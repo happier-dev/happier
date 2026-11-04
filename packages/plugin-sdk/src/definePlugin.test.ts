@@ -4503,6 +4503,29 @@ void 0; /* @sdk-negative-type-case-end */
         expect(() => defineContributionPoint([v1, v2, v3, v4, v5])).toThrow(/at most four protocol epochs/u);
     });
 });
+describe('manifest secret source activation', () => {
+    it('projects only the cold declaration and activates its private acquisition runtime', async () => {
+        const runtime = {
+            async acquire() { return { ok: true as const, value: 'private-acquisition' }; },
+        };
+        const plugin = definePlugin({
+            id: 'example.secrets',
+            version: '0.1.0',
+            secretSources: { keychain: { declaration: { title: 'Local keychain' }, runtime } },
+        });
+        expect(plugin.manifest.contributes?.secretSources).toEqual([
+            { id: 'keychain', title: 'Local keychain' },
+        ]);
+        expect(JSON.stringify(plugin.manifest)).not.toContain('private-acquisition');
+        const testkit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+        try {
+            expect(testkit.registration('secretSources', 'keychain')).toEqual(runtime);
+        } finally {
+            await testkit.dispose();
+        }
+    });
+});
+
 describe('manifest capture source activation', () => {
     it('registers the declared source through public activation and offers frames through the retained runtime', async () => {
         const plugin = definePlugin({ id: 'example.capture', version: '0.1.0', captureSources: {

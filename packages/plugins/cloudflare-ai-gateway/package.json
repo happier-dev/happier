@@ -10,5 +10,10 @@
     "@happier-dev/protocol": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "happier": {
+    "pluginScaffold": {
+      "shipping": "reservation_only"
+    }
   }
 }

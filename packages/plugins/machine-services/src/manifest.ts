@@ -1,6 +1,7 @@
 import { definePlugin, HEALTH_CHECK_KINDS_V1, HealthCheckTcpConfigV1ProtocolSchema,
     HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema,
-    type HealthCheckKindContributionV1, type HealthCheckKindV1 } from '@happier-dev/plugin-sdk';
+    type HealthCheckKindContributionV1, type HealthCheckKindV1, type HealthCheckSourceConfigV1, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
 import { systemdRuntime } from './systemd.js';
 import { composeRuntime } from './compose.js';
 import { HealthCheckSourceConfigV1ProtocolSchema, HealthCheckSetupInputV1ProtocolSchema,

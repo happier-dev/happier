@@ -22,13 +22,17 @@ export type CurrentPluginWebhookClaimAuthorityV1 = Readonly<{
 function projectPluginWebhookContributionsV1(
     manifest: ParsedPluginManifestV2,
 ): readonly ResolvedPluginWebhookContributionV1[] {
-    return manifest.contributes.webhooks.map((contribution) => Object.freeze({
-        pluginId: manifest.id,
-        localId: contribution.id,
-        handlerActionLocalId: contribution.handlerAction.localId,
-        verifierKind: contribution.verifier.kind,
-        routingKind: contribution.verifier.routing,
-    }));
+    return manifest.contributes.webhooks.flatMap((contribution): ResolvedPluginWebhookContributionV1[] => {
+        // Executable claims require an Action; receipt-only endpoints have no dispatch work.
+        if (!('handlerAction' in contribution)) return [];
+        return [Object.freeze({
+            pluginId: manifest.id,
+            localId: contribution.id,
+            handlerActionLocalId: contribution.handlerAction.localId,
+            verifierKind: contribution.verifier.kind,
+            routingKind: contribution.verifier.routing,
+        })];
+    });
 }
 
 /**

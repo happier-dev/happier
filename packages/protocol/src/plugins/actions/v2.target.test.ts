@@ -23,6 +23,20 @@ const localized = { key: 'plugin.title', fallback: 'Title' };
 const daemonExecution = { target: 'daemon' } as const;
 
 describe('plugin executable contribution target grammar', () => {
+  it('admits a conditional Session target only in union arms declaring a string operand', () => {
+    const account = { type: 'object', properties: { kind: { const: 'account', type: 'string' } }, additionalProperties: false };
+    const session = { type: 'object', properties: { kind: { const: 'session', type: 'string' }, sessionId: { type: 'string' } }, additionalProperties: false };
+    const action = { id: 'inspect-target', title: localized, scopes: ['session'], surfaces: ['agent'],
+      execution: daemonExecution, dangerLevel: 'safe', sessionTarget: { field: 'sessionId', cardinality: 'one' },
+      inputSchema: { anyOf: [account, session] } };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    for (const operand of [{ type: 'number' }, { type: 'object' }]) {
+      expect(PluginActionContributionV2Schema.safeParse({ ...action, inputSchema: { anyOf: [account,
+        { ...session, properties: { ...session.properties, sessionId: operand } }] } }).success).toBe(false);
+    }
+    expect(PluginActionContributionV2Schema.safeParse({ ...action, sessionTarget: { field: 'missing', cardinality: 'one' } }).success).toBe(false);
+  });
+
   it('keeps Action invocation surfaces explicit and resolves the execution realm', () => {
     const daemonVoiceAction = {
       id: 'start-voice-note',

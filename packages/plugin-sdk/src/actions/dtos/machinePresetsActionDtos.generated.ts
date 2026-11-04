@@ -234,11 +234,11 @@ export type MachinePresetsActionResultById = {
         cursor?: string | undefined;
     } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     };
     readonly "machines.presets.get": {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     } | {
         kind: 'found';
         preset: {
@@ -312,7 +312,7 @@ export type MachinePresetsActionResultById = {
     };
     readonly "machines.presets.create": {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     } | {
         kind: 'saved';
         preset: {
@@ -389,7 +389,7 @@ export type MachinePresetsActionResultById = {
     };
     readonly "machines.presets.update": {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     } | {
         kind: 'saved';
         preset: {
@@ -466,7 +466,7 @@ export type MachinePresetsActionResultById = {
     };
     readonly "machines.presets.archive": {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     } | {
         kind: 'saved';
         preset: {
@@ -543,7 +543,7 @@ export type MachinePresetsActionResultById = {
     };
     readonly "machines.presets.restore": {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
     } | {
         kind: 'saved';
         preset: {

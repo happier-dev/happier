@@ -1080,6 +1080,23 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         ]);
     });
 
+    it.each([[true, true], [true, false], [false, true], [false, false]])('carries a complete or partial strict Event seed through the installed native handler and refuses malformed nested identity: %s/%s', async (knownAccount, knownMachine) => {
+        const seed = { eventRef: { pluginId: 'com.acme.source', localId: 'review' }, ...(knownMachine ? { monitoringMachineId: 'monitor' } : {}), ...(knownAccount ? {
+            connectedAccount: { service: { pluginId: 'com.acme.source', localId: 'account' }, accountId: 'work' },
+        } : {}), setupInput: { repository: 'acme/widgets' } };
+        const opened = vi.fn(async (request: PluginUiHostApiRequestEnvelopeV1) => {
+            expect(request.payload).toEqual(seed);
+            return null;
+        });
+        const adapter = createAdapterOverHost({ openAutomationEvent: opened });
+        await expect(adapter.api.openAutomationEvent({ ...seed, eventRef: { ...seed.eventRef, href: '/wrong' } } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(opened).not.toHaveBeenCalled();
+        await expect(adapter.api.openAutomationEvent(seed)).resolves.toBeUndefined();
+        expect(opened).toHaveBeenCalledTimes(1);
+        adapter.dispose();
+    });
+
     it('rejects malformed New Session input before the RN transport boundary', async () => {
         const openNewSession = vi.fn(async () => null);
         const adapter = createAdapterOverHost({ openNewSession });

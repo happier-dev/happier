@@ -30,7 +30,7 @@
  * complete emitted set. Two concurrent regenerations clobber each other, so land every
  * manifest/membership source change in the batch first, then regenerate once:
  *
- *   node --conditions=happier-source --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write
+ *   node --import ./packages/cli-common/registerSourceRuntime.mjs --conditions=happier-source --experimental-strip-types apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write
  *
  * RULE 3 — the semantic drift gate already exists; do not add a second one.
  * It runs this same publisher in check mode and fails when an emitted
@@ -1857,7 +1857,7 @@ async function synchronizeSerializedPluginManifest(params: Readonly<{
       assertGeneratedOutputMatches(manifestPath, serializedManifest);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`${detail}. Run node --conditions=happier-source --experimental-strip-types `
+      throw new Error(`${detail}. Run node --import ./packages/cli-common/registerSourceRuntime.mjs --conditions=happier-source --experimental-strip-types `
         + 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts --mode write --package-artifacts '
         + `--workspace ${params.packageName}`);
     }

@@ -504,12 +504,17 @@
       "import": "./dist/plugins/http/contracts.js",
       "default": "./dist/plugins/http/contracts.js"
     },
-
     "./fs/jsonOwnerFileLock": {
       "happier-source": "./src/fs/jsonOwnerFileLock.ts",
       "types": "./dist/fs/jsonOwnerFileLock.d.ts",
       "import": "./dist/fs/jsonOwnerFileLock.js",
       "default": "./dist/fs/jsonOwnerFileLock.js"
+    },
+    "./plugins/registration/accountActionSettings": {
+      "happier-source": "./src/plugins/registration/accountActionSettings.ts",
+      "types": "./dist/plugins/registration/accountActionSettings.d.ts",
+      "import": "./dist/plugins/registration/accountActionSettings.js",
+      "default": "./dist/plugins/registration/accountActionSettings.js"
     }
   },
   "scripts": {

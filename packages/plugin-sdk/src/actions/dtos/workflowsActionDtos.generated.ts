@@ -190,6 +190,11 @@ export type WorkflowsActionInputById = {
         conditions?: ('paused' | 'attention' | 'terminal')[] | undefined;
         timeoutSeconds?: number | undefined;
     };
+    readonly "workflow.run.read_state.set": {
+        runId: string;
+        revision: number;
+        failedAt: string;
+    };
     readonly "workflow.run.pause": {
         runId: string;
         expectedRevision: number;
@@ -545,6 +550,7 @@ export type WorkflowsActionInputById = {
                 mcp?: {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
                 } | undefined;
@@ -764,6 +770,7 @@ export type WorkflowsActionInputById = {
                 mcp?: {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
                 } | undefined;
@@ -1225,6 +1232,7 @@ export type WorkflowsActionInputById = {
                         mcp?: {
                             v?: 1 | undefined;
                             managedServersEnabled?: boolean | undefined;
+                            happierToolsEnabled?: boolean | undefined;
                             forceIncludeServerIds?: string[] | undefined;
                             forceExcludeServerIds?: string[] | undefined;
                         } | undefined;
@@ -1277,8 +1285,35 @@ export type WorkflowsActionInputById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {
@@ -1303,6 +1338,8 @@ export type WorkflowsActionInputById = {
     };
     readonly "workflow.trigger.list": {
         workflow: string;
+    } | {
+        [x: string]: any;
     } | {
         scope: 'account_inline' | 'account_all';
     } | {
@@ -1585,6 +1622,7 @@ export type WorkflowsActionInputById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -1841,6 +1879,192 @@ export type WorkflowsActionInputById = {
                 } | undefined;
             }>;
         } | undefined;
+        observationOnly?: undefined;
+    } | {
+        observationOnly: {
+            kind: 'observationOnly';
+            deploymentEnvironment?: {
+                serverId: string;
+                projectSourceId: string;
+                environmentId: string;
+                previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+            } | undefined;
+        };
+        trigger: {
+            kind: 'schedule';
+            schedule: {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: string | null;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: string | null;
+            };
+            enabled: boolean;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceInstanceId: string;
+            sourceContractVersion: number;
+            sourceConfig: JsonValue;
+            displayLabel: string;
+            observationTransport: {
+                kind: 'checkpointedPull';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'socket';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'durablePush';
+                webhookEndpointId: string;
+                endpointMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                webhookRoutingSourceInstanceId: string;
+                setup: {
+                    kind: 'accountEndpointV1';
+                    credential: 'serverGenerated';
+                } | {
+                    kind: 'githubSharedInstallationV1';
+                    installationId: string;
+                    installationAuthorizationRef: string;
+                };
+            };
+            filter: {
+                v: 1;
+                all: ({
+                    op: 'eq';
+                    field: string;
+                    value: string | number | boolean | null;
+                } | {
+                    op: 'in';
+                    field: string;
+                    values: (string | number | boolean | null)[];
+                })[];
+            } | null;
+            maximumObservationAgeMs: number | null;
+            enabled: boolean;
+        } | {
+            kind: 'pluginEvent';
+            eventRef: {
+                pluginId: string;
+                localId: string;
+            };
+            sourceSelectorId: string;
+            sourceContractVersion: number;
+            observationTransport: {
+                kind: 'checkpointedPull';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'socket';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                kind: 'durablePush';
+                webhookEndpointId: string;
+                endpointMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                webhookRoutingSourceInstanceId: string;
+                setup: {
+                    kind: 'accountEndpointV1';
+                    credential: 'serverGenerated';
+                } | {
+                    kind: 'githubSharedInstallationV1';
+                    installationId: string;
+                    installationAuthorizationRef: string;
+                };
+            };
+            triggerDefinitionEnvelope: {
+                t: 'encrypted';
+                c: string;
+            };
+            enabled: boolean;
+        } | {
+            sourceSessionId: string;
+            events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
+            policy: {
+                kind: 'currentTurn';
+                sourceTurnId: string;
+            } | {
+                kind: 'firstMatch';
+            } | {
+                kind: 'nextMatches';
+                count: number;
+            } | {
+                kind: 'everyMatch';
+            };
+            kind: 'sessionLifecycle';
+            enabled: boolean;
+        } | {
+            source: {
+                kind: 'execution_run';
+                machineId: string;
+                runId: string;
+                sessionId?: string | undefined;
+                observation?: {
+                    kind: 'review_walkthrough';
+                    comparisonId: string;
+                    resultId?: string | undefined;
+                    afterRevision?: number | undefined;
+                } | {
+                    comparisonId: string;
+                    kind: 'scm_diff_summary';
+                    output: 'summary' | 'walkthrough' | 'commitPlan';
+                    resultId?: string | undefined;
+                    afterRevision?: number | undefined;
+                } | undefined;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
+            };
+            condition: 'terminal' | 'needs_attention';
+            kind: 'runLifecycle';
+            enabled: boolean;
+        } | {
+            kind: 'prComment' | 'ciFailed';
+            pullRequest: {
+                repository: string;
+                number: number;
+            };
+            enabled: boolean;
+        } | {
+            kind: 'prComment' | 'ciFailed';
+            triggerDefinitionEnvelope: {
+                t: 'encrypted';
+                c: string;
+            };
+            enabled: boolean;
+        };
+        name?: string | undefined;
+        workflow?: undefined;
+        target?: undefined;
+        project?: undefined;
     };
     readonly "workflow.trigger.update": {
         automationId: string;
@@ -1919,6 +2143,7 @@ export type WorkflowsActionInputById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -2638,6 +2863,7 @@ export type WorkflowsActionInputById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -3006,6 +3232,7 @@ export type WorkflowsActionInputById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -3552,6 +3779,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -3810,6 +4038,10 @@ export type WorkflowsActionResultById = {
     };
     readonly "workflow.run.start": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -3979,6 +4211,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -4019,14 +4252,16 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         admission: 'existing' | 'created';
     };
     readonly "workflow.run.list": {
         runs: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -4196,6 +4431,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -4236,9 +4472,7 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         }[];
         metadataByRunId: Record<string, {
             kind: 'available';
@@ -4311,12 +4545,21 @@ export type WorkflowsActionResultById = {
             lastRun: {
                 runId: string;
                 state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired' | 'dispatch_failed' | 'skipped' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'interrupted' | 'waiting_for_review';
+                workflowCustodyState: 'pending' | 'settled' | null;
+                attentionRequired: boolean;
+                failureUnseen: boolean;
+                invocationAttentionRequired: boolean;
                 createdAt: string;
+                startedAt: string;
                 finishedAt: string | null;
             } | null;
             recent: {
                 runId: string;
                 state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired' | 'dispatch_failed' | 'skipped' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'interrupted' | 'waiting_for_review';
+                workflowCustodyState: 'pending' | 'settled' | null;
+                attentionRequired: boolean;
+                failureUnseen: boolean;
+                invocationAttentionRequired: boolean;
             }[];
             needsYouCount: number;
             needsYouRunId: string | null;
@@ -4330,13 +4573,20 @@ export type WorkflowsActionResultById = {
                 state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired' | 'dispatch_failed' | 'skipped' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'interrupted' | 'waiting_for_review';
                 workflowCustodyState: 'pending' | 'settled' | null;
                 attentionRequired: boolean;
+                failureUnseen: boolean;
+                invocationAttentionRequired: boolean;
                 createdAt: string;
+                startedAt: string;
             } | null;
         }[];
         remainingAutomationIds: string[];
     };
     readonly "workflow.run.get": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -4506,6 +4756,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -4546,9 +4797,7 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         callerAccess: {
             canEdit: boolean;
@@ -4621,6 +4870,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -4949,6 +5199,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -5268,6 +5519,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -5318,8 +5570,35 @@ export type WorkflowsActionResultById = {
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered';
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                             teamId?: string | undefined;
+                            providerModelSelection?: {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: {
+                                    agentTargetKey: string;
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                } | undefined;
+                                executionMachineId?: string | undefined;
+                                nativeSource?: {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                } | undefined;
+                            } | undefined;
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | {
                             v: 1;
                             slot: {
@@ -5464,6 +5743,7 @@ export type WorkflowsActionResultById = {
                                     forceExcludeServerIds: string[];
                                     v: 1;
                                     managedServersEnabled: boolean;
+                                    happierToolsEnabled?: boolean | undefined;
                                 } | undefined;
                                 skills?: {
                                     forceIncludeSkillIds: string[];
@@ -5777,6 +6057,7 @@ export type WorkflowsActionResultById = {
                                         forceExcludeServerIds: string[];
                                         v: 1;
                                         managedServersEnabled: boolean;
+                                        happierToolsEnabled?: boolean | undefined;
                                     } | undefined;
                                     skills?: {
                                         forceIncludeSkillIds: string[];
@@ -5827,8 +6108,35 @@ export type WorkflowsActionResultById = {
                                     };
                                     resourceId: string;
                                     expectedResourceRevision: number;
-                                    deliveryMode: 'direct' | 'brokered';
+                                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                                     teamId?: string | undefined;
+                                    providerModelSelection?: {
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        application?: {
+                                            agentTargetKey: string;
+                                            implementationIdentity: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            endpointTemplateId: string;
+                                            protocol: string;
+                                        } | undefined;
+                                        executionMachineId?: string | undefined;
+                                        nativeSource?: {
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        } | undefined;
+                                    } | undefined;
+                                    nativeDelivery?: {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    } | undefined;
                                 } | {
                                     v: 1;
                                     slot: {
@@ -5971,6 +6279,7 @@ export type WorkflowsActionResultById = {
                                         forceExcludeServerIds: string[];
                                         v: 1;
                                         managedServersEnabled: boolean;
+                                        happierToolsEnabled?: boolean | undefined;
                                     } | undefined;
                                     skills?: {
                                         forceIncludeSkillIds: string[];
@@ -6021,8 +6330,35 @@ export type WorkflowsActionResultById = {
                                     };
                                     resourceId: string;
                                     expectedResourceRevision: number;
-                                    deliveryMode: 'direct' | 'brokered';
+                                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                                     teamId?: string | undefined;
+                                    providerModelSelection?: {
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        application?: {
+                                            agentTargetKey: string;
+                                            implementationIdentity: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            endpointTemplateId: string;
+                                            protocol: string;
+                                        } | undefined;
+                                        executionMachineId?: string | undefined;
+                                        nativeSource?: {
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        } | undefined;
+                                    } | undefined;
+                                    nativeDelivery?: {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    } | undefined;
                                 } | {
                                     v: 1;
                                     slot: {
@@ -6086,6 +6422,7 @@ export type WorkflowsActionResultById = {
                                     forceExcludeServerIds: string[];
                                     v: 1;
                                     managedServersEnabled: boolean;
+                                    happierToolsEnabled?: boolean | undefined;
                                 } | undefined;
                                 skills?: {
                                     forceIncludeSkillIds: string[];
@@ -6271,6 +6608,7 @@ export type WorkflowsActionResultById = {
                 actionContract?: {
                     inputSchema: JsonValue;
                     outputSchema: JsonValue;
+                    secretInputPaths?: string[] | undefined;
                     completion?: JsonValue | undefined;
                 } | undefined;
                 actionInput?: Record<string, JsonValue> | undefined;
@@ -6343,6 +6681,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -6775,6 +7114,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -7094,6 +7434,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -7144,8 +7485,35 @@ export type WorkflowsActionResultById = {
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered';
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                             teamId?: string | undefined;
+                            providerModelSelection?: {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: {
+                                    agentTargetKey: string;
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                } | undefined;
+                                executionMachineId?: string | undefined;
+                                nativeSource?: {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                } | undefined;
+                            } | undefined;
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | {
                             v: 1;
                             slot: {
@@ -7290,6 +7658,7 @@ export type WorkflowsActionResultById = {
                                     forceExcludeServerIds: string[];
                                     v: 1;
                                     managedServersEnabled: boolean;
+                                    happierToolsEnabled?: boolean | undefined;
                                 } | undefined;
                                 skills?: {
                                     forceIncludeSkillIds: string[];
@@ -7603,6 +7972,7 @@ export type WorkflowsActionResultById = {
                                         forceExcludeServerIds: string[];
                                         v: 1;
                                         managedServersEnabled: boolean;
+                                        happierToolsEnabled?: boolean | undefined;
                                     } | undefined;
                                     skills?: {
                                         forceIncludeSkillIds: string[];
@@ -7653,8 +8023,35 @@ export type WorkflowsActionResultById = {
                                     };
                                     resourceId: string;
                                     expectedResourceRevision: number;
-                                    deliveryMode: 'direct' | 'brokered';
+                                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                                     teamId?: string | undefined;
+                                    providerModelSelection?: {
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        application?: {
+                                            agentTargetKey: string;
+                                            implementationIdentity: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            endpointTemplateId: string;
+                                            protocol: string;
+                                        } | undefined;
+                                        executionMachineId?: string | undefined;
+                                        nativeSource?: {
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        } | undefined;
+                                    } | undefined;
+                                    nativeDelivery?: {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    } | undefined;
                                 } | {
                                     v: 1;
                                     slot: {
@@ -7797,6 +8194,7 @@ export type WorkflowsActionResultById = {
                                         forceExcludeServerIds: string[];
                                         v: 1;
                                         managedServersEnabled: boolean;
+                                        happierToolsEnabled?: boolean | undefined;
                                     } | undefined;
                                     skills?: {
                                         forceIncludeSkillIds: string[];
@@ -7847,8 +8245,35 @@ export type WorkflowsActionResultById = {
                                     };
                                     resourceId: string;
                                     expectedResourceRevision: number;
-                                    deliveryMode: 'direct' | 'brokered';
+                                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                                     teamId?: string | undefined;
+                                    providerModelSelection?: {
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                        application?: {
+                                            agentTargetKey: string;
+                                            implementationIdentity: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            endpointTemplateId: string;
+                                            protocol: string;
+                                        } | undefined;
+                                        executionMachineId?: string | undefined;
+                                        nativeSource?: {
+                                            sourceRevision: string;
+                                            providerTicket: string;
+                                        } | undefined;
+                                    } | undefined;
+                                    nativeDelivery?: {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    } | undefined;
                                 } | {
                                     v: 1;
                                     slot: {
@@ -7912,6 +8337,7 @@ export type WorkflowsActionResultById = {
                                     forceExcludeServerIds: string[];
                                     v: 1;
                                     managedServersEnabled: boolean;
+                                    happierToolsEnabled?: boolean | undefined;
                                 } | undefined;
                                 skills?: {
                                     forceIncludeSkillIds: string[];
@@ -8097,6 +8523,7 @@ export type WorkflowsActionResultById = {
                 actionContract?: {
                     inputSchema: JsonValue;
                     outputSchema: JsonValue;
+                    secretInputPaths?: string[] | undefined;
                     completion?: JsonValue | undefined;
                 } | undefined;
                 actionInput?: Record<string, JsonValue> | undefined;
@@ -8169,6 +8596,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -8587,6 +9015,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -8863,6 +9292,10 @@ export type WorkflowsActionResultById = {
     };
     readonly "workflow.run.wait": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -9032,6 +9465,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -9072,15 +9506,17 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         observation: 'terminal';
         matchedCondition: 'terminal';
         result?: JsonValue | undefined;
     } | {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -9250,6 +9686,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -9290,15 +9727,17 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         observation: 'paused';
         matchedCondition: 'paused';
         result?: JsonValue | undefined;
     } | {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -9468,6 +9907,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -9508,15 +9948,17 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         observation: 'needs_attention';
         matchedCondition: 'attention';
         result?: JsonValue | undefined;
     } | {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -9686,6 +10128,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -9726,14 +10169,16 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         observation: 'timeout';
         result?: JsonValue | undefined;
     } | {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -9903,6 +10348,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -9943,15 +10389,21 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         observation: 'not_matched_terminal';
         result?: JsonValue | undefined;
     };
+    readonly "workflow.run.read_state.set": {
+        runId: string;
+        attentionSeenFailureAt: string | null;
+    };
     readonly "workflow.run.pause": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -10121,6 +10573,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -10161,14 +10614,16 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
     readonly "workflow.run.resume": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -10338,6 +10793,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -10378,14 +10834,16 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
     readonly "workflow.run.cancel": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -10555,6 +11013,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -10595,9 +11054,7 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         intent: 'cancelled' | 'pause_requested' | 'paused' | 'unavailable' | 'cancel_requested' | 'resumed' | 'recovery_required';
     };
@@ -11079,6 +11536,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -11292,6 +11750,18 @@ export type WorkflowsActionResultById = {
                             v: 1;
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'wait' | 'manual' | 'retry';
+                        } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
                         } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
@@ -11848,6 +12318,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -12062,6 +12533,18 @@ export type WorkflowsActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'wait' | 'manual' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -12164,6 +12647,10 @@ export type WorkflowsActionResultById = {
     };
     readonly "workflow.run.invocations.retry": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -12333,6 +12820,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -12373,9 +12861,7 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         invocation: {
             id: string;
@@ -12859,6 +13345,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -13073,6 +13560,18 @@ export type WorkflowsActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'wait' | 'manual' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -13175,6 +13674,10 @@ export type WorkflowsActionResultById = {
     };
     readonly "workflow.run.invocations.complete_review": {
         run: {
+            attentionRequired: boolean;
+            failureUnseen: boolean;
+            invocationAttentionRequired: boolean;
+            attentionSeenFailureAt: string | null;
             sourceArtifactId: string | null;
             ownerAccountId: string;
             visibleTeamId: string | null;
@@ -13344,6 +13847,7 @@ export type WorkflowsActionResultById = {
             };
             createdAt: string;
             updatedAt: string;
+            finishedAt: string | null;
             startedBy?: 'agent' | 'user' | 'trigger' | null | undefined;
             stepProgress?: {
                 completed: number;
@@ -13384,9 +13888,7 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
             } | null | undefined;
-            attentionRequired?: boolean | undefined;
             automationScopeSessionId?: string | null | undefined;
-            finishedAt?: string | null | undefined;
         };
         invocation: {
             id: string;
@@ -13666,6 +14168,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -13999,6 +14502,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -14386,6 +14890,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -14773,6 +15278,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -15155,6 +15661,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -15530,6 +16037,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -15864,6 +16372,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -16234,6 +16743,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -16563,6 +17073,7 @@ export type WorkflowsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -16956,6 +17467,7 @@ export type WorkflowsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -17006,8 +17518,35 @@ export type WorkflowsActionResultById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {
@@ -17277,6 +17816,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -17359,6 +17908,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -17718,6 +18268,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -18205,6 +18756,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -18287,6 +18848,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -18646,6 +19208,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -19135,6 +19698,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -19217,6 +19790,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -19576,6 +20150,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -20065,6 +20640,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -20147,6 +20732,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -20506,6 +21092,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -21160,6 +21747,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -21242,6 +21839,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -21601,6 +22199,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -21879,7 +22478,7 @@ export type WorkflowsActionResultById = {
         }[];
         sessionId: string;
         pullRequestLinks: {
-            provider: 'github';
+            provider: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
             repository: string;
             number: number;
             url: string;
@@ -22100,6 +22699,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -22182,6 +22791,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -22541,6 +23151,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -23030,6 +23641,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -23112,6 +23733,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -23471,6 +24093,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -23960,6 +24583,16 @@ export type WorkflowsActionResultById = {
                 triggerDefinitionEnvelope: string;
             })[];
             scopeSessionId?: string | null | undefined;
+            observationOnly?: {
+                kind: 'observationOnly';
+                templateVersion: number;
+                deploymentEnvironment?: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                } | undefined;
+            } | undefined;
             legacy?: {
                 editable: false;
                 reason: 'created_in_0_2';
@@ -24042,6 +24675,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -24401,6 +25035,7 @@ export type WorkflowsActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];

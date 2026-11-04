@@ -64,6 +64,7 @@ export function createAcpClientHandlers(params: Readonly<{
   createHandlerContext: () => HandlerContext;
   getToolNameContext: () => ToolNameContext;
   getActiveSessionId: () => string | null;
+  beforePermissionRequest?: (sessionId: string, toolCallId: string) => Promise<void>;
   capturePermissionRequest: (sessionId: string) => Readonly<{
     scope: 'session' | 'turn';
     isCurrent: () => boolean;
@@ -94,6 +95,13 @@ export function createAcpClientHandlers(params: Readonly<{
               request.mode === 'form' && 'sessionId' in request && typeof request.sessionId === 'string'
                 ? request.sessionId
                 : (params.getActiveSessionId() ?? '');
+            const toolCallId = readNonBlankOpaqueIdentifier('toolCallId' in request ? request.toolCallId : null)
+              ?? `acp-elicitation:${randomUUID()}`;
+            try {
+              await params.beforePermissionRequest?.(requestSessionId, toolCallId);
+            } catch {
+              return { action: 'cancel' };
+            }
             const permissionRequest = params.capturePermissionRequest(requestSessionId);
             if (context?.signal.aborted || !permissionRequest.isCurrent()) {
               return { action: 'cancel' };
@@ -133,6 +141,11 @@ export function createAcpClientHandlers(params: Readonly<{
         typeof (extendedParams as { sessionId?: unknown }).sessionId === 'string'
           ? String((extendedParams as { sessionId?: string }).sessionId)
           : (params.getActiveSessionId() ?? '');
+      try { await params.beforePermissionRequest?.(requestSessionId, toolCallId); }
+      catch {
+        logger.warnLocalFile('[AcpBackend] Provider permission has no proven turn owner');
+        return { outcome: { outcome: 'cancelled' } };
+      }
       const permissionRequest = params.capturePermissionRequest(requestSessionId);
       const tracksForeground = permissionRequest.scope === 'turn';
       const withdraw = (): RequestPermissionResponse => {

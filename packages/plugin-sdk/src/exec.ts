@@ -102,3 +102,5 @@ export interface ExecService {
     ): Promise<PluginProcessHandle>;
     readonly clients: ProtocolClientsService;
 }
+
+export type { GhCommandDeps, GhCommandParams, GhCommandResult, GhNativeTokenResult } from '@happier-dev/cli-common/agents';

@@ -131,6 +131,9 @@ export type AutomationEventsActionResultById = {
                 })[];
             } | null;
             maximumObservationAgeMs: number | null;
+            observationOnly?: {
+                kind: 'observationOnly';
+            } | undefined;
         }[];
         nextCursor: string | null;
     } | {

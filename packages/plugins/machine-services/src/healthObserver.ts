@@ -1,10 +1,10 @@
 import { HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema,
     HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema, HEALTH_CHECK_KINDS_V1,
     computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, arePluginMachineMaterializationRefsEqual,
-    type HealthCheckSourceConfigV1, type HealthCheckResultV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+    type HealthCheckSourceConfigV1, type HealthCheckResultV1, type SavedHealthCheckSelectorV1, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
-    defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+    defineProtocolString, defineProtocolUnion, type ProtocolComposableSchema } from '@happier-dev/plugin-sdk/protocol';
 import { requireAccountStorage } from '@happier-dev/plugin-sdk/storage';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
@@ -177,7 +177,19 @@ export async function runHealthCheckObserver(context: BackgroundServiceContext):
     await runCheckpointedPluginEventObserverV1({ context, source: createHealthCheckSourceAdapter(Date.now, context.services.events.host) });
 }
 
-export const savedHealthActions = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {
+type SavedHealthAction = {
+    title: string;
+    scopes: readonly ['machine', 'global'];
+    surfaces: readonly ['ui', 'cli', 'agent', 'mcp', 'plugin'];
+    dangerLevel: 'safe';
+    readOnly: boolean;
+    execution: { target: 'daemon' };
+    inputSchema: ProtocolComposableSchema<SavedHealthCheckSelectorV1>;
+    resultSchema: ProtocolComposableSchema<HealthCheckResultV1>;
+    run(value: unknown, context: PluginInvocationContext): Promise<HealthCheckResultV1>;
+};
+
+export const savedHealthActions: Record<string, SavedHealthAction> = Object.fromEntries(HEALTH_CHECK_KINDS_V1.map(kind => [`health/${kind}`, {
     title: `Check saved ${kind === 'http' ? 'HTTP' : kind === 'dns' ? 'DNS' : kind === 'tcp' ? 'TCP' : kind}`,
     scopes: ['machine', 'global'] as const, surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] as const,
     dangerLevel: 'safe' as const, readOnly: true, execution: { target: 'daemon' as const },

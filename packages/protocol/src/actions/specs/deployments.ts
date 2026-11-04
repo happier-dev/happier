@@ -24,7 +24,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     executionPlacement: id === 'deployments.backups.restore' || id === 'deployments.prepare' || id === 'deployments.templates.instantiate' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
-    bindings: { mcpToolName: id.replaceAll('.', '_') },
+    bindings: { mcpToolName: id.replaceAll('.', '_'),
+      ...(id === 'deployments.publish.prepare' ? { sdkMethod: 'deployments.preparePublish' } : {}),
+    },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
     ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === 'deployments.environments.update' ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
     inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],

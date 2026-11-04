@@ -6,6 +6,9 @@ import test from 'node:test';
 import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
 
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
+
 import {
   CapabilityMatrixValidationError,
   deriveCapabilityMatrixMetadata,
@@ -424,6 +427,28 @@ test('plans the current author-source matrix through the sole publisher output',
   assert.equal(matrix.subpaths.some((row) => row.specifier === './protocol'), true);
   assert.equal(matrix.subpaths.some((row) => row.specifier === './contributions'), true);
 
+  assert.deepEqual(matrix.services.find((row) => row.serviceId === 'targetedContributions'), {
+    serviceId: 'targetedContributions',
+    property: 'targetedContributions',
+    publicType: 'TargetedContributionsService',
+    authorEntrypoints: ['.'],
+    realms: ['any'],
+    accountInvocation: { members: 'all' },
+    producer: 'src/services/targetedContributions.ts',
+    lifecycle: 'invocation-scoped',
+    availabilityDisposition: 'available',
+  });
+  assert.deepEqual(matrix.services.find((row) => row.serviceId === 'machineConnectorSecrets'), {
+    serviceId: 'machineConnectorSecrets',
+    property: 'machineConnectorSecrets',
+    publicType: 'MachineConnectorSecretsService',
+    authorEntrypoints: ['./secrets'],
+    realms: ['any'],
+    accountInvocation: { members: 'all' },
+    producer: 'src/secrets.ts',
+    lifecycle: 'invocation-scoped',
+    availabilityDisposition: 'available',
+  });
 });
 
 

@@ -53,9 +53,10 @@ export function listMachineEnvironmentAdaptersV1(platform: string): readonly Bui
 /** File names are declarations, not permission to read outside the admitted root. */
 export const PluginProjectNativeAdapterContributionV1Schema = lazyZodSchema(() => z.strictObject({
     id: asProtocolZod(PluginContributionLocalIdSchema),
-    files: z.array(ProjectNativeFilePathV1Schema).check(z.minLength(1)),
+    files: z.array(ProjectNativeFilePathV1Schema),
     roles: z.array(z.enum(PROJECT_NATIVE_ADAPTER_ROLES_V1)).check(z.minLength(1), z.refine(roles => new Set(roles).size === roles.length, 'Duplicate adapter role')),
-}));
+}).check(z.refine(adapter => adapter.files.length > 0
+    || adapter.roles.every(role => role === 'nativeServiceLifecycle'), 'Project adapter roles require native files')));
 export type PluginProjectNativeAdapterContributionV1 = z.infer<typeof PluginProjectNativeAdapterContributionV1Schema>;
 
 const ProcessValueSchema = mini.string().check(mini.regex(/^[^\0]*$/u));

@@ -11,6 +11,30 @@ export type SessionAuthoringActionInputById = {
                 bot?: {
                     kind: 'bot';
                 } | undefined;
+                botFace?: {
+                    style?: 'dither' | 'pixel' | 'solid' | 'dots' | 'planet' | undefined;
+                    body?: 'crab' | 'squid' | 'octopus' | 'ufo' | 'specter' | 'ghost' | 'beetle' | 'spider' | 'jelly' | 'hopper' | 'pup' | 'drone' | 'robot' | 'walker' | 'rocket' | 'feet' | 'tail' | 'drip' | 'bracelegs' | 'tagclaws' | 'cursortail' | 'termbody' | 'antlers' | 'semi' | 'brackets' | 'cursor' | 'bean' | 'squat' | 'bag' | 'loaf' | 'puddle' | 'tower' | 'stilts' | 'tall' | 'cat' | undefined;
+                    palette?: 'daybreak' | 'lagoon' | 'orchid' | 'aurora' | 'indigo' | 'glacier' | 'moss' | 'sand' | 'ink' | undefined;
+                    seed?: string | undefined;
+                    shape?: {
+                        v: 1;
+                        fill: string[];
+                        mouth: [
+                            number,
+                            number,
+                            number
+                        ];
+                        stroke?: [
+                            string,
+                            number
+                        ][] | undefined;
+                        cut?: (string | [
+                            string,
+                            number
+                        ])[] | undefined;
+                        origin?: 'custom' | 'surprise' | undefined;
+                    } | undefined;
+                } | undefined;
                 createdAsBot?: true | undefined;
             } | undefined;
             promptStack?: {

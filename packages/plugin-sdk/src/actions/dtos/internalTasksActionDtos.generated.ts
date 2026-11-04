@@ -10,7 +10,7 @@ export type InternalTasksActionInputById = {
             accountId: string;
         };
         name: string;
-        colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+        colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
     };
     readonly "tasks.internal.labels.clearColor": {
         scope: {
@@ -74,16 +74,16 @@ export type InternalTasksActionResultById = {
         };
         labelCatalog: {
             name: string;
-            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
         }[];
+    } | {
+        status: 'unavailable';
     } | {
         status: 'failed';
         reason: string;
     } | {
         status: 'refused';
         reason: string;
-    } | {
-        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
@@ -96,8 +96,10 @@ export type InternalTasksActionResultById = {
         };
         labelCatalog: {
             name: string;
-            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
         }[];
+    } | {
+        status: 'unavailable';
     } | {
         status: 'failed';
         reason: string;
@@ -105,12 +107,18 @@ export type InternalTasksActionResultById = {
         status: 'refused';
         reason: string;
     } | {
-        status: 'unavailable';
-    } | {
         status: 'uncertain';
         reason: string;
     };
     readonly "tasks.internal.list": {
+        status: 'unavailable';
+    } | {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
         status: 'ok';
         scope: {
             serverId: string;
@@ -130,10 +138,6 @@ export type InternalTasksActionResultById = {
             parentId?: string | undefined;
             blockedBy?: string[] | undefined;
             labels?: string[] | undefined;
-            labelColors?: undefined | {
-                name: string;
-                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
-            }[];
             links?: {
                 url: string;
                 title?: string | undefined;
@@ -148,21 +152,17 @@ export type InternalTasksActionResultById = {
                     sessionId: string;
                 } | undefined;
             }> | undefined;
+            labelColors?: {
+                name: string;
+                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            }[] | undefined;
         }[];
         undoneOrder: string[];
         completedOrder: string[];
-        labelCatalog?: undefined | {
+        labelCatalog?: {
             name: string;
-            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
-        }[];
-    } | {
-        status: 'unavailable';
-    } | {
-        status: 'failed';
-        reason: string;
-    } | {
-        status: 'refused';
-        reason: string;
+            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+        }[] | undefined;
     };
     readonly "tasks.internal.create": {
         status: 'unavailable';
@@ -188,10 +188,6 @@ export type InternalTasksActionResultById = {
             parentId?: string | undefined;
             blockedBy?: string[] | undefined;
             labels?: string[] | undefined;
-            labelColors?: undefined | {
-                name: string;
-                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
-            }[];
             links?: {
                 url: string;
                 title?: string | undefined;
@@ -206,6 +202,10 @@ export type InternalTasksActionResultById = {
                     sessionId: string;
                 } | undefined;
             }> | undefined;
+            labelColors?: {
+                name: string;
+                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            }[] | undefined;
         };
     } | {
         status: 'uncertain';
@@ -235,10 +235,6 @@ export type InternalTasksActionResultById = {
             parentId?: string | undefined;
             blockedBy?: string[] | undefined;
             labels?: string[] | undefined;
-            labelColors?: undefined | {
-                name: string;
-                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
-            }[];
             links?: {
                 url: string;
                 title?: string | undefined;
@@ -253,6 +249,10 @@ export type InternalTasksActionResultById = {
                     sessionId: string;
                 } | undefined;
             }> | undefined;
+            labelColors?: {
+                name: string;
+                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            }[] | undefined;
         };
     } | {
         status: 'uncertain';
@@ -282,10 +282,6 @@ export type InternalTasksActionResultById = {
             parentId?: string | undefined;
             blockedBy?: string[] | undefined;
             labels?: string[] | undefined;
-            labelColors?: undefined | {
-                name: string;
-                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
-            }[];
             links?: {
                 url: string;
                 title?: string | undefined;
@@ -300,6 +296,10 @@ export type InternalTasksActionResultById = {
                     sessionId: string;
                 } | undefined;
             }> | undefined;
+            labelColors?: {
+                name: string;
+                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            }[] | undefined;
         };
     } | {
         status: 'uncertain';

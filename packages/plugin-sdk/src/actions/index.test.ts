@@ -60,7 +60,7 @@ import type {
     ExecutionRunStopResponse,
     ExecutionRunWaitResult,
     SessionSpawnNewInputV2,
-    SessionSpawnNewResultV1,
+    SessionSpawnNewActionResultV1,
 } from '@happier-dev/protocol';
 
 import { getActionSpec } from './service.js';
@@ -552,17 +552,17 @@ describe('ActionsService source contract', () => {
             const sessionSpawnResult = service.execute('session.spawn_new', sessionSpawnInput);
             type ProjectedSessionSpawnResult = Awaited<typeof sessionSpawnResult>;
             type CanonicalSpawnError = Exclude<
-                Extract<SessionSpawnNewResultV1, { type: 'error' }>,
+                Extract<SessionSpawnNewActionResultV1, { type: 'error' }>,
                 { code: 'update_required' }
             >;
             type CanonicalProviderError = NonNullable<CanonicalSpawnError['providerError']>;
             type PublicSpawnResult =
-                | (Omit<Extract<SessionSpawnNewResultV1, { type: 'success' }>, 'sessionId'> & { sessionId: string })
-                | Extract<SessionSpawnNewResultV1, { type: 'pending' }>
+                | (Omit<Extract<SessionSpawnNewActionResultV1, { type: 'success' }>, 'sessionId'> & { sessionId: string })
+                | Extract<SessionSpawnNewActionResultV1, { type: 'pending' }>
                 | (Omit<CanonicalSpawnError, 'providerError'> & {
                     providerError?: Omit<CanonicalProviderError, 'connectionId'> & { connectionId?: string };
                 })
-                | Extract<SessionSpawnNewResultV1, { type: 'error'; code: 'update_required' }>
+                | Extract<SessionSpawnNewActionResultV1, { type: 'error'; code: 'update_required' }>
                 | ActionApprovalRequestCreatedResult;
             const projectedToPublic = (value: ProjectedSessionSpawnResult): PublicSpawnResult => value;
             const publicToProjected = (value: PublicSpawnResult): ProjectedSessionSpawnResult => value;

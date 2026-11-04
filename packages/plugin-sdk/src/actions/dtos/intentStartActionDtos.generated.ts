@@ -4,6 +4,213 @@
 import type { JsonValue } from '../../identity.js';
 
 export type IntentStartActionInputById = {
+    readonly "subagents.plan.start": {
+        [x: string]: unknown;
+        backendTargetKeys: string[];
+        instructions: string;
+        roleId?: string | undefined;
+        launchProfileId?: string | undefined;
+        sessionId?: string | undefined;
+        notifyParentOnCompletion?: boolean | undefined;
+        modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
+        teamCredentialModel?: {
+            kind: 'team_credential_provider_model';
+            resourceId: string;
+            teamId: string;
+            expectedResourceRevision: number;
+            agentTargetKey: string;
+            modelId: string;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
+        } | undefined;
+        teamCredentialSessionBindingConsent?: {
+            v: 1;
+            sessionId: string;
+            teamId: string;
+            resourceId: string;
+            expectedResourceRevision: number;
+        } | undefined;
+        secretReferenceOverlay?: {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
+        } | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | undefined;
+        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        connectedServices?: unknown;
+        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
+        target?: {
+            kind: 'detached';
+        } | undefined;
+        permissionMode?: unknown;
+        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+        runClass?: 'bounded' | 'long_lived' | undefined;
+        ioMode?: 'request_response' | 'streaming' | undefined;
+    };
+    readonly "subagents.delegate.start": {
+        [x: string]: unknown;
+        backendTargetKeys: string[];
+        instructions: string;
+        roleId?: string | undefined;
+        launchProfileId?: string | undefined;
+        sessionId?: string | undefined;
+        notifyParentOnCompletion?: boolean | undefined;
+        modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
+        teamCredentialModel?: {
+            kind: 'team_credential_provider_model';
+            resourceId: string;
+            teamId: string;
+            expectedResourceRevision: number;
+            agentTargetKey: string;
+            modelId: string;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
+        } | undefined;
+        teamCredentialSessionBindingConsent?: {
+            v: 1;
+            sessionId: string;
+            teamId: string;
+            resourceId: string;
+            expectedResourceRevision: number;
+        } | undefined;
+        secretReferenceOverlay?: {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
+        } | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | undefined;
+        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        connectedServices?: unknown;
+        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
+        permissionMode?: unknown;
+        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+        runClass?: 'bounded' | 'long_lived' | undefined;
+        ioMode?: 'request_response' | 'streaming' | undefined;
+    };
+    readonly "voice_agent.start": {
+        [x: string]: unknown;
+        backendTargetKeys: string[];
+        instructions: string;
+        roleId?: string | undefined;
+        launchProfileId?: string | undefined;
+        sessionId?: string | undefined;
+        notifyParentOnCompletion?: boolean | undefined;
+        modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
+        teamCredentialModel?: {
+            kind: 'team_credential_provider_model';
+            resourceId: string;
+            teamId: string;
+            expectedResourceRevision: number;
+            agentTargetKey: string;
+            modelId: string;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
+        } | undefined;
+        teamCredentialSessionBindingConsent?: {
+            v: 1;
+            sessionId: string;
+            teamId: string;
+            resourceId: string;
+            expectedResourceRevision: number;
+        } | undefined;
+        secretReferenceOverlay?: {
+            v: 1;
+            bindings: Record<string, {
+                ref: string;
+                revision?: number | undefined;
+            }>;
+        } | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | undefined;
+        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        connectedServices?: unknown;
+        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
+        permissionMode?: unknown;
+        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+        runClass?: 'bounded' | 'long_lived' | undefined;
+        ioMode?: 'request_response' | 'streaming' | undefined;
+    };
     readonly "review.start": {
         [x: string]: unknown;
         engineIds: string[];
@@ -209,7 +416,16 @@ export type IntentStartActionInputById = {
             expectedResourceRevision: number;
             agentTargetKey: string;
             modelId: string;
-            deliveryMode: 'brokered' | 'direct';
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
         } | undefined;
         teamCredentialSessionBindingConsent?: {
             v: 1;
@@ -248,192 +464,12 @@ export type IntentStartActionInputById = {
         } | undefined;
         reviewRunIds?: string[] | undefined;
     };
-    readonly "subagents.plan.start": {
-        [x: string]: unknown;
-        backendTargetKeys: string[];
-        instructions: string;
-        roleId?: string | undefined;
-        launchProfileId?: string | undefined;
-        sessionId?: string | undefined;
-        notifyParentOnCompletion?: boolean | undefined;
-        modelId?: string | undefined;
-        modelSelection?: {
-            agentTargetKey: string;
-            providerConnectionId: null;
-            modelId: string;
-        } | {
-            agentTargetKey: string;
-            providerConnectionId: string;
-            modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
-            kind: 'team_credential_provider_model';
-            resourceId: string;
-            teamId: string;
-            expectedResourceRevision: number;
-            agentTargetKey: string;
-            modelId: string;
-            deliveryMode: 'brokered' | 'direct';
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
-            v: 1;
-            sessionId: string;
-            teamId: string;
-            resourceId: string;
-            expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
-            v: 1;
-            bindings: Record<string, {
-                ref: string;
-                revision?: number | undefined;
-            }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
-            [x: string]: unknown;
-            v: 1;
-            updatedAt: number;
-            overrides: Record<string, {
-                [x: string]: unknown;
-                updatedAt: number;
-                value: string | number | boolean | null;
-            }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
-        connectedServices?: unknown;
-        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
-        target?: {
-            kind: 'detached';
-        } | undefined;
-        permissionMode?: unknown;
-        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-        runClass?: 'bounded' | 'long_lived' | undefined;
-        ioMode?: 'request_response' | 'streaming' | undefined;
-    };
-    readonly "subagents.delegate.start": {
-        [x: string]: unknown;
-        backendTargetKeys: string[];
-        instructions: string;
-        roleId?: string | undefined;
-        launchProfileId?: string | undefined;
-        sessionId?: string | undefined;
-        notifyParentOnCompletion?: boolean | undefined;
-        modelId?: string | undefined;
-        modelSelection?: {
-            agentTargetKey: string;
-            providerConnectionId: null;
-            modelId: string;
-        } | {
-            agentTargetKey: string;
-            providerConnectionId: string;
-            modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
-            kind: 'team_credential_provider_model';
-            resourceId: string;
-            teamId: string;
-            expectedResourceRevision: number;
-            agentTargetKey: string;
-            modelId: string;
-            deliveryMode: 'brokered' | 'direct';
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
-            v: 1;
-            sessionId: string;
-            teamId: string;
-            resourceId: string;
-            expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
-            v: 1;
-            bindings: Record<string, {
-                ref: string;
-                revision?: number | undefined;
-            }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
-            [x: string]: unknown;
-            v: 1;
-            updatedAt: number;
-            overrides: Record<string, {
-                [x: string]: unknown;
-                updatedAt: number;
-                value: string | number | boolean | null;
-            }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
-        connectedServices?: unknown;
-        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
-        permissionMode?: unknown;
-        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-        runClass?: 'bounded' | 'long_lived' | undefined;
-        ioMode?: 'request_response' | 'streaming' | undefined;
-    };
-    readonly "voice_agent.start": {
-        [x: string]: unknown;
-        backendTargetKeys: string[];
-        instructions: string;
-        roleId?: string | undefined;
-        launchProfileId?: string | undefined;
-        sessionId?: string | undefined;
-        notifyParentOnCompletion?: boolean | undefined;
-        modelId?: string | undefined;
-        modelSelection?: {
-            agentTargetKey: string;
-            providerConnectionId: null;
-            modelId: string;
-        } | {
-            agentTargetKey: string;
-            providerConnectionId: string;
-            modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
-            kind: 'team_credential_provider_model';
-            resourceId: string;
-            teamId: string;
-            expectedResourceRevision: number;
-            agentTargetKey: string;
-            modelId: string;
-            deliveryMode: 'brokered' | 'direct';
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
-            v: 1;
-            sessionId: string;
-            teamId: string;
-            resourceId: string;
-            expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
-            v: 1;
-            bindings: Record<string, {
-                ref: string;
-                revision?: number | undefined;
-            }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
-            [x: string]: unknown;
-            v: 1;
-            updatedAt: number;
-            overrides: Record<string, {
-                [x: string]: unknown;
-                updatedAt: number;
-                value: string | number | boolean | null;
-            }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
-        connectedServices?: unknown;
-        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
-        permissionMode?: unknown;
-        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-        runClass?: 'bounded' | 'long_lived' | undefined;
-        ioMode?: 'request_response' | 'streaming' | undefined;
-    };
 };
 export type IntentStartActionResultById = {
-    readonly "review.start": JsonValue;
-    readonly "review.walkthrough": JsonValue;
-    readonly "review.explain_findings": JsonValue;
     readonly "subagents.plan.start": JsonValue;
     readonly "subagents.delegate.start": JsonValue;
     readonly "voice_agent.start": JsonValue;
+    readonly "review.start": JsonValue;
+    readonly "review.walkthrough": JsonValue;
+    readonly "review.explain_findings": JsonValue;
 };

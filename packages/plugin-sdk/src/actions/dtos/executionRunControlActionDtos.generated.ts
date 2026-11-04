@@ -177,6 +177,10 @@ export type ExecutionRunControlActionInputById = {
                         } | undefined;
                     };
                     disabledReason?: string | undefined;
+                    viewport?: {
+                        width: number;
+                        height: number;
+                    } | undefined;
                 } | {
                     v: 1;
                     contextId: string;
@@ -219,6 +223,12 @@ export type ExecutionRunControlActionInputById = {
                     selectorPath: string;
                     disabledReason?: string | undefined;
                     accessibleName?: string | undefined;
+                    componentName?: string | undefined;
+                    sourceLocation?: {
+                        file: string;
+                        line?: number | undefined;
+                        column?: number | undefined;
+                    } | undefined;
                     rect?: {
                         x: number;
                         y: number;
@@ -226,19 +236,9 @@ export type ExecutionRunControlActionInputById = {
                         height: number;
                     } | undefined;
                 } | {
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserAnnotation';
                     annotationId: string;
                     browserSessionId: string;
-                    media: {
+                    imageRef: {
                         mediaId: string;
                         mediaKind: 'image';
                         width: number;
@@ -252,45 +252,138 @@ export type ExecutionRunControlActionInputById = {
                             mimeType: 'image/png';
                         } | undefined;
                     };
-                    target: {
-                        kind: 'region';
-                        rect: {
-                            x: number;
-                            y: number;
+                    marks: {
+                        v: 1;
+                        image: {
                             width: number;
                             height: number;
+                            scale: number;
                         };
-                    } | {
-                        kind: 'element';
-                        selectorPath: string;
-                        accessibleName?: string | undefined;
-                        rect?: {
+                        marks: ({
+                            kind: 'arrow';
+                            from: {
+                                x: number;
+                                y: number;
+                            };
+                            to: {
+                                x: number;
+                                y: number;
+                            };
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'rectangle';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'ellipse';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'freehand';
+                            points: {
+                                x: number;
+                                y: number;
+                            }[];
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'highlighter';
+                            points: {
+                                x: number;
+                                y: number;
+                            }[];
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'text';
+                            at: {
+                                x: number;
+                                y: number;
+                            };
+                            text: string;
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'step';
+                            at: {
+                                x: number;
+                                y: number;
+                            };
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'blur';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            size: 's' | 'm' | 'l';
+                            id: string;
+                        } | {
+                            kind: 'element';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            label: string;
+                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            id: string;
+                        })[];
+                        crop?: {
                             x: number;
                             y: number;
                             width: number;
                             height: number;
                         } | undefined;
+                    };
+                    elements: {
+                        markId: string;
+                        selectorPath: string;
+                        accessibleName?: string | undefined;
                         componentName?: string | undefined;
                         sourceLocation?: {
                             file: string;
                             line?: number | undefined;
                             column?: number | undefined;
                         } | undefined;
-                    };
-                    disabledReason?: string | undefined;
-                    comment?: string | undefined;
-                    styleIntent?: 'callout' | 'highlight' | 'redaction' | 'arrow' | 'freeform' | undefined;
-                    stroke?: {
-                        shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                        points: {
-                            x: number;
-                            y: number;
-                        }[];
-                        colorToken?: string | undefined;
-                        widthPx?: number | undefined;
-                    } | undefined;
+                    }[];
+                    kind: 'browserAnnotation';
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
+                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
                     pageUrl?: string | undefined;
                     pageTitle?: string | undefined;
+                    disabledReason?: string | undefined;
                 } | {
                     v: 1;
                     contextId: string;
@@ -328,62 +421,145 @@ export type ExecutionRunControlActionInputById = {
                     state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
                     requiresReconfirmBeforeSend?: boolean | undefined;
                     structuredBlock?: {
-                        v: 1;
-                        kind: 'browser.annotation.v1';
                         annotationId: string;
-                        sourceViewId: string;
-                        contextIds: string[];
-                        elements: {
-                            selectorPath: string;
-                            accessibleName?: string | undefined;
-                            rect?: {
-                                x: number;
-                                y: number;
-                                width: number;
-                                height: number;
+                        browserSessionId: string;
+                        imageRef: {
+                            mediaId: string;
+                            mediaKind: 'image';
+                            width: number;
+                            height: number;
+                            sizeBytes: number;
+                            file?: {
+                                sessionId: string;
+                                storage: 'session' | 'daemon';
+                                path: string;
+                                sha256: string;
+                                mimeType: 'image/png';
                             } | undefined;
-                        }[];
-                        regions: {
-                            rect: {
-                                x: number;
-                                y: number;
+                        };
+                        marks: {
+                            v: 1;
+                            image: {
                                 width: number;
                                 height: number;
+                                scale: number;
                             };
-                        }[];
-                        strokes: {
-                            shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                            points: {
-                                x: number;
-                                y: number;
-                            }[];
-                            colorToken?: string | undefined;
-                            widthPx?: number | undefined;
-                        }[];
-                        screenshot: {
-                            media: {
-                                mediaId: string;
-                                mediaKind: 'image';
-                                width: number;
-                                height: number;
-                                sizeBytes: number;
-                                file?: {
-                                    sessionId: string;
-                                    storage: 'session' | 'daemon';
-                                    path: string;
-                                    sha256: string;
-                                    mimeType: 'image/png';
-                                } | undefined;
-                            }[];
-                            cropRect?: {
+                            marks: ({
+                                kind: 'arrow';
+                                from: {
+                                    x: number;
+                                    y: number;
+                                };
+                                to: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'rectangle';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'ellipse';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'freehand';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'highlighter';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'text';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                text: string;
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'step';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'blur';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'element';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                label: string;
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                id: string;
+                            })[];
+                            crop?: {
                                 x: number;
                                 y: number;
                                 width: number;
                                 height: number;
                             } | undefined;
                         };
-                        browserSessionId?: string | undefined;
-                        comment?: string | undefined;
+                        elements: {
+                            markId: string;
+                            selectorPath: string;
+                            accessibleName?: string | undefined;
+                            componentName?: string | undefined;
+                            sourceLocation?: {
+                                file: string;
+                                line?: number | undefined;
+                                column?: number | undefined;
+                            } | undefined;
+                        }[];
+                        v: 2;
+                        kind: 'browser.annotation.v2';
+                        sourceViewId: string;
+                        contextIds: string[];
                         pageUrl?: string | undefined;
                         pageTitle?: string | undefined;
                     } | undefined;
@@ -441,6 +617,7 @@ export type ExecutionRunControlActionInputById = {
             mcp?: {
                 v?: 1 | undefined;
                 managedServersEnabled?: boolean | undefined;
+                happierToolsEnabled?: boolean | undefined;
                 forceIncludeServerIds?: string[] | undefined;
                 forceExcludeServerIds?: string[] | undefined;
             } | undefined;
@@ -470,7 +647,16 @@ export type ExecutionRunControlActionInputById = {
             expectedResourceRevision: number;
             agentTargetKey: string;
             modelId: string;
-            deliveryMode: 'brokered' | 'direct';
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
         } | undefined;
         teamCredentialSessionBindingConsent?: {
             v: 1;
@@ -572,6 +758,7 @@ export type ExecutionRunControlActionInputById = {
         runId: string;
         sessionId?: string | null | undefined;
         includeStructured?: boolean | undefined;
+        includeLatestToolResult?: boolean | undefined;
         waitForInputId?: string | undefined;
         waitForOutput?: {
             kind: 'review_walkthrough';
@@ -786,6 +973,10 @@ export type ExecutionRunControlActionInputById = {
                             } | undefined;
                         };
                         disabledReason?: string | undefined;
+                        viewport?: {
+                            width: number;
+                            height: number;
+                        } | undefined;
                     } | {
                         v: 1;
                         contextId: string;
@@ -828,6 +1019,12 @@ export type ExecutionRunControlActionInputById = {
                         selectorPath: string;
                         disabledReason?: string | undefined;
                         accessibleName?: string | undefined;
+                        componentName?: string | undefined;
+                        sourceLocation?: {
+                            file: string;
+                            line?: number | undefined;
+                            column?: number | undefined;
+                        } | undefined;
                         rect?: {
                             x: number;
                             y: number;
@@ -835,19 +1032,9 @@ export type ExecutionRunControlActionInputById = {
                             height: number;
                         } | undefined;
                     } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserAnnotation';
                         annotationId: string;
                         browserSessionId: string;
-                        media: {
+                        imageRef: {
                             mediaId: string;
                             mediaKind: 'image';
                             width: number;
@@ -861,45 +1048,138 @@ export type ExecutionRunControlActionInputById = {
                                 mimeType: 'image/png';
                             } | undefined;
                         };
-                        target: {
-                            kind: 'region';
-                            rect: {
-                                x: number;
-                                y: number;
+                        marks: {
+                            v: 1;
+                            image: {
                                 width: number;
                                 height: number;
+                                scale: number;
                             };
-                        } | {
-                            kind: 'element';
-                            selectorPath: string;
-                            accessibleName?: string | undefined;
-                            rect?: {
+                            marks: ({
+                                kind: 'arrow';
+                                from: {
+                                    x: number;
+                                    y: number;
+                                };
+                                to: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'rectangle';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'ellipse';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'freehand';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'highlighter';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'text';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                text: string;
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'step';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'blur';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'element';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                label: string;
+                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                id: string;
+                            })[];
+                            crop?: {
                                 x: number;
                                 y: number;
                                 width: number;
                                 height: number;
                             } | undefined;
+                        };
+                        elements: {
+                            markId: string;
+                            selectorPath: string;
+                            accessibleName?: string | undefined;
                             componentName?: string | undefined;
                             sourceLocation?: {
                                 file: string;
                                 line?: number | undefined;
                                 column?: number | undefined;
                             } | undefined;
-                        };
-                        disabledReason?: string | undefined;
-                        comment?: string | undefined;
-                        styleIntent?: 'callout' | 'highlight' | 'redaction' | 'arrow' | 'freeform' | undefined;
-                        stroke?: {
-                            shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                            points: {
-                                x: number;
-                                y: number;
-                            }[];
-                            colorToken?: string | undefined;
-                            widthPx?: number | undefined;
-                        } | undefined;
+                        }[];
+                        kind: 'browserAnnotation';
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
+                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
                         pageUrl?: string | undefined;
                         pageTitle?: string | undefined;
+                        disabledReason?: string | undefined;
                     } | {
                         v: 1;
                         contextId: string;
@@ -937,62 +1217,145 @@ export type ExecutionRunControlActionInputById = {
                         state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
                         requiresReconfirmBeforeSend?: boolean | undefined;
                         structuredBlock?: {
-                            v: 1;
-                            kind: 'browser.annotation.v1';
                             annotationId: string;
-                            sourceViewId: string;
-                            contextIds: string[];
-                            elements: {
-                                selectorPath: string;
-                                accessibleName?: string | undefined;
-                                rect?: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
+                            browserSessionId: string;
+                            imageRef: {
+                                mediaId: string;
+                                mediaKind: 'image';
+                                width: number;
+                                height: number;
+                                sizeBytes: number;
+                                file?: {
+                                    sessionId: string;
+                                    storage: 'session' | 'daemon';
+                                    path: string;
+                                    sha256: string;
+                                    mimeType: 'image/png';
                                 } | undefined;
-                            }[];
-                            regions: {
-                                rect: {
-                                    x: number;
-                                    y: number;
+                            };
+                            marks: {
+                                v: 1;
+                                image: {
                                     width: number;
                                     height: number;
+                                    scale: number;
                                 };
-                            }[];
-                            strokes: {
-                                shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                colorToken?: string | undefined;
-                                widthPx?: number | undefined;
-                            }[];
-                            screenshot: {
-                                media: {
-                                    mediaId: string;
-                                    mediaKind: 'image';
-                                    width: number;
-                                    height: number;
-                                    sizeBytes: number;
-                                    file?: {
-                                        sessionId: string;
-                                        storage: 'session' | 'daemon';
-                                        path: string;
-                                        sha256: string;
-                                        mimeType: 'image/png';
-                                    } | undefined;
-                                }[];
-                                cropRect?: {
+                                marks: ({
+                                    kind: 'arrow';
+                                    from: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    to: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'rectangle';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'ellipse';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'freehand';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'highlighter';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'text';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    text: string;
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'step';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'blur';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'element';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    label: string;
+                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    id: string;
+                                })[];
+                                crop?: {
                                     x: number;
                                     y: number;
                                     width: number;
                                     height: number;
                                 } | undefined;
                             };
-                            browserSessionId?: string | undefined;
-                            comment?: string | undefined;
+                            elements: {
+                                markId: string;
+                                selectorPath: string;
+                                accessibleName?: string | undefined;
+                                componentName?: string | undefined;
+                                sourceLocation?: {
+                                    file: string;
+                                    line?: number | undefined;
+                                    column?: number | undefined;
+                                } | undefined;
+                            }[];
+                            v: 2;
+                            kind: 'browser.annotation.v2';
+                            sourceViewId: string;
+                            contextIds: string[];
                             pageUrl?: string | undefined;
                             pageTitle?: string | undefined;
                         } | undefined;
@@ -1050,6 +1413,7 @@ export type ExecutionRunControlActionInputById = {
                 mcp?: {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
                 } | undefined;
@@ -1079,7 +1443,16 @@ export type ExecutionRunControlActionInputById = {
                 expectedResourceRevision: number;
                 agentTargetKey: string;
                 modelId: string;
-                deliveryMode: 'brokered' | 'direct';
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                nativeDelivery?: {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                } | undefined;
             } | undefined;
             teamCredentialSessionBindingConsent?: {
                 v: 1;
@@ -1286,7 +1659,16 @@ export type ExecutionRunControlActionInputById = {
                         expectedResourceRevision: number;
                         agentTargetKey: string;
                         modelId: string;
-                        deliveryMode: 'brokered' | 'direct';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | undefined;
                     modelId?: string | undefined;
                     connectedServices?: {
@@ -1366,6 +1748,16 @@ export type ExecutionRunControlActionInputById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -1451,6 +1843,7 @@ export type ExecutionRunControlActionInputById = {
                     code: string;
                     message?: string | undefined;
                     runtimeIssueV1?: unknown;
+                    uxDiagnostic?: unknown;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -1602,7 +1995,16 @@ export type ExecutionRunControlActionResultById = {
                 expectedResourceRevision: number;
                 agentTargetKey: string;
                 modelId: string;
-                deliveryMode: 'brokered' | 'direct';
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                nativeDelivery?: {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
+                    sourceRevision: string;
+                    providerTicket: string;
+                } | undefined;
             } | undefined;
             modelId?: string | undefined;
             connectedServices?: {
@@ -1704,7 +2106,16 @@ export type ExecutionRunControlActionResultById = {
                             expectedResourceRevision: number;
                             agentTargetKey: string;
                             modelId: string;
-                            deliveryMode: 'brokered' | 'direct';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | undefined;
                         modelId?: string | undefined;
                         connectedServices?: {
@@ -1784,6 +2195,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -1962,6 +2383,18 @@ export type ExecutionRunControlActionResultById = {
                                 retryAfterMs: number | null;
                                 recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                             } | undefined;
+                            failureCause?: {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                code?: string | undefined;
+                                preparationCause?: {
+                                    code: string;
+                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                                } | undefined;
+                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                httpStatus?: number | undefined;
+                            } | undefined;
                             agentProcessExitAfterSwitch?: {
                                 exitCode: number | null;
                                 signal: string | null;
@@ -1971,6 +2404,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -2160,7 +2605,16 @@ export type ExecutionRunControlActionResultById = {
                             expectedResourceRevision: number;
                             agentTargetKey: string;
                             modelId: string;
-                            deliveryMode: 'brokered' | 'direct';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | undefined;
                         modelId?: string | undefined;
                         connectedServices?: {
@@ -2240,6 +2694,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -2418,6 +2882,18 @@ export type ExecutionRunControlActionResultById = {
                                 retryAfterMs: number | null;
                                 recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                             } | undefined;
+                            failureCause?: {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                code?: string | undefined;
+                                preparationCause?: {
+                                    code: string;
+                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                                } | undefined;
+                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                httpStatus?: number | undefined;
+                            } | undefined;
                             agentProcessExitAfterSwitch?: {
                                 exitCode: number | null;
                                 signal: string | null;
@@ -2427,6 +2903,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -2616,7 +3104,16 @@ export type ExecutionRunControlActionResultById = {
                             expectedResourceRevision: number;
                             agentTargetKey: string;
                             modelId: string;
-                            deliveryMode: 'brokered' | 'direct';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | undefined;
                         modelId?: string | undefined;
                         connectedServices?: {
@@ -2696,6 +3193,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -2874,6 +3381,18 @@ export type ExecutionRunControlActionResultById = {
                                 retryAfterMs: number | null;
                                 recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                             } | undefined;
+                            failureCause?: {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                code?: string | undefined;
+                                preparationCause?: {
+                                    code: string;
+                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                                } | undefined;
+                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                httpStatus?: number | undefined;
+                            } | undefined;
                             agentProcessExitAfterSwitch?: {
                                 exitCode: number | null;
                                 signal: string | null;
@@ -2883,6 +3402,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -3076,7 +3607,16 @@ export type ExecutionRunControlActionResultById = {
                             expectedResourceRevision: number;
                             agentTargetKey: string;
                             modelId: string;
-                            deliveryMode: 'brokered' | 'direct';
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | undefined;
                         modelId?: string | undefined;
                         connectedServices?: {
@@ -3156,6 +3696,16 @@ export type ExecutionRunControlActionResultById = {
                             compaction?: {
                                 events: true;
                                 manual?: true | undefined;
+                                idle?: {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                } | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | undefined;
                             } | undefined;
                             conversationRollback?: true | undefined;
                             goals?: {
@@ -3334,6 +3884,18 @@ export type ExecutionRunControlActionResultById = {
                                 retryAfterMs: number | null;
                                 recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                             } | undefined;
+                            failureCause?: {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                code?: string | undefined;
+                                preparationCause?: {
+                                    code: string;
+                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                                } | undefined;
+                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                httpStatus?: number | undefined;
+                            } | undefined;
                             agentProcessExitAfterSwitch?: {
                                 exitCode: number | null;
                                 signal: string | null;
@@ -3343,6 +3905,18 @@ export type ExecutionRunControlActionResultById = {
                                 effectiveStateMode: 'shared' | 'isolated' | null;
                             } | undefined;
                         }> | undefined;
+                        uxDiagnostic?: {
+                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                            retryable: boolean;
+                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                        } | undefined;
                     } | undefined;
                 };
                 latestToolResult?: unknown;
@@ -3477,7 +4051,11 @@ export type ExecutionRunControlActionResultById = {
             code: 'cancelled';
         } | {
             ok: false;
-            code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
+            code: 'execution_run_not_found' | 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
+        } | undefined;
+        preparedInstructionsFor?: {
+            serverId: string;
+            sessionId: string;
         } | undefined;
     };
     readonly "execution.run.list": {
@@ -3544,7 +4122,16 @@ export type ExecutionRunControlActionResultById = {
                     expectedResourceRevision: number;
                     agentTargetKey: string;
                     modelId: string;
-                    deliveryMode: 'brokered' | 'direct';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | undefined;
                 modelId?: string | undefined;
                 connectedServices?: {
@@ -3624,6 +4211,16 @@ export type ExecutionRunControlActionResultById = {
                     compaction?: {
                         events: true;
                         manual?: true | undefined;
+                        idle?: {
+                            mode: 'native';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                            nativeHonorsMinimum?: true | undefined;
+                        } | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | undefined;
                     } | undefined;
                     conversationRollback?: true | undefined;
                     goals?: {
@@ -3802,6 +4399,18 @@ export type ExecutionRunControlActionResultById = {
                         retryAfterMs: number | null;
                         recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                     } | undefined;
+                    failureCause?: {
+                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                        failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                        code?: string | undefined;
+                        preparationCause?: {
+                            code: string;
+                            stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                        } | undefined;
+                        reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                        providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                        httpStatus?: number | undefined;
+                    } | undefined;
                     agentProcessExitAfterSwitch?: {
                         exitCode: number | null;
                         signal: string | null;
@@ -3811,6 +4420,18 @@ export type ExecutionRunControlActionResultById = {
                         effectiveStateMode: 'shared' | 'isolated' | null;
                     } | undefined;
                 }> | undefined;
+                uxDiagnostic?: {
+                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    retryable: boolean;
+                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    serviceId?: string | undefined;
+                    agentId?: string | undefined;
+                    profileId?: string | undefined;
+                    groupId?: string | undefined;
+                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                } | undefined;
             } | undefined;
         }[];
     };
@@ -3878,7 +4499,16 @@ export type ExecutionRunControlActionResultById = {
                     expectedResourceRevision: number;
                     agentTargetKey: string;
                     modelId: string;
-                    deliveryMode: 'brokered' | 'direct';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | undefined;
                 modelId?: string | undefined;
                 connectedServices?: {
@@ -3958,6 +4588,16 @@ export type ExecutionRunControlActionResultById = {
                     compaction?: {
                         events: true;
                         manual?: true | undefined;
+                        idle?: {
+                            mode: 'native';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                            nativeHonorsMinimum?: true | undefined;
+                        } | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | undefined;
                     } | undefined;
                     conversationRollback?: true | undefined;
                     goals?: {
@@ -4136,6 +4776,18 @@ export type ExecutionRunControlActionResultById = {
                         retryAfterMs: number | null;
                         recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                     } | undefined;
+                    failureCause?: {
+                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                        failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                        code?: string | undefined;
+                        preparationCause?: {
+                            code: string;
+                            stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                        } | undefined;
+                        reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                        providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                        httpStatus?: number | undefined;
+                    } | undefined;
                     agentProcessExitAfterSwitch?: {
                         exitCode: number | null;
                         signal: string | null;
@@ -4145,6 +4797,18 @@ export type ExecutionRunControlActionResultById = {
                         effectiveStateMode: 'shared' | 'isolated' | null;
                     } | undefined;
                 }> | undefined;
+                uxDiagnostic?: {
+                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    retryable: boolean;
+                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    serviceId?: string | undefined;
+                    agentId?: string | undefined;
+                    profileId?: string | undefined;
+                    groupId?: string | undefined;
+                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                } | undefined;
             } | undefined;
         };
         latestToolResult?: unknown;
@@ -4290,6 +4954,10 @@ export type ExecutionRunControlActionResultById = {
             actions?: Readonly<{
                 t: string;
                 args: unknown;
+                confirmation?: {
+                    actionRequestId: string;
+                    inputDigest: string;
+                } | undefined;
             }>[] | undefined;
         } | {
             [x: string]: unknown;
@@ -4324,6 +4992,10 @@ export type ExecutionRunControlActionResultById = {
                 action: Readonly<{
                     t: string;
                     args: unknown;
+                    confirmation?: {
+                        actionRequestId: string;
+                        inputDigest: string;
+                    } | undefined;
                 }>;
             } | {
                 v: 1;
@@ -4435,7 +5107,16 @@ export type ExecutionRunControlActionResultById = {
                         expectedResourceRevision: number;
                         agentTargetKey: string;
                         modelId: string;
-                        deliveryMode: 'brokered' | 'direct';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | undefined;
                     modelId?: string | undefined;
                     connectedServices?: {
@@ -4515,6 +5196,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -4693,6 +5384,18 @@ export type ExecutionRunControlActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -4702,6 +5405,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -4891,7 +5606,16 @@ export type ExecutionRunControlActionResultById = {
                         expectedResourceRevision: number;
                         agentTargetKey: string;
                         modelId: string;
-                        deliveryMode: 'brokered' | 'direct';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | undefined;
                     modelId?: string | undefined;
                     connectedServices?: {
@@ -4971,6 +5695,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -5149,6 +5883,18 @@ export type ExecutionRunControlActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -5158,6 +5904,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -5347,7 +6105,16 @@ export type ExecutionRunControlActionResultById = {
                         expectedResourceRevision: number;
                         agentTargetKey: string;
                         modelId: string;
-                        deliveryMode: 'brokered' | 'direct';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | undefined;
                     modelId?: string | undefined;
                     connectedServices?: {
@@ -5427,6 +6194,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -5605,6 +6382,18 @@ export type ExecutionRunControlActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -5614,6 +6403,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -5807,7 +6608,16 @@ export type ExecutionRunControlActionResultById = {
                         expectedResourceRevision: number;
                         agentTargetKey: string;
                         modelId: string;
-                        deliveryMode: 'brokered' | 'direct';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | undefined;
                     modelId?: string | undefined;
                     connectedServices?: {
@@ -5887,6 +6697,16 @@ export type ExecutionRunControlActionResultById = {
                         compaction?: {
                             events: true;
                             manual?: true | undefined;
+                            idle?: {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            } | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | undefined;
                         } | undefined;
                         conversationRollback?: true | undefined;
                         goals?: {
@@ -6065,6 +6885,18 @@ export type ExecutionRunControlActionResultById = {
                             retryAfterMs: number | null;
                             recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
                         } | undefined;
+                        failureCause?: {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
+                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            code?: string | undefined;
+                            preparationCause?: {
+                                code: string;
+                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
+                            } | undefined;
+                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
+                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            httpStatus?: number | undefined;
+                        } | undefined;
                         agentProcessExitAfterSwitch?: {
                             exitCode: number | null;
                             signal: string | null;
@@ -6074,6 +6906,18 @@ export type ExecutionRunControlActionResultById = {
                             effectiveStateMode: 'shared' | 'isolated' | null;
                         } | undefined;
                     }> | undefined;
+                    uxDiagnostic?: {
+                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        retryable: boolean;
+                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                    } | undefined;
                 } | undefined;
             };
             latestToolResult?: unknown;
@@ -6208,6 +7052,6 @@ export type ExecutionRunControlActionResultById = {
         code: 'cancelled';
     } | {
         ok: false;
-        code: 'execution_run_not_found' | 'execution_run_not_allowed' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied';
+        code: 'execution_run_not_found' | 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
     };
 };

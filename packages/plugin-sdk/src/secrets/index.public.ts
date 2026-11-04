@@ -4,3 +4,5 @@ export { SecretStringV1Schema } from '../secrets.js';
 export type { SecretsService } from '../secrets.js';
 
 export type { SharedSecretAudience, SharedSecretSaveInput, SharedSecretSaveResult } from '../secrets.js';
+
+export type { MachineConnectorSecretsService } from '../secrets.js';

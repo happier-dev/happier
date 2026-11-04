@@ -232,9 +232,11 @@ const PluginHostAccessRequestVariantsV2 = [
       locations: uniqueNonEmptyArray(z.union([
         z.strictObject({ root: z.enum(['pluginData', 'workspace']), pathPrefix: z.optional(z.string().check(z.minLength(1))) }),
         z.strictObject({ root: z.literal('project'), projectId: z.optional(z.string().check(z.minLength(1))), pathPrefix: z.optional(z.string().check(z.minLength(1))) }),
+        z.strictObject({ root: z.literal('machine'), pathPrefix: z.string().check(z.minLength(1), z.regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])/u)) }),
       ])),
       access: uniqueNonEmptyArray(z.enum(['read', 'write', 'delete'])),
-    }),
+    }).check(z.refine(scope => !scope.locations.some(location => location.root === 'machine')
+      || scope.access.every(access => access === 'read'), 'Machine filesystem observation is read-only')),
   }))),
   lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
     capability: z.literal('process'),

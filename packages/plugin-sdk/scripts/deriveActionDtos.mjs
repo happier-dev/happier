@@ -15,6 +15,7 @@ const flags = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseStructural
   | ts.TypeFormatFlags.UseSingleQuotesForStringLiteralType;
 
 const supportBindings = [
+  ...['SessionSpawnNewInputV2', 'SessionServerStartSpawnDraftV1'].map(name => ['sessions/creation/sessionSpawnNewInputV2.ts', name]),
   ...['SessionTargetV1', 'SessionTargetSelectorV1', 'ActionSessionTargetDeclarationV1'].map(name => ['actions/sessionTargetV1.ts', name]),
   ['actions/filesystemActionFamily.ts', 'FilesystemTreeNode'],
   // Host finding author values share the existing Action-result DTO projection.

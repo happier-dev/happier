@@ -4,109 +4,6 @@
 import type { ExternalSessionsSource, PluginAgentExternalSessionLinkDataObject } from './pluginActionDtoSupport.generated.js';
 
 export type MemoryActionInputById = {
-    readonly "memory.search": {
-        [x: string]: unknown;
-        machineId: string;
-        query: {
-            [x: string]: unknown;
-            v: 1;
-            query: string;
-            scope: {
-                [x: string]: unknown;
-                type: 'global';
-            } | {
-                [x: string]: unknown;
-                type: 'session';
-                sessionId: string;
-            } | {
-                type: 'project';
-                projectRef: {
-                    serverId: string;
-                    projectKey: string;
-                };
-            };
-            mode: 'hints' | 'deep' | 'auto';
-            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
-            eligibleSessionIds?: string[] | undefined;
-            externalSource?: {
-                agentId: string;
-                sourceKey: string;
-            } | undefined;
-            maxResults?: number | undefined;
-            minScore?: number | undefined;
-            cursor?: string | undefined;
-            createdAfterMs?: number | undefined;
-            createdBeforeMs?: number | undefined;
-        };
-    };
-    readonly "search.settings.get": {
-        machineId: string;
-    };
-    readonly "search.settings.set": {
-        machineId: string;
-        settings: unknown;
-    };
-    readonly "memory.status": {
-        machineId: string;
-    };
-    readonly "memory.clear_index": {
-        machineId: string;
-    };
-    readonly "search.conversations": {
-        query: {
-            [x: string]: unknown;
-            v: 1;
-            query: string;
-            mode: 'hints' | 'deep' | 'auto';
-            scope: {
-                [x: string]: unknown;
-                type: 'global';
-            } | {
-                [x: string]: unknown;
-                type: 'session';
-                sessionId: string;
-            };
-            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
-            eligibleSessionIds?: string[] | undefined;
-            externalSource?: {
-                agentId: string;
-                sourceKey: string;
-            } | undefined;
-            maxResults?: number | undefined;
-            minScore?: number | undefined;
-            cursor?: string | undefined;
-            createdAfterMs?: number | undefined;
-            createdBeforeMs?: number | undefined;
-        };
-        machineIds?: string[] | undefined;
-        mode?: 'auto' | 'indexed' | 'standard' | undefined;
-        retryUnreachableMachines?: boolean | undefined;
-    };
-    readonly "memory.get_window": {
-        source: {
-            type: 'external_transcript';
-            agentId: string;
-            sourceKey: string;
-            nativeSessionId: string;
-        };
-        sourceItemId: string;
-        machineId: string;
-        cursor?: string | undefined;
-        v?: 1 | undefined;
-    } | {
-        [x: string]: unknown;
-        sessionId: string;
-        seqFrom: number;
-        seqTo: number;
-        machineId: string;
-        source?: undefined;
-        v?: 1 | undefined;
-    };
-    readonly "memory.ensure_up_to_date": {
-        [x: string]: unknown;
-        machineId: string;
-        sessionId?: string | undefined;
-    };
     readonly "memory.decision.save": {
         ref: {
             artifactId: string;
@@ -506,8 +403,415 @@ export type MemoryActionInputById = {
         cursor?: string | undefined;
         limit?: number | undefined;
     };
+    readonly "memory.search": {
+        [x: string]: unknown;
+        machineId: string;
+        query: {
+            [x: string]: unknown;
+            v: 1;
+            query: string;
+            scope: {
+                [x: string]: unknown;
+                type: 'global';
+            } | {
+                [x: string]: unknown;
+                type: 'session';
+                sessionId: string;
+            } | {
+                type: 'project';
+                projectRef: {
+                    serverId: string;
+                    projectKey: string;
+                };
+            };
+            mode: 'hints' | 'deep' | 'auto';
+            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
+            eligibleSessionIds?: string[] | undefined;
+            externalSource?: {
+                agentId: string;
+                sourceKey: string;
+            } | undefined;
+            maxResults?: number | undefined;
+            minScore?: number | undefined;
+            cursor?: string | undefined;
+            createdAfterMs?: number | undefined;
+            createdBeforeMs?: number | undefined;
+        };
+    };
+    readonly "search.settings.get": {
+        machineId: string;
+    };
+    readonly "search.settings.set": {
+        machineId: string;
+        settings: unknown;
+    };
+    readonly "memory.status": {
+        machineId: string;
+    };
+    readonly "memory.clear_index": {
+        machineId: string;
+    };
+    readonly "search.conversations": {
+        query: {
+            [x: string]: unknown;
+            v: 1;
+            query: string;
+            mode: 'hints' | 'deep' | 'auto';
+            scope: {
+                [x: string]: unknown;
+                type: 'global';
+            } | {
+                [x: string]: unknown;
+                type: 'session';
+                sessionId: string;
+            };
+            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
+            eligibleSessionIds?: string[] | undefined;
+            externalSource?: {
+                agentId: string;
+                sourceKey: string;
+            } | undefined;
+            maxResults?: number | undefined;
+            minScore?: number | undefined;
+            cursor?: string | undefined;
+            createdAfterMs?: number | undefined;
+            createdBeforeMs?: number | undefined;
+        };
+        machineIds?: string[] | undefined;
+        mode?: 'auto' | 'indexed' | 'standard' | undefined;
+        retryUnreachableMachines?: boolean | undefined;
+    };
+    readonly "memory.get_window": {
+        source: {
+            type: 'external_transcript';
+            agentId: string;
+            sourceKey: string;
+            nativeSessionId: string;
+        };
+        sourceItemId: string;
+        machineId: string;
+        cursor?: string | undefined;
+        v?: 1 | undefined;
+    } | {
+        [x: string]: unknown;
+        sessionId: string;
+        seqFrom: number;
+        seqTo: number;
+        machineId: string;
+        source?: undefined;
+        v?: 1 | undefined;
+    };
+    readonly "memory.ensure_up_to_date": {
+        [x: string]: unknown;
+        machineId: string;
+        sessionId?: string | undefined;
+    };
 };
 export type MemoryActionResultById = {
+    readonly "memory.decision.save": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: {
+            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
+        } | undefined;
+    } | {
+        ok: false;
+        errorCode: 'memory_duplicate_choice_required';
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        candidates: {
+            factId: string;
+            text: string;
+            match: 'exact' | 'related';
+            topic?: string | undefined;
+            decision?: {
+                reason: string;
+                sourceMessageRef: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                };
+                approvedBy: {
+                    accountId: string;
+                    atMs: number;
+                } | null;
+            } | undefined;
+        }[];
+    };
+    readonly "memory.remember": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: {
+            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
+        } | undefined;
+    } | {
+        ok: false;
+        errorCode: 'memory_duplicate_choice_required';
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        candidates: {
+            factId: string;
+            text: string;
+            match: 'exact' | 'related';
+            topic?: string | undefined;
+            decision?: {
+                reason: string;
+                sourceMessageRef: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                };
+                approvedBy: {
+                    accountId: string;
+                    atMs: number;
+                } | null;
+            } | undefined;
+        }[];
+    };
+    readonly "memory.update": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: {
+            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
+        } | undefined;
+    } | {
+        ok: false;
+        errorCode: 'memory_duplicate_choice_required';
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        candidates: {
+            factId: string;
+            text: string;
+            match: 'exact' | 'related';
+            topic?: string | undefined;
+            decision?: {
+                reason: string;
+                sourceMessageRef: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                };
+                approvedBy: {
+                    accountId: string;
+                    atMs: number;
+                } | null;
+            } | undefined;
+        }[];
+    };
+    readonly "memory.forget": {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: {
+            headerVersion: number;
+            bodyVersion: number;
+        } | undefined;
+        ref?: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        } | undefined;
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: {
+            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
+        } | undefined;
+    };
+    readonly "memory.read": {
+        body: {
+            v: 1;
+            index: {
+                id: string;
+                text: string;
+                createdAtMs: number;
+                sourceSessionRef: {
+                    serverId: string;
+                    sessionId: string;
+                } | null;
+                expiresAtMs?: number | undefined;
+                supersedes?: string | undefined;
+                decision?: {
+                    reason: string;
+                    sourceMessageRef: {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    } | {
+                        kind: 'discussion';
+                        discussion: {
+                            serverId: string;
+                            discussionId: string;
+                        };
+                        messageId: string;
+                    };
+                    approvedBy: {
+                        accountId: string;
+                        atMs: number;
+                    } | null;
+                } | undefined;
+            }[];
+            topics: {
+                title: string;
+                summary: string;
+            }[];
+        };
+        ok: true;
+        artifactId: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        header: {
+            v: 1;
+            kind: 'memory_doc.v1';
+            title: string;
+        };
+    } | {
+        topic: {
+            facts: {
+                id: string;
+                text: string;
+                createdAtMs: number;
+                sourceSessionRef: {
+                    serverId: string;
+                    sessionId: string;
+                } | null;
+                archivedByMutation?: boolean | undefined;
+                expiresAtMs?: number | undefined;
+                supersedes?: string | undefined;
+                decision?: {
+                    reason: string;
+                    sourceMessageRef: {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    } | {
+                        kind: 'discussion';
+                        discussion: {
+                            serverId: string;
+                            discussionId: string;
+                        };
+                        messageId: string;
+                    };
+                    approvedBy: {
+                        accountId: string;
+                        atMs: number;
+                    } | null;
+                } | undefined;
+            }[];
+            title: string;
+            summary: string;
+        };
+        ok: true;
+        artifactId: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        header: {
+            v: 1;
+            kind: 'memory_doc.v1';
+            title: string;
+        };
+    };
+    readonly "memory.list": {
+        items: {
+            artifactId: string;
+            title: string;
+            updatedAtMs: number;
+        }[];
+        coverage: 'complete' | 'partial' | 'unavailable';
+        nextCursor?: string | undefined;
+    };
     readonly "memory.search": {
         [x: string]: unknown;
         v: 1;
@@ -556,10 +860,10 @@ export type MemoryActionResultById = {
             factId?: string | undefined;
         })[];
         documents?: {
-            state: 'ready' | 'pending' | 'partial' | 'unavailable';
+            state: 'partial' | 'unavailable' | 'ready' | 'pending';
         } | undefined;
         project?: {
-            state: 'ready' | 'partial' | 'unavailable';
+            state: 'partial' | 'unavailable' | 'ready';
         } | undefined;
         nextCursor?: string | undefined;
         hasMore?: boolean | undefined;
@@ -848,7 +1152,7 @@ export type MemoryActionResultById = {
         embeddingsPresetId: 'balanced' | 'long_context' | 'quality' | null;
         embeddingsProviderKind: 'local_transformers' | 'openai_compatible' | null;
         embeddingsModelId: string | null;
-        embeddingsRuntimeState: 'error' | 'ready' | 'unavailable' | 'downloading';
+        embeddingsRuntimeState: 'error' | 'unavailable' | 'ready' | 'downloading';
         embeddingsUsingFallback: boolean;
         tier1DbPath: string | null;
         deepDbPath: string | null;
@@ -866,7 +1170,7 @@ export type MemoryActionResultById = {
         } | null;
         worker: {
             [x: string]: unknown;
-            state: 'disabled' | 'error' | 'idle' | 'inventorying' | 'indexing' | 'waiting' | 'backoff';
+            state: 'error' | 'disabled' | 'idle' | 'inventorying' | 'indexing' | 'waiting' | 'backoff';
             lastTickAtMs: number | null;
             lastInventoryAtMs: number | null;
             currentSessionId: string | null;
@@ -938,7 +1242,7 @@ export type MemoryActionResultById = {
                 agentId: string;
                 sourceKey: string;
             };
-            state: 'disabled' | 'error' | 'ready' | 'indexing';
+            state: 'error' | 'disabled' | 'ready' | 'indexing';
             indexedThroughMs?: number | undefined;
             errorCode?: string | undefined;
             errorReason?: string | undefined;
@@ -1034,7 +1338,7 @@ export type MemoryActionResultById = {
             machineId: string;
             status: 'ok' | 'partial' | 'offline' | 'outdated' | 'disabled-by-settings';
             standardSearchEnabled?: boolean | undefined;
-            documents?: 'ready' | 'pending' | 'partial' | 'unavailable' | undefined;
+            documents?: 'partial' | 'unavailable' | 'ready' | 'pending' | undefined;
         }[];
         sources?: {
             machineId: string;
@@ -1104,308 +1408,5 @@ export type MemoryActionResultById = {
     readonly "memory.ensure_up_to_date": {
         [x: string]: unknown;
         ok: boolean;
-    };
-    readonly "memory.decision.save": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
-        ok: false;
-        errorCode: 'memory_duplicate_choice_required';
-        ref: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        };
-        revision: {
-            headerVersion: number;
-            bodyVersion: number;
-        };
-        candidates: {
-            factId: string;
-            text: string;
-            match: 'exact' | 'related';
-            topic?: string | undefined;
-            decision?: {
-                reason: string;
-                sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                };
-                approvedBy: {
-                    accountId: string;
-                    atMs: number;
-                } | null;
-            } | undefined;
-        }[];
-    };
-    readonly "memory.remember": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
-        ok: false;
-        errorCode: 'memory_duplicate_choice_required';
-        ref: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        };
-        revision: {
-            headerVersion: number;
-            bodyVersion: number;
-        };
-        candidates: {
-            factId: string;
-            text: string;
-            match: 'exact' | 'related';
-            topic?: string | undefined;
-            decision?: {
-                reason: string;
-                sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                };
-                approvedBy: {
-                    accountId: string;
-                    atMs: number;
-                } | null;
-            } | undefined;
-        }[];
-    };
-    readonly "memory.update": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
-        ok: false;
-        errorCode: 'memory_duplicate_choice_required';
-        ref: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        };
-        revision: {
-            headerVersion: number;
-            bodyVersion: number;
-        };
-        candidates: {
-            factId: string;
-            text: string;
-            match: 'exact' | 'related';
-            topic?: string | undefined;
-            decision?: {
-                reason: string;
-                sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                };
-                approvedBy: {
-                    accountId: string;
-                    atMs: number;
-                } | null;
-            } | undefined;
-        }[];
-    };
-    readonly "memory.forget": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    };
-    readonly "memory.read": {
-        body: {
-            v: 1;
-            index: {
-                id: string;
-                text: string;
-                createdAtMs: number;
-                sourceSessionRef: {
-                    serverId: string;
-                    sessionId: string;
-                } | null;
-                expiresAtMs?: number | undefined;
-                supersedes?: string | undefined;
-                decision?: {
-                    reason: string;
-                    sourceMessageRef: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
-                        kind: 'discussion';
-                        discussion: {
-                            serverId: string;
-                            discussionId: string;
-                        };
-                        messageId: string;
-                    };
-                    approvedBy: {
-                        accountId: string;
-                        atMs: number;
-                    } | null;
-                } | undefined;
-            }[];
-            topics: {
-                title: string;
-                summary: string;
-            }[];
-        };
-        ok: true;
-        artifactId: string;
-        revision: {
-            headerVersion: number;
-            bodyVersion: number;
-        };
-        header: {
-            v: 1;
-            kind: 'memory_doc.v1';
-            title: string;
-        };
-    } | {
-        topic: {
-            title: string;
-            summary: string;
-            facts: {
-                id: string;
-                text: string;
-                createdAtMs: number;
-                sourceSessionRef: {
-                    serverId: string;
-                    sessionId: string;
-                } | null;
-                expiresAtMs?: number | undefined;
-                supersedes?: string | undefined;
-                decision?: {
-                    reason: string;
-                    sourceMessageRef: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
-                        kind: 'discussion';
-                        discussion: {
-                            serverId: string;
-                            discussionId: string;
-                        };
-                        messageId: string;
-                    };
-                    approvedBy: {
-                        accountId: string;
-                        atMs: number;
-                    } | null;
-                } | undefined;
-            }[];
-        };
-        ok: true;
-        artifactId: string;
-        revision: {
-            headerVersion: number;
-            bodyVersion: number;
-        };
-        header: {
-            v: 1;
-            kind: 'memory_doc.v1';
-            title: string;
-        };
-    };
-    readonly "memory.list": {
-        items: {
-            artifactId: string;
-            title: string;
-            updatedAtMs: number;
-        }[];
-        coverage: 'partial' | 'unavailable' | 'complete';
-        nextCursor?: string | undefined;
     };
 };

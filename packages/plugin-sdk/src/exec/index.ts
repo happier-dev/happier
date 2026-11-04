@@ -1,10 +1,15 @@
-export { resolveGhNativeToken } from '../exec.js';
 export type { PluginAgentCliReadinessRequest as AgentCliReadinessRequest } from '../services/io.js';
 export type { PluginAgentCliReadinessResult as AgentCliReadinessResult } from '../services/io.js';
 export type { AgentCliReadinessService } from '../exec.js';
 export type { AgentNativeLaunchQualifier } from '../exec.js';
+export type { DeploymentExecEnvAttachmentV1 } from '../services/io.js';
+export type { DeploymentExecEnvPortV1 } from '../services/io.js';
 export type { ExecService } from '../exec.js';
 export type { ExecSpawnRequest } from '../exec.js';
+export type { GhCommandDeps } from '../exec.js';
+export type { GhCommandParams } from '../exec.js';
+export type { GhCommandResult } from '../exec.js';
+export type { GhNativeTokenResult } from '../exec.js';
 export type { PluginExecSpawnRequest } from '../services/io.js';
 export type { PluginProcessHandle } from '../services/io.js';
 export type { PluginProcessObservedTermination } from '../services/io.js';
@@ -16,7 +21,4 @@ export type { SystemToolContribution } from '../exec.js';
 export type { SystemToolDiagnostic } from '../exec.js';
 export type { SystemToolResolveRequest } from '../exec.js';
 export type { SystemToolsService } from '../exec.js';
-
-export { DeploymentExecEnvAttachmentV1 } from './index.public.js';
-
-export { DeploymentExecEnvPortV1 } from './index.public.js';
+export { resolveGhNativeToken } from '../exec.js';

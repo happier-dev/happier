@@ -17,10 +17,91 @@ export type SavedSecretSharingActionInputById = {
                 name: string;
                 kind: 'apiKey' | 'token' | 'password' | 'other';
                 value: string;
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'apiKey' | 'token' | 'password' | 'other';
+                source: {
+                    kind: 'external';
+                    contribution: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    account: string;
+                    reference: string;
+                    metadata?: {
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
+                    } | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'other';
+                source: {
+                    kind: 'passkey';
+                    rpId: string;
+                    credentialId: string;
+                    userHandle: string;
+                    privateKey: string;
+                    algorithm: -7;
+                    signCount: number;
+                    backupEligibility: boolean;
+                    backupState: boolean;
+                    userName?: string | undefined;
+                    userDisplayName?: string | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
             };
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         } | {
             t: 'encrypted';
             c: string;
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         };
         accountGrants?: string[] | undefined;
         teamGrants?: string[] | undefined;
@@ -43,10 +124,91 @@ export type SavedSecretSharingActionInputById = {
                 name: string;
                 kind: 'apiKey' | 'token' | 'password' | 'other';
                 value: string;
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'apiKey' | 'token' | 'password' | 'other';
+                source: {
+                    kind: 'external';
+                    contribution: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    account: string;
+                    reference: string;
+                    metadata?: {
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
+                    } | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'other';
+                source: {
+                    kind: 'passkey';
+                    rpId: string;
+                    credentialId: string;
+                    userHandle: string;
+                    privateKey: string;
+                    algorithm: -7;
+                    signCount: number;
+                    backupEligibility: boolean;
+                    backupState: boolean;
+                    userName?: string | undefined;
+                    userDisplayName?: string | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
             };
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         } | {
             t: 'encrypted';
             c: string;
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         };
         nextSettings: {
             t: 'plain';
@@ -183,6 +345,7 @@ export type SavedSecretSharingActionInputById = {
                             defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
                             defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
                             defaultModelMode?: string | undefined;
+                            defaultBackendTargetKey?: unknown;
                             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
                             compatibility?: Record<string, boolean> | undefined;
                             authMode?: 'machineLogin' | undefined;
@@ -433,7 +596,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -446,11 +609,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     };
                                     importedAt: number;
                                 };
@@ -466,11 +639,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     } | undefined;
                                 } | undefined;
                             } | {
@@ -629,7 +812,7 @@ export type SavedSecretSharingActionInputById = {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
@@ -642,11 +825,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     };
                                     importedAt: number;
                                 };
@@ -667,11 +860,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
+                                    } | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
                                     } | undefined;
                                 } | undefined;
                             } | undefined;
@@ -827,6 +1030,11 @@ export type SavedSecretSharingActionInputById = {
                                                 name: string;
                                                 format: 'raw' | 'bearer';
                                             };
+                                            additionalCredentials?: {
+                                                slotId: string;
+                                                destination: any | any;
+                                                label?: string | any | undefined;
+                                            }[] | undefined;
                                         }[];
                                         slotId?: 'apiKey' | undefined;
                                         required?: boolean | undefined;
@@ -847,11 +1055,13 @@ export type SavedSecretSharingActionInputById = {
                             } | undefined;
                             endpointOverrides?: {
                                 endpointTemplateId: string;
-                                baseUrl: string;
+                                baseUrl?: string | undefined;
+                                publicHeaders?: Record<string, string> | undefined;
                             }[] | undefined;
                             endpointOverridesByMachineId?: Record<string, {
                                 endpointTemplateId: string;
-                                baseUrl: string;
+                                baseUrl?: string | undefined;
+                                publicHeaders?: Record<string, string> | undefined;
                             }[]> | undefined;
                             purposeBindingDefaults?: Record<string, {
                                 kind: 'account';
@@ -1292,8 +1502,8 @@ export type SavedSecretSharingActionInputById = {
                             sources: {
                                 id: string;
                                 title: string;
-                                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
-                                kinds: ('agent' | 'skill' | 'mcpServer' | 'plugin')[];
+                                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                                kinds: ('agent' | 'skill' | 'mcpServer' | 'plugin' | 'app' | 'browserExtension')[];
                                 url: string;
                                 enabled: boolean;
                                 addedAt: number;
@@ -1401,10 +1611,91 @@ export type SavedSecretSharingActionInputById = {
                     name: string;
                     kind: 'apiKey' | 'token' | 'password' | 'other';
                     value: string;
+                    createdByPlugin?: {
+                        pluginId: string;
+                        secretId: string;
+                    } | undefined;
+                } | {
+                    v: 2;
+                    name: string;
+                    kind: 'apiKey' | 'token' | 'password' | 'other';
+                    source: {
+                        kind: 'external';
+                        contribution: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        account: string;
+                        reference: string;
+                        metadata?: {
+                            vault: {
+                                id: string;
+                                name: string;
+                            };
+                            item: {
+                                id: string;
+                                title: string;
+                            };
+                            field: {
+                                id: string;
+                                title: string;
+                                kind: string;
+                            };
+                        } | undefined;
+                    };
+                    createdByPlugin?: {
+                        pluginId: string;
+                        secretId: string;
+                    } | undefined;
+                } | {
+                    v: 2;
+                    name: string;
+                    kind: 'other';
+                    source: {
+                        kind: 'passkey';
+                        rpId: string;
+                        credentialId: string;
+                        userHandle: string;
+                        privateKey: string;
+                        algorithm: -7;
+                        signCount: number;
+                        backupEligibility: boolean;
+                        backupState: boolean;
+                        userName?: string | undefined;
+                        userDisplayName?: string | undefined;
+                    };
+                    createdByPlugin?: {
+                        pluginId: string;
+                        secretId: string;
+                    } | undefined;
                 };
+                storage?: {
+                    kind: 'value';
+                } | {
+                    kind: 'passkey';
+                } | {
+                    kind: 'external';
+                    provider: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    providerLabel?: string | undefined;
+                } | undefined;
             } | {
                 t: 'encrypted';
                 c: string;
+                storage?: {
+                    kind: 'value';
+                } | {
+                    kind: 'passkey';
+                } | {
+                    kind: 'external';
+                    provider: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    providerLabel?: string | undefined;
+                } | undefined;
             };
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
@@ -1489,6 +1780,106 @@ export type SavedSecretSharingActionInputById = {
             }[] | undefined;
             settingsMutation?: undefined;
         } | undefined;
+        connectedAccountCredentialMutation?: {
+            expectedCredentialRevision: null;
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            authenticationModeId: string;
+            content: {
+                t: 'plain';
+                v: unknown;
+            } | {
+                t: 'encrypted';
+                c: string;
+            };
+            metadata: {
+                providerIdentity?: {
+                    accountId?: string | null | undefined;
+                    email?: string | null | undefined;
+                    organizationId?: string | null | undefined;
+                } | undefined;
+                displayName?: string | undefined;
+                scopes?: string[] | undefined;
+                authenticationProvenance?: {
+                    authenticatedAt: number;
+                    machine: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                } | undefined;
+            };
+            initialConfiguration?: {
+                expectedConfigurationRevision: null;
+                replacementContentEnvelope: {
+                    t: 'plain';
+                    v: unknown;
+                } | {
+                    t: 'encrypted';
+                    c: string;
+                };
+            } | undefined;
+            directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
+            savedSecretResourceIds?: string[] | undefined;
+            savedSecretRevisions?: {
+                resourceId: string;
+                expectedRevision: number;
+            }[] | undefined;
+            contributionContractVersion?: string | undefined;
+            reconnect?: {
+                allowProviderIdentityChange?: boolean | undefined;
+            } | undefined;
+            refreshLeaseOwnerId?: string | undefined;
+        } | {
+            expectedCredentialRevision: string;
+            expectedConfigurationRevision: string | null;
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            authenticationModeId: string;
+            content: {
+                t: 'plain';
+                v: unknown;
+            } | {
+                t: 'encrypted';
+                c: string;
+            };
+            metadata: {
+                providerIdentity?: {
+                    accountId?: string | null | undefined;
+                    email?: string | null | undefined;
+                    organizationId?: string | null | undefined;
+                } | undefined;
+                displayName?: string | undefined;
+                scopes?: string[] | undefined;
+                authenticationProvenance?: {
+                    authenticatedAt: number;
+                    machine: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                } | undefined;
+            };
+            directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
+            savedSecretResourceIds?: string[] | undefined;
+            savedSecretRevisions?: {
+                resourceId: string;
+                expectedRevision: number;
+            }[] | undefined;
+            contributionContractVersion?: string | undefined;
+            reconnect?: {
+                allowProviderIdentityChange?: boolean | undefined;
+            } | undefined;
+            refreshLeaseOwnerId?: string | undefined;
+        } | undefined;
     };
     readonly "secrets.shared.grants.set": {
         resourceId: string;
@@ -1514,10 +1905,91 @@ export type SavedSecretSharingActionInputById = {
                 name: string;
                 kind: 'apiKey' | 'token' | 'password' | 'other';
                 value: string;
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'apiKey' | 'token' | 'password' | 'other';
+                source: {
+                    kind: 'external';
+                    contribution: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    account: string;
+                    reference: string;
+                    metadata?: {
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
+                        };
+                    } | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
+            } | {
+                v: 2;
+                name: string;
+                kind: 'other';
+                source: {
+                    kind: 'passkey';
+                    rpId: string;
+                    credentialId: string;
+                    userHandle: string;
+                    privateKey: string;
+                    algorithm: -7;
+                    signCount: number;
+                    backupEligibility: boolean;
+                    backupState: boolean;
+                    userName?: string | undefined;
+                    userDisplayName?: string | undefined;
+                };
+                createdByPlugin?: {
+                    pluginId: string;
+                    secretId: string;
+                } | undefined;
             };
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         } | {
             t: 'encrypted';
             c: string;
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
         };
         toMode?: 'plain' | 'e2ee' | undefined;
         keyEnvelopes?: {
@@ -1668,6 +2140,19 @@ export type SavedSecretSharingActionResultById = {
                 manageAccess: boolean;
                 delete: boolean;
             };
+            storage?: {
+                kind: 'value';
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | undefined;
+            deploymentReferenceState?: 'unavailable' | 'referenced' | 'unreferenced' | undefined;
         } | {
             materialStatus: 'resource_corrupt';
             relationship: 'owner';
@@ -1698,6 +2183,10 @@ export type SavedSecretSharingActionResultById = {
             connectedConfigurations?: number | 'absent' | undefined;
             connectedPurposes?: number | 'absent' | undefined;
             registrySources?: number | 'absent' | undefined;
+        } | undefined;
+        connectedAccountCredential?: {
+            configurationRevision: string | null;
+            credentialRevision: string;
         } | undefined;
     };
     readonly "secrets.shared.grants.set": {

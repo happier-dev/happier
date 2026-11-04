@@ -6,57 +6,43 @@ import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js'
 export type LocalDaemonServicesActionInputById = {
     readonly "machines.local.service.status": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.start": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.stop": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.restart": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.autostart.set": {
         serverId: string;
         autostart: 'at-login' | 'on-demand';
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.update": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.local.service.disconnect": {
         serverId: string;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "machines.services.exec": {
-        target: {
-            kind: 'candidate';
-            deploymentId: string;
-            service: string;
-        };
-        mode: 'run';
-        serverId: string;
-        machineId: string;
-        argv: string[];
-    } | {
         target: {
             kind: 'current';
             serviceId: string;
             expectedGeneration: string;
         };
         mode: 'exec' | 'run';
+        serverId: string;
+        machineId: string;
+        argv: string[];
+    } | {
+        target: {
+            kind: 'candidate';
+            deploymentId: string;
+            service: string;
+        };
+        mode: 'run';
         serverId: string;
         machineId: string;
         argv: string[];
@@ -69,10 +55,10 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.discovery": {
         serverId: string;
         machineId: string;
-        adapter?: undefined | {
+        adapter?: {
             pluginId: string;
             localId: string;
-        };
+        } | undefined;
     };
     readonly "machines.services.detail": {
         serviceId: string;
@@ -83,7 +69,7 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.watch": {
         candidateId: string;
         expectedRevision: string;
-        lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+        lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
         serverId: string;
         machineId: string;
     };
@@ -96,7 +82,7 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.control": {
         serviceId: string;
         expectedGeneration: string;
-        operation: 'restart' | 'start' | 'stop';
+        operation: 'start' | 'stop' | 'restart';
         serverId: string;
         machineId: string;
     };
@@ -104,10 +90,80 @@ export type LocalDaemonServicesActionInputById = {
         serverId: string;
         machineId: string;
         serviceId: string;
-        cursor?: undefined | {
+        cursor?: {
             sourceRevision: string;
             token: string;
+        } | undefined;
+    };
+    readonly "machines.services.adopt": {
+        mode: 'review';
+        serverId: string;
+        machineId: string;
+        serviceId: string;
+        expectedGeneration: string;
+        requestKey: string;
+        profiles: string[];
+    } | {
+        mode: 'apply';
+        reviewedDigest: string;
+        destination: {
+            purpose: 'standard' | 'preview';
+            protection: 'production' | 'nonProduction';
+            deployerMode: 'managers' | 'members' | 'chosen';
+            name: string;
+            projectSourceId?: string | undefined;
+            newProject?: {
+                name: string;
+                requestKey: string;
+                owner: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+            } | undefined;
+            deployerPrincipals?: {
+                principalKind: 'account' | 'teamGroup';
+                principalId: string;
+            }[] | undefined;
+            buildMachineId?: string | undefined;
+            managedRetention?: 'keep' | 'until-delete' | undefined;
+            controllerMachineId?: string | undefined;
+            retainPreviousDeployments?: number | undefined;
         };
+        bindingsConfirmed: true;
+        bindings: {
+            source: {
+                kind: 'secret';
+                ref: string;
+                resourceRevision: number;
+            } | {
+                kind: 'value';
+                value: string;
+            } | {
+                kind: 'reference';
+                environmentId: string;
+                export: string;
+                via: 'public' | 'auto' | 'privateNetwork';
+            } | {
+                kind: 'deploymentFact';
+                fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
+            } | {
+                kind: 'deploymentFact';
+                fact: 'domainUrl';
+                domainId: string;
+            };
+            purpose: 'variable';
+            name: string;
+            phase: 'build' | 'runtime';
+        }[];
+        serverId: string;
+        machineId: string;
+        serviceId: string;
+        expectedGeneration: string;
+        requestKey: string;
+        profiles: string[];
     };
 };
 export type LocalDaemonServicesActionResultById = {
@@ -116,16 +172,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.start": {
@@ -133,16 +189,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.stop": {
@@ -150,16 +206,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.restart": {
@@ -167,16 +223,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.autostart.set": {
@@ -184,16 +240,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.update": {
@@ -201,23 +257,23 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        } | {
+            protocolVersion: 1;
+            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
-        } | {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.disconnect": {
-        outcome: 'no_service' | 'removed';
+        outcome: 'removed' | 'no_service';
     } | {
         outcome: 'user_owned';
-        label: null | string;
+        label: string | null;
     };
     readonly "machines.services.exec": {
         exitCode: number;
@@ -233,10 +289,10 @@ export type LocalDaemonServicesActionResultById = {
         services: {
             serviceId: string;
             name: string;
-            authority: 'machine' | 'plugin' | 'project';
-            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
-            generation: null | string;
-            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
+            authority: 'project' | 'machine' | 'plugin';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+            generation: string | null;
+            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
             capabilities: {
                 start: boolean;
                 stop: boolean;
@@ -244,32 +300,33 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
-            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
-            native?: undefined | {
-                phase: 'running' | 'stopped' | 'unknown';
-                readiness: 'not_ready' | 'not_reported' | 'ready';
-            };
-            configuration?: null | undefined | {
+            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
+            native?: {
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+                displayName?: string | undefined;
+            } | undefined;
+            configuration?: {
                 ports: {
-                    target: null | number | string;
-                    published: null | number | string;
-                    bindAddress: null | string;
-                    protocol: null | string;
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
                 }[];
-            };
-            accounting?: undefined | {
+            } | null | undefined;
+            accounting?: {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            };
-            health?: undefined | {
-                status: 'degraded' | 'down' | 'unknown' | 'up';
-                observedAtMs: null | number;
+            } | undefined;
+            health?: {
+                status: 'unknown' | 'up' | 'down' | 'degraded';
+                observedAtMs: number | null;
                 freshness: 'current' | 'unavailable';
                 since?: number | undefined;
                 reason?: string | undefined;
                 expectedDown?: 'stop' | undefined;
-            };
-            deployment?: undefined | {
+            } | undefined;
+            deployment?: {
                 deploymentId: string;
                 installationId: string;
                 service: {
@@ -280,25 +337,28 @@ export type LocalDaemonServicesActionResultById = {
                     composeService: string;
                     serviceId: string;
                 };
-            };
-            nativeInstance?: undefined | {
+            } | undefined;
+            nativeInstance?: {
                 adapter: {
                     pluginId: string;
                     localId: string;
                 };
                 nativeResourceId: string;
-            };
-            baseUrl?: null | string | undefined;
-            port?: null | number | undefined;
+            } | undefined;
+            baseUrl?: string | null | undefined;
+            port?: number | null | undefined;
             environmentId?: string | undefined;
             watchId?: string | undefined;
             watchRevision?: string | undefined;
         }[];
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
     };
     readonly "machines.services.discovery": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
         kind: 'snapshot';
         candidates: {
             candidateId: string;
@@ -310,9 +370,10 @@ export type LocalDaemonServicesActionResultById = {
             };
             nativeResourceId: string;
             observation: {
-                phase: 'running' | 'stopped' | 'unknown';
-                readiness: 'not_ready' | 'not_reported' | 'ready';
-                endpoint: null | string;
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+                endpoint: string | null;
+                displayName?: string | undefined;
             };
         }[];
         failures: {
@@ -322,19 +383,19 @@ export type LocalDaemonServicesActionResultById = {
             };
             code: string;
         }[];
-    } | {
-        kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.detail": {
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
         kind: 'service';
         service: {
             serviceId: string;
             name: string;
-            authority: 'machine' | 'plugin' | 'project';
-            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
-            generation: null | string;
-            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
+            authority: 'project' | 'machine' | 'plugin';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+            generation: string | null;
+            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
             capabilities: {
                 start: boolean;
                 stop: boolean;
@@ -342,32 +403,33 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
-            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
-            native?: undefined | {
-                phase: 'running' | 'stopped' | 'unknown';
-                readiness: 'not_ready' | 'not_reported' | 'ready';
-            };
-            configuration?: null | undefined | {
+            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
+            native?: {
+                phase: 'unknown' | 'running' | 'stopped';
+                readiness: 'ready' | 'not_ready' | 'not_reported';
+                displayName?: string | undefined;
+            } | undefined;
+            configuration?: {
                 ports: {
-                    target: null | number | string;
-                    published: null | number | string;
-                    bindAddress: null | string;
-                    protocol: null | string;
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
                 }[];
-            };
-            accounting?: undefined | {
+            } | null | undefined;
+            accounting?: {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            };
-            health?: undefined | {
-                status: 'degraded' | 'down' | 'unknown' | 'up';
-                observedAtMs: null | number;
+            } | undefined;
+            health?: {
+                status: 'unknown' | 'up' | 'down' | 'degraded';
+                observedAtMs: number | null;
                 freshness: 'current' | 'unavailable';
                 since?: number | undefined;
                 reason?: string | undefined;
                 expectedDown?: 'stop' | undefined;
-            };
-            deployment?: undefined | {
+            } | undefined;
+            deployment?: {
                 deploymentId: string;
                 installationId: string;
                 service: {
@@ -378,70 +440,70 @@ export type LocalDaemonServicesActionResultById = {
                     composeService: string;
                     serviceId: string;
                 };
-            };
-            nativeInstance?: undefined | {
+            } | undefined;
+            nativeInstance?: {
                 adapter: {
                     pluginId: string;
                     localId: string;
                 };
                 nativeResourceId: string;
-            };
-            baseUrl?: null | string | undefined;
-            port?: null | number | undefined;
+            } | undefined;
+            baseUrl?: string | null | undefined;
+            port?: number | null | undefined;
             environmentId?: string | undefined;
             watchId?: string | undefined;
             watchRevision?: string | undefined;
         };
-        accounting?: undefined | {
+        accounting?: {
+            kind: 'unavailable';
+            reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        } | {
             kind: 'sample';
             samples: {
                 nativeResourceId: string;
-                cpuPercent: null | number;
-                memoryBytes: null | number;
+                cpuPercent: number | null;
+                memoryBytes: number | null;
             }[];
-        } | {
-            kind: 'unavailable';
-            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
-        };
-        runtimeFacts?: undefined | {
-            configuration: null | {
+        } | undefined;
+        runtimeFacts?: {
+            configuration: {
                 name: string;
-                replicas: null | number | string;
+                replicas: string | number | null;
                 resources: {
-                    cpus: null | number | string;
-                    memory: null | number | string;
+                    cpus: string | number | null;
+                    memory: string | number | null;
                 };
-                restartPolicy: null | string;
-                healthcheck: 'absent' | 'configured';
+                restartPolicy: string | null;
+                healthcheck: 'configured' | 'absent';
                 ports: {
-                    target: null | number | string;
-                    published: null | number | string;
-                    bindAddress: null | string;
-                    protocol: null | string;
+                    target: string | number | null;
+                    published: string | number | null;
+                    bindAddress: string | null;
+                    protocol: string | null;
                 }[];
                 mounts: {
-                    type: null | string;
-                    source: null | string;
-                    target: null | string;
+                    type: string | null;
+                    source: string | null;
+                    target: string | null;
                     readOnly: boolean;
                 }[];
-            };
-            observedAt: null | number;
+            } | null;
+            observedAt: number | null;
             freshness: 'current' | 'unavailable';
-            accounting?: undefined | {
+            accounting?: {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            };
+            } | undefined;
             healthSince?: number | undefined;
-        };
-    } | {
-        kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        } | undefined;
     };
     readonly "machines.services.watch": {
-        kind: 'applied' | 'conflict' | 'unchanged';
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'applied' | 'unchanged' | 'conflict';
         revision: string;
-        watch?: undefined | {
+        watch?: {
             v: 1;
             watchId: string;
             name: string;
@@ -450,16 +512,16 @@ export type LocalDaemonServicesActionResultById = {
                 localId: string;
             };
             nativeResourceId: string;
-            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
-        };
-    } | {
-        kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        } | undefined;
     };
     readonly "machines.services.unwatch": {
-        kind: 'applied' | 'conflict' | 'unchanged';
+        kind: 'unavailable';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+    } | {
+        kind: 'applied' | 'unchanged' | 'conflict';
         revision: string;
-        watch?: undefined | {
+        watch?: {
             v: 1;
             watchId: string;
             name: string;
@@ -468,43 +530,40 @@ export type LocalDaemonServicesActionResultById = {
                 localId: string;
             };
             nativeResourceId: string;
-            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
-        };
-    } | {
-        kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        } | undefined;
     };
     readonly "machines.services.control": {
+        kind: 'observed';
+        serviceId: string;
+        generation: string;
+        state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+        operation: {
+            operationId: string;
+        };
+    } | {
         kind: 'accepted';
         operation: {
             operationId: string;
         };
     } | {
-        kind: 'observed';
-        serviceId: string;
-        generation: string;
-        state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
-        operation: {
-            operationId: string;
-        };
+        kind: 'unsupported';
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
     } | {
         kind: 'outcome_unknown';
         operation: {
             operationId: string;
         };
-    } | {
-        kind: 'unsupported';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.logs.read": {
         kind: 'page';
         page: {
             sourceRevision: string;
             text: string;
-            nextCursor: null | {
+            nextCursor: {
                 sourceRevision: string;
                 token: string;
-            };
+            } | null;
             truncated: boolean;
             secretMasking?: 'incomplete' | undefined;
         };
@@ -513,11 +572,352 @@ export type LocalDaemonServicesActionResultById = {
         sourceRevision: string;
     } | {
         kind: 'unavailable';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
-        recipeRemedy?: undefined | {
+        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        recipeRemedy?: {
             pluginId: string;
             recipeId: string;
             revision: string;
+        } | undefined;
+    };
+    readonly "machines.services.adopt": {
+        kind: 'review';
+        reviewedDigest: string;
+        originalProfiles: 'unknown';
+        document: string;
+        variables: {
+            name: string;
+            phase: 'runtime';
+            required: boolean;
+            hasDefault: boolean;
+        }[];
+        services: string[];
+        profiles: string[];
+        availableProfiles: string[];
+    } | {
+        kind: 'adopted';
+        environmentId: string;
+        revision: number;
+        targetLinkId: string;
+    } | {
+        kind: 'partial';
+        errorCode: string;
+        preparedCreate: {
+            protection: 'production' | 'nonProduction';
+            purpose: 'standard' | 'preview';
+            deployerMode: 'managers' | 'members' | 'chosen';
+            controllerMachineId: string;
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
+            serverId: string;
+            requestKey: string;
+            projectSourceId?: string | undefined;
+            newProject?: {
+                name: string;
+                requestKey: string;
+                owner: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+            } | undefined;
+            deployerPrincipals?: {
+                principalKind: 'account' | 'teamGroup';
+                principalId: string;
+            }[] | undefined;
+            buildMachineId?: string | undefined;
+            managedRetention?: 'keep' | 'until-delete' | undefined;
+            preview?: {
+                templateEnvironmentId: string;
+                expectedTemplateRevision: number;
+                pullRequestId: string;
+                runtimeTargetLinkId: string;
+            } | undefined;
+            firstTargetLink?: {
+                machines: {
+                    machineId: string;
+                    installationId: string;
+                }[];
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+            } | undefined;
+            copyFrom?: {
+                environmentId: string;
+                expectedRevision: number;
+                choices: {
+                    secrets: ({
+                        kind: 'omit';
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    } | {
+                        kind: 'useSameReference';
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    } | {
+                        kind: 'rebind';
+                        source: {
+                            kind: 'secret';
+                            ref: string;
+                            resourceRevision: number;
+                        };
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    })[];
+                    values: ({
+                        kind: 'omit';
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    } | {
+                        kind: 'include';
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    } | {
+                        kind: 'remap';
+                        source: {
+                            kind: 'value';
+                            value: string;
+                        } | {
+                            kind: 'reference';
+                            environmentId: string;
+                            export: string;
+                            via: 'public' | 'auto' | 'privateNetwork';
+                        } | {
+                            kind: 'deploymentFact';
+                            fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
+                        } | {
+                            kind: 'deploymentFact';
+                            fact: 'domainUrl';
+                            domainId: string;
+                        };
+                        binding: {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    })[];
+                    data: {
+                        targetLinkId: string;
+                        kind: 'omit' | 'reuse' | 'createEmpty' | 'restoreBackup';
+                    }[];
+                    retainPreviousDeployments?: 'default' | 'copy' | undefined;
+                };
+            } | undefined;
+            copyPlan?: {
+                bindings: ({
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    } | {
+                        kind: 'reference';
+                        environmentId: string;
+                        export: string;
+                        via: 'public' | 'auto' | 'privateNetwork';
+                    } | {
+                        kind: 'deploymentFact';
+                        fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
+                    } | {
+                        kind: 'deploymentFact';
+                        fact: 'domainUrl';
+                        domainId: string;
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                } | {
+                    access: 'pull' | 'pushPull';
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    };
+                    purpose: 'registry';
+                    targetLinkId: string;
+                    registryOrigin: string;
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    };
+                    purpose: 'backupDestination';
+                    configKey: 'destination';
+                    role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    };
+                    purpose: 'domainCredential';
+                    domainId: string;
+                    role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    };
+                    service: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                } | {
+                    source: {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    };
+                    targetLinkId: string;
+                    purpose: 'dataRole';
+                    role: 'readOnlyPassword';
+                })[];
+                sourceRuntimeTargetLinkId?: string | undefined;
+            } | undefined;
+            copyIntentCommitment?: string | undefined;
         };
+        environmentId?: string | undefined;
+        revision?: number | undefined;
+        targetLinkId?: string | undefined;
     };
 };

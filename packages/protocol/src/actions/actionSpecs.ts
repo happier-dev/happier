@@ -474,6 +474,10 @@ type AssertNever<T extends never> = T;
 // Reference family declarations so this aggregate preserves literal ids and
 // schemas without serializing every Zod schema into the inline tuple type.
 const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
+  | (typeof SESSION_MESSAGE_PIN_ACTION_SPECS)[number]
+  | (typeof DESKTOP_WINDOWS_ACTION_SPECS)[number]
+  | (typeof DESKTOP_SHELL_ACTION_SPECS)[number]
+  | (typeof MEDIA_ANNOTATION_ACTION_SPECS)[number]
   | (typeof PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS)[number]
   | (typeof USAGE_ACTION_SPECS)[number]
   | (typeof USAGE_COACH_ACTION_SPECS)[number]
@@ -521,6 +525,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof WORKFLOW_ACTION_SPECS_V1)[number]
   | (typeof WORKFLOW_EVENT_CATALOG_ACTION_SPECS_V1)[number]
 )[] = Object.freeze([
+  ...SESSION_MESSAGE_PIN_ACTION_SPECS,
+  ...MEDIA_ANNOTATION_ACTION_SPECS,
   ...PLUGIN_EXECUTION_ORIGIN_ACTION_SPECS,
   ...USAGE_ACTION_SPECS,
   ...USAGE_COACH_ACTION_SPECS,

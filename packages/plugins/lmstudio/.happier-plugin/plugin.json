@@ -4,6 +4,7 @@
     "monochrome": true
   },
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [],
@@ -19,13 +20,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -185,6 +191,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],
@@ -208,9 +215,6 @@
   },
   "description": "Use models served locally by LM Studio 0.4.1 or newer.",
   "displayName": "LM Studio",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "hostAccess": {
     "optional": [],
     "required": []

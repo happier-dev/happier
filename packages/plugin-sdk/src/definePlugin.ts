@@ -1,4 +1,3 @@
-import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources, findAgentResumeOnlyExternalSourceContractIssue } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
@@ -52,6 +51,7 @@ import type {
 import type { AgentContribution } from './agents.js';
 import type { BackgroundServiceDefinition } from './backgroundServices.js';
 import type { PluginCaptureSourceRuntime, PluginCaptureSourceDeclaration } from './captureSources.js';
+import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterDefinitionV1 } from './projectNativeAdapters.js';
 import type { MachineProvisionerAuthorDefinitionV1 } from './machineProvisioners.js';
 import type { AccessProviderAuthorDefinitionV1 } from './accessProviders.js';

@@ -1,8 +1,8 @@
 import {
   definePlugin,
   type PluginInvocationContext,
-  type TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import {
   type ContributionSurfaceNode,
   type ContributionSurfaceNodeInput,

@@ -1,8 +1,9 @@
 export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1 } from './currentUiContext.js';
-export { DeploymentTargetPreparationBaseV1ProtocolSchema } from '../deploymentTargets.js';
 export { MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1 } from './triageEntryRef.js';
 export { MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1 } from './triageEntryRef.js';
 export type { PluginJsonSchema } from './protocolFacade.js';
+export type { PluginUiResourceIntentV1 } from './resourceIntent.js';
+export { PluginUiResourceIntentV1Schema } from './resourceIntent.js';
 export type { ProtocolArrayOptions } from './protocolFacade.js';
 export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
 export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
@@ -26,6 +27,7 @@ export type { ProtocolUniqueJsonArrayOptions } from './protocolFacade.js';
 export type { ProtocolUtf8StringOptions } from './protocolFacade.js';
 export { ProtocolValidationError } from './protocolFacade.js';
 export type { ProtocolValidationIssue } from './protocolFacade.js';
+export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 export { TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 } from './triageEntryRef.js';
 export { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './triageEntryRef.js';
 export { TriageCollisionScopeV1ProtocolSchema } from './triageEntryRef.js';

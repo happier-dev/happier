@@ -1,6 +1,7 @@
 import { ConversationProvidersContributionPointV1 } from '@happier-dev/channels-protocol/v1';
 import { assertEmailTransportContributionV1 } from '@happier-dev/email-transports-protocol/testing/v1';
-import { definePlugin, type JsonValue, type PluginInvocationContext, type PluginServices, type TargetedContributionPointRef, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue, type PluginInvocationContext, type PluginServices, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';

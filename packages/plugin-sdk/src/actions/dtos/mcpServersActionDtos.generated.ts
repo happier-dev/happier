@@ -177,7 +177,7 @@ export type McpServersActionInputById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -190,11 +190,21 @@ export type McpServersActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     };
                     importedAt: number;
                 };
@@ -210,11 +220,21 @@ export type McpServersActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     } | undefined;
                 } | undefined;
             } | {
@@ -434,7 +454,7 @@ export type McpServersActionInputById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -447,11 +467,21 @@ export type McpServersActionInputById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         };
                         importedAt: number;
                     };
@@ -467,11 +497,21 @@ export type McpServersActionInputById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         } | undefined;
                     } | undefined;
                 } | {
@@ -766,7 +806,7 @@ export type McpServersActionInputById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -779,11 +819,21 @@ export type McpServersActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     };
                     importedAt: number;
                 };
@@ -799,11 +849,21 @@ export type McpServersActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     } | undefined;
                 } | undefined;
             } | {
@@ -1011,13 +1071,103 @@ export type McpServersActionInputById = {
             field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
         } | {
             name: string;
-            value: string;
             t: 'createSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            value?: string | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         } | {
             name: string;
             t: 'saveSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         }> | Record<string, Record<string, {
             t: 'literal';
             v: string;
@@ -1039,13 +1189,103 @@ export type McpServersActionInputById = {
             field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
         } | {
             name: string;
-            value: string;
             t: 'createSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            value?: string | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         } | {
             name: string;
             t: 'saveSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         }>> | undefined;
     };
     readonly "mcp.servers.import": {
@@ -1079,13 +1319,103 @@ export type McpServersActionInputById = {
             field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
         } | {
             name: string;
-            value: string;
             t: 'createSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            value?: string | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         } | {
             name: string;
             t: 'saveSecret';
             kind?: 'apiKey' | 'token' | 'password' | 'other' | undefined;
+            source?: {
+                kind: 'external';
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                reference: string;
+                metadata?: {
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
+                    };
+                    vault: {
+                        id: string;
+                        name: string;
+                    };
+                    item: {
+                        id: string;
+                        title: string;
+                    };
+                } | undefined;
+            } | {
+                kind: 'passkey';
+                rpId: string;
+                credentialId: string;
+                userHandle: string;
+                privateKey: string;
+                algorithm: -7;
+                signCount: number;
+                backupEligibility: boolean;
+                backupState: boolean;
+                userName?: string | undefined;
+                userDisplayName?: string | undefined;
+            } | undefined;
+            storeIn?: {
+                vaultId: string;
+                contribution: {
+                    pluginId: string;
+                    localId: string;
+                };
+                account: string;
+                machineId?: string | undefined;
+            } | undefined;
         }> | undefined;
         where?: {
             kind: 'write';
@@ -1445,7 +1775,7 @@ export type McpServersActionResultById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -1458,11 +1788,21 @@ export type McpServersActionResultById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         };
                         importedAt: number;
                     };
@@ -1478,11 +1818,21 @@ export type McpServersActionResultById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         } | undefined;
                     } | undefined;
                 } | {
@@ -1725,7 +2075,7 @@ export type McpServersActionResultById = {
                     kind: 'registry';
                     provenance: {
                         sourceId: string;
-                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                        format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                         sourceUrl: string;
                         itemId: string;
                         ref: {
@@ -1738,11 +2088,21 @@ export type McpServersActionResultById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         };
                         importedAt: number;
                     };
@@ -1758,11 +2118,21 @@ export type McpServersActionResultById = {
                             kind: 'version';
                             version: string;
                         } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
                             kind: 'wellKnown';
                             indexUrl: string;
                             name: string;
                             digest: string;
                             publishedDigest?: string | undefined;
+                        } | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
                         } | undefined;
                     } | undefined;
                 } | {
@@ -2068,7 +2438,7 @@ export type McpServersActionResultById = {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm';
+                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
@@ -2081,11 +2451,21 @@ export type McpServersActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     };
                     importedAt: number;
                 };
@@ -2101,11 +2481,21 @@ export type McpServersActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
+                    } | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
                     } | undefined;
                 } | undefined;
             } | {

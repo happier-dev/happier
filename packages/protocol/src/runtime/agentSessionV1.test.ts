@@ -361,6 +361,23 @@ describe('AgentSessionRuntimeEventV1Schema', () => {
     expect(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1).toContain('runtime-activity-snapshot');
   });
 
+  it('keeps provider continuation correlation closed and separate from host permission authority', () => {
+    const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1 };
+    const facts = [
+      { ...base, kind: 'provider-continuation-registered', continuationId: 'task', parentTurnId: 'first', parentToolCallId: 'tool' },
+      { ...base, kind: 'provider-continuation-released', continuationId: 'task' },
+      { ...base, kind: 'provider-tool-contexts-released', parentTurnId: 'first', toolCallIds: ['tool'] },
+      { ...base, kind: 'turn-start', turnId: 'next', startedBy: 'provider', causedByTurnId: 'first', continuationId: 'task' },
+    ];
+    for (const fact of facts) {
+      expect(AgentSessionRuntimeEventV1Schema.safeParse(fact).success).toBe(true);
+      expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...fact, permissionMode: 'yolo' }).success).toBe(false);
+    }
+    const start = facts[3]!;
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, startedBy: 'host' }).success).toBe(false);
+    expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...start, causedByTurnId: undefined }).success).toBe(false);
+  });
+
   it('has one strict stable replacement for every retained current event fact', () => {
     const base = { sequence: 1, sessionId: 'session-1', emittedAtMs: 1 } as const;
     const turn = { ...base, turnId: 'turn-1' } as const;

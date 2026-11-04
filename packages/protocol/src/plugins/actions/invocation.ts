@@ -629,11 +629,13 @@ export function pluginActionDeclarationRequiresConfirmationForInput(
 ): boolean {
   const condition = policy.confirmationWhen;
   if (condition !== undefined) {
-    // A scoped declaration cannot turn a UI route into human authority. Every
-    // other requester retains the incumbent danger/confirmation default.
+    // CLI defaults do not confer human authority. Only the UI exemption needs
+    // present-user authority; all other requesters retain the declared default.
     const predicate = 'presentUserUi' in condition
-      ? invocationSurface === 'ui' && invocationAuthority === 'present_user'
-        ? condition.presentUserUi : undefined
+      ? invocationSurface === 'cli' && condition.cli !== undefined
+        ? condition.cli
+        : invocationSurface === 'ui' && invocationAuthority === 'present_user'
+        ? condition.presentUserUi : condition.default
       : condition;
     // Catalog reads cannot evaluate input predicates. Scoped boolean defaults
     // need no input; execution predicates see the parsed handler input only.

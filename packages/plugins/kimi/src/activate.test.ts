@@ -16,14 +16,21 @@ describe('activate', () => {
     }));
   });
 
-  it('exposes the declarative Kimi ACP agent with its interactive terminal and no custom factory', async () => {
+  it('exposes the custom Kimi ACP runtime with its interactive terminal surface', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
       const registration = activation.registration('agents', 'kimi');
-      expect(registration).not.toHaveProperty('factory');
-      expect(registration).not.toHaveProperty('sessionRunnerFactory');
+      expect(registration?.factory).toBeTypeOf('function');
+      expect(registration?.sessionRunnerFactory).toMatchObject({
+        module: './agent/runtime/factory', export: 'createKimiAgentRuntime', runtimeApiVersion: 1,
+      });
+      expect(registration).not.toHaveProperty('terminal');
+      const runtime = await registration!.factory!({
+        plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+        agent: { id: 'kimi' }, signal: new AbortController().signal,
+      });
       expect(registration).not.toHaveProperty('cliSessionCommand');
-      await expect(registration?.terminal?.resolveLaunch({
+      await expect(runtime.surfaces?.terminal?.resolveLaunch({
         sessionId: 'session', cwd: '/workspace', metadata: {}, modelSelection: null,
       })).resolves.toMatchObject({ argv: [] });
     } finally {

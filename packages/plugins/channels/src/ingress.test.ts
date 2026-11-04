@@ -1,16 +1,16 @@
 import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
-import type { SessionSendRequest, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionSendRequest, SessionSummary, SessionSpawnNewInputV2 } from '@happier-dev/plugin-sdk/sessions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type {
   JsonValue,
   PluginInvocationContext,
   PluginServices,
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import {
   PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
   PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
@@ -786,7 +786,7 @@ function setAutomationBindingWithFinalResult(
   }, existing.revision + 1));
 }
 
-function setBindingNewSessionEnabled(rows: Map<string, StoredStateRow>): void {
+function setBindingNewSessionEnabled(rows: Map<string, StoredStateRow>, organizationPlacement?: SessionSpawnNewInputV2['organizationPlacement']): void {
   const existing = rows.get('binding-1');
   if (existing === undefined) throw new Error('Expected the bound Channel state row.');
   const binding = record(existing.value);
@@ -805,6 +805,7 @@ function setBindingNewSessionEnabled(rows: Map<string, StoredStateRow>): void {
             kind: 'enabled',
             principalIds: ['telegram:user:42'],
             recipe: {
+              ...(organizationPlacement ? { organizationPlacement } : {}),
               executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
               directory: { kind: 'path', path: '/workspace/channels' },
               agentTarget: {
@@ -1316,7 +1317,7 @@ async function settleAcceptedInputReplyProjection(
   })).resolves.toEqual({ kind: 'updated' });
 }
 
-function routerFixture(rows: Map<string, StoredStateRow>, unmatched = false): void {
+function routerFixture(rows: Map<string, StoredStateRow>, unmatched = false, organizationPlacement?: SessionSpawnNewInputV2['organizationPlacement']): void {
   const binding = channelBinding();
   rows.set(binding.id, stateRow({
     ...binding,
@@ -1333,6 +1334,7 @@ function routerFixture(rows: Map<string, StoredStateRow>, unmatched = false): vo
           id: 'intake',
           when: { group: 'sales', forwarded: unmatched ? true : 'any' },
           recipe: {
+            ...(organizationPlacement ? { organizationPlacement } : {}),
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: { kind: 'path', path: '/workspace/channels' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1817,7 +1819,7 @@ describe('thread router admission', () => {
 
   it('spawns a forum topic once and admits replay/follow-up through an ordinary sender-only child', async () => {
     const harness = createIngressHarness({ connection: socketChannelConnection(), availableSessionIds: ['session-2'], execute: threadSpawnWithBirthBoundary });
-    routerFixture(harness.rows);
+    routerFixture(harness.rows, false, { folderId: 'section-1', tagIds: ['tag-1'] });
     const first = topicObservation('topic-first', 'telegram:user:42', undefined, 'Furniture lead');
     const admit = async (input: ConversationProviderObservationIngestInputV1) => {
       try {
@@ -1844,7 +1846,10 @@ describe('thread router admission', () => {
     expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text)).toEqual(['Hello from Telegram', 'Hello from Telegram']);
     const births = harness.execute.mock.calls.filter(([action]) => action === 'session.spawn_new');
     expect(births).toHaveLength(1);
-    expect(births[0]?.[1]).toMatchObject({ title: 'Furniture lead' });
+    expect(births[0]?.[1]).toMatchObject({ title: 'Furniture lead',
+      organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] },
+    });
+    expect(record(births[0]?.[1]).organizationPlacement).not.toHaveProperty('folderId');
     await ingestConversationProviderObservationForInvocation(topicObservation('other-sender', 'telegram:user:43'), harness.context);
     expect(harness.send).toHaveBeenCalledTimes(2);
   });
@@ -4661,6 +4666,7 @@ pairingRequestId: 'pairing-request-1',
         if (actionId === 'session.spawn_new') {
           expect(actionInput).toEqual({
             creationKey: 'channel-new:binding-1:telegram:update:9001',
+            organizationPlacement: { sectionId: 'section-1', tagIds: ['tag-1'] },
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: { kind: 'path', path: '/workspace/channels' },
             agentTarget: {
@@ -4696,7 +4702,7 @@ pairingRequestId: 'pairing-request-1',
         throw new Error(`Unexpected Action ${actionId}.`);
       },
     });
-    setBindingNewSessionEnabled(harness.rows);
+    setBindingNewSessionEnabled(harness.rows, { folderId: 'section-1', tagIds: ['tag-1'] });
 
     await expect(ingestConversationProviderObservationForInvocation(observation({
       messageRevision: 'edit:1',

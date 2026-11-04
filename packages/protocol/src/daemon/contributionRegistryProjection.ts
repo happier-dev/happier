@@ -2083,6 +2083,7 @@ const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T exten
   'generatedOwnerKind',
   'defaultLocale',
   'locales',
+  'resourceIdsByLocale',
   'bundles',
   'digest',
   'families',
@@ -2886,7 +2887,8 @@ backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFa
 
 const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   z.ZodMiniObject<PluginProjectedFamiliesByIdV2Shape, z.core.$strict>
-> = lazyZodSchema(() => z._default(z.strictObject({
+> = lazyZodSchema(() => {
+  const schema = z._default(z.strictObject({
 accessProviders: z.optional(PluginProjectedAccessProvidersFamilyV1Schema),
 
 machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema),
@@ -2925,8 +2927,10 @@ backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
   composerAttachments: z.optional(PluginProjectedComposerAttachmentsFamilyV1Schema),
   composerControls: z.optional(PluginProjectedComposerControlsFamilyV1Schema),
   composerRegions: z.optional(PluginProjectedComposerRegionsFamilyV1Schema),
-}), {}));
-assertPluginProjectionFamilyIdsV2(Object.keys(PluginProjectedFamiliesByIdV2Schema._zod.def.innerType.shape));
+}), {});
+  assertPluginProjectionFamilyIdsV2(Object.keys(schema._zod.def.innerType.shape));
+  return schema;
+});
 
 export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedAccessProvidersFamilyV1Schema,

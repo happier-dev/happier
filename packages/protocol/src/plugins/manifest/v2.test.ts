@@ -24,6 +24,17 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('plugin manifest v2 root contract', () => {
+  it('admits only explicitly located read-only Machine filesystem observations', () => {
+    const request = (location: unknown, access = ['read']) => manifest({ hostAccess: { required: [{
+      id: 'journal-identity', capability: 'filesystem', reason: 'Observe native journal rotation',
+      scope: { locations: [location], access },
+    }], optional: [] } });
+    expect(PluginManifestV2Schema.safeParse(request({ root: 'machine', pathPrefix: '/var/log/journal' })).success).toBe(true);
+    for (const location of [{ root: 'machine' }, { root: 'machine', pathPrefix: 'relative' }]) {
+      expect(PluginManifestV2Schema.safeParse(request(location)).success).toBe(false);
+    }
+    expect(PluginManifestV2Schema.safeParse(request({ root: 'machine', pathPrefix: '/var/log/journal' }, ['read', 'write'])).success).toBe(false);
+  });
   it('admits an optional automatic Run-on opt-out while keeping routing declarations closed', () => {
     const result = ingestPluginManifestV2(manifest({ executionTarget: { autoPick: false } }));
     expect(result.ok ? result.manifest.executionTarget : result.diagnostics).toEqual({ autoPick: false });

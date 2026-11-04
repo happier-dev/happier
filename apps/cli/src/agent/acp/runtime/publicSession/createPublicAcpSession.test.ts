@@ -43,17 +43,11 @@ import {
   readHappierStructuredInputV1FromMeta,
 } from '@happier-dev/protocol/runtime';
 import type {
-  HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService,
   HostSessionApprovalRequest as PluginSessionApprovalRequest,
   HostSessionApprovalResult as PluginSessionApprovalResult,
-  HostSessionConfirmationRequest as PluginSessionConfirmationRequest,
-  HostSessionConfirmationResult as PluginSessionConfirmationResult,
-  HostSessionInteractionRequest as PluginSessionInteractionRequest,
-  HostSessionInteractionResult as PluginSessionInteractionResult,
-  HostSessionQuestionsRequest as PluginSessionQuestionsRequest,
-  HostSessionQuestionsResult as PluginSessionQuestionsResult,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 
+import { TestInteractions } from '@/agent/acp/testkit/interactionsFixture';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createAcpExecutionRunRuntimeContextFixture, createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runtimeContextFixture';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
@@ -90,21 +84,6 @@ type ApprovalRequester = (
   request: PluginSessionApprovalRequest,
   options?: { signal?: AbortSignal },
 ) => Promise<PluginSessionApprovalResult>;
-
-class TestInteractions implements PluginCurrentSessionInteractionsService {
-  constructor(private readonly requestApproval: ApprovalRequester) {}
-
-  request(request: PluginSessionApprovalRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionApprovalResult>;
-  request(request: PluginSessionQuestionsRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionQuestionsResult>;
-  request(request: PluginSessionConfirmationRequest, options?: { signal?: AbortSignal }): Promise<PluginSessionConfirmationResult>;
-  async request(
-    request: PluginSessionInteractionRequest,
-    options?: { signal?: AbortSignal },
-  ): Promise<PluginSessionInteractionResult> {
-    if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
-    return await this.requestApproval(request, options);
-  }
-}
 
 function createApprovalRequestMock() {
   let nextRequestId = 1;
@@ -1126,7 +1105,10 @@ function createFixture(
       isCurrent: () => current,
       modes: publications.services.modes,
       systemTools: { resolve },
-      interactions: new TestInteractions(requestInteraction),
+      interactions: new TestInteractions((request, options) => {
+        if (request.kind !== 'approval') throw new Error(`Unexpected ${request.kind} interaction`);
+        return requestInteraction(request, options);
+      }),
       media: Object.freeze({ registerSourceRoot: registerMediaSourceRoot }),
       models: Object.freeze({
         bind(source) {
@@ -1689,25 +1671,19 @@ describe('createPublicAcpSession', () => {
           channel: 'reasoning',
           text: 'reasoning trace',
         }));
-        expect(events).toContainEqual(expect.objectContaining({
+        const usage = events.find((event) => event.kind === 'usage-observed');
+        expect(usage).toMatchObject({
           kind: 'usage-observed',
           turnId: 'turn-runtime-observations',
           source: 'acp-usage-update',
           scope: 'session_cumulative',
-          tokens: {
-            input: 0,
-            output: 0,
-            reasoning: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 21,
-          },
           context: expect.objectContaining({
             usedTokens: 21,
             windowTokens: 200_000,
             source: 'provider_turn',
           }),
-        }));
+        });
+        expect(usage).not.toHaveProperty('tokens');
       } finally {
         subscription.dispose();
         await session.dispose();

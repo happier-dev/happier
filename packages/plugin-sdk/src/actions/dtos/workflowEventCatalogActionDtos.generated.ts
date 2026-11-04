@@ -63,6 +63,9 @@ export type WorkflowEventCatalogActionResultById = {
                             pluginId: string;
                             localId: string;
                         } | undefined;
+                        observationOnly?: {
+                            kind: 'observationOnly';
+                        } | undefined;
                         setupSurface?: {
                             renderer: string;
                             fallbackRenderers?: string[] | undefined;

@@ -1001,6 +1001,7 @@ export type TeamsActionResultById = {
                 kind: 'resource_unavailable';
             } | {
                 kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
                 kind: 'broker_unavailable';
                 reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1246,6 +1247,7 @@ export type TeamsActionResultById = {
                 kind: 'resource_unavailable';
             } | {
                 kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
                 kind: 'broker_unavailable';
                 reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1375,6 +1377,7 @@ export type TeamsActionResultById = {
             kind: 'resource_unavailable';
         } | {
             kind: 'source_unavailable';
+            reason?: 'connected_service_credential_reconnect_required' | undefined;
         } | {
             kind: 'broker_unavailable';
             reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1447,6 +1450,7 @@ export type TeamsActionResultById = {
                 kind: 'resource_unavailable';
             } | {
                 kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
                 kind: 'broker_unavailable';
                 reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1472,7 +1476,16 @@ export type TeamsActionResultById = {
                     expectedResourceRevision: number;
                     agentTargetKey: string;
                     modelId: string;
-                    deliveryMode: 'brokered' | 'direct';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
@@ -1559,6 +1572,27 @@ export type TeamsActionResultById = {
                                     template: string;
                                 };
                             };
+                            additionalCredentials?: {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
                     } | undefined;
@@ -1576,10 +1610,12 @@ export type TeamsActionResultById = {
                         } | undefined;
                     }[] | undefined;
                 } | undefined;
-                confirmationSource?: {
-                    connectionId: string;
-                    catalogSourceKey: string;
+                sources?: {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
                 } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
                 compatibility?: {
                     result: {
                         status: 'verified';
@@ -1615,10 +1651,14 @@ export type TeamsActionResultById = {
                     compatibilityFingerprint: string;
                     confirmed: boolean;
                 } | undefined;
+                nativeSource?: {
+                    providerTicket: string;
+                } | undefined;
                 direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
                 } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
             connectedServiceSelections: ({
                 source: 'team_resource';
@@ -1656,6 +1696,11 @@ export type TeamsActionResultById = {
                     definitionRevision: 1;
                 };
             } | null;
+            deliveryPolicy?: {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            } | undefined;
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
             usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
@@ -1684,6 +1729,7 @@ export type TeamsActionResultById = {
                 kind: 'resource_unavailable';
             } | {
                 kind: 'source_unavailable';
+                reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
                 kind: 'broker_unavailable';
                 reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1709,7 +1755,16 @@ export type TeamsActionResultById = {
                     expectedResourceRevision: number;
                     agentTargetKey: string;
                     modelId: string;
-                    deliveryMode: 'brokered' | 'direct';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
@@ -1796,6 +1851,27 @@ export type TeamsActionResultById = {
                                     template: string;
                                 };
                             };
+                            additionalCredentials?: {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
                     } | undefined;
@@ -1813,10 +1889,12 @@ export type TeamsActionResultById = {
                         } | undefined;
                     }[] | undefined;
                 } | undefined;
-                confirmationSource?: {
-                    connectionId: string;
-                    catalogSourceKey: string;
+                sources?: {
+                    manual: boolean;
+                    static: boolean;
+                    probe: boolean;
                 } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
                 compatibility?: {
                     result: {
                         status: 'verified';
@@ -1852,10 +1930,14 @@ export type TeamsActionResultById = {
                     compatibilityFingerprint: string;
                     confirmed: boolean;
                 } | undefined;
+                nativeSource?: {
+                    providerTicket: string;
+                } | undefined;
                 direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
                 } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
             connectedServiceSelections: ({
                 source: 'team_resource';
@@ -1893,6 +1975,11 @@ export type TeamsActionResultById = {
                     definitionRevision: 1;
                 };
             } | null;
+            deliveryPolicy?: {
+                preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+            } | undefined;
+            allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
             usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
@@ -2011,6 +2098,7 @@ export type TeamsActionResultById = {
             kind: 'resource_unavailable';
         } | {
             kind: 'source_unavailable';
+            reason?: 'connected_service_credential_reconnect_required' | undefined;
         } | {
             kind: 'broker_unavailable';
             reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -2091,6 +2179,7 @@ export type TeamsActionResultById = {
             kind: 'resource_unavailable';
         } | {
             kind: 'source_unavailable';
+            reason?: 'connected_service_credential_reconnect_required' | undefined;
         } | {
             kind: 'broker_unavailable';
             reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;

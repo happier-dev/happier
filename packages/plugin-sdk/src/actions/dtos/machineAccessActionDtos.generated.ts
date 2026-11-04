@@ -87,7 +87,7 @@ export type MachineAccessActionResultById = {
                 accountId: string;
                 displayName: string;
                 readiness: 'ready' | 'key_pending' | 'refused';
-                reason: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | null;
+                reason: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required' | null;
                 canPrepareKeys: boolean;
             }[];
             removal: {
@@ -115,11 +115,11 @@ export type MachineAccessActionResultById = {
         }[] | undefined;
     } | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
     };
     readonly "machines.access.grant.set": {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
     } | {
         kind: 'saved';
         grant: {
@@ -151,7 +151,7 @@ export type MachineAccessActionResultById = {
     };
     readonly "machines.access.grant.remove": {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
     } | {
         kind: 'saved';
         grant: {
@@ -183,7 +183,7 @@ export type MachineAccessActionResultById = {
     };
     readonly "machines.access.leave": {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
     } | {
         kind: 'saved';
         grant: {
@@ -221,6 +221,6 @@ export type MachineAccessActionResultById = {
         kind: 'recipient_incompatible';
     } | {
         kind: 'unavailable';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
     };
 };

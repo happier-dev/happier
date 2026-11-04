@@ -1,8 +1,10 @@
+export type { InputTypeOptionsQueryV1 } from '../resources.js';
 export { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1 } from './transcriptActivities.js';
 export { MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1 } from './transcriptActivities.js';
 export { PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1 } from './transcriptActivities.js';
 export type { PluginDynamicResourceContributionV2 } from '../services/resources.js';
 export type { PluginDynamicResourceInvocationOptionsV1 } from '../services/resources.js';
+export type { PluginDynamicResourceProducer } from '../services/resources.js';
 export type { PluginDynamicResourceRuntime } from '../services/resources.js';
 export type { PluginPackagedResourceContributionV2 } from '../services/resources.js';
 export type { PluginPromptAssetDefinition } from '../definePlugin.js';

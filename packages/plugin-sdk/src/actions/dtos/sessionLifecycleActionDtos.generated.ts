@@ -6,6 +6,7 @@ import type { PluginActionWorkflowBlockV1, SessionTargetV1 } from './pluginActio
 
 export type SessionLifecycleActionInputById = {
     readonly "session.open": {
+        presentation?: 'main' | 'overlay' | 'window' | undefined;
         tabId?: string | undefined;
         sessionId?: SessionTargetV1<true> | undefined;
         sessionTitle?: string | undefined;
@@ -109,6 +110,10 @@ export type SessionLifecycleActionInputById = {
                 commit: string;
                 parent?: string;
             } | {
+                kind: 'revisionRange';
+                baseOid: string;
+                headOid: string;
+            } | {
                 kind: 'pullRequest';
                 locator: {
                     providerId: string;
@@ -122,6 +127,7 @@ export type SessionLifecycleActionInputById = {
                             localId: string;
                         };
                         input?: JsonValue;
+                        clientId?: string;
                         messageActionReference?: {
                             v: 1;
                             sessionId: string;
@@ -358,192 +364,6 @@ export type SessionLifecycleActionInputById = {
         [x: string]: unknown;
         handoffId: string;
     };
-    readonly "workspace.sync.conflict.resolve": {
-        controllerMachineId: string;
-        hubWorkspaceRefId: string;
-        path: string;
-        source: {
-            workspaceRefId: string;
-            expected: {
-                kind: 'missing';
-            } | {
-                kind: 'file';
-                digest: string;
-                executable: boolean;
-                size: number;
-            } | {
-                kind: 'symlink';
-                target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
-            };
-        };
-        targets: readonly {
-            workspaceRefId: string;
-            expected: {
-                kind: 'missing';
-            } | {
-                kind: 'file';
-                digest: string;
-                executable: boolean;
-                size: number;
-            } | {
-                kind: 'symlink';
-                target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
-            };
-        }[];
-        relationshipIds: readonly string[];
-        strategy: 'use_source';
-    } | {
-        controllerMachineId: string;
-        hubWorkspaceRefId: string;
-        path: string;
-        source: {
-            workspaceRefId: string;
-            expected: {
-                kind: 'missing';
-            } | {
-                kind: 'file';
-                digest: string;
-                executable: boolean;
-                size: number;
-            } | {
-                kind: 'symlink';
-                target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
-            };
-        };
-        targets: readonly {
-            workspaceRefId: string;
-            expected: {
-                kind: 'missing';
-            } | {
-                kind: 'file';
-                digest: string;
-                executable: boolean;
-                size: number;
-            } | {
-                kind: 'symlink';
-                target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
-            };
-        }[];
-        relationshipIds: readonly string[];
-        strategy: 'keep_both';
-        alternatives: readonly {
-            source: {
-                workspaceRefId: string;
-                expected: {
-                    kind: 'missing';
-                } | {
-                    kind: 'file';
-                    digest: string;
-                    executable: boolean;
-                    size: number;
-                } | {
-                    kind: 'symlink';
-                    target: string;
-                } | {
-                    kind: 'directory';
-                    fingerprint: string;
-                };
-            };
-            destination: {
-                workspaceRefId: string;
-                path: string;
-                expected: {
-                    kind: 'missing';
-                } | {
-                    kind: 'file';
-                    digest: string;
-                    executable: boolean;
-                    size: number;
-                } | {
-                    kind: 'symlink';
-                    target: string;
-                } | {
-                    kind: 'directory';
-                    fingerprint: string;
-                };
-            };
-            consequence: {
-                propagatingToWorkspaceRefIds: readonly string[];
-                unverifiedPropagationToWorkspaceRefIds?: readonly string[] | undefined;
-            };
-        }[];
-    };
-    readonly "workspace.sync.relationship.create": {
-        v: 1;
-        sourceWorkspaceRefId: string;
-        targetMachineId: string;
-        targetPath: string;
-        mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
-        contentPolicy: {
-            v: 1;
-            selection: 'git_worktree' | 'all_files';
-            extraIgnorePatterns: readonly string[];
-            extraIncludePatterns: readonly string[];
-            policyDigest: string;
-        };
-        destinationIntent: 'use_existing' | 'materialize_from_source_workspace';
-        purpose?: 'worker_clean_copy' | undefined;
-    };
-    readonly "workspace.sync.relationship.disable": {
-        controllerMachineId: string;
-        relationshipId: string;
-    };
-    readonly "workspace.sync.relationship.enable": {
-        controllerMachineId: string;
-        relationshipId: string;
-    };
-    readonly "workspace.sync.relationship.flush": {
-        controllerMachineId: string;
-        relationshipId: string;
-    };
-    readonly "workspace.sync.relationship.terminate": {
-        controllerMachineId: string;
-        relationshipId: string;
-    };
-    readonly "workspace.sync.relationships.list": {
-        controllerMachineId?: string | undefined;
-        workspaceRefId?: string | undefined;
-    };
-    readonly "workspace.sync.conflicts.list": {
-        controllerMachineId: string;
-        relationshipId: string;
-        limit: number;
-        cursor?: string | undefined;
-    };
-    readonly "workspace.sync.conflict.inspect": {
-        workspaceRefId: string;
-        path: string;
-        controllerMachineId?: string | undefined;
-        preview?: {
-            workspaceRefId: string;
-            expected: {
-                kind: 'missing';
-            } | {
-                kind: 'file';
-                digest: string;
-                executable: boolean;
-                size: number;
-            } | {
-                kind: 'symlink';
-                target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
-            };
-        } | undefined;
-    };
     readonly "session.spawn_new": {
         executionTarget: {
             serverId: string;
@@ -563,10 +383,185 @@ export type SessionLifecycleActionInputById = {
             };
             definitionId?: string | undefined;
         };
+        organizationPlacement?: {
+            sectionId: string | null;
+            tagIds: string[];
+        } | undefined;
         creationKey?: string | undefined;
+        observeSessionCommit?: true | undefined;
+        authoringOrigin?: {
+            kind: 'project';
+            accountId: string;
+            workspace: {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            };
+            page: 'code' | 'overview' | 'changes' | 'scripts' | 'services' | 'context';
+            purpose?: 'session' | undefined;
+            comparisonId?: string | undefined;
+            layoutId?: string | undefined;
+            attachedDashboard?: {
+                sourceId: string;
+                artifactId: string;
+                serverId?: string | undefined;
+            } | undefined;
+            codeLocation?: {
+                kind: 'folder';
+                path: string;
+            } | {
+                kind: 'file';
+                path: string;
+            } | undefined;
+            resource?: {
+                kind: 'file';
+                path: string;
+                anchor?: {
+                    kind: 'fileLine';
+                    startLine: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'fileLine';
+                    startLine: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'fileLine';
+                    startLine: number;
+                    side?: 'before' | 'after' | undefined;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'fileLine';
+                    startLine: number;
+                    side?: 'before' | 'after' | undefined;
+                    startLineHash?: `lh1:${string}` | undefined;
+                    endLineHash?: `lh1:${string}` | undefined;
+                    selectedTextHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'diffLine';
+                    startLine: number;
+                    side: 'before' | 'after';
+                    oldLine: number | null;
+                    newLine: number | null;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'diffLine';
+                    startLine: number;
+                    side: 'before' | 'after';
+                    oldLine: number | null;
+                    newLine: number | null;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'diffLine';
+                    startLine: number;
+                    side: 'before' | 'after';
+                    oldLine: number | null;
+                    newLine: number | null;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'diffLine';
+                    startLine: number;
+                    side: 'before' | 'after';
+                    oldLine: number | null;
+                    newLine: number | null;
+                    startLineHash?: `lh1:${string}` | undefined;
+                    endLineHash?: `lh1:${string}` | undefined;
+                    selectedTextHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'line';
+                    filePath: string;
+                    line: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'line';
+                    filePath: string;
+                    line: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'line';
+                    filePath: string;
+                    line: number;
+                    side?: 'before' | 'after' | undefined;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'line';
+                    filePath: string;
+                    line: number;
+                    side?: 'before' | 'after' | undefined;
+                    startLineHash?: `lh1:${string}` | undefined;
+                    endLineHash?: `lh1:${string}` | undefined;
+                    selectedTextHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'range';
+                    filePath: string;
+                    startLine: number;
+                    endLine: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'range';
+                    filePath: string;
+                    startLine: number;
+                    endLine: number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'range';
+                    filePath: string;
+                    startLine: number;
+                    endLine: number;
+                    side?: 'before' | 'after' | undefined;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'range';
+                    filePath: string;
+                    startLine: number;
+                    endLine: number;
+                    side?: 'before' | 'after' | undefined;
+                    startLineHash?: `lh1:${string}` | undefined;
+                    endLineHash?: `lh1:${string}` | undefined;
+                    selectedTextHash?: `lh1:${string}` | undefined;
+                } | undefined;
+                anchorSource?: 'file' | 'diff' | undefined;
+            } | {
+                kind: 'commit';
+                sha: string;
+            } | undefined;
+            surface?: 'code' | 'terminal' | 'overview' | 'changes' | 'scripts' | 'services' | 'context' | 'browse' | 'git' | 'tabs' | 'browser' | undefined;
+            companion?: 'terminal' | 'files' | 'scripts' | 'services' | 'git' | 'browser' | {
+                kind: 'plugin';
+                destination: {
+                    pluginId: string;
+                    localId: string;
+                };
+                instanceKey?: string | undefined;
+            } | undefined;
+        } | undefined;
         identity?: {
             bot?: {
                 kind: 'bot';
+            } | undefined;
+            botFace?: {
+                style?: 'dither' | 'pixel' | 'solid' | 'dots' | 'planet' | undefined;
+                body?: 'crab' | 'squid' | 'octopus' | 'ufo' | 'specter' | 'ghost' | 'beetle' | 'spider' | 'jelly' | 'hopper' | 'pup' | 'drone' | 'robot' | 'walker' | 'rocket' | 'feet' | 'tail' | 'drip' | 'bracelegs' | 'tagclaws' | 'cursortail' | 'termbody' | 'antlers' | 'semi' | 'brackets' | 'cursor' | 'bean' | 'squat' | 'bag' | 'loaf' | 'puddle' | 'tower' | 'stilts' | 'tall' | 'cat' | undefined;
+                palette?: 'daybreak' | 'lagoon' | 'orchid' | 'aurora' | 'indigo' | 'glacier' | 'moss' | 'sand' | 'ink' | undefined;
+                seed?: string | undefined;
+                shape?: {
+                    v: 1;
+                    fill: string[];
+                    mouth: [
+                        number,
+                        number,
+                        number
+                    ];
+                    stroke?: [
+                        string,
+                        number
+                    ][] | undefined;
+                    cut?: (string | [
+                        string,
+                        number
+                    ])[] | undefined;
+                    origin?: 'custom' | 'surprise' | undefined;
+                } | undefined;
             } | undefined;
             createdAsBot?: true | undefined;
         } | undefined;
@@ -610,7 +605,7 @@ export type SessionLifecycleActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'file' | 'filter' | 'error' | 'check' | 'terminal' | 'workflow' | 'review' | 'new' | 'branch' | 'commit' | 'action' | 'preview' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | 'watch' | 'link' | 'tag' | 'asset' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
+                        icon?: 'file' | 'filter' | 'error' | 'check' | 'terminal' | 'workflow' | 'review' | 'new' | 'branch' | 'commit' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | 'watch' | 'link' | 'tag' | 'asset' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                 };
@@ -705,6 +700,10 @@ export type SessionLifecycleActionInputById = {
                             } | undefined;
                         };
                         disabledReason?: string | undefined;
+                        viewport?: {
+                            width: number;
+                            height: number;
+                        } | undefined;
                     } | {
                         v: 1;
                         contextId: string;
@@ -747,6 +746,12 @@ export type SessionLifecycleActionInputById = {
                         selectorPath: string;
                         disabledReason?: string | undefined;
                         accessibleName?: string | undefined;
+                        componentName?: string | undefined;
+                        sourceLocation?: {
+                            file: string;
+                            line?: number | undefined;
+                            column?: number | undefined;
+                        } | undefined;
                         rect?: {
                             x: number;
                             y: number;
@@ -754,19 +759,9 @@ export type SessionLifecycleActionInputById = {
                             height: number;
                         } | undefined;
                     } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-                        kind: 'browserAnnotation';
                         annotationId: string;
                         browserSessionId: string;
-                        media: {
+                        imageRef: {
                             mediaId: string;
                             mediaKind: 'image';
                             width: number;
@@ -780,45 +775,138 @@ export type SessionLifecycleActionInputById = {
                                 mimeType: 'image/png';
                             } | undefined;
                         };
-                        target: {
-                            kind: 'region';
-                            rect: {
-                                x: number;
-                                y: number;
+                        marks: {
+                            v: 1;
+                            image: {
                                 width: number;
                                 height: number;
+                                scale: number;
                             };
-                        } | {
-                            kind: 'element';
-                            selectorPath: string;
-                            accessibleName?: string | undefined;
-                            rect?: {
+                            marks: ({
+                                kind: 'arrow';
+                                from: {
+                                    x: number;
+                                    y: number;
+                                };
+                                to: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'rectangle';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'ellipse';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'freehand';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'highlighter';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'text';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                text: string;
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'step';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'blur';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                size: 's' | 'm' | 'l';
+                                id: string;
+                            } | {
+                                kind: 'element';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                label: string;
+                                color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                id: string;
+                            })[];
+                            crop?: {
                                 x: number;
                                 y: number;
                                 width: number;
                                 height: number;
                             } | undefined;
+                        };
+                        elements: {
+                            markId: string;
+                            selectorPath: string;
+                            accessibleName?: string | undefined;
                             componentName?: string | undefined;
                             sourceLocation?: {
                                 file: string;
                                 line?: number | undefined;
                                 column?: number | undefined;
                             } | undefined;
-                        };
-                        disabledReason?: string | undefined;
-                        comment?: string | undefined;
-                        styleIntent?: 'callout' | 'highlight' | 'redaction' | 'arrow' | 'freeform' | undefined;
-                        stroke?: {
-                            shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                            points: {
-                                x: number;
-                                y: number;
-                            }[];
-                            colorToken?: string | undefined;
-                            widthPx?: number | undefined;
-                        } | undefined;
+                        }[];
+                        kind: 'browserAnnotation';
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
+                        fidelity: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+                        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
                         pageUrl?: string | undefined;
                         pageTitle?: string | undefined;
+                        disabledReason?: string | undefined;
                     } | {
                         v: 1;
                         contextId: string;
@@ -856,62 +944,145 @@ export type SessionLifecycleActionInputById = {
                         state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
                         requiresReconfirmBeforeSend?: boolean | undefined;
                         structuredBlock?: {
-                            v: 1;
-                            kind: 'browser.annotation.v1';
                             annotationId: string;
-                            sourceViewId: string;
-                            contextIds: string[];
-                            elements: {
-                                selectorPath: string;
-                                accessibleName?: string | undefined;
-                                rect?: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
+                            browserSessionId: string;
+                            imageRef: {
+                                mediaId: string;
+                                mediaKind: 'image';
+                                width: number;
+                                height: number;
+                                sizeBytes: number;
+                                file?: {
+                                    sessionId: string;
+                                    storage: 'session' | 'daemon';
+                                    path: string;
+                                    sha256: string;
+                                    mimeType: 'image/png';
                                 } | undefined;
-                            }[];
-                            regions: {
-                                rect: {
-                                    x: number;
-                                    y: number;
+                            };
+                            marks: {
+                                v: 1;
+                                image: {
                                     width: number;
                                     height: number;
+                                    scale: number;
                                 };
-                            }[];
-                            strokes: {
-                                shape: 'line' | 'arrow' | 'freehand' | 'rectangle' | 'ellipse';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                colorToken?: string | undefined;
-                                widthPx?: number | undefined;
-                            }[];
-                            screenshot: {
-                                media: {
-                                    mediaId: string;
-                                    mediaKind: 'image';
-                                    width: number;
-                                    height: number;
-                                    sizeBytes: number;
-                                    file?: {
-                                        sessionId: string;
-                                        storage: 'session' | 'daemon';
-                                        path: string;
-                                        sha256: string;
-                                        mimeType: 'image/png';
-                                    } | undefined;
-                                }[];
-                                cropRect?: {
+                                marks: ({
+                                    kind: 'arrow';
+                                    from: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    to: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'rectangle';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'ellipse';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'freehand';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'highlighter';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'text';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    text: string;
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'step';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'blur';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    size: 's' | 'm' | 'l';
+                                    id: string;
+                                } | {
+                                    kind: 'element';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    label: string;
+                                    color: 'ink' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+                                    id: string;
+                                })[];
+                                crop?: {
                                     x: number;
                                     y: number;
                                     width: number;
                                     height: number;
                                 } | undefined;
                             };
-                            browserSessionId?: string | undefined;
-                            comment?: string | undefined;
+                            elements: {
+                                markId: string;
+                                selectorPath: string;
+                                accessibleName?: string | undefined;
+                                componentName?: string | undefined;
+                                sourceLocation?: {
+                                    file: string;
+                                    line?: number | undefined;
+                                    column?: number | undefined;
+                                } | undefined;
+                            }[];
+                            v: 2;
+                            kind: 'browser.annotation.v2';
+                            sourceViewId: string;
+                            contextIds: string[];
                             pageUrl?: string | undefined;
                             pageTitle?: string | undefined;
                         } | undefined;
@@ -945,7 +1116,7 @@ export type SessionLifecycleActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'file' | 'filter' | 'error' | 'check' | 'terminal' | 'workflow' | 'review' | 'new' | 'branch' | 'commit' | 'action' | 'preview' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | 'watch' | 'link' | 'tag' | 'asset' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
+                        icon?: 'file' | 'filter' | 'error' | 'check' | 'terminal' | 'workflow' | 'review' | 'new' | 'branch' | 'commit' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'waiting' | 'list' | 'board' | 'watch' | 'link' | 'tag' | 'asset' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                     content?: {
@@ -962,7 +1133,7 @@ export type SessionLifecycleActionInputById = {
                                 localId: string;
                             };
                             mediaKind: 'image' | 'video';
-                            mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'video/webm';
+                            mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'video/webm' | 'video/mp4';
                             name: string;
                             sizeBytes: number;
                             sha256: string;
@@ -1038,7 +1209,7 @@ export type SessionLifecycleActionInputById = {
                                 endLineHash?: `lh1:${string}` | undefined;
                                 selectedTextHash?: `lh1:${string}` | undefined;
                             };
-                            status: 'exact' | 'missing' | 'hash' | 'context' | 'ambiguous' | 'stale' | 'unsupported';
+                            status: 'exact' | 'context' | 'hash' | 'ambiguous' | 'stale' | 'missing' | 'unsupported';
                             confidence: number;
                             id?: string | undefined;
                             resolvedAnchor?: {
@@ -1152,7 +1323,7 @@ export type SessionLifecycleActionInputById = {
                             endLineHash?: `lh1:${string}` | undefined;
                             selectedTextHash?: `lh1:${string}` | undefined;
                         };
-                        status: 'exact' | 'missing' | 'hash' | 'context' | 'ambiguous' | 'stale' | 'unsupported';
+                        status: 'exact' | 'context' | 'hash' | 'ambiguous' | 'stale' | 'missing' | 'unsupported';
                         confidence: number;
                         id?: string | undefined;
                         resolvedAnchor?: {
@@ -1428,6 +1599,7 @@ export type SessionLifecycleActionInputById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -1763,10 +1935,6 @@ export type SessionLifecycleActionInputById = {
             kind: 'machine_pool';
             poolId: string;
         } | undefined;
-        organizationPlacement?: {
-            folderId: string | null;
-            tagIds: string[];
-        } | undefined;
         roleId?: string | undefined;
         modelSelection?: {
             v: 1;
@@ -1855,6 +2023,7 @@ export type SessionLifecycleActionInputById = {
             mcp?: {
                 v?: 1 | undefined;
                 managedServersEnabled?: boolean | undefined;
+                happierToolsEnabled?: boolean | undefined;
                 forceIncludeServerIds?: string[] | undefined;
                 forceExcludeServerIds?: string[] | undefined;
             } | undefined;
@@ -1907,8 +2076,35 @@ export type SessionLifecycleActionInputById = {
             };
             resourceId: string;
             expectedResourceRevision: number;
-            deliveryMode: 'direct' | 'brokered';
+            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
             teamId?: string | undefined;
+            providerModelSelection?: {
+                agentTargetKey: string;
+                modelId: string;
+                application?: {
+                    agentTargetKey: string;
+                    implementationIdentity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    endpointTemplateId: string;
+                    protocol: string;
+                } | undefined;
+                executionMachineId?: string | undefined;
+                nativeSource?: {
+                    sourceRevision: string;
+                    providerTicket: string;
+                } | undefined;
+            } | undefined;
+            nativeDelivery?: {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            } | undefined;
         } | {
             v: 1;
             slot: {
@@ -1927,6 +2123,192 @@ export type SessionLifecycleActionInputById = {
         })[] | undefined;
         allowedTools?: string[] | undefined;
         unlistedTools?: 'deny' | 'ask' | undefined;
+    };
+    readonly "workspace.sync.conflict.resolve": {
+        controllerMachineId: string;
+        hubWorkspaceRefId: string;
+        path: string;
+        source: {
+            workspaceRefId: string;
+            expected: {
+                kind: 'missing';
+            } | {
+                kind: 'file';
+                digest: string;
+                executable: boolean;
+                size: number;
+            } | {
+                kind: 'symlink';
+                target: string;
+            } | {
+                kind: 'directory';
+                fingerprint: string;
+            };
+        };
+        targets: readonly {
+            workspaceRefId: string;
+            expected: {
+                kind: 'missing';
+            } | {
+                kind: 'file';
+                digest: string;
+                executable: boolean;
+                size: number;
+            } | {
+                kind: 'symlink';
+                target: string;
+            } | {
+                kind: 'directory';
+                fingerprint: string;
+            };
+        }[];
+        relationshipIds: readonly string[];
+        strategy: 'use_source';
+    } | {
+        controllerMachineId: string;
+        hubWorkspaceRefId: string;
+        path: string;
+        source: {
+            workspaceRefId: string;
+            expected: {
+                kind: 'missing';
+            } | {
+                kind: 'file';
+                digest: string;
+                executable: boolean;
+                size: number;
+            } | {
+                kind: 'symlink';
+                target: string;
+            } | {
+                kind: 'directory';
+                fingerprint: string;
+            };
+        };
+        targets: readonly {
+            workspaceRefId: string;
+            expected: {
+                kind: 'missing';
+            } | {
+                kind: 'file';
+                digest: string;
+                executable: boolean;
+                size: number;
+            } | {
+                kind: 'symlink';
+                target: string;
+            } | {
+                kind: 'directory';
+                fingerprint: string;
+            };
+        }[];
+        relationshipIds: readonly string[];
+        strategy: 'keep_both';
+        alternatives: readonly {
+            source: {
+                workspaceRefId: string;
+                expected: {
+                    kind: 'missing';
+                } | {
+                    kind: 'file';
+                    digest: string;
+                    executable: boolean;
+                    size: number;
+                } | {
+                    kind: 'symlink';
+                    target: string;
+                } | {
+                    kind: 'directory';
+                    fingerprint: string;
+                };
+            };
+            destination: {
+                workspaceRefId: string;
+                path: string;
+                expected: {
+                    kind: 'missing';
+                } | {
+                    kind: 'file';
+                    digest: string;
+                    executable: boolean;
+                    size: number;
+                } | {
+                    kind: 'symlink';
+                    target: string;
+                } | {
+                    kind: 'directory';
+                    fingerprint: string;
+                };
+            };
+            consequence: {
+                propagatingToWorkspaceRefIds: readonly string[];
+                unverifiedPropagationToWorkspaceRefIds?: readonly string[] | undefined;
+            };
+        }[];
+    };
+    readonly "workspace.sync.relationship.create": {
+        v: 1;
+        sourceWorkspaceRefId: string;
+        targetMachineId: string;
+        targetPath: string;
+        mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+        contentPolicy: {
+            v: 1;
+            selection: 'git_worktree' | 'all_files';
+            extraIgnorePatterns: readonly string[];
+            extraIncludePatterns: readonly string[];
+            policyDigest: string;
+        };
+        destinationIntent: 'use_existing' | 'materialize_from_source_workspace';
+        purpose?: 'worker_clean_copy' | undefined;
+    };
+    readonly "workspace.sync.relationship.disable": {
+        controllerMachineId: string;
+        relationshipId: string;
+    };
+    readonly "workspace.sync.relationship.enable": {
+        controllerMachineId: string;
+        relationshipId: string;
+    };
+    readonly "workspace.sync.relationship.flush": {
+        controllerMachineId: string;
+        relationshipId: string;
+    };
+    readonly "workspace.sync.relationship.terminate": {
+        controllerMachineId: string;
+        relationshipId: string;
+    };
+    readonly "workspace.sync.relationships.list": {
+        controllerMachineId?: string | undefined;
+        workspaceRefId?: string | undefined;
+    };
+    readonly "workspace.sync.conflicts.list": {
+        controllerMachineId: string;
+        relationshipId: string;
+        limit: number;
+        cursor?: string | undefined;
+    };
+    readonly "workspace.sync.conflict.inspect": {
+        workspaceRefId: string;
+        path: string;
+        controllerMachineId?: string | undefined;
+        preview?: {
+            workspaceRefId: string;
+            expected: {
+                kind: 'missing';
+            } | {
+                kind: 'file';
+                digest: string;
+                executable: boolean;
+                size: number;
+            } | {
+                kind: 'symlink';
+                target: string;
+            } | {
+                kind: 'directory';
+                fingerprint: string;
+            };
+        } | undefined;
     };
 };
 export type SessionLifecycleActionResultById = {
@@ -2591,6 +2973,121 @@ export type SessionLifecycleActionResultById = {
         } | undefined;
     };
     readonly "session.handoff.status.get": JsonValue;
+    readonly "session.spawn_new": {
+        type: 'error';
+        code: 'cancelled' | 'invalid_request' | 'invalid_input' | 'target_required' | 'target_unavailable' | 'machine_offline' | 'incompatible_target' | 'organization_unavailable' | 'organization_invalid' | 'creation_conflict' | 'permission_denied' | 'session_access_request_failed' | 'session_data_key_unavailable' | 'spawn_failed' | 'agent_cli_missing' | 'agent_signed_out' | 'session_access_forbidden' | 'session_access_session_not_found' | 'session_access_subject_not_found' | 'session_access_subject_ineligible' | 'session_access_owner_grant_invalid' | 'session_access_self_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_team_policy_required' | 'session_initial_access_creator_mismatch' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_requires_team_admin' | 'session_access_external_sharing_disabled' | 'session_access_sharing_unavailable' | 'session_access_invalid_recipient_envelope' | 'session_responsibility_assignee_unavailable' | 'invalid_cursor' | 'data_key_not_required' | 'recipient_envelope_required' | 'recipient_key_unavailable';
+        retryable: boolean;
+        agentId?: string | undefined;
+        providerError?: {
+            v: 1;
+            code: 'model_not_granted' | 'permission_mode_not_granted' | 'machine_offline' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+            retryable: boolean;
+            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            connectionId?: (string) | undefined;
+            machineId?: string | undefined;
+            sourceProfileId?: string | undefined;
+            retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
+        } | undefined;
+        terminalHostError?: {
+            kind: 'terminal_host_unavailable';
+            host: 'zellij' | 'herdr';
+            reason: 'installation_unavailable' | 'server_version_unsupported';
+        } | undefined;
+        incompatibleTarget?: {
+            reason: 'terminal_host_unavailable' | 'initial_access_unsupported' | 'target_preparation_rpc_unavailable' | 'target_preparation_invalid_result' | 'checkout_unavailable' | 'session_spawn_protocol_unavailable' | 'creation_lookup_unavailable' | 'initial_trigger_protocol_unavailable' | 'context_memory_protocol_unavailable' | 'spawn_rpc_unavailable' | 'creation_settlement_unavailable' | 'requester_credentials_unavailable' | 'daemon_rpc_unavailable';
+        } | undefined;
+        launchError?: {
+            kind: 'launch_error';
+            code: string;
+            message: string;
+            rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_TRANSPORT_UNAVAILABLE' | 'RPC_OUTCOME_UNKNOWN' | undefined;
+            connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+            uxDiagnostic?: {
+                code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                source: 'new_session' | 'runtime_auth_recovery' | 'spawn_resume' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                retryable: boolean;
+                suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                serviceId?: string | undefined;
+                agentId?: string | undefined;
+                profileId?: string | undefined;
+                groupId?: string | undefined;
+                diagnostics?: Record<string, string | number | boolean | null> | undefined;
+            } | undefined;
+            connectedAccountPool?: {
+                serviceId: string;
+                excluded: {
+                    profileId: string;
+                    reason: 'current_active' | 'disabled' | 'cooldown' | 'quota_exhausted' | 'capacity_limited' | 'auth_invalid' | 'credential_unavailable' | 'plan_unavailable' | 'validation_blocked' | 'policy_wait_until_reset';
+                    retryAtMs?: number | null | undefined;
+                }[];
+            } | undefined;
+        } | undefined;
+    } | {
+        type: 'pending';
+        retryWithSameCreationKey: true;
+        outcome: 'unknown' | 'accepted';
+        operation?: {
+            serverId: string;
+            machineId: string;
+            operationId: string;
+        } | undefined;
+    } | {
+        type: 'error';
+        code: 'update_required';
+        retryable: false;
+        details: {
+            kind: 'update_required';
+            operation: string;
+            component: 'daemon' | 'server' | 'client';
+            reason: string;
+        };
+    } | {
+        organizationPlacement: {
+            sectionId: string | null;
+            tagIds: string[];
+        };
+        type: 'success';
+        disposition: 'created' | 'rejoined';
+        sessionId: string;
+        executionTarget: {
+            serverId: string;
+            machineId: string;
+        };
+        initialInput: {
+            status: 'notRequested';
+        } | {
+            status: 'accepted';
+            localId: string;
+        } | {
+            status: 'alreadyAccepted';
+            localId: string;
+        } | {
+            status: 'rejected';
+            code: 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        } | {
+            status: 'outcomeUnknown';
+            localId: string;
+            code: string;
+        };
+        attestedContext?: {
+            externalPrincipalId: string;
+            sourceMessageId: string;
+        } | undefined;
+        filesNotCopied?: {
+            reason: 'cross_machine';
+        } | undefined;
+        sourceKeyPreparation?: {
+            kind: 'not_needed';
+        } | {
+            kind: 'prepared';
+        } | {
+            kind: 'waiting';
+            reason: 'unsupported' | 'source_key_unavailable' | 'runner_unreachable' | 'runner_key_unavailable';
+            cause?: 'source_key_unavailable' | 'credentials_unavailable' | 'action_context_unavailable' | 'preparation_exception' | 'server_features_exception' | 'source_transport_exception' | 'destination_transport_exception' | 'source_transport_unavailable' | 'destination_transport_unavailable' | 'source_key_exception' | 'home_identity_unavailable' | 'destination_machine_exception' | 'destination_machine_unresolved' | 'destination_machine_missing' | 'rpc_method_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_target_not_current' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | undefined;
+        } | undefined;
+    };
     readonly "workspace.sync.conflict.resolve": {
         endpoints: readonly ({
             workspaceRefId: string;
@@ -2822,98 +3319,4 @@ export type SessionLifecycleActionResultById = {
     };
     readonly "workspace.sync.conflicts.list": JsonValue;
     readonly "workspace.sync.conflict.inspect": JsonValue;
-    readonly "session.spawn_new": {
-        type: 'error';
-        code: 'cancelled' | 'invalid_request' | 'invalid_input' | 'target_required' | 'target_unavailable' | 'machine_offline' | 'incompatible_target' | 'organization_unavailable' | 'organization_invalid' | 'creation_conflict' | 'permission_denied' | 'session_access_request_failed' | 'session_data_key_unavailable' | 'spawn_failed' | 'agent_cli_missing' | 'agent_signed_out' | 'session_access_forbidden' | 'session_access_session_not_found' | 'session_access_subject_not_found' | 'session_access_subject_ineligible' | 'session_access_owner_grant_invalid' | 'session_access_self_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_team_policy_required' | 'session_initial_access_creator_mismatch' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_requires_team_admin' | 'session_access_external_sharing_disabled' | 'session_access_sharing_unavailable' | 'session_access_invalid_recipient_envelope' | 'session_responsibility_assignee_unavailable' | 'invalid_cursor' | 'data_key_not_required' | 'recipient_envelope_required' | 'recipient_key_unavailable';
-        retryable: boolean;
-        agentId?: string | undefined;
-        providerError?: {
-            v: 1;
-            code: 'model_not_granted' | 'permission_mode_not_granted' | 'machine_offline' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
-            retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
-            connectionId?: (string) | undefined;
-            machineId?: string | undefined;
-            sourceProfileId?: string | undefined;
-            retryAfterMs?: number | undefined;
-        } | undefined;
-        terminalHostError?: {
-            kind: 'terminal_host_unavailable';
-            host: 'zellij' | 'herdr';
-            reason: 'installation_unavailable' | 'server_version_unsupported';
-        } | undefined;
-        incompatibleTarget?: {
-            reason: 'terminal_host_unavailable' | 'initial_access_unsupported' | 'target_preparation_rpc_unavailable' | 'target_preparation_invalid_result' | 'checkout_unavailable' | 'session_spawn_protocol_unavailable' | 'creation_lookup_unavailable' | 'initial_trigger_protocol_unavailable' | 'context_memory_protocol_unavailable' | 'spawn_rpc_unavailable' | 'creation_settlement_unavailable' | 'requester_credentials_unavailable' | 'daemon_rpc_unavailable';
-        } | undefined;
-        launchError?: {
-            kind: 'launch_error';
-            code: string;
-            message: string;
-            rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_TRANSPORT_UNAVAILABLE' | 'RPC_OUTCOME_UNKNOWN' | undefined;
-            connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
-        } | undefined;
-    } | {
-        type: 'success';
-        disposition: 'created' | 'rejoined';
-        sessionId: string;
-        executionTarget: {
-            serverId: string;
-            machineId: string;
-        };
-        organizationPlacement: {
-            folderId: string | null;
-            tagIds: string[];
-        };
-        initialInput: {
-            status: 'notRequested';
-        } | {
-            status: 'accepted';
-            localId: string;
-        } | {
-            status: 'alreadyAccepted';
-            localId: string;
-        } | {
-            status: 'rejected';
-            code: 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
-        } | {
-            status: 'outcomeUnknown';
-            localId: string;
-            code: string;
-        };
-        attestedContext?: {
-            externalPrincipalId: string;
-            sourceMessageId: string;
-        } | undefined;
-        filesNotCopied?: {
-            reason: 'cross_machine';
-        } | undefined;
-        sourceKeyPreparation?: {
-            kind: 'not_needed';
-        } | {
-            kind: 'prepared';
-        } | {
-            kind: 'waiting';
-            reason: 'unsupported' | 'source_key_unavailable' | 'runner_unreachable' | 'runner_key_unavailable';
-            cause?: 'source_key_unavailable' | 'credentials_unavailable' | 'action_context_unavailable' | 'preparation_exception' | 'server_features_exception' | 'source_transport_exception' | 'destination_transport_exception' | 'source_transport_unavailable' | 'destination_transport_unavailable' | 'source_key_exception' | 'home_identity_unavailable' | 'destination_machine_exception' | 'destination_machine_unresolved' | 'destination_machine_missing' | 'rpc_method_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_target_not_current' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | undefined;
-        } | undefined;
-    } | {
-        type: 'pending';
-        retryWithSameCreationKey: true;
-        outcome: 'unknown' | 'accepted';
-        operation?: {
-            operationId: string;
-            serverId: string;
-            machineId: string;
-        } | undefined;
-    } | {
-        type: 'error';
-        code: 'update_required';
-        retryable: false;
-        details: {
-            kind: 'update_required';
-            operation: string;
-            component: 'daemon' | 'server' | 'client';
-            reason: string;
-        };
-    };
 };

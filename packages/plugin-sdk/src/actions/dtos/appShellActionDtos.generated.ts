@@ -244,6 +244,14 @@ export type AppShellActionResultById = {
                 id: string;
                 messageId: string;
             };
+            expectedDuring?: {
+                kind: 'stop' | 'restart' | 'deploy' | 'reboot';
+                operation: {
+                    serverId: string;
+                    machineId: string;
+                    operationId: string;
+                };
+            } | undefined;
             question?: {
                 mode: 'wait' | 'continue';
                 lasting: boolean;

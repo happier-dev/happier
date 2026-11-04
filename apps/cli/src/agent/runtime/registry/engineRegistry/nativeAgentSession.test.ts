@@ -10475,6 +10475,133 @@ describe('native Agent session host adapter', () => {
         }));
     });
 
+    it('restores only the originating admitted tool witness for a delayed provider continuation', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let readWitness: () => NativeAgentNewTurnAdmissionWitness | null = () => null;
+        let sequence = 0;
+        const emit = (event: Record<string, unknown>) => {
+            for (const listener of listeners) listener({
+                sessionId: 'continuation-session', emittedAtMs: 1, sequence: ++sequence, ...event,
+            } as AgentSessionRuntimeEvent);
+        };
+        const session: AgentSessionRuntime = {
+            runtimeCapabilities: { providerContinuations: { supported: true } },
+            send: async request => {
+                emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+                emit({ kind: 'turn-start', turnId: request.delivery.turnId, startedBy: 'host' });
+                return { status: 'admitted' };
+            },
+            watch(listener) { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
+            dispose() {},
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session, 'continuation-session', undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, [], undefined, undefined, undefined, reader => { readWitness = reader; },
+        );
+        await runtime.sendTurnPrompt('first', {
+            localId: 'input-original', turnId: 'first', userMessageSeq: 10,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+        });
+        emit({ kind: 'tool-call', turnId: 'first', toolCallId: 'background', toolName: 'Bash', input: {} });
+        emit({ kind: 'turn-complete', turnId: 'first' });
+        expect(readWitness()).toBeNull();
+        await runtime.sendTurnPrompt('second', {
+            localId: 'input-newer', turnId: 'second', userMessageSeq: 20,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+        });
+        emit({ kind: 'turn-complete', turnId: 'second' });
+        emit({ kind: 'provider-continuation-registered', continuationId: 'task', parentTurnId: 'first', parentToolCallId: 'background' });
+        emit({ kind: 'provider-tool-contexts-released', parentTurnId: 'first', toolCallIds: ['background'] });
+        emit({ kind: 'turn-start', turnId: 'continued', startedBy: 'provider', causedByTurnId: 'first', continuationId: 'task' });
+        expect(readWitness()).toMatchObject({
+            inputId: 'input-original', turnId: 'continued', userMessageSeq: 10,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+        });
+        emit({ kind: 'turn-complete', turnId: 'continued' });
+        expect(readWitness()).toBeNull();
+        emit({ kind: 'turn-start', turnId: 'reused', startedBy: 'provider', causedByTurnId: 'first', continuationId: 'task' });
+        expect(readWitness()).toBeNull();
+        await runtime.resetOrDisposeRuntime('session_closed');
+    });
+
+    it('preserves provider continuation authority when foreground authorization finishes after it starts', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        let readWitness: () => NativeAgentNewTurnAdmissionWitness | null = () => null;
+        let sequence = 0;
+        const emit = (event: Record<string, unknown>) => {
+            for (const listener of listeners) listener({
+                sessionId: 'admission-race-session', emittedAtMs: 1, sequence: ++sequence, ...event,
+            } as AgentSessionRuntimeEvent);
+        };
+        let releaseAuthorization!: () => void;
+        const heldAuthorization = new Promise<void>(resolve => { releaseAuthorization = resolve; });
+        let authorizationStarted!: () => void;
+        const awaitingAuthorization = new Promise<void>(resolve => { authorizationStarted = resolve; });
+        const send = vi.fn<AgentSessionRuntime['send']>(async request => {
+            if (request.delivery.turnId === 'competing') {
+                return { status: 'unavailable', diagnostic: { code: 'provider_turn_already_active', severity: 'warning' }, retryable: true };
+            }
+            emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+            emit({ kind: 'turn-start', turnId: request.delivery.turnId, startedBy: 'host' });
+            return { status: 'admitted' };
+        });
+        const session: AgentSessionRuntime = {
+            runtimeCapabilities: { providerContinuations: { supported: true } },
+            send,
+            watch(listener) { listeners.add(listener); return { dispose: () => { listeners.delete(listener); } }; },
+            dispose() {},
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session, 'admission-race-session', undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, [], undefined, undefined,
+            async witness => {
+                if (witness.turnId === 'competing') {
+                    authorizationStarted();
+                    await heldAuthorization;
+                }
+                return { status: 'admitted' };
+            },
+            reader => { readWitness = reader; },
+        );
+        const outcomes: unknown[] = [];
+        runtime.setOnPromptDeliveryOutcome(outcome => { outcomes.push(outcome); });
+        try {
+            await runtime.sendTurnPrompt('original', {
+                localId: 'input-original', turnId: 'original', userMessageSeq: 10,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+            });
+            emit({ kind: 'tool-call', turnId: 'original', toolCallId: 'background', toolName: 'Bash', input: {} });
+            emit({ kind: 'turn-complete', turnId: 'original' });
+            const sending = runtime.sendTurnPrompt('competing', {
+                localId: 'input-competing', turnId: 'competing', userMessageSeq: 20,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+            });
+            const rejected = expect(sending).rejects.toThrow();
+            await awaitingAuthorization;
+            emit({ kind: 'provider-continuation-registered', continuationId: 'task', parentTurnId: 'original', parentToolCallId: 'background' });
+            emit({ kind: 'turn-start', turnId: 'continued', startedBy: 'provider', causedByTurnId: 'original', continuationId: 'task' });
+            const continuationWitness = readWitness();
+            expect(continuationWitness).toMatchObject({
+                inputId: 'input-original', turnId: 'continued', userMessageSeq: 10,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+            });
+            releaseAuthorization();
+            await rejected;
+            expect(readWitness()).toBe(continuationWitness);
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(outcomes).toContainEqual(expect.objectContaining({
+                type: 'input-rejected', localId: 'input-competing', retryable: true,
+            }));
+            emit({ kind: 'turn-complete', turnId: 'continued' });
+            await runtime.sendTurnPrompt('after continuation', { localId: 'input-after', turnId: 'after' });
+            expect(send).toHaveBeenCalledTimes(2);
+            expect(readWitness()).toMatchObject({ inputId: 'input-after', turnId: 'after' });
+        } finally {
+            releaseAuthorization();
+            await runtime.resetOrDisposeRuntime('session_closed');
+        }
+    });
+
     it('keeps the host active-turn authority independent when a native plugin mutates its send payload', async () => {
         let readActiveTurnAdmissionWitness:
             (() => NativeAgentNewTurnAdmissionWitness | null)

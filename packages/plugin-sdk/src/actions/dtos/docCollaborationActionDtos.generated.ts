@@ -417,6 +417,7 @@ export type DocCollaborationActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -503,6 +504,7 @@ export type DocCollaborationActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;
@@ -761,6 +763,7 @@ export type DocCollaborationActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -847,6 +850,7 @@ export type DocCollaborationActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;

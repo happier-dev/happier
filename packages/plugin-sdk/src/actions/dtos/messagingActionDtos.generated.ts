@@ -46,6 +46,21 @@ export type MessagingActionInputById = {
                 };
             };
         }[] | undefined;
+        forgeEvidence?: {
+            v: 1;
+            items: readonly {
+                source: {
+                    kind: 'pullRequest' | 'hostedCi' | 'releaseNotes' | 'alert' | 'localTerminal' | 'entry';
+                    label: string;
+                    url?: string;
+                };
+                author: {
+                    kind: 'unknown' | 'bot' | 'person' | 'process';
+                    label?: string;
+                };
+                text: string;
+            }[];
+        } | undefined;
         toolAnswerDelivery?: {
             toolCallId: string;
         } | undefined;
@@ -194,6 +209,7 @@ export type MessagingActionResultById = {
                 ok: false;
                 errorCode: string;
                 error: string;
+                effectAttempted?: boolean | undefined;
                 details?: unknown;
                 goalControlFailure?: {
                     phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';

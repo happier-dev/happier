@@ -1,3 +1,5 @@
+export type { BackupDestinationContributionV1 } from './backupDestinations.js';
+export type { PluginBotTemplateContributionV1 } from './manifest.js';
 export type {
     DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
     DeploymentTargetFailureTransitionV1, DeploymentTargetCredentialPrincipalV1,
@@ -188,7 +190,6 @@ export type {
 export type {
     TargetedContributionAdmittedEntry,
     TargetedContributionObservation,
-    TargetedContributionPointRef,
     TargetedContributionSelectionResult,
     TargetedContributionSelectionUnavailableReason,
     TargetedContributionSnapshot,
@@ -207,7 +208,6 @@ export {
 } from './executionOrigin.js';
 export { definePlugin } from './definePlugin.js';
 export type {
-    ContributionAdmittedEntry,
     ContributionOperationContracts,
     ContributionSurfaceHandles,
     DefinedContributionPointRef,
@@ -264,3 +264,7 @@ export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapt
 export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';
 export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
 export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';
+
+export type { DeploymentTargetRoleV1 } from './deploymentTargets.js';
+export type { HealthCheckDnsConfigV1, HealthCheckHeartbeatConfigV1, HealthCheckTcpConfigV1 } from './healthCheckKinds.js';
+export type { DeploymentTargetDataInputV1 } from './deploymentTargets.js';

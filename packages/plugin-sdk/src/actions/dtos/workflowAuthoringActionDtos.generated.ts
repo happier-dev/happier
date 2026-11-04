@@ -72,6 +72,7 @@ export type WorkflowAuthoringActionInputById = {
                 mcp?: {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
                 } | undefined;
@@ -291,6 +292,7 @@ export type WorkflowAuthoringActionInputById = {
                 mcp?: {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
                 } | undefined;

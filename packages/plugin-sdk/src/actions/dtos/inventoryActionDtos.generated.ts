@@ -4,6 +4,294 @@
 import type { JsonValue } from '../../identity.js';
 
 export type InventoryActionInputById = {
+    readonly "agents.models.list": {
+        purpose?: 'scm_diff_summary' | undefined;
+        discoveryTargetKey?: string | undefined;
+        modelSelector?: {
+            profileId?: string | undefined;
+            modelId?: string | undefined;
+            backendTargetKey?: string | undefined;
+        } | undefined;
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        serverId?: undefined;
+        limit?: number | undefined;
+        probe?: {
+            cwd?: string | undefined;
+            timeoutMs?: number | undefined;
+            transportTimeoutMs?: number | undefined;
+            bypassCache?: boolean | undefined;
+            profileId?: string | undefined;
+            runtimeDescriptorV1?: unknown;
+            connectedServices?: {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                    disclosedMember?: undefined;
+                }> | undefined;
+            } | undefined;
+            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
+        } | undefined;
+    };
+    readonly "agents.config_options.list": {
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        limit?: number | undefined;
+        modelId?: string | undefined;
+        serverId?: undefined;
+        probe?: {
+            cwd?: string | undefined;
+            timeoutMs?: number | undefined;
+            transportTimeoutMs?: number | undefined;
+            bypassCache?: boolean | undefined;
+            profileId?: string | undefined;
+            runtimeDescriptorV1?: unknown;
+            connectedServices?: {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                    disclosedMember?: undefined;
+                }> | undefined;
+            } | undefined;
+            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
+        } | undefined;
+    };
+    readonly "agents.session_modes.list": {
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        limit?: number | undefined;
+        serverId?: undefined;
+        probe?: {
+            cwd?: string | undefined;
+            timeoutMs?: number | undefined;
+            transportTimeoutMs?: number | undefined;
+            bypassCache?: boolean | undefined;
+            profileId?: string | undefined;
+            runtimeDescriptorV1?: unknown;
+            connectedServices?: {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                    disclosedMember?: undefined;
+                }> | undefined;
+            } | undefined;
+            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
+        } | undefined;
+    };
+    readonly "sessions.spawn.profiles.list": {
+        [x: string]: unknown;
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        limit?: number | undefined;
+    };
+    readonly "sessions.spawn.connected_services.list": {
+        [x: string]: unknown;
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        limit?: number | undefined;
+        includeUnavailable?: boolean | undefined;
+        serverId?: undefined;
+    };
+    readonly "sessions.spawn.mcp_servers.preview": {
+        [x: string]: unknown;
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        directory?: string | undefined;
+        path?: string | undefined;
+        selection?: unknown;
+        limit?: number | undefined;
+    };
+    readonly "agents.backends.list": {
+        [x: string]: unknown;
+        includeDisabled?: boolean | undefined;
+        limit?: number | undefined;
+        machineId?: string | undefined;
+    };
+    readonly "machines.agents.list": {
+        machineId: string;
+        serverId?: string | undefined;
+        agentId?: string | undefined;
+        definitionId?: string | undefined;
+        refresh?: boolean | undefined;
+    };
+    readonly "prompts.invocations.list": {
+        [x: string]: unknown;
+        limit?: number | undefined;
+    };
+    readonly "prompts.invocation.resolve": {
+        [x: string]: unknown;
+        invocationId: string;
+        argsText?: string | undefined;
+    };
+    readonly "review.engines.list": {
+        [x: string]: unknown;
+        sessionId?: string | null | undefined;
+        machineId?: string | undefined;
+        includeDisabled?: boolean | undefined;
+        scope?: 'paths' | undefined;
+    };
     readonly "paths.list_recent": {
         [x: string]: unknown;
         machineId?: string | undefined;
@@ -46,6 +334,14 @@ export type InventoryActionInputById = {
             entryId: string;
             enabled: boolean;
         };
+    };
+    readonly "projects.organization.update": {
+        projectRef: {
+            serverId: string;
+            projectKey: string;
+        };
+        expectedRevision: number | 'absent';
+        label: string | null;
     };
     readonly "projects.visibility.set": {
         target: {
@@ -186,14 +482,9 @@ export type InventoryActionInputById = {
         ref?: string | undefined;
         subdir?: string | undefined;
     };
-    readonly "prompts.invocations.list": {
-        [x: string]: unknown;
-        limit?: number | undefined;
-    };
-    readonly "prompts.invocation.resolve": {
-        [x: string]: unknown;
-        invocationId: string;
-        argsText?: string | undefined;
+    readonly "machines.presence.read": {
+        serverId: string;
+        machineId: string;
     };
     readonly "machines.list": {
         serverId?: string | undefined;
@@ -204,284 +495,90 @@ export type InventoryActionInputById = {
         [x: string]: unknown;
         limit?: number | undefined;
     };
-    readonly "review.engines.list": {
-        [x: string]: unknown;
-        sessionId?: string | null | undefined;
-        machineId?: string | undefined;
-        includeDisabled?: boolean | undefined;
-        scope?: 'paths' | undefined;
-    };
-    readonly "agents.backends.list": {
-        [x: string]: unknown;
-        includeDisabled?: boolean | undefined;
-        limit?: number | undefined;
-        machineId?: string | undefined;
-    };
-    readonly "machines.agents.list": {
-        machineId: string;
-        serverId?: string | undefined;
-        agentId?: string | undefined;
-        definitionId?: string | undefined;
-        refresh?: boolean | undefined;
-    };
-    readonly "agents.models.list": {
-        purpose?: 'scm_diff_summary' | undefined;
-        discoveryTargetKey?: string | undefined;
-        modelSelector?: {
-            profileId?: string | undefined;
-            modelId?: string | undefined;
-            backendTargetKey?: string | undefined;
-        } | undefined;
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        serverId?: undefined;
-        limit?: number | undefined;
-        probe?: {
-            cwd?: string | undefined;
-            timeoutMs?: number | undefined;
-            transportTimeoutMs?: number | undefined;
-            bypassCache?: boolean | undefined;
-            profileId?: string | undefined;
-            runtimeDescriptorV1?: unknown;
-            connectedServices?: {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 2;
-                bindingsByServiceId?: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'direct';
-                    disclosedMember: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
-                }> | undefined;
-            } | undefined;
-        } | undefined;
-    };
-    readonly "agents.config_options.list": {
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        limit?: number | undefined;
-        modelId?: string | undefined;
-        serverId?: undefined;
-        probe?: {
-            cwd?: string | undefined;
-            timeoutMs?: number | undefined;
-            transportTimeoutMs?: number | undefined;
-            bypassCache?: boolean | undefined;
-            profileId?: string | undefined;
-            runtimeDescriptorV1?: unknown;
-            connectedServices?: {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 2;
-                bindingsByServiceId?: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'direct';
-                    disclosedMember: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
-                }> | undefined;
-            } | undefined;
-        } | undefined;
-    };
-    readonly "agents.session_modes.list": {
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        limit?: number | undefined;
-        serverId?: undefined;
-        probe?: {
-            cwd?: string | undefined;
-            timeoutMs?: number | undefined;
-            transportTimeoutMs?: number | undefined;
-            bypassCache?: boolean | undefined;
-            profileId?: string | undefined;
-            runtimeDescriptorV1?: unknown;
-            connectedServices?: {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
-                v: 2;
-                bindingsByServiceId?: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'direct';
-                    disclosedMember: {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
-                }> | undefined;
-            } | undefined;
-        } | undefined;
-    };
-    readonly "sessions.spawn.profiles.list": {
-        [x: string]: unknown;
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        limit?: number | undefined;
-    };
-    readonly "sessions.spawn.connected_services.list": {
-        [x: string]: unknown;
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        limit?: number | undefined;
-        includeUnavailable?: boolean | undefined;
-        serverId?: undefined;
-    };
-    readonly "sessions.spawn.mcp_servers.preview": {
-        [x: string]: unknown;
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        directory?: string | undefined;
-        path?: string | undefined;
-        selection?: unknown;
-        limit?: number | undefined;
-    };
 };
 export type InventoryActionResultById = {
+    readonly "agents.models.list": JsonValue;
+    readonly "agents.config_options.list": JsonValue;
+    readonly "agents.session_modes.list": JsonValue;
+    readonly "sessions.spawn.profiles.list": JsonValue;
+    readonly "sessions.spawn.connected_services.list": JsonValue;
+    readonly "sessions.spawn.mcp_servers.preview": JsonValue;
+    readonly "agents.backends.list": {
+        items: {
+            targetKey: string;
+            label: string;
+            enabled: boolean;
+            agentId?: string | undefined;
+            identity?: {
+                pluginId: string;
+                localId: string;
+            } | undefined;
+            backendId?: string | undefined;
+            description?: string | undefined;
+        }[];
+    };
+    readonly "machines.agents.list": {
+        items: {
+            installed: boolean;
+            version: string | null;
+            latestVersion: string | null;
+            update: {
+                supported: boolean;
+                command: string | null;
+            };
+            signIn: {
+                status: 'unknown' | 'signedIn' | 'signedOut';
+                loginSupport: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                required?: boolean | undefined;
+                accountLabel?: string | undefined;
+            };
+            platform: {
+                supported: true;
+            } | {
+                supported: false;
+                reason: 'os' | 'arch';
+            };
+            install: {
+                available: boolean;
+                mode: 'none' | 'managed' | 'vendor_recipe' | 'manual';
+                sizeBytes: number | null;
+                guideUrl: string | null;
+            };
+            dependencies: {
+                key: string;
+                installed: boolean;
+                version: string | null;
+            }[];
+            agentId: string;
+            title: string;
+            managed?: boolean | undefined;
+            fit?: {
+                kind: 'can_run';
+                via: 'command' | 'npm' | 'archive' | 'uv';
+                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64' | undefined;
+            } | {
+                kind: 'cant_run';
+                reason: 'no_build_for_platform' | 'archive_type_unsupported';
+            } | {
+                kind: 'unknown';
+                reason: 'platform_unknown' | 'arch_unknown';
+            } | undefined;
+            definitionId?: string | undefined;
+        }[];
+        unavailable?: {
+            agentId: string;
+            reason: 'missing_result' | 'probe_failed' | 'invalid_facts';
+            definitionId?: string | undefined;
+            errorCode?: string | undefined;
+        }[] | undefined;
+        definitionCatalog?: {
+            status: 'unavailable';
+            reason: string;
+        } | undefined;
+    };
+    readonly "prompts.invocations.list": JsonValue;
+    readonly "prompts.invocation.resolve": JsonValue;
+    readonly "review.engines.list": JsonValue;
     readonly "paths.list_recent": JsonValue;
     readonly "projects.context.update": {
         ok: true;
@@ -531,6 +628,56 @@ export type InventoryActionResultById = {
     } | {
         ok: false;
         errorCode: 'invalid_parameters' | 'entry_conflict' | 'entry_not_found' | 'project_context_conflict' | 'project_context_unavailable' | 'project_context_access_denied' | 'artifact_unavailable' | 'artifact_wrong_kind';
+        currentRevision?: number | 'absent' | undefined;
+    };
+    readonly "projects.organization.update": {
+        ok: true;
+        row: {
+            atmosphere?: 'home' | {
+                behindSessions: boolean;
+                source: 'none' | 'planet' | 'picture';
+                planet: {
+                    placement: 'corner' | 'side' | 'rise';
+                    style: 'airy' | 'balanced' | 'rich';
+                    digits: boolean;
+                };
+                picture: {
+                    ref: {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        kind: 'user';
+                        localId: string;
+                    };
+                    layout: 'horizon' | 'wallpaper';
+                };
+                looks: Record<string, {
+                    look?: 'original' | 'fine' | 'painted-fine' | 'halftone' | 'mosaic' | 'painted' | 'haze' | 'engraving' | undefined;
+                    strength?: number | undefined;
+                    dissolve?: 'haze' | 'ordered' | 'gradient' | 'shrink' | 'rows' | undefined;
+                }>;
+            } | undefined;
+            hidden?: boolean | undefined;
+            pinned?: boolean | undefined;
+            label?: string | undefined;
+            promptStack?: {
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                id: string;
+                enabled: boolean;
+                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+            }[] | undefined;
+        };
+        revision: number;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'project_organization_conflict' | 'project_organization_access_denied' | 'project_organization_unavailable';
         currentRevision?: number | 'absent' | undefined;
     };
     readonly "projects.visibility.set": {
@@ -650,6 +797,7 @@ export type InventoryActionResultById = {
         ok: false;
         errorCode: string;
         error: string;
+        effectAttempted?: boolean | undefined;
         details?: unknown;
         goalControlFailure?: {
             phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';
@@ -659,6 +807,7 @@ export type InventoryActionResultById = {
         ok: false;
         errorCode: string;
         error: string;
+        effectAttempted?: boolean | undefined;
         details?: unknown;
         goalControlFailure?: {
             phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';
@@ -725,88 +874,25 @@ export type InventoryActionResultById = {
         kind: 'outcomeUnknown';
         operationId?: string | undefined;
     };
-    readonly "prompts.invocations.list": JsonValue;
-    readonly "prompts.invocation.resolve": JsonValue;
+    readonly "machines.presence.read": {
+        kind: 'present';
+        machineId: string;
+        transitions: {
+            v: 1;
+            revision: number;
+            offline: {
+                revision: number;
+                occurredAt: number;
+            } | null;
+            online: {
+                revision: number;
+                occurredAt: number;
+            } | null;
+        } | null;
+    } | {
+        kind: 'refused';
+        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+    };
     readonly "machines.list": JsonValue;
     readonly "servers.list": JsonValue;
-    readonly "review.engines.list": JsonValue;
-    readonly "agents.backends.list": {
-        items: {
-            targetKey: string;
-            label: string;
-            enabled: boolean;
-            agentId?: string | undefined;
-            identity?: {
-                pluginId: string;
-                localId: string;
-            } | undefined;
-            backendId?: string | undefined;
-            description?: string | undefined;
-        }[];
-    };
-    readonly "machines.agents.list": {
-        items: {
-            installed: boolean;
-            version: string | null;
-            latestVersion: string | null;
-            update: {
-                supported: boolean;
-                command: string | null;
-            };
-            signIn: {
-                status: 'unknown' | 'signedIn' | 'signedOut';
-                loginSupport: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
-                required?: boolean | undefined;
-                accountLabel?: string | undefined;
-            };
-            platform: {
-                supported: true;
-            } | {
-                supported: false;
-                reason: 'os' | 'arch';
-            };
-            install: {
-                available: boolean;
-                mode: 'none' | 'managed' | 'vendor_recipe' | 'manual';
-                sizeBytes: number | null;
-                guideUrl: string | null;
-            };
-            dependencies: {
-                key: string;
-                installed: boolean;
-                version: string | null;
-            }[];
-            agentId: string;
-            title: string;
-            managed?: boolean | undefined;
-            fit?: {
-                kind: 'can_run';
-                via: 'command' | 'npm' | 'archive' | 'uv';
-                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64' | undefined;
-            } | {
-                kind: 'cant_run';
-                reason: 'no_build_for_platform' | 'archive_type_unsupported';
-            } | {
-                kind: 'unknown';
-                reason: 'platform_unknown' | 'arch_unknown';
-            } | undefined;
-            definitionId?: string | undefined;
-        }[];
-        unavailable?: {
-            agentId: string;
-            reason: 'missing_result' | 'probe_failed' | 'invalid_facts';
-            definitionId?: string | undefined;
-            errorCode?: string | undefined;
-        }[] | undefined;
-        definitionCatalog?: {
-            status: 'unavailable';
-            reason: string;
-        } | undefined;
-    };
-    readonly "agents.models.list": JsonValue;
-    readonly "agents.config_options.list": JsonValue;
-    readonly "agents.session_modes.list": JsonValue;
-    readonly "sessions.spawn.profiles.list": JsonValue;
-    readonly "sessions.spawn.connected_services.list": JsonValue;
-    readonly "sessions.spawn.mcp_servers.preview": JsonValue;
 };

@@ -156,6 +156,7 @@ export type WorkflowEffectsActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -206,8 +207,35 @@ export type WorkflowEffectsActionResultById = {
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered';
+                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                     teamId?: string | undefined;
+                    providerModelSelection?: {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: {
+                            agentTargetKey: string;
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                        } | undefined;
+                        executionMachineId?: string | undefined;
+                        nativeSource?: {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
+                    } | undefined;
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | {
                     v: 1;
                     slot: {
@@ -352,6 +380,7 @@ export type WorkflowEffectsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -402,8 +431,35 @@ export type WorkflowEffectsActionResultById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {

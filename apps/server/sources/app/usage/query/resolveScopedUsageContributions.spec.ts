@@ -17,6 +17,70 @@ function row(id: string, time: number, scope: string, total: number): ScopedUsag
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it("does not reset an inference counter when an intervening context snapshot carries no billed usage", () => {
+        const context = { ...row("context", 200, "session_cumulative", 0),
+            contextUsedTokens: 25, contextWindowTokens: 1000 };
+        const result = resolveScopedUsageContributions([
+            row("baseline", 100, "session_cumulative", 100),
+            context,
+            row("latest", 300, "session_cumulative", 120),
+        ]);
+        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + event.cost.estimatedUsd, 0)).toBeCloseTo(1.2);
+        expect(result.totalContributions.find(event => event.id === "context")).toMatchObject({
+            contextUsedTokens: 25, contextWindowTokens: 1000, tokens: { total: 0 },
+        });
+        expect(result.coverageReasons).not.toContain("counter_discontinuity");
+    });
+
+    it("reconciles paid context independently from inference snapshots and replay", () => {
+        const paid = (id: string, time: number, total: number, reportedUsd: number, scope = "session_cumulative") => ({
+            ...row(id, time, scope, total),
+            cost: { ...createEmptyUsageCost(), reportedUsd, costSource: "provider_reported" as const },
+        });
+        const first = { ...paid("first", 100, 100, 0.1, "turn_delta"),
+            metadata: { usageAccounting: { path: "runtime", inferenceId: "first" } } };
+        const result = resolveScopedUsageContributions([
+            first,
+            { ...paid("paid-context", 200, 0, 0.25), contextUsedTokens: 140, contextWindowTokens: 1000 },
+            paid("second", 250, 20, 0.05, "turn_delta"),
+            paid("measured-total", 300, 120, 0.3),
+            { ...paid("latest-paid-context", 400, 0, 0.5), contextUsedTokens: 25, contextWindowTokens: 1000 },
+            { ...first, id: "replayed-first", source: "native", observedAt: new Date(500), createdAt: new Date(500),
+                metadata: { usageAccounting: { path: "native", inferenceId: "first" } } },
+        ]);
+        expect(result.totalContributions.reduce((sum, event) => sum + event.tokens.total, 0)).toBe(120);
+        expect(result.totalContributions.reduce((sum, event) => sum + event.cost.reportedUsd, 0)).toBeCloseTo(0.5);
+        expect(result.totalContributions.filter(event => event.contextUsedTokens != null).at(-1)).toMatchObject({
+            contextUsedTokens: 25, contextWindowTokens: 1000,
+        });
+        expect(result.coverageReasons).not.toContain("ambiguous_overlap");
+        expect(result.coverageReasons).not.toContain("counter_discontinuity");
+    });
+
+    it("keeps inference replay deduplication when a zero-usage inference also carries context", () => {
+        const inference = { ...row("runtime", 100, "turn_delta", 0), requestCount: 1,
+            contextUsedTokens: 25, contextWindowTokens: 1000 };
+        const result = resolveScopedUsageContributions([
+            { ...inference, metadata: { usageAccounting: { path: "runtime", inferenceId: "empty" } } },
+            { ...inference, id: "native", source: "native",
+                metadata: { usageAccounting: { path: "native", inferenceId: "empty" } } },
+        ]);
+        expect(result.totalContributions.map(event => event.id)).toEqual(["runtime"]);
+    });
+
+    it("retains reported money on a context snapshot without inventing billed tokens", () => {
+        const result = resolveScopedUsageContributions([{
+            ...row("context-with-cost", 100, "session_cumulative", 0),
+            contextUsedTokens: 25, contextWindowTokens: 1000,
+            cost: { ...createEmptyUsageCost(), reportedUsd: 0.25, costSource: "provider_reported" },
+        }]);
+        expect(result.totalContributions).toHaveLength(1);
+        expect(result.totalContributions[0]).toMatchObject({
+            contextUsedTokens: 25, tokens: { total: 0 }, cost: { reportedUsd: 0.25 },
+        });
+    });
+
     it("reconciles response deltas against the same-millisecond cumulative snapshot regardless of ingestion order", () => {
         const order = (sequence: number) => ({ usageAccounting: { path: 'runtime', runtimeEventOrder: { runtimeIncarnationId: 'runtime', sequence } } });
         const snapshot = { ...row("snapshot", 100, "session_cumulative", 1006), createdAt: new Date(101), metadata: order(3) };

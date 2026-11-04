@@ -63,6 +63,7 @@ export type SessionReadStateActionResultById = {
                 level: 'none' | 'important' | 'all_messages';
                 source: 'none' | 'preference' | 'owner';
             };
+            tagIds?: readonly string[] | undefined;
         } | undefined;
     };
 };

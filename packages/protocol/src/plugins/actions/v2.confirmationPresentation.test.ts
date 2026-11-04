@@ -4,6 +4,46 @@ import { PluginActionConfirmationV2Schema, PluginActionContributionV2Schema } fr
 import { pluginActionRequiresPresentUserIntent } from './invocation.js';
 
 describe('PluginActionConfirmationV2Schema', () => {
+  it('keeps an explicit CLI default separate from human authority and per-Action Ask', () => {
+    const action = PluginActionContributionV2Schema.parse({
+      id: 'attach', title: 'Attach', execution: { target: 'daemon' },
+      scopes: ['global'], surfaces: ['ui', 'cli', 'agent', 'mcp'], placementBindings: [],
+      dangerLevel: 'writesLocal', confirmation: { title: 'Attach?' },
+      confirmationWhen: { presentUserUi: false, cli: false },
+    });
+    expect(pluginActionRequiresPresentUserIntent(action, 'cli', {}, 'account_automation')).toBe(false);
+    expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true },
+      'cli', {}, 'account_automation')).toBe(true);
+    for (const surface of ['agent', 'mcp', 'api', 'ui']) {
+      expect(pluginActionRequiresPresentUserIntent(action, surface, {}, 'account_automation')).toBe(true);
+    }
+    expect(PluginActionContributionV2Schema.safeParse({ ...action,
+      confirmationWhen: { presentUserUi: false, cli: false, unknownSurface: false },
+    }).success).toBe(false);
+  });
+
+  it('combines an input-sensitive default with a present-person UI exemption', () => {
+    const action = PluginActionContributionV2Schema.parse({
+      id: 'manage-links', title: 'Manage links', execution: { target: 'daemon' },
+      scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+      dangerLevel: 'writesLocal', confirmation: { title: 'Change links?' },
+      confirmationWhen: {
+        default: { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
+        presentUserUi: false,
+      },
+    });
+    for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
+      expect(pluginActionRequiresPresentUserIntent(action, surface, { kind: 'list' }, 'account_automation')).toBe(false);
+      expect(pluginActionRequiresPresentUserIntent(action, surface, { kind: 'attach' }, 'account_automation')).toBe(true);
+    }
+    expect(pluginActionRequiresPresentUserIntent(action, 'ui', { kind: 'attach' }, 'present_user')).toBe(false);
+    expect(pluginActionRequiresPresentUserIntent(action, 'agent')).toBe(true);
+    expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', { kind: 'list' }, 'present_user')).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action,
+      confirmationWhen: { ...action.confirmationWhen, unknownAuthority: true },
+    }).success).toBe(false);
+  });
+
   it('keeps reversible own-UI confirmation separate from danger, settings and other requesters', () => {
     const action = PluginActionContributionV2Schema.parse({
       id: 'set-complete', title: 'Set completion', execution: { target: 'daemon' },

@@ -11,7 +11,7 @@ export const PluginWebhookVerifierV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type PluginWebhookVerifierV1 = z.infer<typeof PluginWebhookVerifierV1Schema>;
 
-export const PluginWebhookContributionV1Schema = lazyZodSchema(() => z.strictObject({
+export const PluginWebhookContributionV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: z.optional(PluginLocalizedStringV2Schema),
@@ -19,5 +19,11 @@ export const PluginWebhookContributionV1Schema = lazyZodSchema(() => z.strictObj
   handlerAction: z.strictObject({
     localId: asProtocolZod(PluginContributionLocalIdSchema),
   }),
-}));
+}), z.strictObject({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  title: PluginLocalizedStringV2Schema,
+  description: z.optional(PluginLocalizedStringV2Schema),
+  verifier: z.strictObject({ kind: z.literal('capabilityUrl_v1'), routing: z.literal('accountEndpoint') }),
+  delivery: z.literal('recordReceiptOnly'),
+})]));
 export type PluginWebhookContributionV1 = z.infer<typeof PluginWebhookContributionV1Schema>;

@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ExtensionSelectionV1, QualifiedAudienceSelection, UpdatedSelectionV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SettingsDeclarationsActionInputById = {
     readonly "settings.list": {
@@ -102,6 +103,7 @@ export type SettingsDeclarationsActionInputById = {
     };
     readonly "settings.reset": {
         anchor: string;
+        key?: string | undefined;
         target?: {
             kind: 'home';
             serverId: string;
@@ -140,6 +142,407 @@ export type SettingsDeclarationsActionInputById = {
     readonly "settings.invoke": {
         anchor: string;
         input?: {
+            kind: 'collection_space';
+            entityKind: 'sessionWork';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: Readonly<{
+                        show: 'sessions' | 'runs' | 'both';
+                        startedBy: readonly ('you' | 'triggers' | 'agents')[];
+                        scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                        attention: 'any' | 'needs_my_attention';
+                        bot?: 'bot' | 'ordinary' | undefined;
+                        coordinator?: 'coordinator' | undefined;
+                        projects?: Readonly<{
+                            include: readonly {
+                                serverId: string;
+                                projectKey: string;
+                            }[];
+                            exclude: readonly {
+                                serverId: string;
+                                projectKey: string;
+                            }[];
+                        }> | undefined;
+                        statuses?: readonly ('unknown' | 'waiting' | 'locked' | 'archived' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'thinking')[] | undefined;
+                        excludedStatuses?: readonly ('unknown' | 'waiting' | 'locked' | 'archived' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'thinking')[] | undefined;
+                        machines?: Readonly<{
+                            include: readonly Readonly<{
+                                serverId: string;
+                                machineId: string;
+                            }>[];
+                            exclude: readonly Readonly<{
+                                serverId: string;
+                                machineId: string;
+                            }>[];
+                        }> | undefined;
+                        agents?: Readonly<{
+                            include: readonly string[];
+                            exclude: readonly string[];
+                        }> | undefined;
+                        sections?: Readonly<{
+                            include: readonly {
+                                serverId: string;
+                                sectionId: string;
+                            }[];
+                            exclude: readonly {
+                                serverId: string;
+                                sectionId: string;
+                            }[];
+                        }> | undefined;
+                        owners?: Readonly<{
+                            include: readonly Readonly<{
+                                serverId: string;
+                                accountId: string;
+                            }>[];
+                            exclude: readonly Readonly<{
+                                serverId: string;
+                                accountId: string;
+                            }>[];
+                        }> | undefined;
+                        branches?: Readonly<{
+                            include: readonly string[];
+                            exclude: readonly string[];
+                        }> | undefined;
+                        updated?: UpdatedSelectionV1<true> | undefined;
+                        includeInactive?: boolean | undefined;
+                        extensions?: Readonly<Record<string, ExtensionSelectionV1<true>>> | undefined;
+                        underSessionId?: string | undefined;
+                        homeServerIds: readonly string[];
+                        audiences: readonly QualifiedAudienceSelection<true>[];
+                        tagIds: readonly Readonly<{
+                            serverId: string;
+                            tagId: string;
+                        }>[];
+                        source: 'all' | 'direct' | 'persisted';
+                    }>;
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'sessionWork';
+                    membership?: {
+                        mode: 'filter_or_manual' | 'manual_only';
+                        tags: {
+                            serverId: string;
+                            accountId: string;
+                            tagId: string;
+                        }[];
+                    } | undefined;
+                };
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    membership?: {
+                        mode: 'filter_or_manual' | 'manual_only';
+                    } | undefined;
+                    name?: string | undefined;
+                    icon?: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    } | undefined;
+                    filter?: Readonly<{
+                        show: 'sessions' | 'runs' | 'both';
+                        startedBy: readonly ('you' | 'triggers' | 'agents')[];
+                        scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                        attention: 'any' | 'needs_my_attention';
+                        bot?: 'bot' | 'ordinary' | undefined;
+                        coordinator?: 'coordinator' | undefined;
+                        projects?: Readonly<{
+                            include: readonly {
+                                serverId: string;
+                                projectKey: string;
+                            }[];
+                            exclude: readonly {
+                                serverId: string;
+                                projectKey: string;
+                            }[];
+                        }> | undefined;
+                        statuses?: readonly ('unknown' | 'waiting' | 'locked' | 'archived' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'thinking')[] | undefined;
+                        excludedStatuses?: readonly ('unknown' | 'waiting' | 'locked' | 'archived' | 'preparing' | 'repair_needed' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'thinking')[] | undefined;
+                        machines?: Readonly<{
+                            include: readonly Readonly<{
+                                serverId: string;
+                                machineId: string;
+                            }>[];
+                            exclude: readonly Readonly<{
+                                serverId: string;
+                                machineId: string;
+                            }>[];
+                        }> | undefined;
+                        agents?: Readonly<{
+                            include: readonly string[];
+                            exclude: readonly string[];
+                        }> | undefined;
+                        sections?: Readonly<{
+                            include: readonly {
+                                serverId: string;
+                                sectionId: string;
+                            }[];
+                            exclude: readonly {
+                                serverId: string;
+                                sectionId: string;
+                            }[];
+                        }> | undefined;
+                        owners?: Readonly<{
+                            include: readonly Readonly<{
+                                serverId: string;
+                                accountId: string;
+                            }>[];
+                            exclude: readonly Readonly<{
+                                serverId: string;
+                                accountId: string;
+                            }>[];
+                        }> | undefined;
+                        branches?: Readonly<{
+                            include: readonly string[];
+                            exclude: readonly string[];
+                        }> | undefined;
+                        updated?: UpdatedSelectionV1<true> | undefined;
+                        includeInactive?: boolean | undefined;
+                        extensions?: Readonly<Record<string, ExtensionSelectionV1<true>>> | undefined;
+                        underSessionId?: string | undefined;
+                        homeServerIds: readonly string[];
+                        audiences: readonly QualifiedAudienceSelection<true>[];
+                        tagIds: readonly Readonly<{
+                            serverId: string;
+                            tagId: string;
+                        }>[];
+                        source: 'all' | 'direct' | 'persisted';
+                    }> | undefined;
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: string | null;
+            } | {
+                op: 'resetDefault';
+            } | {
+                op: 'associateTag';
+                spaceId: string;
+                tag: {
+                    serverId: string;
+                    accountId: string;
+                    tagId: string;
+                };
+            };
+        } | {
+            kind: 'collection_space';
+            entityKind: 'workflow';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: {
+                        view: 'all' | 'triggered' | 'running';
+                        extensions?: Record<string, {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    };
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'workflow';
+                };
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    name?: string | undefined;
+                    icon?: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    } | undefined;
+                    filter?: {
+                        view: 'all' | 'triggered' | 'running';
+                        extensions?: Record<string, {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    } | undefined;
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: string | null;
+            } | {
+                op: 'resetDefault';
+            };
+        } | {
+            kind: 'collection_space';
+            entityKind: 'discussion';
+            mutation: {
+                op: 'create';
+                space: {
+                    id: string;
+                    name: string;
+                    icon: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    };
+                    filter: {
+                        state: 'active' | 'archived';
+                        attention: 'any' | 'needs_you';
+                        unreadOnly: boolean;
+                        extensions?: Record<string, {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    };
+                    includeNeedsYouEverywhere: boolean;
+                    entityKind: 'discussion';
+                };
+            } | {
+                op: 'edit';
+                spaceId: string;
+                changes: {
+                    name?: string | undefined;
+                    icon?: {
+                        kind: 'icon';
+                        name: 'file' | 'workflow' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'check' | 'close' | 'error' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral';
+                    } | {
+                        kind: 'project';
+                        project: {
+                            serverId: string;
+                            projectKey: string;
+                        };
+                    } | undefined;
+                    filter?: {
+                        state: 'active' | 'archived';
+                        attention: 'any' | 'needs_you';
+                        unreadOnly: boolean;
+                        extensions?: Record<string, {
+                            kind: 'set';
+                            include: string[];
+                            exclude: string[];
+                        } | {
+                            kind: 'boolean';
+                            value: boolean;
+                        } | {
+                            kind: 'time';
+                            selection: {
+                                op: 'before';
+                                atMs: number;
+                            } | {
+                                op: 'after';
+                                atMs: number;
+                            } | {
+                                op: 'between';
+                                fromMs: number;
+                                toMs: number;
+                            };
+                        }> | undefined;
+                    } | undefined;
+                    includeNeedsYouEverywhere?: boolean | undefined;
+                };
+            } | {
+                op: 'delete';
+                spaceId: string;
+            } | {
+                op: 'reorder';
+                spaceId: string;
+                beforeSpaceId: string | null;
+            } | {
+                op: 'resetDefault';
+            };
+        } | {
             kind: 'atmosphere_picture_add';
             source: {
                 kind: 'picked';
@@ -205,7 +608,7 @@ export type SettingsDeclarationsActionInputById = {
             expectedSettingsVersion: number;
             expectedSecretId: string | null;
             expectedSecretUpdatedAt: number | null;
-            operation: 'inspect' | 'remove' | 'review';
+            operation: 'review' | 'inspect' | 'remove';
             machineId?: string | null | undefined;
             expectedRecipientContractDigest?: string | undefined;
         } | {
@@ -447,7 +850,7 @@ export type SettingsDeclarationsActionResultById = {
     };
     readonly "settings.invoke": {
         anchor: string;
-        status: 'completed' | 'cancelled' | 'unavailable' | 'interaction_opened';
+        status: 'unavailable' | 'completed' | 'cancelled' | 'interaction_opened';
         reason?: string | undefined;
         value?: JsonValue | undefined;
     };

@@ -1,5 +1,9 @@
+export type { JsonRpcApplicationError } from '../jsonRpcOutcome.js';
+export type { JsonRpcApplicationRejectionDetails } from '../jsonRpcOutcome.js';
 export type { PluginFramedBytesClient } from '../protocol-clients.js';
 export type { PluginJsonRpcClient } from '../protocol-clients.js';
+export type { PluginJsonRpcConnection } from '../protocol-clients.js';
+export type { PluginJsonRpcConnectionSpec } from '../protocol-clients.js';
 export type { PluginJsonStreamClient } from '../protocol-clients.js';
 export type { PluginLoopbackWebSocketClientSpec } from '../protocol-clients.js';
 export type { PluginLoopbackWebSocketEndpoint } from '../protocol-clients.js';
@@ -12,10 +16,4 @@ export type { PluginProtocolClientKind } from '../protocol-clients.js';
 export type { PluginProtocolClientSpec } from '../protocol-clients.js';
 export type { PluginProtocolClientSpecByKind } from '../protocol-clients.js';
 export type { ProtocolClientsService } from '../protocol-clients.js';
-
-export { PluginJsonRpcConnectionSpec } from './index.public.js';
-
-export { PluginJsonRpcConnection } from './index.public.js';
-
 export { readJsonRpcApplicationRejection } from '../jsonRpcOutcome.js';
-export type { JsonRpcApplicationError, JsonRpcApplicationRejectionDetails } from '../jsonRpcOutcome.js';

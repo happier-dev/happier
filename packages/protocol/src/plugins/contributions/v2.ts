@@ -1010,7 +1010,9 @@ function createPluginContributesV2SchemaWithoutDefault(): z.ZodMiniObject<
     });
   }
   value.webhooks.forEach((webhook, index) => {
-    const action = value.actions.find((candidate) => candidate.id === webhook.handlerAction.localId);
+    if ('delivery' in webhook) return;
+    const handlerAction = webhook.handlerAction;
+    const action = value.actions.find((candidate) => candidate.id === handlerAction.localId);
     if (!action) {
       ctx.addIssue({
         code: 'custom',

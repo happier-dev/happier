@@ -23,7 +23,8 @@ export type ProvidersActionInputById = {
             selectedCandidateId: string | null;
             endpointOverrides?: {
                 endpointTemplateId: string;
-                baseUrl: string;
+                baseUrl?: string | undefined;
+                publicHeaders?: Record<string, string> | undefined;
             }[] | undefined;
         } | undefined;
     }, true>;
@@ -41,7 +42,8 @@ export type ProvidersActionInputById = {
             revision: number;
             endpointOverrides?: {
                 endpointTemplateId: string;
-                baseUrl: string;
+                baseUrl?: string | undefined;
+                publicHeaders?: Record<string, string> | undefined;
             }[] | undefined;
         };
     }, true>;
@@ -88,6 +90,27 @@ export type ProvidersActionInputById = {
                         name: string;
                         format: 'raw' | 'bearer';
                     };
+                    additionalCredentials?: {
+                        slotId: string;
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        label?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    }[] | undefined;
                 }[];
                 slotId?: 'apiKey' | undefined;
                 required?: boolean | undefined;
@@ -162,6 +185,27 @@ export type ProvidersActionInputById = {
                         name: string;
                         format: 'raw' | 'bearer';
                     };
+                    additionalCredentials?: {
+                        slotId: string;
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        label?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    }[] | undefined;
                 }[];
                 slotId?: 'apiKey' | undefined;
                 required?: boolean | undefined;
@@ -212,7 +256,7 @@ export type ProvidersActionInputById = {
         expectedRevision: number;
         scope: 'account' | 'machine';
         endpointTemplateId: string;
-        baseUrl: string | null;
+        baseUrl?: string | null | undefined;
     }, true>;
     readonly "providers.connections.duplicate": AccountOperand<{
         machineId: string;
@@ -285,22 +329,17 @@ export type ProvidersActionInputById = {
             groupId: string;
         } | undefined;
         sourceCatalog?: true | undefined;
-        teamCredentialResources?: undefined | {
+        nativeSource?: {
+            resourceId: string;
+            expectedResourceRevision: number;
+        } | undefined;
+        teamCredentialResources?: {
             id: string;
             teamId: string;
             displayName: string;
             resourceRevision: number;
             readiness: {
                 kind: 'available';
-            } | {
-                kind: 'broker_unavailable';
-                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
-            } | {
-                kind: 'limit_reached';
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
-                resetsAtUtc: string;
-            } | {
-                kind: 'policy_denied';
             } | {
                 kind: 'resource_corrupt';
             } | {
@@ -309,12 +348,21 @@ export type ProvidersActionInputById = {
                 kind: 'source_unavailable';
                 reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
+            } | {
                 kind: 'update_required';
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'limit_reached';
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                resetsAtUtc: string;
             };
-            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            recoveryAction: 'update_required' | 'retry' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
             mayBroker: boolean;
             mayReceiveDirect: boolean;
-            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            directMaterialState: 'never_delivered' | 'preparing' | 'current' | 'stale' | 'revoked';
             sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
             providerModels: {
                 selection: {
@@ -325,7 +373,7 @@ export type ProvidersActionInputById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: undefined | {
+                    nativeDelivery?: {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -333,172 +381,139 @@ export type ProvidersActionInputById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    };
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
                     name: string;
-                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    costTier?: 'low' | 'standard' | 'premium' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
-                    inlineCompletion?: undefined | {
+                    inlineCompletion?: {
                         operationId: string;
                         tokenAccounting: 'utf8-bytes';
                         promptOverheadTokens: number;
                         outputTokens?: number | undefined;
                         maxOutputTokens?: number | undefined;
-                        rawFimTemplate?: undefined | {
+                        rawFimTemplate?: {
                             prefix: string;
                             suffix: string;
                             middle: string;
-                        };
-                    };
-                    nextEdit?: undefined | {
-                        operationId: string;
-                        tokenAccounting: 'utf8-bytes';
-                        promptOverheadTokens: number;
-                        outputTokens?: number | undefined;
-                        maxOutputTokens?: number | undefined;
-                    };
+                        } | undefined;
+                    } | undefined;
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: {
                         id: string;
                         name: string;
                         type: string;
                         currentValue: string;
                         description?: string | undefined;
-                        options?: undefined | {
+                        options?: {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
+                        }[] | undefined;
+                        overridesWhenOn?: {
                             optionIds: string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
-                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
+                        } | undefined;
+                    }[] | undefined;
+                    capabilities?: {
+                        toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                    } | undefined;
                 };
                 application: {
+                    agentTargetKey: string;
                     implementationIdentity: {
                         pluginId: string;
                         localId: string;
                     };
                     endpointTemplateId: string;
                     protocol: string;
-                    agentTargetKey: string;
                 };
                 sourceRevision: string;
-                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
-                sourceFacts?: undefined | {
+                availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
+                sourceFacts?: {
                     endpoint: {
                         id: string;
                         protocol: string;
                         capabilities: {
-                            streaming: 'supported' | 'unknown' | 'unsupported';
-                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
-                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
-                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                            streaming: 'unknown' | 'supported' | 'unsupported';
+                            toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
+                            statefulResponses: 'unknown' | 'supported' | 'unsupported';
+                            reasoningControls: 'unknown' | 'supported' | 'unsupported';
                         };
-                        modelIdPattern?: string | undefined;
                     };
-                    credential?: undefined | {
+                    credential?: {
                         kind: 'apiKey';
                         transports: {
                             id: string;
                             protocols: string[];
-                            uses: ('management' | 'probe' | 'runtime')[];
+                            uses: ('probe' | 'runtime' | 'management')[];
                             destination: {
                                 kind: 'httpHeader';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             } | {
                                 kind: 'queryParam';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             };
-                            additionalCredentials?: undefined | {
+                            additionalCredentials?: {
                                 slotId: string;
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 };
-                                label?: string | undefined | {
+                                label?: string | {
                                     key: string;
                                     fallback: string;
-                                    params?: Record<string, number | string> | undefined;
-                                };
-                            }[];
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         slotId?: 'apiKey' | undefined;
                         required?: boolean | undefined;
                         keyUrl?: string | undefined;
-                        authorityDescription?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    compatibilityOverrides?: undefined | {
+                    } | undefined;
+                    compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'experimental' | 'incompatible' | 'verified';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
-                        evidence?: undefined | {
+                        evidence?: {
                             sourceUrls: string[];
                             verifiedAt: string;
                             providerVersion?: string | undefined;
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
-                        };
-                    }[];
-                };
-                sources?: undefined | {
+                        } | undefined;
+                    }[] | undefined;
+                } | undefined;
+                sources?: {
                     manual: boolean;
                     static: boolean;
                     probe: boolean;
-                };
-                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
-                compatibility?: undefined | {
+                } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
+                compatibility?: {
                     result: {
-                        status: 'experimental';
-                        selectedProtocol: string;
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                        confirmationScope: {
-                            kind: 'connection';
-                        } | {
-                            kind: 'model';
-                            modelId: string;
-                        };
-                        evidence?: undefined | {
-                            sourceUrls: string[];
-                            verifiedAt: string;
-                            providerVersion?: string | undefined;
-                            agentVersion?: string | undefined;
-                            testIds?: string[] | undefined;
-                        };
-                    } | {
-                        status: 'incompatible';
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                    } | {
                         status: 'verified';
                         selectedProtocol: string;
                         evidence: {
@@ -508,27 +523,47 @@ export type ProvidersActionInputById = {
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
                         };
+                    } | {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        } | undefined;
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                     };
                     compatibilityFingerprint: string;
                     confirmed: boolean;
-                };
-                nativeSource?: undefined | {
+                } | undefined;
+                nativeSource?: {
                     providerTicket: string;
-                };
-                direct?: null | undefined | {
+                } | undefined;
+                direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
-                };
-                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+                } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
-            sourcePresentation: null | {
+            sourcePresentation: {
                 kind: 'connected_service';
                 service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
                     pluginId: string;
                     localId: string;
+                } | {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
                 };
             } | {
                 kind: 'provider';
@@ -539,18 +574,14 @@ export type ProvidersActionInputById = {
                     };
                     definitionRevision: 1;
                 };
-            };
-            deliveryPolicy?: undefined | {
+            } | null;
+            deliveryPolicy?: {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
-            };
+            } | undefined;
             allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
-            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
             connectedServiceSelections?: ({
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-            } | {
                 source: 'team_resource';
                 resourceId: string;
                 deliveryMode: 'direct';
@@ -561,19 +592,24 @@ export type ProvidersActionInputById = {
                     };
                     accountId: string;
                 };
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+                disclosedMember?: undefined;
             })[] | undefined;
-            usageCapabilities?: undefined | {
+            usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
                 totalTokens: 'available' | 'unavailable';
                 costUsd: 'available' | 'unavailable';
-                limitCoverage: 'brokered_only' | 'unavailable';
-            };
-            usageLimit?: null | undefined | {
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                limitCoverage: 'unavailable' | 'brokered_only';
+            } | undefined;
+            usageLimit?: {
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
                 remaining: string;
                 resetsAtUtc: string;
-            };
-        }[];
+            } | null | undefined;
+        }[] | undefined;
         mode?: 'management' | 'picker' | undefined;
         sourceConnectionId?: string | undefined;
         favoriteSelections?: ({
@@ -637,22 +673,17 @@ export type ProvidersActionInputById = {
             groupId: string;
         } | undefined;
         sourceCatalog?: true | undefined;
-        teamCredentialResources?: undefined | {
+        nativeSource?: {
+            resourceId: string;
+            expectedResourceRevision: number;
+        } | undefined;
+        teamCredentialResources?: {
             id: string;
             teamId: string;
             displayName: string;
             resourceRevision: number;
             readiness: {
                 kind: 'available';
-            } | {
-                kind: 'broker_unavailable';
-                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
-            } | {
-                kind: 'limit_reached';
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
-                resetsAtUtc: string;
-            } | {
-                kind: 'policy_denied';
             } | {
                 kind: 'resource_corrupt';
             } | {
@@ -661,12 +692,21 @@ export type ProvidersActionInputById = {
                 kind: 'source_unavailable';
                 reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
+            } | {
                 kind: 'update_required';
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'limit_reached';
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                resetsAtUtc: string;
             };
-            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            recoveryAction: 'update_required' | 'retry' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
             mayBroker: boolean;
             mayReceiveDirect: boolean;
-            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            directMaterialState: 'never_delivered' | 'preparing' | 'current' | 'stale' | 'revoked';
             sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
             providerModels: {
                 selection: {
@@ -677,7 +717,7 @@ export type ProvidersActionInputById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: undefined | {
+                    nativeDelivery?: {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -685,172 +725,139 @@ export type ProvidersActionInputById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    };
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
                     name: string;
-                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    costTier?: 'low' | 'standard' | 'premium' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
-                    inlineCompletion?: undefined | {
+                    inlineCompletion?: {
                         operationId: string;
                         tokenAccounting: 'utf8-bytes';
                         promptOverheadTokens: number;
                         outputTokens?: number | undefined;
                         maxOutputTokens?: number | undefined;
-                        rawFimTemplate?: undefined | {
+                        rawFimTemplate?: {
                             prefix: string;
                             suffix: string;
                             middle: string;
-                        };
-                    };
-                    nextEdit?: undefined | {
-                        operationId: string;
-                        tokenAccounting: 'utf8-bytes';
-                        promptOverheadTokens: number;
-                        outputTokens?: number | undefined;
-                        maxOutputTokens?: number | undefined;
-                    };
+                        } | undefined;
+                    } | undefined;
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: {
                         id: string;
                         name: string;
                         type: string;
                         currentValue: string;
                         description?: string | undefined;
-                        options?: undefined | {
+                        options?: {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
+                        }[] | undefined;
+                        overridesWhenOn?: {
                             optionIds: string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
-                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
+                        } | undefined;
+                    }[] | undefined;
+                    capabilities?: {
+                        toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                    } | undefined;
                 };
                 application: {
+                    agentTargetKey: string;
                     implementationIdentity: {
                         pluginId: string;
                         localId: string;
                     };
                     endpointTemplateId: string;
                     protocol: string;
-                    agentTargetKey: string;
                 };
                 sourceRevision: string;
-                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
-                sourceFacts?: undefined | {
+                availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
+                sourceFacts?: {
                     endpoint: {
                         id: string;
                         protocol: string;
                         capabilities: {
-                            streaming: 'supported' | 'unknown' | 'unsupported';
-                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
-                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
-                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                            streaming: 'unknown' | 'supported' | 'unsupported';
+                            toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
+                            statefulResponses: 'unknown' | 'supported' | 'unsupported';
+                            reasoningControls: 'unknown' | 'supported' | 'unsupported';
                         };
-                        modelIdPattern?: string | undefined;
                     };
-                    credential?: undefined | {
+                    credential?: {
                         kind: 'apiKey';
                         transports: {
                             id: string;
                             protocols: string[];
-                            uses: ('management' | 'probe' | 'runtime')[];
+                            uses: ('probe' | 'runtime' | 'management')[];
                             destination: {
                                 kind: 'httpHeader';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             } | {
                                 kind: 'queryParam';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             };
-                            additionalCredentials?: undefined | {
+                            additionalCredentials?: {
                                 slotId: string;
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 };
-                                label?: string | undefined | {
+                                label?: string | {
                                     key: string;
                                     fallback: string;
-                                    params?: Record<string, number | string> | undefined;
-                                };
-                            }[];
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         slotId?: 'apiKey' | undefined;
                         required?: boolean | undefined;
                         keyUrl?: string | undefined;
-                        authorityDescription?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    compatibilityOverrides?: undefined | {
+                    } | undefined;
+                    compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'experimental' | 'incompatible' | 'verified';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
-                        evidence?: undefined | {
+                        evidence?: {
                             sourceUrls: string[];
                             verifiedAt: string;
                             providerVersion?: string | undefined;
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
-                        };
-                    }[];
-                };
-                sources?: undefined | {
+                        } | undefined;
+                    }[] | undefined;
+                } | undefined;
+                sources?: {
                     manual: boolean;
                     static: boolean;
                     probe: boolean;
-                };
-                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
-                compatibility?: undefined | {
+                } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
+                compatibility?: {
                     result: {
-                        status: 'experimental';
-                        selectedProtocol: string;
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                        confirmationScope: {
-                            kind: 'connection';
-                        } | {
-                            kind: 'model';
-                            modelId: string;
-                        };
-                        evidence?: undefined | {
-                            sourceUrls: string[];
-                            verifiedAt: string;
-                            providerVersion?: string | undefined;
-                            agentVersion?: string | undefined;
-                            testIds?: string[] | undefined;
-                        };
-                    } | {
-                        status: 'incompatible';
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                    } | {
                         status: 'verified';
                         selectedProtocol: string;
                         evidence: {
@@ -860,27 +867,47 @@ export type ProvidersActionInputById = {
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
                         };
+                    } | {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        } | undefined;
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                     };
                     compatibilityFingerprint: string;
                     confirmed: boolean;
-                };
-                nativeSource?: undefined | {
+                } | undefined;
+                nativeSource?: {
                     providerTicket: string;
-                };
-                direct?: null | undefined | {
+                } | undefined;
+                direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
-                };
-                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+                } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
-            sourcePresentation: null | {
+            sourcePresentation: {
                 kind: 'connected_service';
                 service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
                     pluginId: string;
                     localId: string;
+                } | {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
                 };
             } | {
                 kind: 'provider';
@@ -891,18 +918,14 @@ export type ProvidersActionInputById = {
                     };
                     definitionRevision: 1;
                 };
-            };
-            deliveryPolicy?: undefined | {
+            } | null;
+            deliveryPolicy?: {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
-            };
+            } | undefined;
             allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
-            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
             connectedServiceSelections?: ({
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-            } | {
                 source: 'team_resource';
                 resourceId: string;
                 deliveryMode: 'direct';
@@ -913,19 +936,24 @@ export type ProvidersActionInputById = {
                     };
                     accountId: string;
                 };
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+                disclosedMember?: undefined;
             })[] | undefined;
-            usageCapabilities?: undefined | {
+            usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
                 totalTokens: 'available' | 'unavailable';
                 costUsd: 'available' | 'unavailable';
-                limitCoverage: 'brokered_only' | 'unavailable';
-            };
-            usageLimit?: null | undefined | {
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                limitCoverage: 'unavailable' | 'brokered_only';
+            } | undefined;
+            usageLimit?: {
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
                 remaining: string;
                 resetsAtUtc: string;
-            };
-        }[];
+            } | null | undefined;
+        }[] | undefined;
         mode?: 'management' | 'picker' | undefined;
         sourceConnectionId?: string | undefined;
         favoriteSelections?: ({
@@ -1112,6 +1140,27 @@ export type ProvidersActionInputById = {
                         name: string;
                         format: 'raw' | 'bearer';
                     };
+                    additionalCredentials?: {
+                        slotId: string;
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        label?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    }[] | undefined;
                 }[];
                 slotId?: 'apiKey' | undefined;
                 required?: boolean | undefined;
@@ -1218,6 +1267,27 @@ export type ProvidersActionInputById = {
                             template: string;
                         };
                     };
+                    additionalCredentials?: {
+                        slotId: string;
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        label?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    }[] | undefined;
                 } | null;
                 prepared: {
                     v: 1;
@@ -1296,6 +1366,27 @@ export type ProvidersActionInputById = {
                             template: string;
                         };
                     };
+                    additionalCredentials?: {
+                        slotId: string;
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        label?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    }[] | undefined;
                 } | null;
                 prepared: {
                     v: 1;
@@ -1358,6 +1449,7 @@ export type ProvidersActionInputById = {
                             title?: string | {
                                 key: string;
                                 fallback: string;
+                                params?: Record<string, string | number> | undefined;
                             } | undefined;
                             required?: boolean | undefined;
                             materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
@@ -1531,15 +1623,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -1588,6 +1685,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -1608,6 +1706,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -1618,11 +1717,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -1630,11 +1746,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -1671,7 +1788,7 @@ export type ProvidersActionResultById = {
         available: {
             contributionKey: string;
             name: string;
-            kind: 'frontier' | 'aggregator' | 'cloud' | 'local';
+            kind: 'local' | 'frontier' | 'aggregator' | 'cloud';
             provenance: 'external' | 'first_party';
             icon: string | null;
             credential: {
@@ -1781,11 +1898,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.create_contribution": {
@@ -1823,15 +1941,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -1880,6 +2003,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -1900,6 +2024,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -1910,11 +2035,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -1922,11 +2064,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -1976,11 +2119,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.create_custom": {
@@ -2018,15 +2162,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2075,6 +2224,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2095,6 +2245,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2105,11 +2256,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2117,11 +2285,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2171,11 +2340,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.enable_detected": {
@@ -2213,15 +2383,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2270,6 +2445,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2290,6 +2466,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2300,11 +2477,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2312,11 +2506,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2366,11 +2561,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.start_local": {
@@ -2408,15 +2604,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2465,6 +2666,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2485,6 +2687,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2495,11 +2698,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2507,11 +2727,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2561,11 +2782,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.update": {
@@ -2603,15 +2825,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2660,6 +2887,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2680,6 +2908,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2690,11 +2919,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2702,11 +2948,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2756,11 +3003,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.endpoint.set": {
@@ -2798,15 +3046,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -2855,6 +3108,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -2875,6 +3129,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -2885,11 +3140,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -2897,11 +3169,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2951,11 +3224,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.duplicate": {
@@ -2993,15 +3267,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3050,6 +3329,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3070,6 +3350,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3080,11 +3361,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3092,11 +3390,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3146,11 +3445,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.delete": {
@@ -3188,15 +3488,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3245,6 +3550,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3265,6 +3571,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3275,11 +3582,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3287,11 +3611,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3341,11 +3666,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.enabled.set": {
@@ -3383,15 +3709,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3440,6 +3771,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3460,6 +3792,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3470,11 +3803,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3482,11 +3832,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3536,11 +3887,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.connections.secrets.bind": {
@@ -3578,15 +3930,20 @@ export type ProvidersActionResultById = {
             grants: {
                 accountEnabled: boolean;
                 enabledMachineIds: string[];
-                accountState: 'absent' | 'valid' | 'stale';
-                machineState: 'absent' | 'valid' | 'stale';
-                effectiveState: 'absent' | 'valid' | 'stale';
+                accountState: 'stale' | 'absent' | 'valid';
+                machineState: 'stale' | 'absent' | 'valid';
+                effectiveState: 'stale' | 'absent' | 'valid';
             };
             credential: {
                 required: boolean;
                 accountBound: boolean;
                 boundMachineIds: string[];
                 keyUrl?: string | undefined;
+                authorityDescription?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
             } | null;
             teamCredentialSourceOffer: {
                 connectionId: string;
@@ -3635,6 +3992,7 @@ export type ProvidersActionResultById = {
                         title?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                         materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                     }[];
@@ -3655,6 +4013,7 @@ export type ProvidersActionResultById = {
                     title?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                     materializationKinds?: ('httpHeaders' | 'environment' | 'files')[] | undefined;
                 }[];
@@ -3665,11 +4024,28 @@ export type ProvidersActionResultById = {
             endpoints: {
                 endpointTemplateId: string;
                 protocol: string;
-                baseUrl: string;
+                baseUrl: string | null;
                 effectiveSource: 'template' | 'accountOverride' | 'machineOverride';
                 defaultBaseUrl: string | null;
                 accountOverrideBaseUrl: string | null;
                 machineOverrideBaseUrl: string | null;
+                publicHeaders: Readonly<Record<string, string>>;
+                defaultPublicHeaders: Readonly<Record<string, string>>;
+                accountOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                machineOverridePublicHeaders: Readonly<Record<string, string>> | null;
+                publicHeaderSources: Record<string, 'template' | 'accountOverride' | 'machineOverride'>;
+                requiresEndpointOverride?: true | undefined;
+                addressConstraint?: {
+                    origin: string;
+                    pathSegments: (string | null)[];
+                } | undefined;
+                modelIdPattern?: string | undefined;
+                requiredPublicHeaders?: string[] | undefined;
+                publicHeaderHints?: Record<string, string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                }> | undefined;
             }[];
             scope: 'account' | 'machine' | null;
             authorized: boolean;
@@ -3677,11 +4053,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | null;
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3731,11 +4108,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.list": {
@@ -3758,11 +4136,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.projection": {
@@ -3784,11 +4163,12 @@ export type ProvidersActionResultById = {
                     v: 1;
                     code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                     retryable: boolean;
-                    action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                    action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                     connectionId?: (string) | undefined;
                     machineId?: string | undefined;
                     sourceProfileId?: string | undefined;
                     retryAfterMs?: number | undefined;
+                    savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
                 };
             };
             manualModelPolicy: 'allowed' | 'catalog-only';
@@ -3933,6 +4313,64 @@ export type ProvidersActionResultById = {
                     endpointTemplateId: string;
                     protocol: string;
                 } | undefined;
+                nativeSource?: {
+                    authorizationTicket: {
+                        connectionId: string;
+                        connectionRevision: number;
+                        machineId: string;
+                        connectionSecurityFingerprint: string;
+                        bindingSecurityFingerprint: string;
+                        grantFingerprint: string;
+                        selectedSecretBindingId: string | null;
+                        selectedSecretRecordFingerprint: string | null;
+                    };
+                    providerTicket: string;
+                    endpoint: {
+                        endpointTemplateId: string;
+                        normalizedUrl: string;
+                        protocol: string;
+                        publicHeaders: Readonly<Record<string, string>>;
+                    };
+                    credentialTransport: {
+                        id: string;
+                        protocols: string[];
+                        uses: ('probe' | 'runtime' | 'management')[];
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        additionalCredentials?: {
+                            slotId: string;
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            };
+                            label?: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            } | undefined;
+                        }[] | undefined;
+                    };
+                } | undefined;
                 sourceFacts?: {
                     endpoint: {
                         id: string;
@@ -3965,13 +4403,34 @@ export type ProvidersActionResultById = {
                                     template: string;
                                 };
                             };
+                            additionalCredentials?: {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
                     } | undefined;
                     compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'verified' | 'experimental' | 'incompatible';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
                         evidence?: {
                             sourceUrls: string[];
@@ -4076,6 +4535,27 @@ export type ProvidersActionResultById = {
                                 template: string;
                             };
                         };
+                        additionalCredentials?: {
+                            slotId: string;
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            };
+                            label?: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            } | undefined;
+                        }[] | undefined;
                     };
                 } | undefined;
             }[];
@@ -4112,22 +4592,13 @@ export type ProvidersActionResultById = {
             sourceRevision?: string | undefined;
             modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
         }[];
-        teamCredentialResources?: undefined | {
+        teamCredentialResources?: {
             id: string;
             teamId: string;
             displayName: string;
             resourceRevision: number;
             readiness: {
                 kind: 'available';
-            } | {
-                kind: 'broker_unavailable';
-                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
-            } | {
-                kind: 'limit_reached';
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
-                resetsAtUtc: string;
-            } | {
-                kind: 'policy_denied';
             } | {
                 kind: 'resource_corrupt';
             } | {
@@ -4136,12 +4607,21 @@ export type ProvidersActionResultById = {
                 kind: 'source_unavailable';
                 reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
+            } | {
                 kind: 'update_required';
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'limit_reached';
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                resetsAtUtc: string;
             };
-            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            recoveryAction: 'update_required' | 'retry' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
             mayBroker: boolean;
             mayReceiveDirect: boolean;
-            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            directMaterialState: 'never_delivered' | 'preparing' | 'current' | 'stale' | 'revoked';
             sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
             providerModels: {
                 selection: {
@@ -4152,7 +4632,7 @@ export type ProvidersActionResultById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: undefined | {
+                    nativeDelivery?: {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -4160,172 +4640,139 @@ export type ProvidersActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    };
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
                     name: string;
-                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    costTier?: 'low' | 'standard' | 'premium' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
-                    inlineCompletion?: undefined | {
+                    inlineCompletion?: {
                         operationId: string;
                         tokenAccounting: 'utf8-bytes';
                         promptOverheadTokens: number;
                         outputTokens?: number | undefined;
                         maxOutputTokens?: number | undefined;
-                        rawFimTemplate?: undefined | {
+                        rawFimTemplate?: {
                             prefix: string;
                             suffix: string;
                             middle: string;
-                        };
-                    };
-                    nextEdit?: undefined | {
-                        operationId: string;
-                        tokenAccounting: 'utf8-bytes';
-                        promptOverheadTokens: number;
-                        outputTokens?: number | undefined;
-                        maxOutputTokens?: number | undefined;
-                    };
+                        } | undefined;
+                    } | undefined;
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: {
                         id: string;
                         name: string;
                         type: string;
                         currentValue: string;
                         description?: string | undefined;
-                        options?: undefined | {
+                        options?: {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
+                        }[] | undefined;
+                        overridesWhenOn?: {
                             optionIds: string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
-                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
+                        } | undefined;
+                    }[] | undefined;
+                    capabilities?: {
+                        toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                    } | undefined;
                 };
                 application: {
+                    agentTargetKey: string;
                     implementationIdentity: {
                         pluginId: string;
                         localId: string;
                     };
                     endpointTemplateId: string;
                     protocol: string;
-                    agentTargetKey: string;
                 };
                 sourceRevision: string;
-                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
-                sourceFacts?: undefined | {
+                availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
+                sourceFacts?: {
                     endpoint: {
                         id: string;
                         protocol: string;
                         capabilities: {
-                            streaming: 'supported' | 'unknown' | 'unsupported';
-                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
-                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
-                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                            streaming: 'unknown' | 'supported' | 'unsupported';
+                            toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
+                            statefulResponses: 'unknown' | 'supported' | 'unsupported';
+                            reasoningControls: 'unknown' | 'supported' | 'unsupported';
                         };
-                        modelIdPattern?: string | undefined;
                     };
-                    credential?: undefined | {
+                    credential?: {
                         kind: 'apiKey';
                         slotId: 'apiKey';
                         required: boolean;
                         transports: {
                             id: string;
                             protocols: string[];
-                            uses: ('management' | 'probe' | 'runtime')[];
+                            uses: ('probe' | 'runtime' | 'management')[];
                             destination: {
                                 kind: 'httpHeader';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             } | {
                                 kind: 'queryParam';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             };
-                            additionalCredentials?: undefined | {
+                            additionalCredentials?: {
                                 slotId: string;
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 };
-                                label?: string | undefined | {
+                                label?: string | {
                                     key: string;
                                     fallback: string;
-                                    params?: Record<string, number | string> | undefined;
-                                };
-                            }[];
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
-                        authorityDescription?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    compatibilityOverrides?: undefined | {
+                    } | undefined;
+                    compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'experimental' | 'incompatible' | 'verified';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
-                        evidence?: undefined | {
+                        evidence?: {
                             sourceUrls: string[];
                             verifiedAt: string;
                             providerVersion?: string | undefined;
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
-                        };
-                    }[];
-                };
-                sources?: undefined | {
+                        } | undefined;
+                    }[] | undefined;
+                } | undefined;
+                sources?: {
                     manual: boolean;
                     static: boolean;
                     probe: boolean;
-                };
-                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
-                compatibility?: undefined | {
+                } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
+                compatibility?: {
                     result: {
-                        status: 'experimental';
-                        selectedProtocol: string;
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                        confirmationScope: {
-                            kind: 'connection';
-                        } | {
-                            kind: 'model';
-                            modelId: string;
-                        };
-                        evidence?: undefined | {
-                            sourceUrls: string[];
-                            verifiedAt: string;
-                            providerVersion?: string | undefined;
-                            agentVersion?: string | undefined;
-                            testIds?: string[] | undefined;
-                        };
-                    } | {
-                        status: 'incompatible';
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                    } | {
                         status: 'verified';
                         selectedProtocol: string;
                         evidence: {
@@ -4335,24 +4782,40 @@ export type ProvidersActionResultById = {
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
                         };
+                    } | {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        } | undefined;
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                     };
                     compatibilityFingerprint: string;
                     confirmed: boolean;
-                };
-                nativeSource?: undefined | {
+                } | undefined;
+                nativeSource?: {
                     providerTicket: string;
-                };
-                direct?: null | undefined | {
+                } | undefined;
+                direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
-                };
-                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+                } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
             connectedServiceSelections: ({
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-            } | {
                 source: 'team_resource';
                 resourceId: string;
                 deliveryMode: 'direct';
@@ -4363,15 +4826,20 @@ export type ProvidersActionResultById = {
                     };
                     accountId: string;
                 };
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+                disclosedMember?: undefined;
             })[];
-            sourcePresentation: null | {
+            sourcePresentation: {
                 kind: 'connected_service';
                 service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
                     pluginId: string;
                     localId: string;
+                } | {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
                 };
             } | {
                 kind: 'provider';
@@ -4382,25 +4850,25 @@ export type ProvidersActionResultById = {
                     };
                     definitionRevision: 1;
                 };
-            };
-            deliveryPolicy?: undefined | {
+            } | null;
+            deliveryPolicy?: {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
-            };
+            } | undefined;
             allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
-            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
-            usageCapabilities?: undefined | {
+            usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
                 totalTokens: 'available' | 'unavailable';
                 costUsd: 'available' | 'unavailable';
-                limitCoverage: 'brokered_only' | 'unavailable';
-            };
-            usageLimit?: null | undefined | {
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                limitCoverage: 'unavailable' | 'brokered_only';
+            } | undefined;
+            usageLimit?: {
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
                 remaining: string;
                 resetsAtUtc: string;
-            };
-        }[];
+            } | null | undefined;
+        }[] | undefined;
         hiddenSources?: {
             connectionId: string;
             providerName: string;
@@ -4424,11 +4892,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             };
             displaySnapshot: {
                 providerName?: string | undefined;
@@ -4442,11 +4911,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             };
         }[] | undefined;
     } | {
@@ -4455,11 +4925,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.refresh": {
@@ -4481,11 +4952,12 @@ export type ProvidersActionResultById = {
                     v: 1;
                     code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                     retryable: boolean;
-                    action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                    action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                     connectionId?: (string) | undefined;
                     machineId?: string | undefined;
                     sourceProfileId?: string | undefined;
                     retryAfterMs?: number | undefined;
+                    savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
                 };
             };
             manualModelPolicy: 'allowed' | 'catalog-only';
@@ -4630,6 +5102,64 @@ export type ProvidersActionResultById = {
                     endpointTemplateId: string;
                     protocol: string;
                 } | undefined;
+                nativeSource?: {
+                    authorizationTicket: {
+                        connectionId: string;
+                        connectionRevision: number;
+                        machineId: string;
+                        connectionSecurityFingerprint: string;
+                        bindingSecurityFingerprint: string;
+                        grantFingerprint: string;
+                        selectedSecretBindingId: string | null;
+                        selectedSecretRecordFingerprint: string | null;
+                    };
+                    providerTicket: string;
+                    endpoint: {
+                        endpointTemplateId: string;
+                        normalizedUrl: string;
+                        protocol: string;
+                        publicHeaders: Readonly<Record<string, string>>;
+                    };
+                    credentialTransport: {
+                        id: string;
+                        protocols: string[];
+                        uses: ('probe' | 'runtime' | 'management')[];
+                        destination: {
+                            kind: 'httpHeader';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        } | {
+                            kind: 'queryParam';
+                            name: string;
+                            format: 'raw' | 'bearer' | {
+                                template: string;
+                            };
+                        };
+                        additionalCredentials?: {
+                            slotId: string;
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            };
+                            label?: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            } | undefined;
+                        }[] | undefined;
+                    };
+                } | undefined;
                 sourceFacts?: {
                     endpoint: {
                         id: string;
@@ -4662,13 +5192,34 @@ export type ProvidersActionResultById = {
                                     template: string;
                                 };
                             };
+                            additionalCredentials?: {
+                                slotId: string;
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                };
+                                label?: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
                     } | undefined;
                     compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'verified' | 'experimental' | 'incompatible';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
                         evidence?: {
                             sourceUrls: string[];
@@ -4773,6 +5324,27 @@ export type ProvidersActionResultById = {
                                 template: string;
                             };
                         };
+                        additionalCredentials?: {
+                            slotId: string;
+                            destination: {
+                                kind: 'httpHeader';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            } | {
+                                kind: 'queryParam';
+                                name: string;
+                                format: 'raw' | 'bearer' | {
+                                    template: string;
+                                };
+                            };
+                            label?: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            } | undefined;
+                        }[] | undefined;
                     };
                 } | undefined;
             }[];
@@ -4809,22 +5381,13 @@ export type ProvidersActionResultById = {
             sourceRevision?: string | undefined;
             modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
         }[];
-        teamCredentialResources?: undefined | {
+        teamCredentialResources?: {
             id: string;
             teamId: string;
             displayName: string;
             resourceRevision: number;
             readiness: {
                 kind: 'available';
-            } | {
-                kind: 'broker_unavailable';
-                reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
-            } | {
-                kind: 'limit_reached';
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
-                resetsAtUtc: string;
-            } | {
-                kind: 'policy_denied';
             } | {
                 kind: 'resource_corrupt';
             } | {
@@ -4833,12 +5396,21 @@ export type ProvidersActionResultById = {
                 kind: 'source_unavailable';
                 reason?: 'connected_service_credential_reconnect_required' | undefined;
             } | {
+                kind: 'broker_unavailable';
+                reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
+            } | {
                 kind: 'update_required';
+            } | {
+                kind: 'policy_denied';
+            } | {
+                kind: 'limit_reached';
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                resetsAtUtc: string;
             };
-            recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+            recoveryAction: 'update_required' | 'retry' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
             mayBroker: boolean;
             mayReceiveDirect: boolean;
-            directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
+            directMaterialState: 'never_delivered' | 'preparing' | 'current' | 'stale' | 'revoked';
             sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
             providerModels: {
                 selection: {
@@ -4849,7 +5421,7 @@ export type ProvidersActionResultById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: undefined | {
+                    nativeDelivery?: {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -4857,172 +5429,139 @@ export type ProvidersActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    };
+                    } | undefined;
                 };
                 descriptor: {
                     id: string;
                     name: string;
-                    costTier?: 'low' | 'premium' | 'standard' | undefined;
+                    costTier?: 'low' | 'standard' | 'premium' | undefined;
                     aliases?: string[] | undefined;
                     description?: string | undefined;
                     contextWindowTokens?: number | undefined;
-                    inlineCompletion?: undefined | {
+                    inlineCompletion?: {
                         operationId: string;
                         tokenAccounting: 'utf8-bytes';
                         promptOverheadTokens: number;
                         outputTokens?: number | undefined;
                         maxOutputTokens?: number | undefined;
-                        rawFimTemplate?: undefined | {
+                        rawFimTemplate?: {
                             prefix: string;
                             suffix: string;
                             middle: string;
-                        };
-                    };
-                    nextEdit?: undefined | {
-                        operationId: string;
-                        tokenAccounting: 'utf8-bytes';
-                        promptOverheadTokens: number;
-                        outputTokens?: number | undefined;
-                        maxOutputTokens?: number | undefined;
-                    };
+                        } | undefined;
+                    } | undefined;
                     extendedContextModelId?: string | undefined;
-                    modelOptions?: undefined | {
+                    modelOptions?: {
                         id: string;
                         name: string;
                         type: string;
                         currentValue: string;
                         description?: string | undefined;
-                        options?: undefined | {
+                        options?: {
                             value: string;
                             name: string;
                             description?: string | undefined;
-                        }[];
-                        overridesWhenOn?: undefined | {
+                        }[] | undefined;
+                        overridesWhenOn?: {
                             optionIds: string[];
                             forcedValue?: string | undefined;
-                        };
-                    }[];
-                    capabilities?: undefined | {
-                        toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                        structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
-                    };
+                        } | undefined;
+                    }[] | undefined;
+                    capabilities?: {
+                        toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                        structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                    } | undefined;
                 };
                 application: {
+                    agentTargetKey: string;
                     implementationIdentity: {
                         pluginId: string;
                         localId: string;
                     };
                     endpointTemplateId: string;
                     protocol: string;
-                    agentTargetKey: string;
                 };
                 sourceRevision: string;
-                availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
-                sourceFacts?: undefined | {
+                availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
+                sourceFacts?: {
                     endpoint: {
                         id: string;
                         protocol: string;
                         capabilities: {
-                            streaming: 'supported' | 'unknown' | 'unsupported';
-                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
-                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
-                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                            streaming: 'unknown' | 'supported' | 'unsupported';
+                            toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
+                            statefulResponses: 'unknown' | 'supported' | 'unsupported';
+                            reasoningControls: 'unknown' | 'supported' | 'unsupported';
                         };
-                        modelIdPattern?: string | undefined;
                     };
-                    credential?: undefined | {
+                    credential?: {
                         kind: 'apiKey';
                         slotId: 'apiKey';
                         required: boolean;
                         transports: {
                             id: string;
                             protocols: string[];
-                            uses: ('management' | 'probe' | 'runtime')[];
+                            uses: ('probe' | 'runtime' | 'management')[];
                             destination: {
                                 kind: 'httpHeader';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             } | {
                                 kind: 'queryParam';
                                 name: string;
-                                format: 'bearer' | 'raw' | {
+                                format: 'raw' | 'bearer' | {
                                     template: string;
                                 };
                             };
-                            additionalCredentials?: undefined | {
+                            additionalCredentials?: {
                                 slotId: string;
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'bearer' | 'raw' | {
+                                    format: 'raw' | 'bearer' | {
                                         template: string;
                                     };
                                 };
-                                label?: string | undefined | {
+                                label?: string | {
                                     key: string;
                                     fallback: string;
-                                    params?: Record<string, number | string> | undefined;
-                                };
-                            }[];
+                                    params?: Record<string, string | number> | undefined;
+                                } | undefined;
+                            }[] | undefined;
                         }[];
                         keyUrl?: string | undefined;
-                        authorityDescription?: string | undefined | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, number | string> | undefined;
-                        };
-                    };
-                    compatibilityOverrides?: undefined | {
+                    } | undefined;
+                    compatibilityOverrides?: {
                         agentTargetKey: string;
                         protocol: string;
-                        status: 'experimental' | 'incompatible' | 'verified';
+                        status: 'incompatible' | 'verified' | 'experimental';
                         reason: string;
-                        evidence?: undefined | {
+                        evidence?: {
                             sourceUrls: string[];
                             verifiedAt: string;
                             providerVersion?: string | undefined;
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
-                        };
-                    }[];
-                };
-                sources?: undefined | {
+                        } | undefined;
+                    }[] | undefined;
+                } | undefined;
+                sources?: {
                     manual: boolean;
                     static: boolean;
                     probe: boolean;
-                };
-                confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
-                compatibility?: undefined | {
+                } | undefined;
+                confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
+                compatibility?: {
                     result: {
-                        status: 'experimental';
-                        selectedProtocol: string;
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                        confirmationScope: {
-                            kind: 'connection';
-                        } | {
-                            kind: 'model';
-                            modelId: string;
-                        };
-                        evidence?: undefined | {
-                            sourceUrls: string[];
-                            verifiedAt: string;
-                            providerVersion?: string | undefined;
-                            agentVersion?: string | undefined;
-                            testIds?: string[] | undefined;
-                        };
-                    } | {
-                        status: 'incompatible';
-                        reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
-                    } | {
                         status: 'verified';
                         selectedProtocol: string;
                         evidence: {
@@ -5032,24 +5571,40 @@ export type ProvidersActionResultById = {
                             agentVersion?: string | undefined;
                             testIds?: string[] | undefined;
                         };
+                    } | {
+                        status: 'experimental';
+                        selectedProtocol: string;
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                        confirmationScope: {
+                            kind: 'connection';
+                        } | {
+                            kind: 'model';
+                            modelId: string;
+                        };
+                        evidence?: {
+                            sourceUrls: string[];
+                            verifiedAt: string;
+                            providerVersion?: string | undefined;
+                            agentVersion?: string | undefined;
+                            testIds?: string[] | undefined;
+                        } | undefined;
+                    } | {
+                        status: 'incompatible';
+                        reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                     };
                     compatibilityFingerprint: string;
                     confirmed: boolean;
-                };
-                nativeSource?: undefined | {
+                } | undefined;
+                nativeSource?: {
                     providerTicket: string;
-                };
-                direct?: null | undefined | {
+                } | undefined;
+                direct?: {
                     sourceMemberKey: string;
                     sourceVersion: string;
-                };
-                deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+                } | null | undefined;
+                deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             }[];
             connectedServiceSelections: ({
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-            } | {
                 source: 'team_resource';
                 resourceId: string;
                 deliveryMode: 'direct';
@@ -5060,15 +5615,20 @@ export type ProvidersActionResultById = {
                     };
                     accountId: string;
                 };
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
+                disclosedMember?: undefined;
             })[];
-            sourcePresentation: null | {
+            sourcePresentation: {
                 kind: 'connected_service';
                 service: {
-                    pluginId: 'happier';
-                    localId: 'mcp-sign-in';
-                } | {
                     pluginId: string;
                     localId: string;
+                } | {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
                 };
             } | {
                 kind: 'provider';
@@ -5079,25 +5639,25 @@ export type ProvidersActionResultById = {
                     };
                     definitionRevision: 1;
                 };
-            };
-            deliveryPolicy?: undefined | {
+            } | null;
+            deliveryPolicy?: {
                 preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
-            };
+            } | undefined;
             allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
-            deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
+            deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
             directDeliveryRecorded?: boolean | undefined;
-            usageCapabilities?: undefined | {
+            usageCapabilities?: {
                 inferenceRequests: 'available' | 'unavailable';
                 totalTokens: 'available' | 'unavailable';
                 costUsd: 'available' | 'unavailable';
-                limitCoverage: 'brokered_only' | 'unavailable';
-            };
-            usageLimit?: null | undefined | {
-                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                limitCoverage: 'unavailable' | 'brokered_only';
+            } | undefined;
+            usageLimit?: {
+                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
                 remaining: string;
                 resetsAtUtc: string;
-            };
-        }[];
+            } | null | undefined;
+        }[] | undefined;
         hiddenSources?: {
             connectionId: string;
             providerName: string;
@@ -5121,11 +5681,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             };
             displaySnapshot: {
                 providerName?: string | undefined;
@@ -5139,11 +5700,12 @@ export type ProvidersActionResultById = {
                 v: 1;
                 code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                 retryable: boolean;
-                action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                 connectionId?: (string) | undefined;
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             };
         }[] | undefined;
     } | {
@@ -5152,11 +5714,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.manual.add": {
@@ -5168,11 +5731,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.manual.remove": {
@@ -5184,11 +5748,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.visibility.set": {
@@ -5200,11 +5765,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.visibility.reset": {
@@ -5216,11 +5782,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.visibility.bulk": {
@@ -5232,11 +5799,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.source_visibility.set": {
@@ -5251,11 +5819,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.load": {
@@ -5273,11 +5842,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.models.cancel_load": {
@@ -5295,11 +5865,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.probe": {
@@ -5344,11 +5915,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     } | {
         status: 'not_supported';
@@ -5364,11 +5936,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.legacy.prepare": {
@@ -5458,6 +6031,7 @@ export type ProvidersActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;
@@ -5499,11 +6073,12 @@ export type ProvidersActionResultById = {
             v: 1;
             code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
-            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+            action: 'retry' | 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "providers.defaults.set": {

@@ -11,10 +11,10 @@ import {
 } from '@happier-dev/plugin-sdk/manifest';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
 import type {
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1 } from '@happier-dev/plugin-sdk/resources';
 import { describe, expect, it, vi } from 'vitest';

@@ -16,6 +16,10 @@ export type SessionTerminalsActionInputById = {
                 kind: 'package_script';
                 runTargetId: string;
             } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
+            } | {
                 kind: 'agent_login';
                 agentId: string;
                 launchId?: 'primary' | 'device_code' | undefined;
@@ -42,6 +46,10 @@ export type SessionTerminalsActionInputById = {
             launch?: {
                 kind: 'package_script';
                 runTargetId: string;
+            } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
             } | {
                 kind: 'agent_login';
                 agentId: string;
@@ -78,6 +86,10 @@ export type SessionTerminalsActionInputById = {
                 kind: 'package_script';
                 runTargetId: string;
             } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
+            } | {
                 kind: 'agent_login';
                 agentId: string;
                 launchId?: 'primary' | 'device_code' | undefined;
@@ -104,6 +116,10 @@ export type SessionTerminalsActionInputById = {
             launch?: {
                 kind: 'package_script';
                 runTargetId: string;
+            } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
             } | {
                 kind: 'agent_login';
                 agentId: string;
@@ -204,6 +220,10 @@ export type SessionTerminalsActionResultById = {
                             kind: 'package_script';
                             runTargetId: string;
                         } | {
+                            kind: 'service_shell';
+                            serviceId: string;
+                            expectedGeneration: string;
+                        } | {
                             kind: 'agent_login';
                             agentId: string;
                             launchId?: 'primary' | 'device_code' | undefined;
@@ -230,6 +250,10 @@ export type SessionTerminalsActionResultById = {
                         launch?: {
                             kind: 'package_script';
                             runTargetId: string;
+                        } | {
+                            kind: 'service_shell';
+                            serviceId: string;
+                            expectedGeneration: string;
                         } | {
                             kind: 'agent_login';
                             agentId: string;

@@ -23,12 +23,16 @@ export { ManagedServiceLocalIdSchema } from './contract.js';
 export type { ManagedServiceMaterializationInjection } from './contract.js';
 export type { ManagedServiceNativeInstanceV1 } from './contract.js';
 export type { ManagedServiceNativeLifecycleV1 } from './contract.js';
+export type { ManagedServiceNativeLogCursorV1 } from './contract.js';
+export type { ManagedServiceNativeLogPageV1 } from './contract.js';
+export type { ManagedServiceNativeLogReadV1 } from './contract.js';
+export type { ManagedServiceNativeLogResultV1 } from './contract.js';
+export type { ManagedServiceNativeLogWatchV1 } from './contract.js';
 export type { ManagedServiceNativeObservationV1 } from './contract.js';
 export type { ManagedServiceRequest } from './contract.js';
 export type { ManagedServiceResponse } from './contract.js';
 export type { ManagedServiceSnapshot } from './contract.js';
 export type { ManagedServiceSpec } from './contract.js';
+export type { ManagedServiceUnavailableReasonV1 } from './contract.js';
 export type { ManagedServices } from './contract.js';
 export { readManagedServiceEndpointUrl } from './contract.js';
-export type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogPageV1, ManagedServiceNativeLogReadV1,
-    ManagedServiceNativeLogResultV1, ManagedServiceNativeLogWatchV1, ManagedServiceUnavailableReasonV1 } from './contract.js';

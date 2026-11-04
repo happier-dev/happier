@@ -129,6 +129,7 @@ export type AccountPluginDataActionResultById = {
                             label?: string | {
                                 key: string;
                                 fallback: string;
+                                params?: Record<string, string | number> | undefined;
                             } | undefined;
                         }[] | undefined;
                     } | undefined;
@@ -141,10 +142,35 @@ export type AccountPluginDataActionResultById = {
                         label?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                     }[] | undefined;
                     nativeExpiry?: number | undefined;
                     reason?: string | undefined;
+                    nativeCause?: {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'unknown' | 'unavailable' | 'json_error' | 'unauthorized' | 'forbidden' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'conflict' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                        fields?: ('name' | 'location' | 'image' | 'server_type' | 'start_after_create' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'start' | 'stop' | 'restart' | 'create' | 'run' | 'up';
+                        exitCode: number | null;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'stop' | 'delete' | 'run' | 'inspect' | 'pull' | 'configure';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        grpcStatusCode: 1 | 4 | 6 | 2 | 3 | 5 | 14 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 15 | 16;
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                    } | undefined;
                 } | undefined;
                 cleanup?: {
                     disposition: 'unavailable' | 'pending';
@@ -229,6 +255,7 @@ export type AccountPluginDataActionResultById = {
                         label?: string | {
                             key: string;
                             fallback: string;
+                            params?: Record<string, string | number> | undefined;
                         } | undefined;
                     }[] | undefined;
                 } | undefined;
@@ -241,10 +268,35 @@ export type AccountPluginDataActionResultById = {
                     label?: string | {
                         key: string;
                         fallback: string;
+                        params?: Record<string, string | number> | undefined;
                     } | undefined;
                 }[] | undefined;
                 nativeExpiry?: number | undefined;
                 reason?: string | undefined;
+                nativeCause?: {
+                    httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                    code?: 'unknown' | 'unavailable' | 'json_error' | 'unauthorized' | 'forbidden' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'conflict' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
+                    fields?: ('name' | 'location' | 'image' | 'server_type' | 'start_after_create' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                } | {
+                    localCause: 'native_command_failed';
+                    command: 'start' | 'stop' | 'restart' | 'create' | 'run' | 'up';
+                    exitCode: number | null;
+                    stderr?: string | undefined;
+                    stderrTruncated?: true | undefined;
+                } | {
+                    localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
+                } | {
+                    localCause: 'native_route_not_found';
+                    route: 'stop' | 'delete' | 'run' | 'inspect' | 'pull' | 'configure';
+                    httpStatus: 404;
+                } | {
+                    localCause: 'native_configure_refused' | 'native_delete_refused';
+                    httpStatus: 400;
+                } | {
+                    grpcStatusCode: 1 | 4 | 6 | 2 | 3 | 5 | 14 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 15 | 16;
+                } | {
+                    sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
+                } | undefined;
             } | undefined;
             cleanup?: {
                 disposition: 'unavailable' | 'pending';

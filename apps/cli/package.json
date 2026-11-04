@@ -208,7 +208,7 @@
     "typecheck:local": "pnpm --silent run typecheck:source:finite",
     "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --verifyProjectCoverage tsconfig.json --singleThreaded --project tsconfig.foundation.json --project tsconfig.services.json --project tsconfig.core.json --project tsconfig.source.json --project tsconfig.test.json --project tsconfig.test-ui.json",
     "build": "node scripts/build.mjs",
-    "plugins:aggregate:finite": "node scripts/withNodeHeapLimit.mjs node --conditions=happier-source --experimental-strip-types scripts/build-owned/generateBundledPluginEntries.ts --root ../.. --mode check --scope projections --aggregate",
+    "plugins:aggregate:finite": "node scripts/withNodeHeapLimit.mjs node --import ../../packages/cli-common/registerSourceRuntime.mjs --conditions=happier-source --experimental-strip-types scripts/build-owned/generateBundledPluginEntries.ts --root ../.. --mode check --scope projections --aggregate",
     "build:prepared": "node scripts/build.mjs",
     "test": "../stack/bin/hstack-exec --script=test:local",
     "test:local": "pnpm run test:unit:local",

@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { InputPredicate, PluginJsonSchemaV2, WidgetDefinitionBodyV1Input } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate, InputPredicateWithValue, JSONType, PluginJsonSchemaV2, WidgetDefinitionBodyV1Input } from './pluginActionDtoSupport.generated.js';
 
 export type DiscoveryActionInputById = {
     readonly "action.spec.search": {
@@ -179,6 +179,7 @@ export type DiscoveryActionInputById = {
             localId: string;
         };
         input?: JsonValue;
+        clientId?: string;
         messageActionReference?: {
             v: 1;
             sessionId: string;
@@ -274,6 +275,7 @@ export type DiscoveryActionResultById = {
             confirmVerb?: string | {
                 key: string;
                 fallback: string;
+                params?: Record<string, string | number> | undefined;
             } | undefined;
             irreversible?: true | undefined;
             approval?: {
@@ -409,6 +411,7 @@ export type DiscoveryActionResultById = {
             confirmVerb?: string | {
                 key: string;
                 fallback: string;
+                params?: Record<string, string | number> | undefined;
             } | undefined;
             irreversible?: true | undefined;
             approval?: {
@@ -518,6 +521,2725 @@ export type DiscoveryActionResultById = {
             disabled?: boolean | undefined;
         }[];
         nextCursor?: string | undefined;
+        machineRecipeDetails?: readonly {
+            id: string;
+            pluginId: string;
+            pluginVersion: string;
+            definition: {
+                id: string;
+                revision: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                };
+                inputSchema: PluginJsonSchemaV2;
+                steps: ({
+                    username: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'user';
+                    id: string;
+                    home?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    shell?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    ownershipMarker?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    name: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'group';
+                    members: string[];
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        group: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        kind: 'journalReadGroup';
+                    })[] | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    existingOnly?: true | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    path: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    owner: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    group: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    mode: number | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'directory';
+                    id: string;
+                    ownershipMarker?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    path: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    owner: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    group: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    mode: number | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'file';
+                    id: string;
+                    content?: {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
+                    } | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        value: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        kind: 'literal';
+                    } | {
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                        kind: 'template';
+                        value: string;
+                    } | undefined;
+                    expectedContentDigest?: string | {
+                        kind: 'renderedContent';
+                        content: {
+                            value: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            kind: 'literal';
+                        } | {
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                            kind: 'template';
+                            value: string;
+                        };
+                    } | undefined;
+                    validate?: 'sudoers' | 'docker' | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    } | {
+                        contexts: {
+                            user: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            host: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            address: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                        }[];
+                        kind: 'sshd';
+                    } | undefined;
+                    probe?: {
+                        kind: 'docker';
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    } | {
+                        contexts: {
+                            user: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            host: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            address: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                        }[];
+                        kind: 'sshd';
+                    } | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    ownershipMarker?: string | undefined;
+                    onChange?: {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    } | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    args: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | (string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[];
+                    check: {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    } | {
+                        args: {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | (string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        })[];
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | null> | undefined;
+                    };
+                    executable: string;
+                    kind: 'command';
+                    id: string;
+                    remove?: {
+                        executable: string;
+                        args: string[];
+                    } | undefined;
+                    affects?: 'none' | 'dockerEngine' | {
+                        services: string[];
+                    } | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    packages: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | ({
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'formula' | 'cask' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    })[];
+                    kind: 'package';
+                    id: string;
+                    state?: 'present' | 'absent' | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    unit: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'serviceUnit';
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'public' | 'privateNetwork' | 'loopback';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                })[];
+                description?: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, string | number> | undefined;
+                } | undefined;
+                icon?: 'file' | 'workflow' | 'error' | 'check' | 'action' | 'external' | 'search' | 'link' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
+                software?: true | undefined;
+                inputHints?: {
+                    fields: readonly {
+                        path: string;
+                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        inputType?: {
+                            pluginId: string;
+                            localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'period' | 'session' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
+                        } | undefined;
+                        contextMode?: 'follow' | 'own' | undefined;
+                        required?: boolean | undefined;
+                        requireExplicitSelection?: boolean | undefined;
+                        listSeparator?: 'comma' | 'newline' | undefined;
+                        maxSelections?: number | undefined;
+                        defaultValue?: JsonValue | undefined;
+                        unit?: 'bytes' | undefined;
+                        visibleWhen?: InputPredicate | undefined;
+                        visibleWhenContextSlot?: string | undefined;
+                        requiredWhen?: InputPredicate | undefined;
+                        disabledWhen?: InputPredicate | undefined;
+                        prompt?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                        options?: readonly {
+                            value: JsonValue;
+                            label: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            };
+                            labelKey?: string | undefined;
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, string | number> | undefined;
+                            } | undefined;
+                            disabled?: boolean | undefined;
+                        }[] | undefined;
+                    }[];
+                    title?: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, string | number> | undefined;
+                    } | undefined;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, string | number> | undefined;
+                    } | undefined;
+                    submitLabel?: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, string | number> | undefined;
+                    } | undefined;
+                } | undefined;
+                inputConstraints?: {
+                    kind: 'pathWithin';
+                    path: string;
+                    root: string;
+                }[] | undefined;
+                checks?: ({
+                    args: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | (string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[];
+                    check: {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    } | {
+                        args: {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | (string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        })[];
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | null> | undefined;
+                    };
+                    executable: string;
+                    kind: 'command';
+                    id: string;
+                    remove?: {
+                        executable: string;
+                        args: string[];
+                    } | undefined;
+                    affects?: 'none' | 'dockerEngine' | {
+                        services: string[];
+                    } | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                } | {
+                    manager: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    packages: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | ({
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'formula' | 'cask' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    })[];
+                    kind: 'package';
+                    id: string;
+                    state?: 'present' | 'absent' | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                })[] | undefined;
+                removeSteps?: ({
+                    username: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'user';
+                    id: string;
+                    home?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    shell?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    ownershipMarker?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    supplementaryGroups?: string[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    name: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'group';
+                    members: string[];
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        group: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        kind: 'journalReadGroup';
+                    })[] | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    existingOnly?: true | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    path: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    owner: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    group: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    mode: number | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'directory';
+                    id: string;
+                    ownershipMarker?: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | undefined;
+                    preserveExistingOwnership?: true | undefined;
+                    protectedAncestors?: true | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    path: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    owner: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    group: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    mode: number | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'file';
+                    id: string;
+                    content?: {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
+                    } | {
+                        kind: 'iniKeys';
+                        sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'secretGrant';
+                        grantRef: string;
+                    } | {
+                        value: string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        kind: 'literal';
+                    } | {
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                        kind: 'template';
+                        value: string;
+                    } | undefined;
+                    expectedContentDigest?: string | {
+                        kind: 'renderedContent';
+                        content: {
+                            value: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            kind: 'literal';
+                        } | {
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                            kind: 'template';
+                            value: string;
+                        };
+                    } | undefined;
+                    validate?: 'sudoers' | 'docker' | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    } | {
+                        contexts: {
+                            user: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            host: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            address: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                        }[];
+                        kind: 'sshd';
+                    } | undefined;
+                    probe?: {
+                        kind: 'docker';
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    } | {
+                        contexts: {
+                            user: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            host: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                            address: string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            } | {
+                                kind: 'template';
+                                value: string;
+                                variables: Record<string, string | {
+                                    kind: 'input';
+                                    path: string;
+                                } | {
+                                    kind: 'targetFact';
+                                    fact: 'daemon.primaryGroup' | 'daemon.username';
+                                }>;
+                            };
+                        }[];
+                        kind: 'sshd';
+                    } | undefined;
+                    state?: 'present' | 'absent' | undefined;
+                    ownershipMarker?: string | undefined;
+                    onChange?: {
+                        serviceStepId: string;
+                        action: 'reload' | 'restart';
+                    } | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    args: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | (string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[];
+                    check: {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | undefined;
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    } | {
+                        args: {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        } | (string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        })[];
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | null> | undefined;
+                    };
+                    executable: string;
+                    kind: 'command';
+                    id: string;
+                    remove?: {
+                        executable: string;
+                        args: string[];
+                    } | undefined;
+                    affects?: 'none' | 'dockerEngine' | {
+                        services: string[];
+                    } | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    packages: {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    } | ({
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'formula' | 'cask' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    })[];
+                    kind: 'package';
+                    id: string;
+                    state?: 'present' | 'absent' | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    unit: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'serviceUnit';
+                    enabled: boolean;
+                    running: boolean;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'public' | 'privateNetwork' | 'loopback';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[] | undefined;
+                    requiredFacts?: ({
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'init';
+                        system: 'systemd' | 'launchd' | 'windowsScm';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    })[] | undefined;
+                    review?: {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, string | number> | undefined;
+                        } | undefined;
+                    } | undefined;
+                    when?: ({
+                        checkId: string;
+                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                })[] | undefined;
+                appliesWhen?: {
+                    posture: 'publicSshOpen';
+                } | undefined;
+            };
+            occurrenceId?: string | undefined;
+            executionOrigin?: {
+                serverIdentityId: string;
+                materializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+            } | {
+                serverIdentityId: string;
+                sourceRef: {
+                    machineId: string;
+                    pluginId: string;
+                    sourceCustody: {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'npm' | 'archive' | 'localPath';
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    };
+                };
+            } | undefined;
+            source?: {
+                kind: string;
+                locator: string;
+            } | undefined;
+            brand?: {
+                state: 'available';
+                resource: {
+                    pluginId: string;
+                    localId: string;
+                };
+                width: number;
+                height: number;
+                digest: `sha256:${string}`;
+                monochrome?: boolean | undefined;
+            } | {
+                state: 'missing' | 'invalid' | 'retired';
+            } | undefined;
+        }[] | undefined;
         modelCatalog?: {
             nativeModels: readonly {
                 value: string;
@@ -548,6 +3270,7 @@ export type DiscoveryActionResultById = {
                             machineId?: string | undefined;
                             sourceProfileId?: string | undefined;
                             retryAfterMs?: number | undefined;
+                            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
                         };
                     };
                     manualModelPolicy: 'allowed' | 'catalog-only';
@@ -692,6 +3415,64 @@ export type DiscoveryActionResultById = {
                             endpointTemplateId: string;
                             protocol: string;
                         } | undefined;
+                        nativeSource?: {
+                            authorizationTicket: {
+                                connectionId: string;
+                                connectionRevision: number;
+                                machineId: string;
+                                connectionSecurityFingerprint: string;
+                                bindingSecurityFingerprint: string;
+                                grantFingerprint: string;
+                                selectedSecretBindingId: string | null;
+                                selectedSecretRecordFingerprint: string | null;
+                            };
+                            providerTicket: string;
+                            endpoint: {
+                                endpointTemplateId: string;
+                                normalizedUrl: string;
+                                protocol: string;
+                                publicHeaders: Readonly<Record<string, string>>;
+                            };
+                            credentialTransport: {
+                                id: string;
+                                protocols: string[];
+                                uses: ('probe' | 'runtime' | 'management')[];
+                                destination: {
+                                    kind: 'httpHeader';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                } | {
+                                    kind: 'queryParam';
+                                    name: string;
+                                    format: 'raw' | 'bearer' | {
+                                        template: string;
+                                    };
+                                };
+                                additionalCredentials?: {
+                                    slotId: string;
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    };
+                                    label?: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, string | number> | undefined;
+                                    } | undefined;
+                                }[] | undefined;
+                            };
+                        } | undefined;
                         sourceFacts?: {
                             endpoint: {
                                 id: string;
@@ -724,6 +3505,27 @@ export type DiscoveryActionResultById = {
                                             template: string;
                                         };
                                     };
+                                    additionalCredentials?: {
+                                        slotId: string;
+                                        destination: {
+                                            kind: 'httpHeader';
+                                            name: string;
+                                            format: 'raw' | 'bearer' | {
+                                                template: string;
+                                            };
+                                        } | {
+                                            kind: 'queryParam';
+                                            name: string;
+                                            format: 'raw' | 'bearer' | {
+                                                template: string;
+                                            };
+                                        };
+                                        label?: string | {
+                                            key: string;
+                                            fallback: string;
+                                            params?: Record<string, string | number> | undefined;
+                                        } | undefined;
+                                    }[] | undefined;
                                 }[];
                                 keyUrl?: string | undefined;
                             } | undefined;
@@ -835,6 +3637,27 @@ export type DiscoveryActionResultById = {
                                         template: string;
                                     };
                                 };
+                                additionalCredentials?: {
+                                    slotId: string;
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    };
+                                    label?: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, string | number> | undefined;
+                                    } | undefined;
+                                }[] | undefined;
                             };
                         } | undefined;
                     }[];
@@ -871,6 +3694,283 @@ export type DiscoveryActionResultById = {
                     sourceRevision?: string | undefined;
                     modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
                 }[];
+                teamCredentialResources?: {
+                    id: string;
+                    teamId: string;
+                    displayName: string;
+                    resourceRevision: number;
+                    readiness: {
+                        kind: 'available';
+                    } | {
+                        kind: 'resource_corrupt';
+                    } | {
+                        kind: 'resource_unavailable';
+                    } | {
+                        kind: 'source_unavailable';
+                        reason?: 'connected_service_credential_reconnect_required' | undefined;
+                    } | {
+                        kind: 'broker_unavailable';
+                        reason?: 'incompatible' | 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'catalog_empty' | undefined;
+                    } | {
+                        kind: 'update_required';
+                    } | {
+                        kind: 'policy_denied';
+                    } | {
+                        kind: 'limit_reached';
+                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                        resetsAtUtc: string;
+                    };
+                    recoveryAction: 'retry' | 'update_required' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
+                    mayBroker: boolean;
+                    mayReceiveDirect: boolean;
+                    directMaterialState: 'current' | 'stale' | 'never_delivered' | 'preparing' | 'revoked';
+                    sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
+                    providerModels: {
+                        selection: {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        };
+                        descriptor: {
+                            id: string;
+                            name: string;
+                            costTier?: 'low' | 'standard' | 'premium' | undefined;
+                            aliases?: string[] | undefined;
+                            description?: string | undefined;
+                            contextWindowTokens?: number | undefined;
+                            inlineCompletion?: {
+                                operationId: string;
+                                tokenAccounting: 'utf8-bytes';
+                                promptOverheadTokens: number;
+                                outputTokens?: number | undefined;
+                                maxOutputTokens?: number | undefined;
+                                rawFimTemplate?: {
+                                    prefix: string;
+                                    suffix: string;
+                                    middle: string;
+                                } | undefined;
+                            } | undefined;
+                            extendedContextModelId?: string | undefined;
+                            modelOptions?: {
+                                id: string;
+                                name: string;
+                                type: string;
+                                currentValue: string;
+                                description?: string | undefined;
+                                options?: {
+                                    value: string;
+                                    name: string;
+                                    description?: string | undefined;
+                                }[] | undefined;
+                                overridesWhenOn?: {
+                                    optionIds: string[];
+                                    forcedValue?: string | undefined;
+                                } | undefined;
+                            }[] | undefined;
+                            capabilities?: {
+                                toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                                reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                                structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
+                            } | undefined;
+                        };
+                        application: {
+                            agentTargetKey: string;
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                        };
+                        sourceRevision: string;
+                        availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
+                        sourceFacts?: {
+                            endpoint: {
+                                id: string;
+                                protocol: string;
+                                capabilities: {
+                                    streaming: 'unknown' | 'supported' | 'unsupported';
+                                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
+                                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
+                                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
+                                };
+                            };
+                            credential?: {
+                                kind: 'apiKey';
+                                slotId: 'apiKey';
+                                required: boolean;
+                                transports: {
+                                    id: string;
+                                    protocols: string[];
+                                    uses: ('probe' | 'runtime' | 'management')[];
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    };
+                                    additionalCredentials?: {
+                                        slotId: string;
+                                        destination: {
+                                            kind: 'httpHeader';
+                                            name: string;
+                                            format: 'raw' | 'bearer' | {
+                                                template: string;
+                                            };
+                                        } | {
+                                            kind: 'queryParam';
+                                            name: string;
+                                            format: 'raw' | 'bearer' | {
+                                                template: string;
+                                            };
+                                        };
+                                        label?: string | {
+                                            key: string;
+                                            fallback: string;
+                                            params?: Record<string, string | number> | undefined;
+                                        } | undefined;
+                                    }[] | undefined;
+                                }[];
+                                keyUrl?: string | undefined;
+                            } | undefined;
+                            compatibilityOverrides?: {
+                                agentTargetKey: string;
+                                protocol: string;
+                                status: 'verified' | 'experimental' | 'incompatible';
+                                reason: string;
+                                evidence?: {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                } | undefined;
+                            }[] | undefined;
+                        } | undefined;
+                        sources?: {
+                            manual: boolean;
+                            static: boolean;
+                            probe: boolean;
+                        } | undefined;
+                        confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
+                        compatibility?: {
+                            result: {
+                                status: 'verified';
+                                selectedProtocol: string;
+                                evidence: {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                };
+                            } | {
+                                status: 'experimental';
+                                selectedProtocol: string;
+                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                                confirmationScope: {
+                                    kind: 'connection';
+                                } | {
+                                    kind: 'model';
+                                    modelId: string;
+                                };
+                                evidence?: {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                } | undefined;
+                            } | {
+                                status: 'incompatible';
+                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
+                            };
+                            compatibilityFingerprint: string;
+                            confirmed: boolean;
+                        } | undefined;
+                        nativeSource?: {
+                            providerTicket: string;
+                        } | undefined;
+                        direct?: {
+                            sourceMemberKey: string;
+                            sourceVersion: string;
+                        } | null | undefined;
+                        deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
+                    }[];
+                    connectedServiceSelections: ({
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                        disclosedMember?: undefined;
+                    })[];
+                    sourcePresentation: {
+                        kind: 'connected_service';
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        } | {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        };
+                    } | {
+                        kind: 'provider';
+                        provider: {
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionRevision: 1;
+                        };
+                    } | null;
+                    deliveryPolicy?: {
+                        preferredAllowedModes: ('direct' | 'brokered' | 'vendor-native')[];
+                    } | undefined;
+                    allowedRoutes?: ('direct' | 'brokered' | 'vendor-native')[] | undefined;
+                    deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
+                    directDeliveryRecorded?: boolean | undefined;
+                    usageCapabilities?: {
+                        inferenceRequests: 'unavailable' | 'available';
+                        totalTokens: 'unavailable' | 'available';
+                        costUsd: 'unavailable' | 'available';
+                        limitCoverage: 'unavailable' | 'brokered_only';
+                    } | undefined;
+                    usageLimit?: {
+                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                        remaining: string;
+                        resetsAtUtc: string;
+                    } | null | undefined;
+                }[] | undefined;
                 hiddenSources?: {
                     connectionId: string;
                     providerName: string;
@@ -899,6 +3999,7 @@ export type DiscoveryActionResultById = {
                         machineId?: string | undefined;
                         sourceProfileId?: string | undefined;
                         retryAfterMs?: number | undefined;
+                        savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
                     };
                     displaySnapshot: {
                         providerName?: string | undefined;
@@ -917,6 +4018,7 @@ export type DiscoveryActionResultById = {
                         machineId?: string | undefined;
                         sourceProfileId?: string | undefined;
                         retryAfterMs?: number | undefined;
+                        savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
                     };
                 }[] | undefined;
             } | null;

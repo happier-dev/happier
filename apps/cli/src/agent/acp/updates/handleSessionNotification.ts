@@ -1,4 +1,5 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
@@ -80,6 +81,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
   getToolCallCountSincePrompt?: () => number;
   emit: (message: AgentMessage) => void;
   sessionModeState: SessionModeState | null;
+  disableSessionModeUpdates?: boolean;
   setSessionModeState: (state: SessionModeState) => void;
   sessionModelState: SessionModelState | null;
   setSessionModelState: (state: SessionModelState) => void;
@@ -246,6 +248,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
     }
 
     if (sessionUpdateType === 'current_mode_update') {
+      if (params.disableSessionModeUpdates) return;
       const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
       if (modeId && sessionModeState) {
         sessionModeState = {
@@ -287,7 +290,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
       const configOptionsCandidate = (update as { configOptions?: unknown }).configOptions;
       const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
       if (configOptionsRaw) {
-        sessionConfigOptionsState = normalizeSessionConfigOptions(configOptionsRaw);
+        sessionConfigOptionsState = normalizeSessionConfigOptions(configOptionsRaw, params.disableSessionModeUpdates);
         params.setSessionConfigOptionsState(sessionConfigOptionsState);
         const projectedModelState = params.deriveSessionModelState?.(sessionConfigOptionsState) ?? null;
         if (projectedModelState) {
@@ -316,7 +319,9 @@ export async function handleAcpSessionNotification(params: Readonly<{
       });
       const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
       if (telemetry) {
-        params.emit(telemetry);
+        // Only explicit delta keys identify inferences; cumulative/default report keys identify streams.
+        const observationId = observation?.scope === 'turn_delta' ? readNonBlankOpaqueIdentifier(update.key) : null;
+        params.emit({ ...telemetry, ...(observationId ? { observationId } : {}) });
       }
       return;
     }

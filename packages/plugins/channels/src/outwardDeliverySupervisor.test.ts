@@ -6,10 +6,10 @@ import type { ConversationDeliveryInputV1, ConversationDeliveryResultV1 } from '
 import type {
   PluginInvocationContext,
   PluginServices,
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { getPluginMachineExecutionRouting, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';

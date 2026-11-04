@@ -918,6 +918,10 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   for (const output of outputs.values()) {
     assert.doesNotMatch(output, /export type ScmComparisonSource\s*=/u);
   }
+  const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
+  assert.ok(/import type \{ MachinePresetItemV1 \} from '\.\.\/\.\.\/machineSetup\.js';/u.test(support),
+    'Machine Preset values must reuse their existing SDK public declaration');
+  assert.doesNotMatch(support, /export type MachinePresetItemV1\s*=/u);
 });
 
 test('Action DTO projection scopes mapped keys without hiding external declarations', () => {

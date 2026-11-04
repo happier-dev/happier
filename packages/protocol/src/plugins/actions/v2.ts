@@ -234,7 +234,11 @@ export type PluginActionConfirmationV2 = z.infer<typeof PluginActionConfirmation
 /** Flat predicates apply everywhere; the scoped form preserves automation defaults. */
 export const PluginActionConfirmationWhenV2Schema = lazyZodSchema(() => z.union([
   InputPredicateSchema,
-  z.strictObject({ presentUserUi: z.union([z.boolean(), InputPredicateSchema]) }),
+  z.strictObject({
+    presentUserUi: z.union([z.boolean(), InputPredicateSchema]),
+    cli: z.optional(z.union([z.boolean(), InputPredicateSchema])),
+    default: z.optional(InputPredicateSchema),
+  }),
 ]));
 export type PluginActionConfirmationWhenV2 = z.infer<typeof PluginActionConfirmationWhenV2Schema>;
 
@@ -591,8 +595,12 @@ readOnly: z.optional(z.union([z.boolean(), InputPredicateSchema])),
   }
 
   const inputSchema = value.inputSchema;
-  if (value.sessionTarget && (!declaresTraversableObjectInput(inputSchema)
-    || !resolveDeclaredInputLeaves(inputSchema!, value.sessionTarget.field)?.length)) {
+  const sessionTargetLeaves = value.sessionTarget && declaresTraversableObjectInput(inputSchema)
+    ? resolveDeclaredInputLeaves(inputSchema!, value.sessionTarget.field, 'conditional-field') : null;
+  // Account-only union arms may omit the operand. Each arm declaring it must
+  // declare a string arm for concrete ids supplied by the existing target front door.
+  if (value.sessionTarget && (!sessionTargetLeaves?.length
+    || !sessionTargetLeaves.every(leaf => expandDeclaredInputAlternatives(leaf).some(arm => arm.type === 'string')))) {
     ctx.addIssue({
       code: 'custom', path: ['sessionTarget', 'field'],
       message: 'Session target must identify a declared object input operand.',

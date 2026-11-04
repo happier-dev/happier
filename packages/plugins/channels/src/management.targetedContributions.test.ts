@@ -2,10 +2,10 @@ import {
   PluginError,
   type JsonValue,
   type PluginInvocationContext,
-  type TargetedContributionPointRef,
   type TargetedContributionSnapshot,
   type TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { ActionsService, PluginMachineExecutionOriginV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import { ConversationEndpointResolveInputV1Schema, ConversationProviderSetupResultV1Schema } from '@happier-dev/channels-protocol/v1';

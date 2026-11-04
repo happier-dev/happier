@@ -100,6 +100,16 @@ export type VoiceControlsActionInputById = {
     readonly "ui.voice_global.dictation.dismiss": {
         commandId: string;
     };
+    readonly "ui.voice_global.conversations.list": {
+        conversationSessionAddress?: {
+            serverId: string;
+            sessionId: string;
+        } | undefined;
+        cursor?: {
+            active: string | null;
+            archived: string | null;
+        } | undefined;
+    };
     readonly "ui.voice_global.history.search": {
         query?: string | undefined;
         refresh?: boolean | undefined;
@@ -2968,6 +2978,28 @@ export type VoiceControlsActionResultById = {
     } | {
         status: 'unavailable';
         code: 'dictation_field_unmounted' | 'dictation_field_unavailable' | 'dictation_consent_required' | 'dictation_microphone_unavailable' | 'dictation_capture_unavailable' | 'dictation_state_changed' | 'dictation_cancelled' | 'dictation_failed';
+    };
+    readonly "ui.voice_global.conversations.list": {
+        coverage: 'loaded';
+        conversations: {
+            address: {
+                serverId: string;
+                sessionId: string;
+            };
+            title: string;
+            lastActivityAt: number;
+            canContinue: boolean | null;
+            hasBlockedInputs: boolean;
+            pendingInputs: {
+                localId: string;
+                reason: string | null;
+            }[];
+        }[];
+        coverageComplete?: boolean | undefined;
+        nextCursor?: {
+            active: string | null;
+            archived: string | null;
+        } | null | undefined;
     };
     readonly "ui.voice_global.history.search": {
         sessionId: string | null;

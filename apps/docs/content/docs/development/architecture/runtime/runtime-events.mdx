@@ -7,7 +7,7 @@ description: Every kind of live runtime event an agent emits, generated from the
 runs. Provider leaves map whatever their agent natively produces into these, so
 the host sees one shape regardless of which agent is running.
 
-There are **26 event kinds**, plus context compaction, which is one kind with
+There are **29 event kinds**, plus context compaction, which is one kind with
 6 phases.
 
 <Callout type="info">
@@ -45,6 +45,16 @@ A turn starts, runs, and ends exactly once. `turn-complete`, `turn-failed` and `
 | `turn-rollback-boundary` |
 | `provider-session-id` |
 | `runtime-ended` |
+
+### Background continuation correlation
+
+Native task evidence connects a continuation to its originating tool call. The host retains the original turn authority and releases it when the observer no longer needs it.
+
+| Kind |
+| --- |
+| `provider-continuation-registered` |
+| `provider-continuation-released` |
+| `provider-tool-contexts-released` |
 
 ### Output
 

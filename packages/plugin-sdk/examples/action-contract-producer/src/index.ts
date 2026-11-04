@@ -1,7 +1,7 @@
 import {
   definePlugin,
-  type TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import {
   PUBLIC_TOOLCHAIN_COMPATIBILITY_V1,
   type BrowserActionContributionInput,

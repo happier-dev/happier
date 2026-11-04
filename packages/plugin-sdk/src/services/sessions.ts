@@ -41,7 +41,7 @@ import { SESSION_CAPABILITY_NOTICE_SIDECAR_KEY as protocolSessionCapabilityNotic
 import { SessionUsageLimitRecoveryV1Schema as protocolSessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SPAWN_SESSION_ERROR_CODES as protocolSpawnSessionErrorCodes } from '@happier-dev/protocol/spawnSession';
 import { SessionAuthoringCheckoutCreationDraftV1Schema as protocolSessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
-import { SessionServerStartSpawnDraftV1Schema as protocolSessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema as protocolSessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionServerStartSpawnDraftV1Schema as protocolSessionServerStartSpawnDraftV1Schema, SessionSpawnNewInputV2Schema as protocolSessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 as canonicalProjectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { HappierStructuredInputV1Schema as protocolHappierStructuredInputV1Schema, normalizeSessionAttachmentUploadPath as protocolNormalizeSessionAttachmentUploadPath, readHappierStructuredInputV1FromMeta as protocolReadHappierStructuredInputV1FromMeta, readStructuredInputMentionSourcesV1 as protocolReadStructuredInputMentionSourcesV1, sanitizeHappierStructuredInputV1 as protocolSanitizeHappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { MENTION_KIND_V1 as protocolMentionKindV1, MentionRefV1Schema as protocolMentionRefV1Schema } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES as protocolChangeTitleToolNameAliases, isChangeTitleToolNameAlias as protocolIsChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2/aliases';
@@ -50,6 +50,11 @@ import { readSessionModesMetadata as protocolReadSessionModesMetadata } from '@h
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE as protocolNativeToolApprovalRequestSource, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE as protocolNativeToolApprovalOnceRequestSource } from '@happier-dev/protocol/sessions/permissions/v1';
 import { buildAgentRequestSemanticSummary as protocolBuildAgentRequestSemanticSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { StructuredQuestionAnswersV1Schema as protocolStructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+
+/** Converts native Session creation drafts through the canonical Protocol boundary. */
+export const projectSessionSpawnNewActionInputV2: (
+    input: SessionSpawnNewInputV2,
+) => PluginActionInputById['session.spawn_new'] = /* @__PURE__ */ projectProtocolValue(canonicalProjectSessionSpawnNewActionInputV2);
 
 /** Accepted native mode facts; parsing and retained V1 normalization stay Protocol-owned. */
 export type SessionModeCatalog = Readonly<{

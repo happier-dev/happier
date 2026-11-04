@@ -639,8 +639,8 @@ export type ProjectWorkersActionResultById = {
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
                     } | undefined;
                 } | {
-                    targetId: string;
                     kind: 'streamedBrowser';
+                    targetId: string;
                     streamId: string;
                     display?: {
                         title: string;
@@ -648,6 +648,10 @@ export type ProjectWorkersActionResultById = {
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
+                    } | undefined;
+                    daemonView?: {
+                        browserSessionId: string;
+                        viewId: string;
                     } | undefined;
                 } | {
                     targetId: string;
@@ -819,8 +823,8 @@ export type ProjectWorkersActionResultById = {
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
                     } | undefined;
                 } | {
-                    targetId: string;
                     kind: 'streamedBrowser';
+                    targetId: string;
                     streamId: string;
                     display?: {
                         title: string;
@@ -828,6 +832,10 @@ export type ProjectWorkersActionResultById = {
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
+                    } | undefined;
+                    daemonView?: {
+                        browserSessionId: string;
+                        viewId: string;
                     } | undefined;
                 } | {
                     targetId: string;

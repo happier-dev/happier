@@ -2,10 +2,10 @@ import type {
   JsonValue,
   PluginInvocationContext,
   PluginServices,
-  TargetedContributionPointRef,
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { compareCanonicalConversationResolutionCandidatesV1, ConversationPairingCreateResultV1Schema, type ConversationResolvedEndpointV1 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 

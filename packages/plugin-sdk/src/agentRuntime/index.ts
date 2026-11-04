@@ -1,3 +1,4 @@
+export type { AgentAcpProviderTurnSink, AgentAcpProviderTurnSourceHost, AgentAcpProviderTurnSource, AgentAcpProviderTurnSourceFactory } from './acpProviderTurns.js';
 export { buildAgentAccountUsageRecordId } from './accountUsage.js';
 export type {
   AgentAcpAuthenticationContext,

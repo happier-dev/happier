@@ -57,6 +57,11 @@ export interface CreateAcpBackendOptions {
 
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+  providerTurnSource?: AcpBackendOptions['providerTurnSource'];
+  providerTurnLifecycle?: AcpBackendOptions['providerTurnLifecycle'];
+  providerJournalFollower?: AcpBackendOptions['providerJournalFollower'];
+  initialSessionModeId?: string;
+  disableSessionModeUpdates?: boolean;
 
   /** Optional per-backend ACP fs capability override */
   fsEnabled?: boolean;
@@ -139,6 +144,11 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     ...(options.networkTransport ? { networkTransport: options.networkTransport } : {}),
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
+    providerTurnSource: options.providerTurnSource,
+    providerTurnLifecycle: options.providerTurnLifecycle,
+    providerJournalFollower: options.providerJournalFollower,
+    initialSessionModeId: options.initialSessionModeId,
+    disableSessionModeUpdates: options.disableSessionModeUpdates,
     ...(typeof options.fsEnabled === 'boolean' ? { fsEnabled: options.fsEnabled } : {}),
     transportHandler: options.transportHandler ?? new DefaultTransport(options.agentName),
     ...(options.authMethodId ? { authMethodId: options.authMethodId } : {}),

@@ -22,6 +22,7 @@ import {
     PluginUiHostApiRequestEnvelopeV1Schema,
     PluginUiJsonValueV1Schema,
     PluginUiOpenNewSessionRequestV1Schema,
+    PluginUiOpenAutomationEventRequestV1Schema,
     PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
@@ -1108,6 +1109,14 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // routinely retires the requesting surface, so an accepted launch
             // stays a success (the shared outward-effect classifier owns that
             // decision at the request carrier).
+        },
+        openAutomationEvent: async (openRequest, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openAutomationEvent');
+            const payload = PluginUiOpenAutomationEventRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('openAutomationEvent', payload.data,
+                options?.signal ? { signal: options.signal } : undefined);
         },
         settleEphemeralInput: async (settlement, options) => {
             assertActive(options?.signal);

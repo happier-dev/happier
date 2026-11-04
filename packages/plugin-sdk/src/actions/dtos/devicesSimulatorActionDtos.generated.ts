@@ -16,6 +16,55 @@ export type DevicesSimulatorActionInputById = {
         streamId: string;
         sourceId: string;
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -24,6 +73,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -99,6 +151,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -174,6 +238,55 @@ export type DevicesSimulatorActionInputById = {
         streamId: string;
         sourceId: string;
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -182,6 +295,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -257,6 +373,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -364,6 +492,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.tap": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -372,6 +549,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -447,6 +627,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -509,6 +701,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.swipe": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -517,6 +758,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -592,6 +836,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -654,6 +910,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.text": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -662,6 +967,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -737,6 +1045,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -799,6 +1119,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.key": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -807,6 +1176,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -882,6 +1254,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -944,6 +1328,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.button": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -952,6 +1385,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1027,6 +1463,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -1089,6 +1537,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.pinch": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -1097,6 +1594,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1172,6 +1672,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -1234,6 +1746,55 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.input.rotate": {
         type: 'simulator.control.send';
         control: {
+            kind: 'browser_input';
+            controlEpoch: number;
+            event: {
+                kind: 'key';
+                target: 'page';
+                key: string;
+                sequence: number;
+                modifiers?: ('alt' | 'control' | 'meta' | 'shift')[] | undefined;
+            } | {
+                kind: 'pointer';
+                target: 'page';
+                action: 'down' | 'move' | 'up' | 'cancel';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'text';
+                target: 'page';
+                text: string;
+                sequence: number;
+            } | {
+                width: number;
+                height: number;
+                deviceScaleFactor: number;
+                kind: 'viewport';
+                target: 'page';
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            };
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
+            kind: 'move';
+            x: number;
+            y: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            leaseId?: string | undefined;
+        } | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -1242,6 +1803,9 @@ export type DevicesSimulatorActionInputById = {
             x: number;
             y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'right' | 'middle' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1317,6 +1881,18 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             kind: 'keyboard_key';
             key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             leaseId?: string | undefined;
         } | {
             v: 1;
@@ -1402,7 +1978,7 @@ export type DevicesSimulatorActionResultById = {
                 sourceId: string;
                 supportedCodecs: ('image.frame.v1' | 'image.mjpeg' | 'h264.avcc')[];
                 inputMode: 'none' | 'shared' | 'exclusive';
-                supportedInputKinds?: ('tap' | 'long_press' | 'swipe' | 'drag' | 'pinch' | 'rotate' | 'keyboard_text' | 'keyboard_key' | 'hardware_button' | 'orientation')[] | undefined;
+                supportedInputKinds?: ('browser_input' | 'move' | 'tap' | 'long_press' | 'swipe' | 'drag' | 'pinch' | 'rotate' | 'keyboard_text' | 'keyboard_key' | 'wheel' | 'hardware_button' | 'orientation')[] | undefined;
                 streamControls?: {
                     requestKeyframe: boolean;
                     snapshot: boolean;

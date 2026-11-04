@@ -951,3 +951,6 @@ export const TERMINAL_BRACKETED_PASTE_START: string = canonicalTerminalBracketed
 export const TERMINAL_BRACKETED_PASTE_END: string = canonicalTerminalBracketedPasteEnd;
 
 export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from '@happier-dev/protocol/usage/coach/coachVendorFacts';
+
+export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
+export type { UsagePromptCache } from '@happier-dev/protocol/usage/usageAnalyticsContracts';

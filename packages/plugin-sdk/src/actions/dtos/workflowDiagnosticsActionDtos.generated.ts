@@ -126,6 +126,7 @@ export type WorkflowDiagnosticsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -489,6 +490,7 @@ export type WorkflowDiagnosticsActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];

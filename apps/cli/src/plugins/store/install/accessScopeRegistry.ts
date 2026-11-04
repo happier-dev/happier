@@ -358,6 +358,7 @@ function canonicalizeFilesystemPathPrefix(value: string | undefined): string | u
 function canonicalizeFilesystemLocation(
   location: Extract<PluginHostAccessRequestV2, { capability: 'filesystem' }>['scope']['locations'][number],
 ): Extract<PluginHostAccessRequestV2, { capability: 'filesystem' }>['scope']['locations'][number] {
+  if (location.root === 'machine') return location;
   const pathPrefix = canonicalizeFilesystemPathPrefix(location.pathPrefix);
   const { pathPrefix: _ignored, ...rest } = location;
   return {
@@ -425,7 +426,7 @@ function canonicalizeBuiltInScopeInput(capability: string, value: unknown): unkn
         locations: Array.isArray(scope.locations)
           ? sortStructured(scope.locations.map((location) => {
             const record = asScopeRecord(location);
-            if (!record || typeof record.pathPrefix !== 'string') return location;
+            if (!record || record.root === 'machine' || typeof record.pathPrefix !== 'string') return location;
             const pathPrefix = canonicalizeFilesystemPathPrefix(record.pathPrefix);
             const { pathPrefix: _ignored, ...rest } = record;
             return { ...rest, ...(pathPrefix ? { pathPrefix } : {}) };

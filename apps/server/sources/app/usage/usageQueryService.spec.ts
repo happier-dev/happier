@@ -21,6 +21,38 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('keeps latest ACP context without billing it or overlapping replayed inference usage', () => {
+        const inference = (id: string, time: number, total: number, inferenceId: string): CapturedRow => ({
+            ...row(id, total, { usageAccounting: { path: 'runtime', inferenceId } }),
+            agentId: 'kimi', source: 'acp-usage-update', observedAt: new Date(time), createdAt: new Date(time),
+            externalKey: inferenceId, estimatedCostUsd: total / 1000,
+        });
+        const context = (id: string, time: number, used: number): CapturedRow => ({
+            ...inference(id, time, 0, id), scope: 'session_cumulative', isCumulative: true,
+            turnId: null, requestCount: 0, contextUsedTokens: used, contextWindowTokens: 1000,
+        });
+        const snapshot: UsageAnalyticsSnapshot = {
+            rows: [
+                inference('first', 100, 100, 'kimi-step:first'),
+                context('first-context', 200, 140),
+                inference('second', 300, 50, 'kimi-step:second'),
+                context('compacted-context', 400, 25),
+                inference('replayed-first', 500, 100, 'kimi-step:first'),
+            ],
+            legacyReports: [], priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined,
+        };
+        const result = projectUsageAnalytics(snapshot, UsageAnalyticsQueryRequestSchema.parse({
+            granularity: 'day', includeSeries: true, breakdowns: ['session'],
+        }));
+        expect(result.totals.tokens.total).toBe(150);
+        expect(result.totals.cost.estimatedUsd).toBeCloseTo(0.15);
+        expect(result.totals.context).toEqual({ usedTokens: 25, windowTokens: 1000 });
+        expect(result.series?.reduce((sum, bucket) => sum + bucket.tokens.total, 0)).toBe(150);
+        expect(result.breakdowns?.session?.[0]?.context).toEqual({ usedTokens: 25, windowTokens: 1000 });
+        expect(result.coverage?.reasons).not.toContain('ambiguous_overlap');
+        expect(result.coverage?.reasons).not.toContain('counter_discontinuity');
+    });
+
     it('selects witnessed execution after native/runtime reconciliation and keeps mixed-Session message counts unqualified', () => {
         const snapshot: UsageAnalyticsSnapshot = {
             rows: [

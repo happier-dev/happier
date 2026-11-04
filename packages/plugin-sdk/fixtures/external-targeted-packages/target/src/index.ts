@@ -2,8 +2,8 @@ import {
   definePlugin,
   type JsonValue,
   type PluginInvocationContext,
-  type TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
 import {
   defineContributionPoint,

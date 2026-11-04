@@ -1,8 +1,8 @@
 import type {
   JsonValue,
   PluginInvocationContext,
-  TargetedContributionPointRef,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
   SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
 import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';

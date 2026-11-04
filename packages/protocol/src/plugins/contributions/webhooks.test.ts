@@ -12,6 +12,32 @@ const webhookAction = {
 } as const;
 
 describe('plugin webhook contributions', () => {
+  it('admits a closed record-only capability endpoint without an executable handler', () => {
+    const base = {
+      schemaVersion: 2,
+      id: 'example.health-checks',
+      version: '1.0.0',
+      displayName: 'Health checks',
+      runtime: { apiVersion: 1 },
+      entrypoints: { daemon: './dist/index.js' },
+    };
+    const heartbeat = {
+      id: 'heartbeat',
+      title: 'Heartbeat',
+      verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+      delivery: 'recordReceiptOnly',
+    };
+    const manifest = PluginManifestV2Schema.parse({ ...base, contributes: { webhooks: [heartbeat] } });
+    expect(manifest.contributes.webhooks).toEqual([heartbeat]);
+    for (const invalid of [
+      { ...heartbeat, handlerAction: { localId: 'receive-github' } },
+      { ...heartbeat, verifier: { kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' } },
+      { ...heartbeat, verifier: { kind: 'capabilityUrl_v1', routing: 'providerInstallation' } },
+    ]) {
+      expect(PluginManifestV2Schema.safeParse({ ...base, contributes: { webhooks: [invalid] } }).success).toBe(false);
+    }
+  });
+
   it('admits only the closed GitHub verifier and a same-plugin plugin-surface Action', () => {
     const manifest = PluginManifestV2Schema.parse({
       schemaVersion: 2,

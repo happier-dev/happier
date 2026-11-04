@@ -56,9 +56,11 @@ export function buildInitializeRequest(params: {
   };
 }
 
+/** Apply workspace and permission policy to client filesystem calls, rechecking captured turn authority after I/O. */
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
+  beforeRequest?: (sessionId: string) => Promise<void | Readonly<{ assertCurrent(): void }>>;
 }): Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
@@ -136,8 +138,11 @@ export function createAcpClientFsMethods(params: {
   };
 
   const readTextFile: NonNullable<AcpClientConnectionHandlers['readTextFile']> = async (req) => {
+    const owner = await params.beforeRequest?.(req.sessionId);
     const targetPath = await assertWithinCwd(req.path, { kind: 'read' });
+    owner?.assertCurrent();
     const full = await fs.readFile(targetPath, 'utf8');
+    owner?.assertCurrent();
     const line = typeof req.line === 'number' ? req.line : null;
     const limit = typeof req.limit === 'number' ? req.limit : null;
 
@@ -155,7 +160,9 @@ export function createAcpClientFsMethods(params: {
   };
 
   const writeTextFile: NonNullable<AcpClientConnectionHandlers['writeTextFile']> = async (req) => {
+    const owner = await params.beforeRequest?.(req.sessionId);
     const targetPath = await assertWithinCwd(req.path, { kind: 'write' });
+    owner?.assertCurrent();
     const reqRecord = asRecord(req) ?? {};
     const meta = asRecord(reqRecord._meta) ?? {};
     const toolCallId = typeof meta.toolCallId === 'string' ? meta.toolCallId : `acp-fs-write:${randomUUID()}`;
@@ -182,7 +189,9 @@ export function createAcpClientFsMethods(params: {
       }
     }
 
+    owner?.assertCurrent();
     await fs.mkdir(dirname(targetPath), { recursive: true });
+    owner?.assertCurrent();
     const finalDecision = params.permissionHandler?.getImmediateDecision?.(
       toolCallId,
       'writeTextFile',
@@ -193,6 +202,7 @@ export function createAcpClientFsMethods(params: {
       throw new Error(`Permission denied for writeTextFile (${toolCallId})`);
     }
     await assertWithinCwd(targetPath, { kind: 'write' });
+    owner?.assertCurrent();
     await fs.writeFile(targetPath, req.content, 'utf8');
     return {};
   };

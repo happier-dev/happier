@@ -61,6 +61,11 @@ export type ArtifactAccessActionResultById = {
                 name: string | null;
                 username?: string | null | undefined;
             };
+            acceptedVersions?: {
+                version: string;
+                copies: number;
+                reportedAt: number;
+            }[] | undefined;
         }[];
     };
     readonly "artifact.access.grants.set": {
@@ -85,6 +90,11 @@ export type ArtifactAccessActionResultById = {
                 name: string | null;
                 username?: string | null | undefined;
             };
+            acceptedVersions?: {
+                version: string;
+                copies: number;
+                reportedAt: number;
+            }[] | undefined;
         }[];
         access: 'view' | 'edit' | 'admin' | 'owner' | null;
         changed: boolean;
@@ -114,6 +124,11 @@ export type ArtifactAccessActionResultById = {
                 name: string | null;
                 username?: string | null | undefined;
             };
+            acceptedVersions?: {
+                version: string;
+                copies: number;
+                reportedAt: number;
+            }[] | undefined;
         }[];
         access: 'view' | 'edit' | 'admin' | 'owner' | null;
         changed: boolean;

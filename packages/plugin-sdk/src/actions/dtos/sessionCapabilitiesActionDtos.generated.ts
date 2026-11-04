@@ -14,6 +14,7 @@ export type SessionCapabilitiesActionInputById = {
             mcp?: {
                 v?: 1 | undefined;
                 managedServersEnabled?: boolean | undefined;
+                happierToolsEnabled?: boolean | undefined;
                 forceIncludeServerIds?: string[] | undefined;
                 forceExcludeServerIds?: string[] | undefined;
             } | undefined;

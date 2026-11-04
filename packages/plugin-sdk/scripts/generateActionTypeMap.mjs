@@ -36,6 +36,9 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
   const canonicalSdkTypes = new Map(['JsonValue', 'PluginJsonValueV2'].map((name) => [name, {
     path: resolve(repoRoot, 'packages/plugin-sdk/src/identity.ts'), name,
   }]));
+  canonicalSdkTypes.set('MachinePresetItemV1', {
+    path: resolve(repoRoot, 'packages/plugin-sdk/src/machineSetup.ts'), name: 'MachinePresetItemV1',
+  });
   canonicalSdkTypes.set('ScmComparisonSource', {
     path: resolve(repoRoot, 'packages/plugin-sdk/src/scm/comparisonSource.ts'), name: 'ScmComparisonSource',
   });

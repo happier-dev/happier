@@ -64,6 +64,31 @@ function sourceBetween(startMarker: string, endMarker: string, source = generato
 }
 
 describe('bundled Agent skill delivery coverage', () => {
+  it('reads packaged locale Resource JSON alongside transitional inline bundles', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-translation-resource-'));
+    const localeDirectory = join(root, 'packages/plugins/example/assets/i18n');
+    mkdirSync(localeDirectory, { recursive: true });
+    writeFileSync(join(localeDirectory, 'fr.json'), JSON.stringify({
+      'plugins.example.title': 'Canaux',
+      'plugins.example.empty': '',
+    }));
+    try {
+      expect(collectBundledPluginUiTranslations([{
+        pluginPackageId: 'example',
+        manifest: { contributes: {
+          resources: [{ id: 'i18n.fr', kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json' }],
+          ui: { translations: [
+            { locale: 'en', messages: { 'plugins.example.title': 'Channels' } },
+            { locale: 'fr', resourceId: 'i18n.fr' },
+          ] },
+        } },
+      }], root)).toEqual({
+        en: { 'plugins.example.title': 'Channels' },
+        fr: { 'plugins.example.empty': '', 'plugins.example.title': 'Canaux' },
+      });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   for (const { metadata, authored } of authoredAgentManifests) {
     const ingestion = ingestPluginManifestV2(authored.PLUGIN_MANIFEST);
     if (!ingestion.ok) throw new Error(`${metadata.pluginId}: ${JSON.stringify(ingestion.diagnostics)}`);

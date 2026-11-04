@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Kimi plugin manifest', () => {
-  it('declares current Kimi Code ACP through the shared declarative owner', () => {
+  it('declares the Kimi runtime with ACP continuation support', () => {
     const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(result).toMatchObject({ ok: true });
     expect(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST))).toEqual(result);
@@ -18,23 +18,7 @@ describe('Kimi plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'kimi',
-        runtime: {
-          kind: 'acp',
-          transport: {
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'kimi-cli' },
-            args: ['acp'],
-            timeouts: { initializeMs: 90_000, idleMs: 500, toolCallMs: 120_000 },
-          },
-          definition: {
-            modelConfigOptionId: 'model',
-            mcp: { policy: 'pass_through' },
-            stderrRules: {
-              authenticationErrorDetail:
-                'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-            },
-          },
-        },
+        runtime: { kind: 'custom' },
         primary: 'sessions',
         capabilities: expect.objectContaining({
           surfaces: ['terminal', 'externalSessions'],
@@ -50,7 +34,7 @@ describe('Kimi plugin manifest', () => {
     ]);
   });
 
-  it('declares one native history source while retaining the declarative ACP runtime', () => {
+  it('declares one native history source for the custom ACP runtime', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents[0];
     expect(agent.capabilities.surfaces).toContain('externalSessions');
     expect(agent.surfaces?.externalSession).toEqual({
@@ -66,7 +50,7 @@ describe('Kimi plugin manifest', () => {
         instances: [{ kind: 'default', constants: {} }],
       }],
     });
-    expect(agent).toMatchObject({ primary: 'sessions', runtime: { kind: 'acp' } });
+    expect(agent).toMatchObject({ primary: 'sessions', runtime: { kind: 'custom' } });
     expect(agent.capabilities.sessions?.open).toContain('resume');
   });
 
@@ -76,23 +60,13 @@ describe('Kimi plugin manifest', () => {
     )).toContainEqual(expect.objectContaining({
       family: 'agents',
       localId: 'kimi',
-      requiredFields: expect.arrayContaining(['terminal', 'externalSessions']),
+      requiredFields: expect.arrayContaining(['factory', 'externalSessions']),
     }));
   });
 
-  it('uses plain kimi acp without unsafe top-level permission flags', () => {
+  it('declares the custom runtime entrypoint without legacy Python settings', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents[0];
-    if (!agent || agent.runtime.kind !== 'acp' || agent.runtime.transport.kind !== 'stdio') {
-      throw new Error('Expected declarative Kimi stdio ACP runtime');
-    }
-    expect(agent.runtime.transport.args).toEqual(['acp']);
-    expect(agent.runtime.definition).not.toHaveProperty('permissionModeMapping');
-  });
-
-  it('carries no custom session factory, spawn hook, or legacy Python settings', () => {
-    const agent = PLUGIN_MANIFEST.contributes.agents[0];
-    expect(agent).not.toHaveProperty('factory');
-    expect(agent).not.toHaveProperty('sessionRunnerFactory');
+    expect(agent.runtime).toEqual({ kind: 'custom' });
     expect(agent).not.toHaveProperty('cliSessionCommand');
     expect(PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
     expect(PLUGIN_MANIFEST.contributes.settings ?? []).toEqual([]);
@@ -176,7 +150,7 @@ describe('Kimi plugin manifest', () => {
     )) as {
       contributes?: {
         agents?: readonly {
-          runtime?: { transport?: { args?: readonly string[] } };
+          runtime?: { kind?: string };
           capabilities?: { tools?: { delivery?: string } };
         }[];
         systemTools?: readonly { id?: string; executableNames?: readonly string[] }[];
@@ -190,7 +164,7 @@ describe('Kimi plugin manifest', () => {
     expect(publishedAgent?.capabilities?.tools?.delivery).toBe('native_mcp');
     expect(publishedAgent?.capabilities?.tools?.delivery)
       .toBe(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities?.tools?.delivery);
-    expect(publishedAgent?.runtime?.transport?.args).toEqual(['acp']);
+    expect(publishedAgent?.runtime?.kind).toBe('custom');
     expect(published.contributes?.systemTools?.find((tool) => tool.id === 'kimi-cli')?.executableNames)
       .toEqual(['kimi']);
   });

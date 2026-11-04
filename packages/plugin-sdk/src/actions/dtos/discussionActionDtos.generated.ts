@@ -5,9 +5,6 @@ import type { JsonValue } from '../../identity.js';
 import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type DiscussionActionInputById = {
-    readonly "discussion.pass": {
-        discussionId: string;
-    };
     readonly "discussion.second_opinion.start": {
         intent: 'preview' | 'ask';
         source: {
@@ -167,6 +164,7 @@ export type DiscussionActionInputById = {
                         mcp?: {
                             v?: 1 | undefined;
                             managedServersEnabled?: boolean | undefined;
+                            happierToolsEnabled?: boolean | undefined;
                             forceIncludeServerIds?: string[] | undefined;
                             forceExcludeServerIds?: string[] | undefined;
                         } | undefined;
@@ -219,8 +217,35 @@ export type DiscussionActionInputById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {
@@ -414,6 +439,7 @@ export type DiscussionActionInputById = {
                             mcp?: {
                                 v?: 1 | undefined;
                                 managedServersEnabled?: boolean | undefined;
+                                happierToolsEnabled?: boolean | undefined;
                                 forceIncludeServerIds?: string[] | undefined;
                                 forceExcludeServerIds?: string[] | undefined;
                             } | undefined;
@@ -466,8 +492,35 @@ export type DiscussionActionInputById = {
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered';
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                             teamId?: string | undefined;
+                            providerModelSelection?: {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: {
+                                    agentTargetKey: string;
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                } | undefined;
+                                executionMachineId?: string | undefined;
+                                nativeSource?: {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                } | undefined;
+                            } | undefined;
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | {
                             v: 1;
                             slot: {
@@ -1354,6 +1407,7 @@ export type DiscussionActionInputById = {
                         mcp?: {
                             v?: 1 | undefined;
                             managedServersEnabled?: boolean | undefined;
+                            happierToolsEnabled?: boolean | undefined;
                             forceIncludeServerIds?: string[] | undefined;
                             forceExcludeServerIds?: string[] | undefined;
                         } | undefined;
@@ -1406,8 +1460,35 @@ export type DiscussionActionInputById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {
@@ -1549,6 +1630,7 @@ export type DiscussionActionInputById = {
                         kind: 'resource_unavailable';
                     } | {
                         kind: 'source_unavailable';
+                        reason?: 'connected_service_credential_reconnect_required' | undefined;
                     } | {
                         kind: 'broker_unavailable';
                         reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -1766,6 +1848,7 @@ export type DiscussionActionInputById = {
                     mcp?: {
                         v?: 1 | undefined;
                         managedServersEnabled?: boolean | undefined;
+                        happierToolsEnabled?: boolean | undefined;
                         forceIncludeServerIds?: string[] | undefined;
                         forceExcludeServerIds?: string[] | undefined;
                     } | undefined;
@@ -1818,8 +1901,35 @@ export type DiscussionActionInputById = {
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered';
+                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                     teamId?: string | undefined;
+                    providerModelSelection?: {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: {
+                            agentTargetKey: string;
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                        } | undefined;
+                        executionMachineId?: string | undefined;
+                        nativeSource?: {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
+                    } | undefined;
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | {
                     v: 1;
                     slot: {
@@ -1906,109 +2016,11 @@ export type DiscussionActionInputById = {
         };
         discussionId: string;
     };
+    readonly "discussion.pass": {
+        discussionId: string;
+    };
 };
 export type DiscussionActionResultById = {
-    readonly "discussion.pass": {
-        v: 1;
-        ok: true;
-        progress: {
-            v: 1;
-            mode: 'wait' | 'return';
-            disposition: 'observing' | 'inline' | 'return_pending' | 'returned' | 'released';
-            sourceSession?: {
-                sourceSessionId: string;
-                sourceTurnId: string;
-                via: 'mcp' | 'action';
-                sourceInputId?: string | undefined;
-                discussionAddressing?: {
-                    discussionId: string;
-                    messageId: string;
-                    throughSeq: number;
-                    participantSessionId: string;
-                } | undefined;
-            } | undefined;
-            humanOrigin?: {
-                sessionId: string;
-            } | undefined;
-            discussion?: {
-                discussionId: string;
-                messageId: string;
-                throughSeq: number;
-                participantSessionId: string;
-            } | undefined;
-            workflow?: {
-                purpose: 'invocation';
-                runId: string;
-                invocationRecordId: string;
-                workDepth?: number | undefined;
-                stepOrdinal?: string | undefined;
-            } | undefined;
-            actionRequestAttributionV1?: {
-                requestRef: string;
-                requester: {
-                    serverId: string;
-                    accountId: string;
-                } | null;
-                persona: {
-                    serverId: string;
-                    sessionId: string;
-                };
-                origin: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                } | null;
-            } | undefined;
-            acceptedTurnId?: string | undefined;
-            outcome?: {
-                kind: 'answer';
-                result: {
-                    sessionId: string;
-                    messageId: string;
-                };
-            } | {
-                kind: 'answer';
-                publicationRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
-                    kind: 'discussion';
-                    discussion: {
-                        serverId: string;
-                        discussionId: string;
-                    };
-                    messageId: string;
-                };
-            } | {
-                kind: 'cancelled';
-                result: {
-                    sessionId: string;
-                    messageId: string;
-                };
-            } | {
-                kind: 'cancelled' | 'pass' | 'failed' | 'terminal_no_result' | 'declined';
-            } | undefined;
-            returnedInputLocalId?: string | undefined;
-        };
-    } | {
-        v: 1;
-        ok: false;
-        error: 'unavailable' | 'forbidden' | 'conflict' | 'invalid_request';
-    };
     readonly "discussion.second_opinion.start": {
         status: 'preview';
         preview: {
@@ -2169,6 +2181,7 @@ export type DiscussionActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -2219,8 +2232,35 @@ export type DiscussionActionResultById = {
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered';
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                             teamId?: string | undefined;
+                            providerModelSelection?: {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: {
+                                    agentTargetKey: string;
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                } | undefined;
+                                executionMachineId?: string | undefined;
+                                nativeSource?: {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                } | undefined;
+                            } | undefined;
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | {
                             v: 1;
                             slot: {
@@ -2428,6 +2468,7 @@ export type DiscussionActionResultById = {
                                 forceExcludeServerIds: string[];
                                 v: 1;
                                 managedServersEnabled: boolean;
+                                happierToolsEnabled?: boolean | undefined;
                             } | undefined;
                             skills?: {
                                 forceIncludeSkillIds: string[];
@@ -2478,8 +2519,35 @@ export type DiscussionActionResultById = {
                             };
                             resourceId: string;
                             expectedResourceRevision: number;
-                            deliveryMode: 'direct' | 'brokered';
+                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                             teamId?: string | undefined;
+                            providerModelSelection?: {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: {
+                                    agentTargetKey: string;
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                } | undefined;
+                                executionMachineId?: string | undefined;
+                                nativeSource?: {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                } | undefined;
+                            } | undefined;
+                            nativeDelivery?: {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
                         } | {
                             v: 1;
                             slot: {
@@ -2549,7 +2617,7 @@ export type DiscussionActionResultById = {
     } | {
         grantedAccountIds: string[];
         status: 'pending';
-        stage: 'ask' | 'workflow' | 'grant' | 'create' | 'invite';
+        stage: 'ask' | 'grant' | 'create' | 'invite' | 'workflow';
         errorCode: string;
         discussion?: {
             serverId: string;
@@ -2574,6 +2642,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -2622,7 +2691,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -2646,7 +2715,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -2829,6 +2898,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -3077,6 +3147,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -3125,7 +3196,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -3149,7 +3220,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -3163,6 +3234,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -3233,6 +3305,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         }[];
         nextCursor: string | null;
@@ -3258,6 +3331,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -3306,7 +3380,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -3330,7 +3404,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -3513,6 +3587,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -3761,6 +3836,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -3809,7 +3885,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -3833,7 +3909,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -3847,6 +3923,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -3917,6 +3994,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         };
         v: 1;
@@ -4123,6 +4201,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -4171,7 +4250,7 @@ export type DiscussionActionResultById = {
                 replyReturn?: {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
                     workflow?: {
                         runId: string;
@@ -4195,7 +4274,7 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
             } | null;
             mentionedAccountIds: string[];
             createdAt: number;
@@ -4209,6 +4288,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;
@@ -4299,6 +4379,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -4347,7 +4428,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -4371,7 +4452,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -4554,6 +4635,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -4802,6 +4884,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -4850,7 +4933,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -4874,7 +4957,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -4888,6 +4971,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -4958,6 +5042,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         };
         firstMessage: {
@@ -5154,6 +5239,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -5202,7 +5288,7 @@ export type DiscussionActionResultById = {
                 replyReturn?: {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
                     workflow?: {
                         runId: string;
@@ -5226,7 +5312,7 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
             } | null;
             mentionedAccountIds: string[];
             createdAt: number;
@@ -5240,6 +5326,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;
@@ -5497,6 +5584,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -5545,7 +5633,7 @@ export type DiscussionActionResultById = {
                 replyReturn?: {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
                     workflow?: {
                         runId: string;
@@ -5569,7 +5657,7 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
             } | null;
             mentionedAccountIds: string[];
             createdAt: number;
@@ -5583,6 +5671,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;
@@ -5664,6 +5753,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -5712,7 +5802,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -5736,7 +5826,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -5919,6 +6009,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -6167,6 +6258,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -6215,7 +6307,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -6239,7 +6331,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -6253,6 +6345,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -6323,6 +6416,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         };
         v: 1;
@@ -6351,6 +6445,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -6399,7 +6494,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -6423,7 +6518,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -6606,6 +6701,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -6854,6 +6950,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -6902,7 +6999,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -6926,7 +7023,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -6940,6 +7037,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -7010,6 +7108,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         };
         v: 1;
@@ -7038,6 +7137,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -7086,7 +7186,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -7110,7 +7210,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 createdAt: number;
                 content?: {
@@ -7293,6 +7393,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
             };
             anchor: {
@@ -7541,6 +7642,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null;
                 producerV1: {
                     v: 1;
@@ -7589,7 +7691,7 @@ export type DiscussionActionResultById = {
                     replyReturn?: {
                         serverId: string;
                         requestLocalId: string;
-                        outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                        outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                         acceptedTurnId?: string | undefined;
                         workflow?: {
                             runId: string;
@@ -7613,7 +7715,7 @@ export type DiscussionActionResultById = {
                         kind: 'not_started';
                         blockKind: 'action' | 'step';
                     };
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                 } | null;
                 mentionedAccountIds: string[];
                 createdAt: number;
@@ -7627,6 +7729,7 @@ export type DiscussionActionResultById = {
                         username: string | null;
                         avatarUrl: string | null;
                     } | null;
+                    accessibility?: 'current' | 'former' | undefined;
                 } | null | undefined;
                 addressingV1?: {
                     throughSeq: number;
@@ -7697,6 +7800,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             }[] | undefined;
         };
         v: 1;
@@ -7911,6 +8015,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null;
             producerV1: {
                 v: 1;
@@ -7959,7 +8064,7 @@ export type DiscussionActionResultById = {
                 replyReturn?: {
                     serverId: string;
                     requestLocalId: string;
-                    outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                    outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
                     acceptedTurnId?: string | undefined;
                     workflow?: {
                         runId: string;
@@ -7983,7 +8088,7 @@ export type DiscussionActionResultById = {
                     kind: 'not_started';
                     blockKind: 'action' | 'step';
                 };
-                outcome: 'answer' | 'cancelled' | 'pass' | 'failed' | 'terminal_no_result';
+                outcome: 'answer' | 'pass' | 'failed' | 'cancelled' | 'terminal_no_result';
             } | null;
             mentionedAccountIds: string[];
             createdAt: number;
@@ -7997,6 +8102,7 @@ export type DiscussionActionResultById = {
                     username: string | null;
                     avatarUrl: string | null;
                 } | null;
+                accessibility?: 'current' | 'former' | undefined;
             } | null | undefined;
             addressingV1?: {
                 throughSeq: number;
@@ -8202,6 +8308,7 @@ export type DiscussionActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -8252,8 +8359,35 @@ export type DiscussionActionResultById = {
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered';
+                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                     teamId?: string | undefined;
+                    providerModelSelection?: {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: {
+                            agentTargetKey: string;
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                        } | undefined;
+                        executionMachineId?: string | undefined;
+                        nativeSource?: {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
+                    } | undefined;
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | {
                     v: 1;
                     slot: {
@@ -8434,6 +8568,7 @@ export type DiscussionActionResultById = {
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
+                            happierToolsEnabled?: boolean | undefined;
                         } | undefined;
                         skills?: {
                             forceIncludeSkillIds: string[];
@@ -8484,8 +8619,35 @@ export type DiscussionActionResultById = {
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered';
+                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                         teamId?: string | undefined;
+                        providerModelSelection?: {
+                            agentTargetKey: string;
+                            modelId: string;
+                            application?: {
+                                agentTargetKey: string;
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                            } | undefined;
+                            executionMachineId?: string | undefined;
+                            nativeSource?: {
+                                sourceRevision: string;
+                                providerTicket: string;
+                            } | undefined;
+                        } | undefined;
+                        nativeDelivery?: {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
                     } | {
                         v: 1;
                         slot: {
@@ -8627,6 +8789,7 @@ export type DiscussionActionResultById = {
                         kind: 'resource_unavailable';
                     } | {
                         kind: 'source_unavailable';
+                        reason?: 'connected_service_credential_reconnect_required' | undefined;
                     } | {
                         kind: 'broker_unavailable';
                         reason?: 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty' | undefined;
@@ -8862,6 +9025,7 @@ export type DiscussionActionResultById = {
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
+                        happierToolsEnabled?: boolean | undefined;
                     } | undefined;
                     skills?: {
                         forceIncludeSkillIds: string[];
@@ -8912,8 +9076,35 @@ export type DiscussionActionResultById = {
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered';
+                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
                     teamId?: string | undefined;
+                    providerModelSelection?: {
+                        agentTargetKey: string;
+                        modelId: string;
+                        application?: {
+                            agentTargetKey: string;
+                            implementationIdentity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            endpointTemplateId: string;
+                            protocol: string;
+                        } | undefined;
+                        executionMachineId?: string | undefined;
+                        nativeSource?: {
+                            sourceRevision: string;
+                            providerTicket: string;
+                        } | undefined;
+                    } | undefined;
+                    nativeDelivery?: {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    } | undefined;
                 } | {
                     v: 1;
                     slot: {
@@ -8939,7 +9130,7 @@ export type DiscussionActionResultById = {
         } | undefined;
         sessionStart?: {
             type: 'error';
-            code: 'cancelled' | 'invalid_request' | 'invalid_input' | 'target_required' | 'target_unavailable' | 'machine_offline' | 'incompatible_target' | 'organization_unavailable' | 'organization_invalid' | 'creation_conflict' | 'permission_denied' | 'session_access_request_failed' | 'session_data_key_unavailable' | 'spawn_failed' | 'agent_cli_missing' | 'agent_signed_out' | 'session_access_forbidden' | 'session_access_session_not_found' | 'session_access_subject_not_found' | 'session_access_subject_ineligible' | 'session_access_owner_grant_invalid' | 'session_access_self_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_team_policy_required' | 'session_initial_access_creator_mismatch' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_requires_team_admin' | 'session_access_external_sharing_disabled' | 'session_access_sharing_unavailable' | 'session_access_invalid_recipient_envelope' | 'session_responsibility_assignee_unavailable' | 'invalid_cursor' | 'data_key_not_required' | 'recipient_envelope_required' | 'recipient_key_unavailable';
+            code: 'cancelled' | 'invalid_input' | 'target_required' | 'target_unavailable' | 'machine_offline' | 'incompatible_target' | 'organization_unavailable' | 'organization_invalid' | 'creation_conflict' | 'permission_denied' | 'session_access_request_failed' | 'session_data_key_unavailable' | 'spawn_failed' | 'agent_cli_missing' | 'agent_signed_out' | 'session_access_forbidden' | 'session_access_session_not_found' | 'session_access_subject_not_found' | 'session_access_subject_ineligible' | 'session_access_owner_grant_invalid' | 'session_access_self_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_team_policy_required' | 'session_initial_access_creator_mismatch' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_requires_team_admin' | 'session_access_external_sharing_disabled' | 'session_access_sharing_unavailable' | 'session_access_invalid_recipient_envelope' | 'session_responsibility_assignee_unavailable' | 'invalid_cursor' | 'invalid_request' | 'data_key_not_required' | 'recipient_envelope_required' | 'recipient_key_unavailable';
             retryable: boolean;
             agentId?: string | undefined;
             providerError?: {
@@ -8951,6 +9142,7 @@ export type DiscussionActionResultById = {
                 machineId?: string | undefined;
                 sourceProfileId?: string | undefined;
                 retryAfterMs?: number | undefined;
+                savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
             } | undefined;
             terminalHostError?: {
                 kind: 'terminal_host_unavailable';
@@ -8966,6 +9158,26 @@ export type DiscussionActionResultById = {
                 message: string;
                 rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_TRANSPORT_UNAVAILABLE' | 'RPC_OUTCOME_UNKNOWN' | undefined;
                 connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+                uxDiagnostic?: {
+                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
+                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
+                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    retryable: boolean;
+                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    serviceId?: string | undefined;
+                    agentId?: string | undefined;
+                    profileId?: string | undefined;
+                    groupId?: string | undefined;
+                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
+                } | undefined;
+                connectedAccountPool?: {
+                    serviceId: string;
+                    excluded: {
+                        profileId: string;
+                        reason: 'current_active' | 'disabled' | 'cooldown' | 'quota_exhausted' | 'capacity_limited' | 'auth_invalid' | 'credential_unavailable' | 'plan_unavailable' | 'validation_blocked' | 'policy_wait_until_reset';
+                        retryAtMs?: number | null | undefined;
+                    }[];
+                } | undefined;
             } | undefined;
         } | {
             type: 'success';
@@ -9016,9 +9228,9 @@ export type DiscussionActionResultById = {
             retryWithSameCreationKey: true;
             outcome: 'unknown' | 'accepted';
             operation?: {
-                operationId: string;
                 serverId: string;
                 machineId: string;
+                operationId: string;
             } | undefined;
         } | {
             type: 'error';
@@ -9196,5 +9408,106 @@ export type DiscussionActionResultById = {
                 username?: string | null | undefined;
             };
         }[];
+    };
+    readonly "discussion.pass": {
+        v: 1;
+        ok: true;
+        progress: {
+            v: 1;
+            mode: 'wait' | 'return';
+            disposition: 'observing' | 'inline' | 'return_pending' | 'returned' | 'released';
+            sourceSession?: {
+                sourceSessionId: string;
+                sourceTurnId: string;
+                via: 'mcp' | 'action';
+                sourceInputId?: string | undefined;
+                discussionAddressing?: {
+                    discussionId: string;
+                    messageId: string;
+                    throughSeq: number;
+                    participantSessionId: string;
+                } | undefined;
+            } | undefined;
+            humanOrigin?: {
+                sessionId: string;
+            } | undefined;
+            discussion?: {
+                discussionId: string;
+                messageId: string;
+                throughSeq: number;
+                participantSessionId: string;
+            } | undefined;
+            workflow?: {
+                purpose: 'invocation';
+                runId: string;
+                invocationRecordId: string;
+                workDepth?: number | undefined;
+                stepOrdinal?: string | undefined;
+            } | undefined;
+            actionRequestAttributionV1?: {
+                requestRef: string;
+                requester: {
+                    serverId: string;
+                    accountId: string;
+                } | null;
+                persona: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                origin: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                } | null;
+            } | undefined;
+            acceptedTurnId?: string | undefined;
+            outcome?: {
+                kind: 'answer';
+                result: {
+                    sessionId: string;
+                    messageId: string;
+                };
+            } | {
+                kind: 'answer';
+                publicationRef: {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
+                } | {
+                    kind: 'discussion';
+                    discussion: {
+                        serverId: string;
+                        discussionId: string;
+                    };
+                    messageId: string;
+                };
+            } | {
+                kind: 'cancelled';
+                result: {
+                    sessionId: string;
+                    messageId: string;
+                };
+            } | {
+                kind: 'pass' | 'failed' | 'cancelled' | 'terminal_no_result' | 'declined';
+            } | undefined;
+            returnedInputLocalId?: string | undefined;
+        };
+    } | {
+        v: 1;
+        ok: false;
+        error: 'unavailable' | 'invalid_request' | 'forbidden' | 'conflict';
     };
 };

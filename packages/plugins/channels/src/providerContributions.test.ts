@@ -1,9 +1,9 @@
 import {
   PluginError,
-  type TargetedContributionPointRef,
   type TargetedContributionSnapshot,
   type TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
+import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import { describe, expect, it } from 'vitest';
 

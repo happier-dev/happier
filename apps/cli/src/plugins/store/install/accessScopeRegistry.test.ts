@@ -7,6 +7,14 @@ import {
 } from './accessScopeRegistry';
 
 describe('PluginAccessScopeRegistry', () => {
+  it('retains admitted absolute Machine roots', () => {
+    const registry = createDefaultPluginAccessScopeRegistry();
+    for (const location of [{ root: 'machine', pathPrefix: '/srv/work' }, { root: 'machine', pathPrefix: 'C:\\work' }]) {
+      const scope = { access: ['read'], locations: [location] };
+      expect(registry.compare('filesystem', scope, scope)).toEqual({ relation: 'exact', reason: 'canonical_scope_equal' });
+    }
+  });
+
   it('ranks a contained canonical scope as narrower and everything else as changed', () => {
     const registry = createDefaultPluginAccessScopeRegistry();
 

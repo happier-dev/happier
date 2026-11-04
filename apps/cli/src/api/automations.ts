@@ -14,7 +14,7 @@ import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBas
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 // The incumbent Automation HTTP owner budget applies to every definition operation.
-const AUTOMATION_HTTP_TIMEOUT_MS = 15_000;
+export const AUTOMATION_HTTP_TIMEOUT_MS = 15_000;
 
 function unresolvedMutationReceipt(cause: unknown): never {
   throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });

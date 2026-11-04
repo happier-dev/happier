@@ -182,7 +182,7 @@ export type ComposerIngressActionInputById = {
                             localId: string;
                         };
                         mediaKind: 'image' | 'video';
-                        mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'video/webm';
+                        mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'video/webm' | 'video/mp4';
                         name: string;
                         sizeBytes: number;
                         sha256: string;

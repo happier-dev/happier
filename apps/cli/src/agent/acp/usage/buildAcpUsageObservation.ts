@@ -8,6 +8,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+/** ACP amount is a reported monetary fact; retain its currency and remaining cost metadata. */
 function normalizeAcpUsageUpdateCost(raw: unknown): unknown {
     const record = asRecord(raw);
     if (!record) return raw;
@@ -35,6 +36,10 @@ function normalizeAcpUsageUpdateCost(raw: unknown): unknown {
     };
 }
 
+/**
+ * Normalize ACP usage without inventing inference identity. Cumulative updates
+ * keep their stream key; keyless deltas defer to the publishing event's identity.
+ */
 export function buildAcpUsageUpdateObservation(params: Readonly<{
     provider: string;
     update: unknown;
@@ -48,13 +53,13 @@ export function buildAcpUsageUpdateObservation(params: Readonly<{
         body: {
             ...record,
             ...(record.cost !== undefined ? { cost: normalizeAcpUsageUpdateCost(record.cost) } : {}),
-            key: 'acp-usage-update',
+            key: record.key ?? (record.scope === 'turn_delta' ? null : 'acp-usage-update'),
             source: 'acp-usage-update',
-            scope: 'session_cumulative',
         },
     });
 }
 
+/** Embedded session-update usage describes one turn, unlike ACP's default cumulative usage_update. */
 export function buildAcpSessionUpdateUsageObservation(params: Readonly<{
     provider: string;
     usage: unknown;
@@ -74,6 +79,7 @@ export function buildAcpSessionUpdateUsageObservation(params: Readonly<{
     });
 }
 
+/** Read direct or metadata-envelope prompt usage after any provider-owned counter projection. */
 export function buildAcpPromptUsageObservation(params: Readonly<{
     provider: string;
     promptResponse: unknown;

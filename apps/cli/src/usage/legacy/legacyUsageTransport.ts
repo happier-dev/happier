@@ -34,6 +34,10 @@ function createLegacyNumberMap(): Record<string, number> {
     return Object.create(null) as Record<string, number>;
 }
 
+/**
+ * Preserve inference categories when present; otherwise encode context occupancy
+ * for legacy transcript telemetry. Accounting callers must first require measured tokens.
+ */
 function getCompatibleLegacyTokens(observation: UsageObservation): LegacyUsageNumberMap | null {
     if (observation.tokens) {
         const out = createLegacyNumberMap();
@@ -148,6 +152,11 @@ export function buildTokenCountSessionMessageFromUsageObservation(
     };
 }
 
+/**
+ * Project measured token snapshots onto the legacy full-row replacement contract.
+ * Tokenless costs remain available to v2 accounting; emitting them as zero tokens
+ * would erase an earlier same-key measurement, while a separate key could double costs.
+ */
 export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     sessionId: string;
     observation: UsageObservationBoundaryInput;
@@ -158,6 +167,7 @@ export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
     // servers replace the session key and cannot reconcile the two; retain
     // their unchanged cumulative report instead of letting a delta replace it.
     if (observation.source === 'codex-app-server-response-usage') return null;
+    if (!observation.tokens) return null;
     const tokens = getCompatibleLegacyTokens(observation);
     if (!tokens) return null;
     const cost = createLegacyNumberMap();

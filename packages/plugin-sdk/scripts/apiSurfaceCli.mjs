@@ -1787,7 +1787,13 @@ function directTypeAliasTargetSymbol(checker, symbol) {
   return null;
 }
 
-function assertAuthorSignatureTypeClosure({ program, inventory, sources }) {
+function isHostTypeDeclaration(declaration, metadata = declarationPackageMetadata(declaration.getSourceFile())) {
+  return Boolean(metadata && /^(?:src|dist)\/host\//u.test(
+    relativeOutputPath(metadata.root, declaration.getSourceFile().fileName),
+  ));
+}
+
+function assertAuthorSignatureTypeClosure({ program, inventory, sources, packageRoot, bundledDependencies = [] }) {
   const checker = program.getTypeChecker();
   const sourceByModule = new Map(sources.map((source) => [source.sourceModule, source]));
   const sourceFileByModule = new Map(
@@ -1921,10 +1927,49 @@ function assertAuthorSignatureTypeClosure({ program, inventory, sources }) {
         }
       }
       for (const [referencedType, name] of referencedTypes) {
+        // A declaration can name a private structural helper without making it
+        // an author export. Follow its edges instead; only public specs choose
+        // the inventory. The same applies inside the shipped bundled closure.
+        const localDeclarations = referencedType.declarations ?? [];
+        const declarationOwners = localDeclarations.map((declaration) => ({
+          declaration, metadata: declarationPackageMetadata(declaration.getSourceFile()),
+        }));
+        const reachesHostDeclaration = declarationOwners.some(({ declaration, metadata }) => (
+          isHostTypeDeclaration(declaration, metadata)
+        ));
+        if (!reachesHostDeclaration && reachableAuthorTypes.has(referencedType)) continue;
+        const inDeclarationClosure = declarationOwners.length > 0 && declarationOwners.every(({ metadata }) => (
+          metadata?.root === resolve(packageRoot) || bundledDependencies.includes(metadata?.name)
+        ));
+        const bundledType = declarationOwners.some(({ metadata }) => (
+          bundledDependencies.includes(metadata?.name)
+        )) ? checker.getDeclaredTypeOfSymbol(referencedType) : null;
+        const isBundledSchema = bundledType !== null
+          && hasCallSurface(checker, propertyType(checker, bundledType, 'parse'), 1)
+          && hasCallSurface(checker, propertyType(checker, bundledType, 'safeParse'), 1);
+        const neutralSchemaSymbol = canonicalAuthorSchemaProjectionTypes.protocolComposableSchema;
+        const isNeutralSchema = isBundledSchema && neutralSchemaSymbol !== null
+          && hasCanonicalProtocolComposableSchemaSurface(
+            checker, bundledType, canonicalAuthorSchemaProjectionTypes.pluginJsonSchema,
+          )
+          && checker.getPropertiesOfType(bundledType).every((property) => (
+            checker.getPropertyOfType(checker.getDeclaredTypeOfSymbol(neutralSchemaSymbol), property.name)
+              !== undefined
+          ));
+        // Native validator types still require the existing neutral SDK schema
+        // projection; bundling their implementation does not make them author API.
+        if (!reachesHostDeclaration && inDeclarationClosure && (!isBundledSchema || isNeutralSchema)) {
+          for (const declaration of localDeclarations) {
+            collectDeclarationSignatureTypeNodes(checker, declaration, referencedTypes);
+          }
+          continue;
+        }
         if (
-          !isTypeScriptPlatformType(program, referencedType)
-          && !isPublishedThirdPartyType(program, referencedType)
-          && !reachableAuthorTypes.has(referencedType)
+          reachesHostDeclaration || (
+            !isTypeScriptPlatformType(program, referencedType)
+            && !isPublishedThirdPartyType(program, referencedType)
+            && !reachableAuthorTypes.has(referencedType)
+          )
         ) {
           failures.push(
             `API surface author ${row.kind} ${row.sourceModule}#${row.sourceExport} public signature references author type ${name}, which is absent from the author inventory (declarations: ${referencedTypeDeclarationBasis(program, referencedType)})`,
@@ -2452,6 +2497,8 @@ async function finalizeApiSurfaceMaterialization(
     program: prepared.publicSurfaceProgram(),
     inventory,
     sources: preflightedSourceModules,
+    packageRoot,
+    bundledDependencies: packageJson.bundledDependencies ?? [],
   });
   reportProgress(options, 'realm-closure');
   await assertInventoryValueRealmClosures({

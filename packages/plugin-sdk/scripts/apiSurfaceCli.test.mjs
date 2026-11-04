@@ -4837,3 +4837,36 @@ test('projects exact daemon value exports from an entrypoint publication spec', 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('CLI closes private structural helpers without publishing them or admitting host types', async () => {
+  const root = await createPackageFixture();
+  try {
+    await publishFixtureSymbols(root, [{
+      specifier: './actions', exportName: 'PublicOptions', kind: 'type',
+      sourceModule: 'src/actions/service.ts', sourceExport: 'PublicOptions', realm: 'any',
+    }]);
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      'export interface ActionsService {}',
+      'interface PrivateHelper { readonly id: string }',
+      'export type PublicOptions = Readonly<{ helper: PrivateHelper }>;',
+      '',
+    ].join('\n'));
+    const valid = runJsonCli(root);
+    assert.equal(valid.status, 0, valid.stderr);
+    const inventory = await apiSurfaceCli.readCurrentApiSurfaceInventory({ packageRoot: root });
+    assert.equal(inventory.symbols.some((row) => row.exportName === 'PrivateHelper'), false);
+    await writeFixtureFile(root, 'src/host/private.ts', 'export interface HiddenHost { readonly secret: string }\n');
+    await writeFixtureFile(root, 'src/actions/service.ts', [
+      'export interface ActionsService {}',
+      "import type { HiddenHost } from '../host/private.js';",
+      'interface PrivateHelper { readonly host: HiddenHost }',
+      'export type PublicOptions = Readonly<{ helper: PrivateHelper }>;',
+      '',
+    ].join('\n'));
+    const forbidden = runJsonCli(root);
+    assert.equal(forbidden.status, 1);
+    assert.match(forbidden.stderr, /HiddenHost.*absent from the author inventory/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

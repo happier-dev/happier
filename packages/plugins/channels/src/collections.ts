@@ -1,5 +1,7 @@
+import { SessionPullRequestConfiguredFixInputV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ConversationConnectionTransportOriginV1JsonSchema, ConversationPendingEndpointRetargetIntentV1JsonSchema } from './connectionLifecycle.js';
 import {
   defineAccountCollection,
@@ -1362,6 +1364,12 @@ export function isCanonicalChannelStateRecordIdentity(input: Readonly<{
   }
   return true;
 }
+
+/** Configured input shares obligation custody without fabricating provider events or a census. */
+export const SessionPullRequestConfiguredFixCustodySchema = defineProtocolObject({
+  kind: defineProtocolLiteral('configuredFix'), request: SessionPullRequestConfiguredFixInputV1Schema,
+  result: SessionMessageSendResultV1ProtocolSchema.optional(),
+}, { policy: 'closed' });
 
 const STATE_RECORDS: readonly StateRecordDefinition[] = [
   {

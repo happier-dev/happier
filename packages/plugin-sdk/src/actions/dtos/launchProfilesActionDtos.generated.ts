@@ -77,6 +77,7 @@ export type LaunchProfilesActionInputById = {
             defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
             defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: unknown;
             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
             compatibility?: Record<string, boolean> | undefined;
             authMode?: 'machineLogin' | undefined;
@@ -338,6 +339,27 @@ export type LaunchProfilesActionInputById = {
                                     name: string;
                                     format: 'raw' | 'bearer';
                                 };
+                                additionalCredentials?: {
+                                    slotId: string;
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    };
+                                    label?: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, string | number> | undefined;
+                                    } | undefined;
+                                }[] | undefined;
                             }[];
                             slotId?: 'apiKey' | undefined;
                             required?: boolean | undefined;
@@ -358,11 +380,13 @@ export type LaunchProfilesActionInputById = {
                 } | undefined;
                 endpointOverrides?: {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[] | undefined;
                 endpointOverridesByMachineId?: Record<string, {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[]> | undefined;
                 purposeBindingDefaults?: Record<string, {
                     kind: 'account';
@@ -464,6 +488,27 @@ export type LaunchProfilesActionInputById = {
                                     name: string;
                                     format: 'raw' | 'bearer';
                                 };
+                                additionalCredentials?: {
+                                    slotId: string;
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'raw' | 'bearer' | {
+                                            template: string;
+                                        };
+                                    };
+                                    label?: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, string | number> | undefined;
+                                    } | undefined;
+                                }[] | undefined;
                             }[];
                             slotId?: 'apiKey' | undefined;
                             required?: boolean | undefined;
@@ -484,11 +529,13 @@ export type LaunchProfilesActionInputById = {
                 } | undefined;
                 endpointOverrides?: {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[] | undefined;
                 endpointOverridesByMachineId?: Record<string, {
                     endpointTemplateId: string;
-                    baseUrl: string;
+                    baseUrl?: string | undefined;
+                    publicHeaders?: Record<string, string> | undefined;
                 }[]> | undefined;
                 purposeBindingDefaults?: Record<string, {
                     kind: 'account';
@@ -605,6 +652,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -744,6 +792,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -939,6 +988,7 @@ export type LaunchProfilesActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;
@@ -996,6 +1046,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -1139,6 +1190,7 @@ export type LaunchProfilesActionResultById = {
             description?: string | undefined;
             defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             defaultModelMode?: string | undefined;
+            defaultBackendTargetKey?: string | undefined;
             authMode?: 'machineLogin' | undefined;
             requiresMachineLoginTargetKey?: string | undefined;
             requiresMachineLogin?: string | undefined;
@@ -1337,6 +1389,7 @@ export type LaunchProfilesActionResultById = {
                     description?: string | undefined;
                     defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     defaultModelMode?: string | undefined;
+                    defaultBackendTargetKey?: string | undefined;
                     authMode?: 'machineLogin' | undefined;
                     requiresMachineLoginTargetKey?: string | undefined;
                     requiresMachineLogin?: string | undefined;
@@ -1468,6 +1521,7 @@ export type LaunchProfilesActionResultById = {
                         description?: string | undefined;
                         defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                         defaultModelMode?: string | undefined;
+                        defaultBackendTargetKey?: string | undefined;
                         authMode?: 'machineLogin' | undefined;
                         requiresMachineLoginTargetKey?: string | undefined;
                         requiresMachineLogin?: string | undefined;
@@ -1728,6 +1782,7 @@ export type LaunchProfilesActionResultById = {
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "launch_profiles.legacy.convert": {
@@ -1746,6 +1801,7 @@ export type LaunchProfilesActionResultById = {
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "launch_profiles.legacy.resolve_conflict": {
@@ -1764,6 +1820,7 @@ export type LaunchProfilesActionResultById = {
             machineId?: string | undefined;
             sourceProfileId?: string | undefined;
             retryAfterMs?: number | undefined;
+            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
         };
     };
     readonly "launch_profiles.draft.discard": {

@@ -22,6 +22,10 @@ export type MachineConnectionActionInputById = {
             kind: 'package_script';
             runTargetId: string;
         } | {
+            kind: 'service_shell';
+            serviceId: string;
+            expectedGeneration: string;
+        } | {
             kind: 'agent_login';
             agentId: string;
             launchId?: 'primary' | 'device_code' | undefined;
@@ -111,6 +115,10 @@ export type MachineConnectionActionInputById = {
         launch?: {
             kind: 'package_script';
             runTargetId: string;
+        } | {
+            kind: 'service_shell';
+            serviceId: string;
+            expectedGeneration: string;
         } | {
             kind: 'agent_login';
             agentId: string;
@@ -222,6 +230,38 @@ export type MachineConnectionActionInputById = {
     readonly "machines.pairing.create": {
         serverId: string;
     };
+    readonly "machines.managed.bootstrap.respond": {
+        purpose: 'approve';
+        prompt: {
+            kind: 'auth.approveRemoteProvisioning';
+            message: string;
+        } | {
+            kind: 'ssh.trustHost' | 'ssh.replaceHostKey';
+            message: string;
+            host: string;
+            keyType: string | null;
+            fingerprint: string;
+            existingFingerprint: string | null;
+        } | {
+            kind: 'daemon.replaceRemoteBackgroundServices';
+            message: string;
+        };
+        approved: boolean;
+        serverId: string;
+        homeId: string;
+        managedId: string;
+        operationId: string;
+        taskId: string;
+    } | {
+        purpose: 'establish';
+        promptId: string;
+        password: string;
+        serverId: string;
+        homeId: string;
+        managedId: string;
+        operationId: string;
+        taskId: string;
+    };
 };
 export type MachineConnectionActionResultById = {
     readonly "machines.terminal.open": {
@@ -232,7 +272,7 @@ export type MachineConnectionActionResultById = {
     } | {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
         error: string;
         spawnFailure?: {
             reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
@@ -260,7 +300,7 @@ export type MachineConnectionActionResultById = {
         }[];
     } | {
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
         error: string;
         spawnFailure?: {
             reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
@@ -323,7 +363,7 @@ export type MachineConnectionActionResultById = {
     readonly "machines.terminal.close": {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
         error: string;
         spawnFailure?: {
             reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
@@ -341,7 +381,7 @@ export type MachineConnectionActionResultById = {
     } | {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
         error: string;
         spawnFailure?: {
             reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
@@ -455,5 +495,8 @@ export type MachineConnectionActionResultById = {
         pairId: string;
         link: string;
         expiresAtMs: number;
+    };
+    readonly "machines.managed.bootstrap.respond": {
+        taskId: string;
     };
 };

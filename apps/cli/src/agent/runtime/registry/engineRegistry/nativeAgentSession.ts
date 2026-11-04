@@ -2472,9 +2472,17 @@ export function createNativeAgentSessionOperations(
     let disposeStarted = false;
     let disposePromise: Promise<void> | null = null;
     let disposeRuntimeScopePromise: Promise<void> | null = null;
-    const invariant = createAgentSessionTurnInvariant({
+    const invariant = createAgentSessionTurnInvariant<NativeAgentNewTurnAdmissionWitness>({
         sessionId: expectedSessionId,
         ...(expectedProviderSessionId ? { expectedProviderSessionId } : {}),
+        ...(session.runtimeCapabilities?.providerContinuations?.supported === true ? {
+            providerContinuations: {
+                captureToolContext: (turnId: string) => {
+                    const witness = readActiveTurnAdmissionWitness();
+                    return witness?.turnId === turnId ? witness : null;
+                },
+            },
+        } : {}),
     });
     let lastProviderSessionEvent: Extract<AgentSessionRuntimeEvent, { kind: 'provider-session-id' }> | null = null;
     let deliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
@@ -2880,6 +2888,12 @@ export function createNativeAgentSessionOperations(
         }
         if (observation.status === 'ignored') return;
         const event = observation.event;
+        if (event.kind === 'turn-start' && observation.providerContinuationContext) {
+            activeTurnAdmissionWitness = Object.freeze({
+                ...observation.providerContinuationContext,
+                turnId: event.turnId,
+            });
+        }
         if (event.kind === 'provider-session-id') lastProviderSessionEvent = event;
         if (firstAssistantTextTiming
             && isForegroundTurnRuntimeTranscriptEvent(event)
@@ -3891,6 +3905,21 @@ export function createNativeAgentSessionOperations(
                             Object.freeze({ signal: admissionAbortController.signal }),
                         );
                         admissionAbortController.signal.throwIfAborted();
+                    }
+                    // A provider continuation can start while host authorization awaits.
+                    // Keep its admitted witness intact and leave this input retryable.
+                    if (invariant.read().activeTurnId !== null) {
+                        emitDeliveryOutcome({
+                            type: 'input-rejected',
+                            localInputId: correlation.inputId,
+                            userMessageSeq: correlation.userMessageSeq,
+                            ...(correlation.userMessageSeqs
+                                ? { userMessageSeqs: correlation.userMessageSeqs }
+                                : {}),
+                            diagnostic: { code: 'agent_runtime_turn_already_active', severity: 'warning' },
+                            retryable: true,
+                        });
+                        throw new Error('Native Agent runtime already has an active turn');
                     }
                 } catch (error) {
                     if (

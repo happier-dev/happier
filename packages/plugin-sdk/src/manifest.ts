@@ -33,6 +33,7 @@ import type { WorkflowsActionResultById } from './actions/dtos/workflowsActionDt
 import type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';
 import type { MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import type { AccessProviderContributionV1 } from './accessProviders.js';
+import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterContributionV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from '@happier-dev/protocol';

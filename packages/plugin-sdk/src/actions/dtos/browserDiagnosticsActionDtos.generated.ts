@@ -66,6 +66,10 @@ export type BrowserDiagnosticsActionInputById = {
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
         diagnosticsInteractionEnabled: true;
+        point?: {
+            x: number;
+            y: number;
+        } | undefined;
     };
     readonly "browser.diagnostics.elementPicker.cancel": {
         browserSessionId: string;
@@ -76,6 +80,10 @@ export type BrowserDiagnosticsActionInputById = {
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
         diagnosticsInteractionEnabled: true;
+        point?: {
+            x: number;
+            y: number;
+        } | undefined;
     };
 };
 export type BrowserDiagnosticsActionResultById = {
@@ -92,7 +100,7 @@ export type BrowserDiagnosticsActionResultById = {
             navigationGeneration: number;
             capturedAtMs: number;
             family: 'console' | 'pageError' | 'network' | 'elements' | 'resources' | 'storage' | 'pageInfo' | 'performance' | 'screenshot' | 'proxyTunnel';
-            kind: 'console.entry' | 'pageError.thrown' | 'network.requestStarted' | 'network.response' | 'network.finished' | 'network.failed' | 'network.redirect' | 'network.websocketOpened' | 'network.websocketSummary' | 'network.websocketClosed' | 'network.eventSourceOpened' | 'network.eventSourceSummary' | 'network.eventSourceClosed' | 'network.sendBeacon' | 'elements.snapshot' | 'elements.pickerState' | 'resources.snapshot' | 'storage.availability' | 'storage.keyInventory' | 'pageInfo.snapshot' | 'pageInfo.capabilities' | 'pageInfo.domSnapshot' | 'performance.vitals' | 'screenshot.metadata' | 'proxyTunnel.snapshot' | 'diagnostics.unavailable' | 'eval.requested' | 'eval.completed' | 'eval.failed' | 'eval.timedOut' | 'collector.degraded';
+            kind: 'console.entry' | 'pageError.thrown' | 'network.requestStarted' | 'network.response' | 'network.finished' | 'network.failed' | 'network.redirect' | 'network.websocketOpened' | 'network.websocketSummary' | 'network.websocketClosed' | 'network.eventSourceOpened' | 'network.eventSourceSummary' | 'network.eventSourceClosed' | 'network.sendBeacon' | 'elements.snapshot' | 'elements.pickerState' | 'resources.snapshot' | 'storage.availability' | 'storage.keyInventory' | 'pageInfo.snapshot' | 'pageInfo.capabilities' | 'pageInfo.domSnapshot' | 'performance.vitals' | 'screenshot.metadata' | 'proxyTunnel.snapshot' | 'diagnostics.unavailable' | 'diagnostics.available' | 'eval.requested' | 'eval.completed' | 'eval.failed' | 'eval.timedOut' | 'collector.degraded';
             fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
             trusted: boolean;
             data: Record<string, unknown>;

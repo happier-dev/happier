@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -60,6 +61,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp",
             "mcpToolControl": {
@@ -111,6 +115,52 @@
         "runtime": {
           "kind": "custom"
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "kiloStorage"
+                    },
+                    {
+                      "field": "storageRoot",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "kiloStorage"
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "storageRoot",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "kiloStorage"
+              }
+            ]
+          }
+        },
         "title": "Kilo"
       }
     ],
@@ -126,13 +176,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -152,6 +207,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -219,6 +275,21 @@
     "optional": [],
     "required": [
       {
+        "capability": "filesystem",
+        "id": "kilo-workspace",
+        "reason": "Use the admitted Agent workspace as the Kilo process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
         "capability": "process",
         "id": "kilo-process",
         "reason": "Run the declared Kilo CLI executable.",
@@ -244,6 +315,7 @@
         "localAgentId": "kilo",
         "locator": {
           "export": "createKiloAgentRuntime",
+          "externalSessionsExport": "kiloExternalSessionsContribution",
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },

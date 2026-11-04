@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -66,6 +67,7 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
@@ -113,9 +115,13 @@
         "title": "DeepSec repository security audit"
       }
     ],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -167,6 +173,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],

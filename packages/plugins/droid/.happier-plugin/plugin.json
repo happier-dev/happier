@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -58,7 +59,8 @@
             }
           },
           "surfaces": [
-            "terminal"
+            "terminal",
+            "externalSessions"
           ],
           "tools": {
             "delivery": "native_mcp"
@@ -164,6 +166,60 @@
             "kind": "stdio"
           }
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "droidFactoryDir"
+                    },
+                    {
+                      "field": "factoryDir",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "droidFactoryDir"
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "factoryDir",
+                      "nullish": true
+                    },
+                    {
+                      "kind": "string",
+                      "max": 10000,
+                      "min": 1,
+                      "name": "sessionFilePath",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "droidFactoryDir"
+              }
+            ]
+          }
+        },
         "title": {
           "fallback": "Factory Droid",
           "key": "agentInput.agent.droid"
@@ -182,13 +238,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -208,6 +269,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [],

@@ -12,6 +12,10 @@
  * left for a coordinated window; this slice only fixes launch/permission seams.
  */
 
+import type { AcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
+import { AcpProviderTurns, type AcpProviderTurnLifecycle } from './turn/providerTurns';
+import type { AgentAcpProviderTurnSourceFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import spawn from 'cross-spawn';
@@ -310,6 +314,11 @@ export interface AcpBackendOptions {
 
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+  providerTurnSource?: AgentAcpProviderTurnSourceFactory;
+  providerTurnLifecycle?: AcpProviderTurnLifecycle;
+  providerJournalFollower?: AcpProviderJournalFollower;
+  initialSessionModeId?: string;
+  disableSessionModeUpdates?: boolean;
 
   /** Optional per-backend ACP fs capability override */
   fsEnabled?: boolean;
@@ -387,7 +396,7 @@ export interface AcpBackendOptions {
   /** Observes the subprocess terminal fact without taking lifecycle ownership from the caller. */
   onProcessExit?: (exit: Readonly<{ code: number | null; signal: NodeJS.Signals | null }>) => void;
 
-  /** Observes an unintentional network connection loss after the connection is installed. */
+  /** Observes unintentional loss of the usable provider connection, including its mandatory journal source. */
   onConnectionLost?: (loss: Readonly<{ detail: string }>) => void;
 
   /** Observes only accumulator-owned terminal result publications. */
@@ -545,6 +554,7 @@ export class AcpBackend implements CatalogAcpBackend {
   private dropPromptTurnUpdatesUntilPromptResponse = false;
   private pendingPromptResponseTurnGeneration: number | null = null;
   private rawPromptRequest: Promise<unknown> | null = null;
+  private providerTurnSourceEnv: Readonly<NodeJS.ProcessEnv> = {};
   private rawPromptRequestTurnGeneration: number | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
@@ -553,6 +563,55 @@ export class AcpBackend implements CatalogAcpBackend {
 
   constructor(private options: AcpBackendOptions) {
     this.transport = options.transportHandler ?? new DefaultTransport(options.agentName);
+    if (options.providerTurnSource && options.providerTurnLifecycle) {
+      this.providerTurns = new AcpProviderTurns(options.providerTurnSource, options.providerTurnLifecycle, {
+        sessionId: () => this.acpSessionId,
+        cwd: options.cwd,
+        env: () => Object.freeze({ ...this.providerTurnSourceEnv }),
+        followJournal: options.providerJournalFollower,
+        isDisposed: () => this.disposed,
+        foregroundActive: () => !this.providerTurns?.isActive() && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
+        canBegin: () => !this.waitingForResponse && this.rawPromptRequest === null && this.providerCancellation === null,
+        begin: () => {
+          this.turnGeneration++;
+          this.closedTurnGeneration = null;
+          this.pendingTurnOutcome = null;
+          this.lastTurnOutcome = null;
+          this.permissionFlushTurnGeneration = null;
+          this.pendingPromptResponseTurnGeneration = null;
+          this.prePromptResponseUpdateGuard = 'none';
+          this.dropPromptTurnUpdatesUntilPromptResponse = false;
+          this.waitingForResponse = true;
+          this.responseCompletionError = null;
+          this.sawSessionUpdateSincePrompt = false;
+          this.sawAssistantMessageSincePrompt = false;
+          this.lastSelectedPermissionOptionIdByToolCallId.clear();
+          this.clearTurnTimers();
+          this.clearResponseCompletionTimeout();
+          this.emit({ type: 'status', status: 'running' });
+        },
+        update: async update => {
+          const value = AgentRuntimeJsonValueV1Schema.parse(update);
+          if (!asRecord(value) || !['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan', 'usage_update']
+            .includes(String(update.sessionUpdate))) throw new Error('Invalid provider continuation update');
+          await this.handleSessionUpdate({ sessionId: this.acpSessionId!, update } as SessionNotification, true);
+        },
+        finish: async outcome => {
+          if (outcome.kind === 'failed') this.failPendingResponseWait(new Error(outcome.message ?? 'Provider continuation failed'));
+          else this.finalizeTurnOutcome(outcome.kind === 'cancelled'
+            ? { kind: 'aborted', stopReason: 'cancelled' }
+            : { kind: 'completed', stopReason: 'end_turn' });
+        },
+        fail: error => {
+          this.failPendingResponseWait(error);
+          this.emit({ type: 'status', status: 'error', detail: error.message });
+          // Fatal journal loss retires the runtime; an intentionally detached child's exit does not.
+          this.options.onConnectionLost?.({ detail: error.message });
+          void this.cleanupInitializedProcessConnection({ graceMs: 250 });
+        },
+      });
+    }
+
     this.toolCalls = new LegacyAcpToolRuntime({
       sessionId: () => this.acpSessionId ?? 'acp-session-uninitialized',
       turnId: () => `legacy-turn:${this.turnGeneration}`,
@@ -638,6 +697,7 @@ export class AcpBackend implements CatalogAcpBackend {
     return mcpServers as unknown as NewSessionRequest['mcpServers'];
   }
 
+  /** Capture composed launch settings for observers before runner-private credential substitution. */
   private buildSpawnEnv(): NodeJS.ProcessEnv {
     const environment = finalizeSessionChildEnvironment({
       environment: buildScopedProcessEnv({
@@ -649,6 +709,7 @@ export class AcpBackend implements CatalogAcpBackend {
       enableCgroupSelfMigration: false,
       stackProcessKind: null,
     });
+    this.providerTurnSourceEnv = Object.freeze({ ...environment });
     if (!this.options.transformAgentChildLaunchEnvironment) {
       return withHostProcessOwnerEnvironment(environment);
     }
@@ -662,11 +723,26 @@ export class AcpBackend implements CatalogAcpBackend {
     ));
   }
 
+  /** Revoke source ownership synchronously; observer cleanup cannot prevent native teardown. */
+  private async stopProviderTurnSource(): Promise<void> {
+    try {
+      const outcome = await withGracefulTeardownBound(this.providerTurns?.stop() ?? Promise.resolve());
+      if (outcome === 'timed_out') {
+        logger.debug('[AcpBackend] Provider source cleanup exceeded the graceful teardown bound');
+      }
+    } catch (error) {
+      logger.debug('[AcpBackend] Provider source cleanup failed (non-fatal)', error);
+    }
+  }
+
+  /** Detach native resources before killing the child, while revoked observer cleanup proceeds independently. */
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
+    const sourceStopped = this.stopProviderTurnSource();
     const proc = this.process;
     const connection = this.connection;
     const closeNetworkTransport = this.closeNetworkTransport;
     this.process = null;
+    this.providerTurnSourceEnv = {};
     this.connection = null;
     this.closeNetworkTransport = null;
     this.acpSessionId = null;
@@ -698,8 +774,10 @@ export class AcpBackend implements CatalogAcpBackend {
     }
 
     await connection?.closed.catch(() => undefined);
+    await sourceStopped;
   }
 
+  /** Prepare one source snapshot and native transport; failed initialization releases both through the existing cleanup owner. */
   private async createConnectionAndInitialize(params: { operationId: string }): Promise<{ initTimeout: number }> {
     logger.debug(`[AcpBackend] Starting transport + initializing connection (op=${params.operationId})`);
 
@@ -728,11 +806,12 @@ export class AcpBackend implements CatalogAcpBackend {
         }
       // Spawn the ACP agent process.
       // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
+      const spawnEnv = this.buildSpawnEnv();
       const spec = buildAcpSpawnSpec({
         command,
         args: this.options.args || [],
         cwd: this.options.cwd,
-        env: this.buildSpawnEnv(),
+        env: spawnEnv,
         ...(this.options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
         ...(this.options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: this.options.windowsVerbatimArguments }),
       });
@@ -742,14 +821,18 @@ export class AcpBackend implements CatalogAcpBackend {
 
       try {
         this.process = spawn(spec.command, spec.args, spec.options);
+        const spawnedProcess = this.process;
         // Install lifecycle observers before stderr artifact setup yields to I/O.
         // Failed spawns emit `error` on the next tick, even with valid stdio pipes.
         this.process.on('error', (err) => {
+          if (this.process !== spawnedProcess) return;
           logger.debug(`[AcpBackend] Process error:`, err);
           this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
           this.emit({ type: 'status', status: 'error', detail: err.message });
         });
         this.process.on('exit', (code, signal) => {
+          // Intentional cleanup detaches the child before killing it; that is not runtime failure.
+          if (this.process !== spawnedProcess) return;
           const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
           const hasNonZeroCode = typeof code === 'number' && Number.isFinite(code) && code !== 0;
           const hasUnknownExit = code === null && !hasSignal;
@@ -986,6 +1069,9 @@ export class AcpBackend implements CatalogAcpBackend {
         toolCallCountSincePrompt: this.toolCallCountSincePrompt,
       }),
       getActiveSessionId: () => this.acpSessionId,
+      beforePermissionRequest: async (sessionId, toolCallId) => {
+        if (sessionId === this.acpSessionId) await this.providerTurns?.catchUp(toolCallId);
+      },
       capturePermissionRequest: (sessionId) => {
         const turnGeneration = this.turnGeneration;
         const scope = this.transport.getPermissionRequestScope?.() ?? 'turn';
@@ -1026,6 +1112,22 @@ export class AcpBackend implements CatalogAcpBackend {
         createAcpClientFsMethods({
           cwd: this.options.cwd,
           permissionHandler: this.options.permissionHandler,
+          beforeRequest: async sessionId => {
+            if (sessionId !== this.acpSessionId) throw new Error("ACP filesystem session mismatch");
+            await this.providerTurns?.catchUp();
+            if (this.options.providerTurnSource) {
+              const generation = this.turnGeneration;
+              const assertCurrent = () => {
+                if (sessionId !== this.acpSessionId || this.disposed || this.providerCancellation
+                  || generation !== this.turnGeneration || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()) {
+                  throw new Error('ACP filesystem request has no active provider turn');
+                }
+              };
+              assertCurrent();
+              return { assertCurrent };
+            }
+          return undefined;
+          },
         })
       );
     }
@@ -1195,6 +1297,7 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 }
 
+  /** Return a native session only after required mode and journal ownership are established; tear down partial startup on failure. */
   async startSession(): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -1246,9 +1349,11 @@ export class AcpBackend implements CatalogAcpBackend {
       this.acpSessionId = sessionId;
       logger.debug(`[AcpBackend] Session created: ${sessionId}`);
 
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
+      await this.providerTurns?.start();
 
       this.emitIdleStatus();
 
@@ -1270,6 +1375,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Resume the requested native session with required mode and source ownership; never substitute a new session. */
   async loadSession(sessionId: SessionId): Promise<StartSessionResult> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -1292,9 +1398,11 @@ export class AcpBackend implements CatalogAcpBackend {
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
 
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
+      await this.providerTurns?.start();
 
       this.emitIdleStatus();
       return { sessionId: normalized };
@@ -1379,9 +1487,11 @@ export class AcpBackend implements CatalogAcpBackend {
       }
 
       this.acpSessionId = forkedSessionId;
-      this.seedSessionModesFromSessionResponse(response);
-      await this.seedSessionModelsFromSessionResponse(response);
-      this.seedSessionConfigOptionsFromSessionResponse(response);
+      const initialSessionResponse = await this.applyInitialSessionMode(response);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
+      await this.providerTurns?.start();
       this.emitIdleStatus();
 
       return { sessionId: forkedSessionId };
@@ -1395,6 +1505,7 @@ export class AcpBackend implements CatalogAcpBackend {
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
       });
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       throw error;
     }
   }
@@ -1519,9 +1630,11 @@ export class AcpBackend implements CatalogAcpBackend {
       this.seedSessionModesFromSessionResponse(forkResponse);
       await this.seedSessionModelsFromSessionResponse(forkResponse);
       this.seedSessionConfigOptionsFromSessionResponse(forkResponse);
-      this.seedSessionModesFromSessionResponse(sessionResponse);
-      await this.seedSessionModelsFromSessionResponse(sessionResponse);
-      this.seedSessionConfigOptionsFromSessionResponse(sessionResponse);
+      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      this.seedSessionModesFromSessionResponse(initialSessionResponse);
+      await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+      this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
+      await this.providerTurns?.start();
 
       this.emitIdleStatus();
       return { sessionId: normalized };
@@ -1622,7 +1735,9 @@ export class AcpBackend implements CatalogAcpBackend {
     return new Set(this.toolCalls.activeCalls().map((call) => call.toolCallId));
   }
 
-  private async handleSessionUpdate(params: SessionNotification): Promise<void> {
+  /** Normalize updates through shared publishers, excluding competing ACP prompt output while a journal continuation owns the turn. */
+  private async handleSessionUpdate(params: SessionNotification, providerTurn = false): Promise<void> {
+    if (this.providerTurns?.isActive() && !providerTurn && isPromptTurnSessionUpdate(params.update)) return;
     const raw = asRecord(params) ?? {};
     const filteredNotification = (() => {
       if (this.replayCapture) return params;
@@ -1752,6 +1867,7 @@ export class AcpBackend implements CatalogAcpBackend {
       getToolCallCountSincePrompt: () => this.toolCallCountSincePrompt,
       emit: (message) => this.emit(message),
       sessionModeState: this.sessionModeState,
+      disableSessionModeUpdates: this.options.disableSessionModeUpdates,
       setSessionModeState: (state) => {
         this.sessionModeState = state;
       },
@@ -1783,7 +1899,25 @@ export class AcpBackend implements CatalogAcpBackend {
     });
   }
 
+  async catchUpProviderTurns(): Promise<void> { await this.providerTurns?.catchUp(); }
+
+  /** Require the declared native safety mode even when mode UI is disabled, and reject providers that do not advertise it. */
+  private async applyInitialSessionMode(response: unknown): Promise<unknown> {
+    const modeId = this.options.initialSessionModeId;
+    if (!modeId) return response;
+    const state = readSessionModeStateFromSessionResponse(response);
+    const rawResponse = asRecord(response);
+    const modes = asRecord(rawResponse?.modes);
+    if (!rawResponse || !modes || !state?.availableModes.some(mode => mode.id === modeId)) {
+      throw new Error('Required ACP session mode is unavailable');
+    }
+    // Native mode reports can omit inherited automatic-approval settings.
+    await this.connection!.peer.setSessionMode({ sessionId: this.acpSessionId!, modeId });
+    return { ...rawResponse, modes: { ...modes, currentModeId: modeId } };
+  }
+
   private seedSessionModesFromSessionResponse(sessionResponse: unknown): void {
+    if (this.options.disableSessionModeUpdates) return;
     const state = readSessionModeStateFromSessionResponse(sessionResponse);
     if (!state) return;
     this.sessionModeState = state;
@@ -1806,7 +1940,7 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 
   private seedSessionConfigOptionsFromSessionResponse(sessionResponse: unknown): void {
-    const configOptions = readSessionConfigOptionsFromSessionResponse(sessionResponse);
+    const configOptions = readSessionConfigOptionsFromSessionResponse(sessionResponse, this.options.disableSessionModeUpdates);
     if (!configOptions) return;
     this.sessionConfigOptionsState = configOptions;
     this.emit({ type: 'event', name: 'config_options_state', payload: { configOptions } });
@@ -1842,6 +1976,10 @@ export class AcpBackend implements CatalogAcpBackend {
     if (!normalizedConfigId) {
       throw new Error('Config ID is required');
     }
+    if (this.options.disableSessionModeUpdates
+      && !this.sessionConfigOptionsState?.some(option => option.id === normalizedConfigId)) {
+      throw new Error('Config option is unavailable or disabled by provider policy');
+    }
 
     const normalizedValueId = readNonBlankOpaqueIdentifier(valueId) ?? '';
     if (!normalizedValueId) {
@@ -1857,7 +1995,7 @@ export class AcpBackend implements CatalogAcpBackend {
     const configOptionsCandidate = response?.configOptions;
     const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
     if (configOptionsRaw) {
-      const next = normalizeSessionConfigOptions(configOptionsRaw);
+      const next = normalizeSessionConfigOptions(configOptionsRaw, this.options.disableSessionModeUpdates);
       const isModelSelector = this.options.modelConfigOptionId === normalizedConfigId;
       const currentModel = this.sessionModelState?.availableModels.find((model) => model.id === this.sessionModelState?.currentModelId);
       const isModelOption = (this.options.projectSetModelResponse || this.options.projectSetModelResponseAwaitable)
@@ -1912,6 +2050,8 @@ export class AcpBackend implements CatalogAcpBackend {
   private idleResolver: ((outcome?: AcpTurnOutcome) => void) | null = null;
   private idleRejecter: ((error: Error) => void) | null = null;
   private waitingForResponse = false;
+  private providerTurns: AcpProviderTurns | null = null;
+  private providerCancellation: Promise<void> | null = null;
   private responseCompletionError: Error | null = null;
   private postPromptCompletionIdleTimeout: NodeJS.Timeout | null = null;
   private postIdleWithoutAssistantMessageTimeout: NodeJS.Timeout | null = null;
@@ -2049,6 +2189,7 @@ export class AcpBackend implements CatalogAcpBackend {
     });
   }
 
+  /** Close the current generation and its pending permissions before resolving the public composer's completion waiter. */
   private finalizeTurnOutcome(outcome: AcpTurnOutcome): void {
     this.clearTurnTimers();
     this.clearResponseCompletionTimeout();
@@ -2205,6 +2346,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.idleRejecter = null;
   }
 
+  /** Reject overlapping prompt, continuation or cancellation ownership before dispatch, then preserve evidence of provider acceptance. */
   async sendPrompt(
     sessionId: SessionId,
     prompt: string | readonly ContentBlock[],
@@ -2233,7 +2375,7 @@ export class AcpBackend implements CatalogAcpBackend {
     if (!this.connection || !this.acpSessionId) {
       throw new Error('Session not started');
     }
-    if (this.rawPromptRequest !== null) {
+    if (this.rawPromptRequest !== null || this.providerTurns?.isActive() || this.providerCancellation) {
       throw new Error('Previous ACP prompt request is still settling');
     }
 
@@ -2423,6 +2565,7 @@ export class AcpBackend implements CatalogAcpBackend {
           promptLivenessTimeout = null;
         }
       }
+      await this.providerTurns?.catchUp();
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
 
       const scheduleNoUpdateCompletionIfNeeded = (): void => {
@@ -2624,6 +2767,7 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 
   async setSessionMode(sessionId: SessionId, modeId: string): Promise<void> {
+    if (this.options.disableSessionModeUpdates) throw new Error('ACP native mode changes are unavailable');
     if (this.disposed) {
       throw new Error('Backend has been disposed');
     }
@@ -2885,7 +3029,9 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Apply foreground idle heuristics only when no provider continuation owns completion and its prompt response has settled. */
   private emitIdleStatus(): void {
+    if (this.providerTurns?.isActive()) return;
     if (this.waitingForResponse && this.pendingPromptResponseTurnGeneration === this.turnGeneration) {
       this.idleStatusDeferredUntilPromptResponse = true;
       logger.debug('[AcpBackend] Deferring idle status until prompt response arrives');
@@ -2921,7 +3067,9 @@ export class AcpBackend implements CatalogAcpBackend {
     this.finalizeIdleStatus();
   }
 
+  /** Schedule foreground quiet-period completion without allowing tool inactivity to end a journal-owned continuation. */
   private scheduleIdleStatusAfterToolCompletion(): void {
+    if (this.providerTurns?.isActive()) return;
     if (this.toolCalls.activeCalls().length > 0) return;
     // Tool terminalization is also used by failure/cancellation cleanup. Once the response owner
     // has stopped waiting, an on-idle callback must not resolve a still-installed waiter or emit a
@@ -2947,7 +3095,72 @@ export class AcpBackend implements CatalogAcpBackend {
     this.idleTimeout.unref?.();
   }
 
+  /** Stop native work independently of publication, then recover through the canonical startup deadline. */
+  private async cancelProviderSession(sessionId: string): Promise<void> {
+    const foregroundCancellation = this.rawPromptRequest && this.connection
+      ? this.connection.peer.cancel({ sessionId }).catch(error => logger.debug('[AcpBackend] Foreground cancel before close failed', error))
+      : undefined;
+    this.failPendingResponseWait(makeAbortError('Cancelled by user'));
+    const sourceStopped = this.stopProviderTurnSource();
+    this.toolCalls.terminalizeTurn('cancelled');
+    if (!this.connection) { await sourceStopped; return; }
+    try {
+      let restart = !this.negotiatedSessionCapabilities.closeSession;
+      if (!restart) {
+        try {
+          const outcome = await withGracefulTeardownBound(Promise.all([
+            this.connection.peer.closeSession({ sessionId }), foregroundCancellation,
+          ]));
+          restart = outcome === 'timed_out';
+          if (restart) logger.warnLocalFile('[AcpBackend] Native session close timed out; restarting connection');
+        } catch (error) {
+          logger.warnLocalFile('[AcpBackend] Native session close failed; restarting connection', error);
+          restart = true;
+        }
+      }
+      if (restart) {
+        await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+        await sourceStopped;
+        await this.loadSession(sessionId);
+      } else {
+        await sourceStopped;
+        this.replayCapture = new AcpReplayCapture();
+        const response = await this.loadSessionOnCurrentConnection(sessionId, this.transport.getInitTimeout());
+        this.rawPromptRequest = null;
+        this.rawPromptRequestTurnGeneration = null;
+        this.lastSelectedPermissionOptionIdByToolCallId.clear();
+        this.toolCalls.reset();
+        const initialSessionResponse = await this.applyInitialSessionMode(response);
+        this.seedSessionModesFromSessionResponse(initialSessionResponse);
+        await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
+        this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
+        this.replayCapture = null;
+        await this.providerTurns?.start();
+      }
+    } catch (error) {
+      this.replayCapture = null;
+      await this.cleanupInitializedProcessConnection({ graceMs: 250 });
+      // Cleanup detaches the process/connection observers; explicitly retire unrecoverable runtimes.
+      this.options.onConnectionLost?.({ detail: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
+    this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
+  }
+
+  /** Serialize whole-session cancellation for provider continuations; ordinary prompt cancellation retains its existing settlement path. */
   async cancel(sessionId: SessionId): Promise<void> {
+    if (this.acpSessionId === sessionId) {
+      if (this.providerCancellation) { await this.providerCancellation; return; }
+      if (this.providerTurns?.isOpen()) {
+        const cancellation = Promise.resolve().then(() => this.cancelProviderSession(sessionId));
+        this.providerCancellation = cancellation;
+        try { await cancellation; }
+        finally { if (this.providerCancellation === cancellation) this.providerCancellation = null; }
+        return;
+      }
+    }
+
     const cancelledTurnGeneration = this.turnGeneration;
 
     if (this.postPromptCompletionIdleTimeout) {
@@ -3047,11 +3260,14 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
+  /** Release native resources even when an observer rejects or cannot finish draining. */
   async dispose(options?: Readonly<{ preserveProviderSession: boolean }>): Promise<void> {
     if (this.disposed) return;
-    
+
     logger.debug('[AcpBackend] Disposing backend');
     this.disposed = true;
+    const sourceStopped = this.stopProviderTurnSource();
+    this.providerTurnSourceEnv = {};
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));
@@ -3118,6 +3334,7 @@ export class AcpBackend implements CatalogAcpBackend {
       }
     }
     await connection?.closed.catch(() => undefined);
+    await sourceStopped;
 
     // Clear timeouts
     if (this.postPromptCompletionIdleTimeout) {

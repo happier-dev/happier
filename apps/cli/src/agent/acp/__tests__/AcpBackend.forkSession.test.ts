@@ -17,6 +17,7 @@ const CALL_LOG_FILE_NAME = 'acp-fork-calls.log';
 function writeForkAgentScript(params: {
   dir: string;
   negotiateForkSession?: boolean;
+  implementsForkSession?: boolean;
 }): string {
   const negotiateForkSession = params.negotiateForkSession !== false;
   return writeAcpTestAgentScript({
@@ -48,6 +49,10 @@ function writeForkAgentScript(params: {
                 : '{ sessionCapabilities: {} }'},
             });
           } else if (request.method === 'session/fork') {
+            if (${params.implementsForkSession === false}) {
+              send({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } });
+              continue;
+            }
             if (request.params?.sessionId !== ' parent\\nsession ') {
               send({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'session id bytes changed' } });
               continue;
@@ -176,16 +181,18 @@ describe('AcpBackend forkSession', () => {
     expect(closeCalls).toBe(1);
   });
 
-  it('throws when the agent does not support session/fork', async () => {
-    const backend = new AcpBackend({
-      agentName: 'test',
-      cwd: '/test/cwd',
-      command: 'noop',
+  it('preserves the unsupported fork error when a negotiated agent rejects the method', async () => {
+    await withTempDir('happier-acp-fork-unsupported-', async dir => {
+      const backend = new AcpBackend({
+        agentName: 'test', cwd: dir, command: process.execPath,
+        args: [writeForkAgentScript({ dir, implementsForkSession: false })],
+      });
+      try {
+        await expect(backend.forkSession({ sessionId: ' parent\nsession ' }))
+          .rejects.toThrow(/does not support ACP session\/fork/i);
+        expect(readCalledMethods(dir)).toContain('session/fork');
+      } finally { await backend.dispose(); }
     });
-
-    (backend as any).connection = {};
-
-    await expect((backend as any).forkSession({ sessionId: 'sess_parent' })).rejects.toThrow(/does not support ACP session\/fork/i);
   });
 
   it('throws when the session id is empty', async () => {

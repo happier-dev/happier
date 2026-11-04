@@ -1,3 +1,4 @@
+export type { PluginDynamicResourceProducer } from '../services/resources.js';
 export {
     MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
     MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,

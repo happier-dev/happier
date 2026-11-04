@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { PUBLIC_ACTION_IDS } from './actionSpecs.js';
-import { assertPublicActionSdkMethodNames } from './actionSdkMethodNames.js';
+import { getActionSpec, PUBLIC_ACTION_IDS } from './actionSpecs.js';
+import { assertPublicActionSdkMethodNames, resolveActionSdkMethodName } from './actionSdkMethodNames.js';
 
 describe('Action SDK method-name validation', () => {
+  it('keeps publish callable alongside its preparation operation', () => {
+    const publish = getActionSpec('deployments.publish');
+    const prepare = getActionSpec('deployments.publish.prepare');
+    expect(resolveActionSdkMethodName(publish)).toBe('deployments.publish');
+    expect(resolveActionSdkMethodName(prepare)).toBe('deployments.preparePublish');
+    expect(() => assertPublicActionSdkMethodNames([publish, prepare], new Set([publish.id, prepare.id]))).not.toThrow();
+  });
+
   it('validates only the canonical API-public projection', () => {
     const publicActionIds = new Set<string>(PUBLIC_ACTION_IDS);
 

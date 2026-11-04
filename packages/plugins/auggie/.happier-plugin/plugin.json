@@ -1,5 +1,6 @@
 {
   "contributes": {
+    "accessProviders": [],
     "accountCollections": [],
     "actions": [],
     "agents": [
@@ -22,8 +23,9 @@
             ]
           },
           "skills": {
-            "delivery": "none",
+            "delivery": "session_dir",
             "liveReload": "unsupported",
+            "materialization": "copy",
             "nativeDisable": "unsupported",
             "nativeRoots": {
               "project": [
@@ -56,6 +58,9 @@
               ]
             }
           },
+          "surfaces": [
+            "externalSessions"
+          ],
           "tools": {
             "delivery": "native_mcp"
           }
@@ -103,6 +108,52 @@
         "runtime": {
           "kind": "custom"
         },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "contentSearch": true,
+                "instances": [
+                  {
+                    "constants": {},
+                    "kind": "default"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "auggieHome"
+                    },
+                    {
+                      "field": "augmentHome",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "auggieHome"
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "augmentHome",
+                      "nullish": true
+                    }
+                  ]
+                },
+                "sourceKind": "auggieHome"
+              }
+            ]
+          }
+        },
         "title": "Auggie"
       }
     ],
@@ -118,13 +169,18 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "deploymentTargets": [],
     "dragSources": [],
     "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
+    "healthCheckKinds": [],
     "hooks": [],
     "inputTypes": [],
+    "languageServers": [],
     "machineProvisioners": [],
+    "machineRecipes": [],
+    "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -144,6 +200,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "searchProviders": [],
+    "secretSources": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
     "settings": [
@@ -201,9 +258,6 @@
     "workflows": []
   },
   "displayName": "Auggie",
-  "engines": {
-    "happier": "^0.0.0"
-  },
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
   },
@@ -233,6 +287,7 @@
         "localAgentId": "auggie",
         "locator": {
           "export": "createAuggieAgentRuntime",
+          "externalSessionsExport": "auggieExternalSessionsContribution",
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
