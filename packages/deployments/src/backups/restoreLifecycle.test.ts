@@ -3,7 +3,7 @@ import * as owners from '../index.js';
 import type { DeploymentRestoreConfirmInputV1, DeploymentRestoreNativeRequestV1, DeploymentRestoreNativeResultV1,
     DeploymentRestorePrepareInputV1, DeploymentRestorePrepareReceiptV1 } from '../index.js';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
-import type { DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
 
 const snapshotId = 'a'.repeat(64), treeId = 'b'.repeat(64), repositoryId = 'c'.repeat(64), checksum = 'd'.repeat(64);
 const manifest: DeploymentBackupManifestV1 = { schemaVersion: 1, environmentId: 'source', sourceId: 'main', kind: 'dump', configRevision: 1,
@@ -140,13 +140,20 @@ describe('exact PostgreSQL restore semantic owner', () => {
     it('retains the exact safety backup settlement when Stop arrives after its canonical final check', async () => {
         const native = boundary(); const controller = new AbortController();
         const target = { ...destination, hasMeaningfulData: true };
-        // Native IO and the backup owner's execute wrapper each resume once.
-        // The third microtask reaches the gap after the child's final check.
-        const backup = safetyBackup(0, () => queueMicrotask(() => queueMicrotask(() => queueMicrotask(() => controller.abort()))));
+        let retained: DeploymentPreMigrationBackupV1 | undefined;
+        const backup: DeploymentBackupRunInputV1 = { ...safetyBackup(), preMigrationBackup: {
+            sourceFormat: 'postgresCustom', target: { service: target.service, adapter: target.adapter, database: target.database },
+            async writeCapture(capture) {
+                // Substitute receipt persistence, which follows the child's canonical final check.
+                retained = capture;
+                controller.abort();
+            },
+        } };
         await expect(prepare(native, { destination: target, safetyBackup: backup, signal: controller.signal })).resolves.toMatchObject({
             kind: 'prepared', destination: target, safetyBackup: { kind: 'verified', manifests: [{ environmentId: 'target',
                 snapshot: { snapshotId: 'e'.repeat(64) }, producerChecksumSha256: checksum }] },
         });
+        expect(retained?.source).toMatchObject({ environmentId: 'target', snapshot: { snapshotId: 'e'.repeat(64) } });
         expect(controller.signal.aborted).toBe(true);
         expect(native.names).toEqual(['app']);
         expect(native.effects.every(effect => effect.startsWith('restic:'))).toBe(true);
@@ -154,7 +161,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
 
     it('retains child recovery evidence when Stop precedes the safety backup settlement', async () => {
         const native = boundary(); const controller = new AbortController();
-        const backup = safetyBackup(0, () => queueMicrotask(() => queueMicrotask(() => controller.abort())));
+        const backup = safetyBackup(0, () => controller.abort());
         await expect(prepare(native, { destination: { ...destination, hasMeaningfulData: true }, safetyBackup: backup,
             signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled', details: {
             manifests: [{ environmentId: 'target', snapshot: { snapshotId: 'e'.repeat(64) } }],

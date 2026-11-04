@@ -21,6 +21,10 @@ export * from './backups/configurationV1.js';
 export * from './actions/backups.js';
 export * from './backups/restoreLifecycle.js';
 export * from './backups/preMigrationBackup.js';
+export * from './backups/inventoryV1.js';
+export { verifyDeploymentBackupV1, type DeploymentBackupVerifyInputV1,
+    type DeploymentBackupVerificationV1 } from './backups/verificationV1.js';
+export * from './backups/maintenanceV1.js';
 export { buildResticRetentionArgsV1, type BackupRetentionV1 } from './backups/retentionV1.js';
 
 export * from './secrets/prepareEnvironmentSecretBindingsV1.js';

@@ -31,7 +31,9 @@ export function selectResticForgetCandidatesV1(input: Readonly<{ stdout: string;
         if (!Array.isArray(group.remove)) return resticEvidenceFailureV1('outcome_unknown');
         for (const value of group.remove) {
             const snapshot = readResticNativeSnapshotV1(value);
-            if (!isResticSnapshotOwnedV1(snapshot, input.environmentId)) return resticEvidenceFailureV1('outcome_unknown');
+            if (!isResticSnapshotOwnedV1(snapshot, input.environmentId)) {
+                throw Object.assign(new Error('backup_integrity_failed'), { code: 'backup_integrity_failed' });
+            }
             if (seen.has(snapshot.snapshotId)) continue;
             seen.add(snapshot.snapshotId);
             if (!protectedIds.has(snapshot.snapshotId)) candidates.push(snapshot.snapshotId);

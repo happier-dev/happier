@@ -2,9 +2,9 @@ import type { DeploymentBackupManifestV1 } from '@happier-dev/deployment-protoco
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
     type DeploymentBackupRunResultV1 } from '../actions/backups.js';
-import { isResticSnapshotOwnedV1, readResticNativeJsonV1, readResticNativeRecordV1,
-    readResticRepositoryConfigV1, readResticSnapshotsV1 } from './manifestV1.js';
-import { buildResticRequestV1, type ResticAccessV1, type ResticCommandV1, type ResticRequestV1 } from './resticExecutor.js';
+import { readResticNativeJsonV1 } from './manifestV1.js';
+import { verifyDeploymentBackupV1 } from './verificationV1.js';
+import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
  * Staging/recovery names belong to this operation, not a caller-selected live database. */
@@ -114,35 +114,13 @@ function sameDestination(left: DeploymentRestoreDestinationV1, right: Deployment
  * an external boundary and must agree with that owned receipt. */
 async function verifySource(input: RestoreCapture) {
     const source = input.source;
-    const execute = async (command: ResticCommandV1) => {
-        cancelled(input.signal);
-        const result = await input.execute({ kind: 'restic', request: buildResticRequestV1({
-            environmentId: source.environmentId, access: input.access, command }) });
-        if (result.kind !== 'completed') return refuse('outcome_unknown');
-        return result;
-    };
-    const config = await execute({ kind: 'config' });
-    if (readResticRepositoryConfigV1(config.stdout, config.exitCode, config.stdoutTruncated).repositoryId !== source.repositoryId) refuse('backup_integrity_failed');
-    const inventory = await execute({ kind: 'snapshots', snapshotId: source.snapshot.snapshotId });
-    const snapshots = readResticSnapshotsV1(inventory.stdout, inventory.exitCode, inventory.stdoutTruncated);
-    const selected = snapshots[0];
-    if (snapshots.length !== 1 || !selected || !isResticSnapshotOwnedV1(selected, source.environmentId)
-        || selected.snapshotId !== source.snapshot.snapshotId || selected.treeId !== source.snapshot.treeId
-        || !selected.tags.includes(`src:${source.sourceId}`) || !selected.tags.includes('kind:dump')
-        || selected.paths.length !== 1 || selected.paths[0] !== source.snapshot.paths[0]) refuse('backup_integrity_failed');
-    const path = selected.paths[0]!;
-    const tree = await execute({ kind: 'tree', treeId: selected.treeId });
-    if (tree.exitCode !== 0) refuse('restore_failed');
-    if (tree.stdoutTruncated) refuse('outcome_unknown');
-    const nativeTree = readResticNativeRecordV1(readResticNativeJsonV1(tree.stdout));
-    const nodes = nativeTree.nodes;
-    if (!Array.isArray(nodes) || nodes.length !== 1) refuse('backup_integrity_failed');
-    const file = readResticNativeRecordV1(nodes[0]);
-    if (path !== `/${String(file.name)}` || file.type !== 'file' || file.size !== source.totalBytesProcessed) refuse('backup_integrity_failed');
-    const payload = await execute({ kind: 'dump', snapshotId: selected.snapshotId, path });
-    if (payload.exitCode !== 0) refuse('restore_failed');
-    if (payload.stdoutChecksumSha256 !== source.producerChecksumSha256 || payload.stdoutBytes !== source.totalBytesProcessed) refuse('backup_integrity_failed');
-    return path;
+    await verifyDeploymentBackupV1({ environmentId: source.environmentId, configRevision: source.configRevision,
+        manifest: source, access: input.access, signal: input.signal, level: 'manifestReadBack', execute: async request => {
+            const result = await input.execute({ kind: 'restic', request });
+            if (result.kind !== 'completed') return refuse('outcome_unknown');
+            return result;
+        } });
+    return source.snapshot.paths[0]!;
 }
 
 export async function prepareDeploymentRestoreV1(input: DeploymentRestorePrepareInputV1): Promise<DeploymentRestorePrepareReceiptV1> {

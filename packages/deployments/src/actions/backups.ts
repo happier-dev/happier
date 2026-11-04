@@ -1,10 +1,11 @@
-import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema,
+import { DeploymentBackupSnapshotV1Schema,
     type DeploymentBackupConfigurationV1, type DeploymentBackupSourceV1, type DeploymentEnvironmentContentV1,
     type DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
 
 import { buildResticRequestV1, type ResticAccessV1, type ResticCommandV1, type ResticRequestV1 } from '../backups/resticExecutor.js';
-import { readResticBackupManifestV1, readResticBackupSummaryV1, readResticNativeJsonV1, readResticNativeRecordV1,
+import { readResticBackupManifestV1, readResticBackupSummaryV1,
     readResticRepositoryConfigV1, readResticSnapshotsV1, type BackupManifestV1 } from '../backups/manifestV1.js';
+import { backupOperationStepV1, readBackDeploymentBackupManifestV1 } from '../backups/verificationV1.js';
 
 /** Facts supplied by the canonical native execution adapter; dump bytes never cross this result. */
 export type DeploymentBackupNativeResultV1 = Readonly<{ kind: 'outcome_unknown' }> | Readonly<{
@@ -29,11 +30,11 @@ export type DeploymentBackupRunInputV1 = Readonly<{
 }>;
 type FailureCode = 'backup_failed' | 'backup_integrity_failed' | 'outcome_unknown' | 'cancelled' | 'unsupported_action';
 type SnapshotEvidence = Readonly<{ environmentId: string; sourceId: string; configRevision: number; repositoryId: string; snapshotId: string }>;
-function refuse(code: FailureCode): never { throw Object.assign(new Error(code), { code }); }
-function failureCode(error: unknown): FailureCode {
+function refuse(code: FailureCode, step?: string): never { throw Object.assign(new Error(code), { code, ...(step ? { step } : {}) }); }
+function failureCode(error: unknown): string {
     if (error && typeof error === 'object' && 'code' in error) {
         const code = error.code;
-        if (code === 'backup_failed' || code === 'backup_integrity_failed' || code === 'cancelled' || code === 'unsupported_action') return code;
+        if (typeof code === 'string') return code;
     }
     return 'outcome_unknown';
 }
@@ -43,12 +44,14 @@ function failureCode(error: unknown): FailureCode {
  * Public Action activation additionally requires the real P30/P42 adapter. This function is not a second process runner. */
 export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): Promise<DeploymentBackupRunResultV1> {
     const manifests: BackupManifestV1[] = [], snapshots: SnapshotEvidence[] = [];
-    const checkCancelled = () => { if (input.signal.aborted) refuse('cancelled'); };
+    const checkCancelled = () => { if (input.signal.aborted) refuse('cancelled', 'backup'); };
     const execute = async (command: ResticCommandV1, source?: DeploymentBackupSourceV1) => {
-        checkCancelled();
-        const result = await input.execute(buildResticRequestV1({ environmentId: input.environmentId, access: input.access, command }), source);
-        if (result.kind === 'outcome_unknown') return refuse('outcome_unknown');
-        return result;
+        return backupOperationStepV1(command.kind, async () => {
+            checkCancelled();
+            const result = await input.execute(buildResticRequestV1({ environmentId: input.environmentId, access: input.access, command }), source);
+            if (result.kind === 'outcome_unknown') return refuse('outcome_unknown');
+            return result;
+        });
     };
     try {
         checkCancelled();
@@ -68,40 +71,29 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             return { source, filename: `${source.service}.${extension}` };
         });
         const configResult = await execute({ kind: 'config' });
-        const { repositoryId } = readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated);
+        const { repositoryId } = await backupOperationStepV1('repository', () =>
+            readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated));
         for (const { source, filename } of recipes) {
             const backup = await execute({ kind: 'backupStdin', sourceId: source.sourceId, filename }, source);
-            if (!backup.producer || backup.producer.exitCode !== 0) return refuse('backup_failed');
-            const summary = readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated);
+            if (!backup.producer || backup.producer.exitCode !== 0) return refuse('backup_failed', 'producer');
+            const summary = await backupOperationStepV1('backup', () => readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated));
             snapshots.push({ environmentId: input.environmentId, sourceId: source.sourceId,
                 configRevision: input.configuration.configRevision, repositoryId, snapshotId: summary.snapshotId });
-            const producerChecksumSha256 = DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(backup.producer.checksumSha256);
+            const producerChecksumSha256 = await backupOperationStepV1('producer', () =>
+                DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(backup.producer!.checksumSha256));
             const inventory = await execute({ kind: 'snapshots', snapshotId: summary.snapshotId });
-            const manifest = readResticBackupManifestV1({ summary, snapshots: readResticSnapshotsV1(inventory.stdout, inventory.exitCode, inventory.stdoutTruncated),
+            const manifest = await backupOperationStepV1('snapshot', () => readResticBackupManifestV1({ summary,
+                snapshots: readResticSnapshotsV1(inventory.stdout, inventory.exitCode, inventory.stdoutTruncated),
                 environmentId: input.environmentId, sourceId: source.sourceId, kind: 'dump',
-                configRevision: input.configuration.configRevision, repositoryId, producerChecksumSha256 });
+                configRevision: input.configuration.configRevision, repositoryId, producerChecksumSha256 }));
             manifests.push(manifest);
-            const tree = await execute({ kind: 'tree', treeId: manifest.snapshot.treeId });
-            if (tree.exitCode !== 0) return refuse('backup_failed');
-            if (tree.stdoutTruncated) return refuse('outcome_unknown');
-            const nativeTree = readResticNativeRecordV1(readResticNativeJsonV1(tree.stdout));
-            if (!Array.isArray(nativeTree.nodes)) return refuse('outcome_unknown');
-            const nodes = nativeTree.nodes.map(readResticNativeRecordV1);
-            const file = nodes.find(node => node.name === filename && node.type === 'file');
-            if (!file) return refuse('backup_integrity_failed');
-            const size = DeploymentBackupManifestV1Schema.shape.totalBytesProcessed.parse(file.size);
-            if (size !== manifest.totalBytesProcessed) return refuse('backup_integrity_failed');
-            const payload = await execute({ kind: 'dump', snapshotId: summary.snapshotId, path: `/${filename}` });
-            if (payload.exitCode !== 0) return refuse('backup_failed');
-            // Payload capture may be bounded/omitted; only the same native byte stream's digest/count are evidence.
-            const checksum = DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(payload.stdoutChecksumSha256);
-            const bytes = DeploymentBackupManifestV1Schema.shape.totalBytesProcessed.parse(payload.stdoutBytes);
-            if (checksum !== manifest.producerChecksumSha256 || bytes !== size) return refuse('backup_integrity_failed');
+            await readBackDeploymentBackupManifestV1({ ...input, manifest });
         }
         checkCancelled();
     } catch (error) {
         const code = failureCode(error);
-        throw Object.assign(new Error(code), { code, details: { snapshots, manifests } });
+        const step = error && typeof error === 'object' && 'step' in error ? error.step : 'source';
+        throw Object.assign(new Error(code), { code, step, details: { snapshots, manifests } });
     }
     const recording = input.preMigrationBackup;
     if (recording) {

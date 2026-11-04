@@ -57,6 +57,38 @@ export function isResticSnapshotOwnedV1(snapshot: ResticSnapshotV1, environmentI
         && snapshot.tags.includes(`env:${environmentId}`);
 }
 
+/** The immutable native snapshot must be the one bound by the existing operation receipt. */
+export function isResticSnapshotBoundToManifestV1(snapshot: ResticSnapshotV1, manifest: BackupManifestV1): boolean {
+    const expected = manifest.snapshot;
+    const expectedTags = new Set(expected.tags), actualTags = new Set(snapshot.tags);
+    return isResticSnapshotOwnedV1(snapshot, manifest.environmentId)
+        && snapshot.snapshotId === expected.snapshotId && snapshot.treeId === expected.treeId
+        && snapshot.hostname === expected.hostname && snapshot.time === expected.time
+        && snapshot.paths.length === expected.paths.length && snapshot.paths.every((path, index) => path === expected.paths[index])
+        && actualTags.size === expectedTags.size && snapshot.tags.every(tag => expectedTags.has(tag))
+        && snapshot.tags.includes(`src:${manifest.sourceId}`) && snapshot.tags.includes(`kind:${manifest.kind}`);
+}
+
+/** Snapshot summaries are optional native facts; absence does not mean a zero-byte backup. */
+export function readResticSnapshotInventoryV1(stdout: string, exitCode: number, stdoutTruncated = false): Readonly<{
+    snapshot: ResticSnapshotV1; totalBytesProcessed?: number; totalFilesProcessed?: number;
+}>[] {
+    if (exitCode !== 0) return resticEvidenceFailureV1('backup_failed');
+    if (stdoutTruncated) return resticEvidenceFailureV1('outcome_unknown');
+    const rows = readResticNativeJsonV1(stdout);
+    if (!Array.isArray(rows)) return resticEvidenceFailureV1('outcome_unknown');
+    return rows.map(value => {
+        const row = readResticNativeRecordV1(value), snapshot = readResticNativeSnapshotV1(row);
+        if (row.summary === undefined || row.summary === null) return { snapshot };
+        const summary = readResticNativeRecordV1(row.summary);
+        return { snapshot,
+            ...(summary.total_bytes_processed === undefined ? {} : { totalBytesProcessed: nativeValue(() =>
+                DeploymentBackupManifestV1Schema.shape.totalBytesProcessed.parse(summary.total_bytes_processed)) }),
+            ...(summary.total_files_processed === undefined ? {} : { totalFilesProcessed: nativeValue(() =>
+                DeploymentBackupManifestV1Schema.shape.totalFilesProcessed.parse(summary.total_files_processed)) }) };
+    });
+}
+
 /** Bind already-normalized native evidence; do not parse a manifest we just constructed. */
 export function readResticBackupManifestV1(input: Readonly<{ summary: ResticBackupSummaryV1; snapshots: readonly ResticSnapshotV1[];
     environmentId: string; sourceId: string; configRevision: number; repositoryId: string;
