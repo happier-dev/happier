@@ -4,23 +4,30 @@ import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeL
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ProjectOrganizationUpdateOutputV1Schema, type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
 
 /** UI intents enter Action admission; its captured Account adapter owns row effects. */
 export async function updateProjectWorkspace(input: ProjectWorkspaceUpdateInputV1,
     lifetime = captureActiveServerAccountScopeLifetime()) {
-    return invokeWorkspaceAction('projects.workspace.update', input, lifetime, ProjectWorkspaceUpdateOutputV1Schema);
+    return invokeProjectAction('projects.workspace.update', input, lifetime, ProjectWorkspaceUpdateOutputV1Schema);
 }
 
 export async function forgetProjectWorkspace(input: ProjectWorkspaceForgetInputV1,
     lifetime = captureActiveServerAccountScopeLifetime()) {
-    return invokeWorkspaceAction('projects.workspace.forget', input, lifetime, ProjectWorkspaceForgetOutputV1Schema);
+    return invokeProjectAction('projects.workspace.forget', input, lifetime, ProjectWorkspaceForgetOutputV1Schema);
 }
 
-async function invokeWorkspaceAction<T>(actionId: 'projects.workspace.update' | 'projects.workspace.forget',
-    input: ProjectWorkspaceUpdateInputV1 | ProjectWorkspaceForgetInputV1, lifetime: ActiveServerAccountScopeLifetime | null,
+export async function updateProjectOrganization(input: ProjectOrganizationUpdateInputV1,
+    lifetime = captureActiveServerAccountScopeLifetime()) {
+    return invokeProjectAction('projects.organization.update', input, lifetime, ProjectOrganizationUpdateOutputV1Schema);
+}
+
+async function invokeProjectAction<T>(actionId: 'projects.workspace.update' | 'projects.workspace.forget' | 'projects.organization.update',
+    input: ProjectWorkspaceUpdateInputV1 | ProjectWorkspaceForgetInputV1 | ProjectOrganizationUpdateInputV1, lifetime: ActiveServerAccountScopeLifetime | null,
     schema: Readonly<{ parse(value: unknown): T }>) {
     const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-    if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(input.serverId, lifetime.scope.serverId)) return retired;
+    const serverId = 'projectRef' in input ? input.projectRef.serverId : input.serverId;
+    if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(serverId, lifetime.scope.serverId)) return retired;
     try {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         if (!lifetime.isCurrent()) return retired;
