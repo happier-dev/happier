@@ -3125,6 +3125,8 @@ export const es: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} habilitados`,
         optionsTitle: "Opciones",
         autoSwitchTitle: "Respaldo automático",
+        claudeCodeAutoContinueAtUsageLimitTitle: "Permitir que Claude espere al alcanzar límites",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "En las sesiones nuevas, Claude espera y continúa automáticamente cuando se restablece el límite. Desactívalo para que Happier gestione la recuperación.",
         autoQuotaResetTitle: "Usar restablecimientos de cuota automáticamente",
         autoQuotaResetSubtitle: "Consume un restablecimiento disponible solo cuando ninguna cuenta del grupo está lista y se puede restablecer la cuota agotada. Desactivado de forma predeterminada.",
         autoDisablePlanInvalidTitle: "Desactivar cuentas que no pueden usar el modelo seleccionado",

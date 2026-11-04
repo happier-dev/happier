@@ -30,6 +30,7 @@ import { createManagedChildProcess } from '@/subprocess/supervision/managedChild
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable'
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage'
 import { prepareClaudeSubprocessEnv } from '@/backends/claude/spawn/buildClaudeSubprocessEnv'
+import { resolveClaudeLaunchSettingsOverlayArg } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay'
 import { spawnBackgroundSync, resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers'
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree'
@@ -360,7 +361,12 @@ export function query(config: {
 	    if (permissionMode && (forcePermissionMode || permissionMode !== 'default')) {
 	        args.push('--permission-mode', permissionMode)
 	    }
-	    if (settingsPath) args.push('--settings', settingsPath)
+        const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+            settingsPath,
+            launchSettings: {},
+            env: { ...process.env, ...envOverlay },
+        })
+	    if (settingsOverlay) args.push('--settings', settingsOverlay)
 
 	    if (fallbackModel) {
         if (model && fallbackModel === model) {

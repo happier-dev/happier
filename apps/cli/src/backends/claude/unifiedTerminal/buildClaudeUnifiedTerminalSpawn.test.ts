@@ -463,7 +463,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
   return JSON.parse(await readFile(overlayArg, 'utf8')) as Record<string, unknown>;
 }
 
-  it('merges ultracode into the single --settings overlay when the mode enables it', async () => {
+  it.each([false, true])('merges ultracode and pool continuation into the single settings overlay (pool %s)', async (pool) => {
     const { mkdtemp, readFile, stat, writeFile } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
@@ -474,6 +474,12 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
     try {
       const spawn = await buildClaudeUnifiedTerminalSpawn({
         path: '/workspace/project',
+        envOverlay: pool ? {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group', serviceId: 'claude-subscription', groupId: 'pool',
+            activeProfileId: 'work', fallbackProfileId: 'work', generation: 1,
+          }]),
+        } : {},
         first: {
           message: 'hello',
           mode: {
@@ -497,6 +503,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
       const args = launchSpec.args ?? [];
       const overlay = await readOverlayFromArgs(args, hookSettingsPath);
       expect(overlay.ultracode).toBe(true);
+      expect(overlay.autoContinueAtUsageLimit).toBe(pool ? false : undefined);
       expect(overlay).not.toHaveProperty('skipDangerousModePermissionPrompt');
       // The hook settings content survives the merge.
       expect(overlay.permissions).toEqual({ allow: ['mcp__happier__change_title'] });

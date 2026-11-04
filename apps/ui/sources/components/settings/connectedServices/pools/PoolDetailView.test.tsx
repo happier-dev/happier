@@ -510,6 +510,56 @@ beforeEach(() => {
 });
 
 describe('PoolDetailView', () => {
+    it.each(['claude-subscription', 'anthropic'].flatMap((serviceId) => (
+        [undefined, false, true].map((currentValue) => ({ serviceId, currentValue }))
+    )))('renders $serviceId native usage-limit waiting ($currentValue) and saves changes with the pool generation', async ({ serviceId, currentValue }) => {
+        connectedServicesModuleState.searchParams = { serviceId, groupId: 'primary' };
+        const group = createAuthoritativeGroup({ serviceId });
+        authoritativeGroupState.groups = [{
+            ...group,
+            policy: { ...group.policy, ...(currentValue === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: currentValue }) },
+        }];
+        profileState.current = {
+            connectedServicesV2: [{
+                serviceId,
+                profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'work@example.com' }],
+            }],
+        };
+        const screen = await renderPoolDetail();
+        const toggle = screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle');
+
+        expect(toggle).toBeTruthy();
+        expect(toggle?.props.value).toBe(currentValue === true);
+        await act(async () => {
+            toggle?.props.onValueChange(currentValue !== true);
+            await flushAsyncHandlers();
+        });
+
+        expect(authGroupApiSpies.patchConnectedServiceAuthGroupV3).toHaveBeenCalledWith(
+            expect.objectContaining({ token: 't' }),
+            {
+                serviceId,
+                groupId: 'primary',
+                patch: {
+                    expectedGeneration: 2,
+                    policy: { claudeCodeAutoContinueAtUsageLimit: currentValue !== true },
+                },
+            },
+        );
+    });
+
+    it('disables Claude native waiting policy changes when account fallback is disabled', async () => {
+        connectedServicesModuleState.searchParams = { serviceId: 'claude-subscription', groupId: 'primary' };
+        authoritativeGroupState.groups = [createAuthoritativeGroup({ serviceId: 'claude-subscription' })];
+        featureEnabledById.set('connectedServices.accountFallback', false);
+        const screen = await renderPoolDetail();
+
+        const toggle = screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle');
+        expect(toggle?.props.disabled).toBe(true);
+        expect(toggle?.props.onValueChange).toBeUndefined();
+        expect(authGroupApiSpies.patchConnectedServiceAuthGroupV3).not.toHaveBeenCalled();
+    });
+
     it('adds a connected profile to a freshly-created empty pool with the current generation', async () => {
         authoritativeGroupState.groups = [createAuthoritativeGroup({
             activeProfileId: null,
@@ -1184,6 +1234,7 @@ describe('PoolDetailView', () => {
         expect(screen.findByTestId('connected-services-pool-detail:recovery-prompt')).toBeTruthy();
 
         // The two newly-surfaced knobs.
+        expect(screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle')).toBeNull();
         expect(screen.findByTestId('connected-services-pool-detail:auto-restore-primary')).toBeTruthy();
         expect(screen.findByTestId('connected-services-pool-detail:switch-on:usageLimit')).toBeTruthy();
         expect(screen.findByTestId('connected-services-pool-detail:switch-on:authExpired')).toBeTruthy();

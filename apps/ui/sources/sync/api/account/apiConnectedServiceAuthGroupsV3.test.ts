@@ -138,7 +138,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         expect(groups).toHaveLength(1);
         expect(groups[0]?.groupId).toBe('primary');
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({
                 method: 'GET',
                 headers: expect.any(Headers),
@@ -169,7 +169,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
 
         expect(group.groupId).toBe('primary');
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({
                 method: 'POST',
                 headers: expect.any(Headers),
@@ -230,7 +230,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         });
 
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({
                 method: 'POST',
                 body: JSON.stringify({
@@ -242,15 +242,15 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
             }),
         );
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members/backup?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members/backup?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false, expectedGeneration: 3 }) }),
         );
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({ method: 'POST', body: JSON.stringify({ profileId: 'work', expectedGeneration: 2 }) }),
         );
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members/backup?expectedGeneration=4&happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/members/backup?expectedGeneration=4&happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({ method: 'DELETE' }),
         );
     });
@@ -264,7 +264,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
             if (url === 'https://api.example.test/health' || url === 'https://api.example.test/v1/auth/ping') {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
-            if (matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1').asymmetricMatch(url)) {
+            if (matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1').asymmetricMatch(url)) {
                 activeProfileRequestCount += 1;
             }
             if (activeProfileRequestCount === 1) {
@@ -304,7 +304,7 @@ describe('apiConnectedServiceAuthGroupsV3', () => {
         })).resolves.toEqual(expect.objectContaining({ groupId: 'primary' }));
 
         expect(fetchMock).toHaveBeenCalledWith(
-            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1'),
+            matchServerFetchUrl('https://api.example.test/v3/connect/openai-codex/groups/primary/active-profile?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1&happierClaudeCodeAutoContinueAtUsageLimit=1'),
             expect.objectContaining({
                 method: 'POST',
                 body: JSON.stringify({

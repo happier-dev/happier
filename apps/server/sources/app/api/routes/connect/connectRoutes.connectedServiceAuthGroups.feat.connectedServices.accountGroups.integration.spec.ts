@@ -279,6 +279,30 @@ describe("connectRoutes connected service auth groups (integration)", () => {
         expect(oldDefaultRead.json().group.policy).not.toHaveProperty("quotaLimitSelection");
     });
 
+    it("negotiates Claude continuation policy reads and preserves the preference across older-client edits", async () => {
+        const user = await createAccount("pk-groups-claude-continuation");
+        await createConnectedProfile(user.id, "claude-subscription", "work");
+        const app = await createReadyApp();
+        const headers = authHeaders(user.id);
+        const url = "/v3/connect/claude-subscription/groups/claude-pool";
+        const readerQuery = "happierClaudeCodeAutoContinueAtUsageLimit=1";
+        const create = await app.inject({ method: "POST", url: `/v3/connect/claude-subscription/groups?${readerQuery}`, headers,
+            payload: { groupId: "claude-pool", activeProfileId: "work", members: [{ profileId: "work", priority: 10 }], policy: { claudeCodeAutoContinueAtUsageLimit: true } },
+        });
+        expect(create.statusCode).toBe(200);
+        expect(create.json().group.policy.claudeCodeAutoContinueAtUsageLimit).toBe(true);
+        const oldRead = await app.inject({ method: "GET", url, headers });
+        expect(oldRead.json().group.policy).not.toHaveProperty("claudeCodeAutoContinueAtUsageLimit");
+        const oldList = await app.inject({ method: "GET", url: "/v3/connect/claude-subscription/groups", headers });
+        expect(oldList.json().groups[0].policy).not.toHaveProperty("claudeCodeAutoContinueAtUsageLimit");
+        const edit = await app.inject({ method: "PATCH", url, headers, payload: {
+            expectedGeneration: create.json().group.generation, policy: { ...oldRead.json().group.policy, cooldownMs: 1234 },
+        } });
+        expect(edit.statusCode).toBe(200);
+        const newRead = await app.inject({ method: "GET", url: `${url}?${readerQuery}`, headers });
+        expect(newRead.json().group.policy).toMatchObject({ claudeCodeAutoContinueAtUsageLimit: true, cooldownMs: 1234 });
+    });
+
     it.each(["anthropic", "claude-subscription", "openai-codex"])("rejects quota-reset opt-in when the service or quota feature cannot support it (%s)", async (serviceId) => {
         const user = await createAccount(`pk-auto-reset-disabled-${serviceId}`);
         await createConnectedProfile(user.id, serviceId, "work", serviceId === "anthropic" ? "token" : "oauth");

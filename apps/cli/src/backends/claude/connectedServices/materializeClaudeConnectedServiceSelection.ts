@@ -5,12 +5,14 @@ import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol';
 
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 import type { ConnectedServicesProviderMaterializerInput } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 import type { ConnectedServiceResolvedSelection } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
+import { CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay';
 import { materializeClaudeAnthropicApiKeyAuth } from './materializeClaudeAnthropicApiKeyAuth';
 import {
   materializeClaudeSubscriptionNativeAuthHome,
@@ -140,6 +142,12 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
     selection: params.selection ?? null,
   });
   if (!claudeConfigDir) return null;
+  const poolPolicy = params.selection?.kind === 'group'
+    ? ConnectedServiceAuthGroupPolicyV1Schema.parse(params.selection.policy ?? {})
+    : null;
+  const poolLaunchEnv: Record<string, string> = poolPolicy
+    ? { [CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY]: poolPolicy.claudeCodeAutoContinueAtUsageLimit === true ? '1' : '0' }
+    : {};
 
   if (params.serviceId === 'claude-subscription') {
     const selectionDescriptor = buildClaudeSubscriptionNativeAuthSelectionDescriptor({
@@ -218,7 +226,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
       validateGroupMutationCurrentness: params.validateGroupMutationCurrentness,
     });
     return {
-      env: materialized.env,
+      env: { ...materialized.env, ...poolLaunchEnv },
       targetMaterializedRoot: claudeConfigDir,
       diagnostics: dedupeDiagnostics([...groupSourceDiagnostics, ...materialized.diagnostics]),
       identityDiagnostic: materialized.identityDiagnostic,
@@ -235,6 +243,7 @@ export async function materializeClaudeConnectedServiceSelection(params: Readonl
   return {
     env: {
       ...materialized.env,
+      ...poolLaunchEnv,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
     },
     targetMaterializedRoot: claudeConfigDir,

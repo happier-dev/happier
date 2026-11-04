@@ -3433,6 +3433,8 @@ localTailscale: {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} 有効`,
         optionsTitle: "オプション",
         autoSwitchTitle: "自動フォールバック",
+        claudeCodeAutoContinueAtUsageLimitTitle: "使用上限に達したらClaudeに待機させる",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "新しいセッションでは、Claudeが上限のリセットを待ち、自動的に続行します。オフにすると、Happierが復旧を管理します。",
         autoQuotaResetTitle: "クォータリセットを自動的に使用",
         autoQuotaResetSubtitle: "プール内に利用可能なアカウントがなく、使い切ったクォータをリセットできる場合にのみ、保存されたリセットを消費します。初期設定はオフです。",
         autoDisablePlanInvalidTitle: "選択したモデルを利用できないアカウントを無効化",

@@ -1,4 +1,7 @@
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+
+export const CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY = 'HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT';
 
 function chmodPrivateFileIfSupported(path: string): void {
     if (process.platform === 'win32') return;
@@ -33,8 +36,16 @@ export function resolveClaudeLaunchSettingsOverlayArg(params: Readonly<{
     settingsPath: string | undefined;
     launchSettings: Readonly<Record<string, unknown>>;
     unsafeInlineKeys?: readonly string[] | undefined;
+    env?: NodeJS.ProcessEnv;
 }>): string | undefined {
-    if (Object.keys(params.launchSettings).length === 0) return params.settingsPath;
+    const env = params.env ?? process.env;
+    const hasPool = (['claude-subscription', 'anthropic'] as const).some((serviceId) =>
+        findConnectedServiceChildSelection(env, serviceId)?.kind === 'group');
+    const launchSettings = {
+        ...params.launchSettings,
+        ...(hasPool ? { autoContinueAtUsageLimit: env[CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT_ENV_KEY] === '1' } : {}),
+    };
+    if (Object.keys(launchSettings).length === 0) return params.settingsPath;
 
     let base: Record<string, unknown> = {};
     if (params.settingsPath) {
@@ -51,7 +62,7 @@ export function resolveClaudeLaunchSettingsOverlayArg(params: Readonly<{
 
     const merged: Record<string, unknown> = {
         ...base,
-        ...params.launchSettings,
+        ...launchSettings,
     };
 
     if (params.settingsPath) {

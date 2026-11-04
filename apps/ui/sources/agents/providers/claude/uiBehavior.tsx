@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ClaudePoolSettings } from '@/agents/providers/claude/connectedServices/ClaudePoolSettings';
 
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { buildClaudeSessionComposerNextMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeSessionComposerNextMessageMetaOverrides';
@@ -17,6 +18,9 @@ import { resolveClaudePendingDeliveryLabelKey } from '@/agents/providers/claude/
 import { isCurrentPendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 
 export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
+    connectedServices: {
+        renderPoolSettings: (props) => <ClaudePoolSettings {...props} />,
+    },
     pendingDelivery: {
         resolveLabelKey: ({ session, localId, detail }) => resolveClaudePendingDeliveryLabelKey({
             localId,

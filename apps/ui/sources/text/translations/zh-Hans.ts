@@ -3048,6 +3048,8 @@ export const zhHans: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} 已启用`,
         optionsTitle: "选项",
         autoSwitchTitle: "自动回退",
+        claudeCodeAutoContinueAtUsageLimitTitle: "让Claude在达到用量上限时等待",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "对于新会话，让Claude等待用量上限重置后自动继续。关闭后由Happier管理恢复。",
         autoQuotaResetTitle: "自动使用配额重置",
         autoQuotaResetSubtitle: "仅当池中没有可用账户且耗尽的配额可以重置时，才消耗已保存的重置次数。默认关闭。",
         autoDisablePlanInvalidTitle: "停用无法使用所选模型的账户",

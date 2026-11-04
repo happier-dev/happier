@@ -2976,6 +2976,8 @@ export const ca: TranslationStructure = {
                 membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} activats`,
                 optionsTitle: 'Opcions',
                 autoSwitchTitle: 'Fallback automàtic',
+                claudeCodeAutoContinueAtUsageLimitTitle: "Permet que Claude esperi als límits d’ús",
+                claudeCodeAutoContinueAtUsageLimitSubtitle: "A les sessions noves, Claude espera i continua automàticament quan es restableix el límit. Desactiva-ho perquè Happier gestioni la recuperació.",
                 autoQuotaResetTitle: "Utilitza els restabliments de quota automàticament",
                 autoQuotaResetSubtitle: "Gasta un restabliment disponible només quan cap compte del grup està preparat i es pot restablir la quota esgotada. Desactivat per defecte.",
                 autoDisablePlanInvalidTitle: "Desactiva els comptes que no poden utilitzar el model seleccionat",

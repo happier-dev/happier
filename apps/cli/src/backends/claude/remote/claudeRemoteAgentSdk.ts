@@ -36,11 +36,11 @@ import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import {
     resolveModeEffortLevelsForModel,
-    buildClaudeUltracodeSettingsJson,
     resolveClaudeEffortForModel,
     resolveClaudeUltracodeForModel,
 } from '@/backends/claude/utils/claudeEffort';
 import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
+import { resolveClaudeLaunchSettingsOverlayArg } from '@/backends/claude/utils/resolveClaudeLaunchSettingsOverlay';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import { readClaudeMainChainAssistantModelId } from '../sessionModels/readClaudeMainChainAssistantModelId';
@@ -722,17 +722,24 @@ Current model: ${lastAppliedRuntimeSettings.model ?? 'provider default'}.${messa
             ultracode: mode.ultracode,
             supportedLevels: effortSupportedLevels,
         });
+        const claudeSubprocessEnv = withCurrentHappierSessionId({
+            ...buildClaudeSubprocessEnv({ envOverlay: sessionEnvOverlay }),
+        }, opts.happySessionId ?? '');
         const extraArgs = (() => {
             const out: Record<string, string | null> = Object.create(null);
             out['replay-user-messages'] = null;
             if (debugEnabled) out.debug = debugCategories.length > 0 ? debugCategories.join(',') : null;
             if (verboseEnabled) out.verbose = null;
-            if (resolvedUltracode) out.settings = buildClaudeUltracodeSettingsJson();
+            const settings = resolveClaudeLaunchSettingsOverlayArg({
+                settingsPath: undefined,
+                launchSettings: resolvedUltracode ? { ultracode: true } : {},
+                // The subprocess environment intentionally strips Happier's selection marker.
+                // Resolve launch policy from the runner before that boundary is sanitized.
+                env: { ...process.env, ...sessionEnvOverlay },
+            });
+            if (settings) out.settings = settings;
             return Object.keys(out).length > 0 ? out : undefined;
         })();
-        const claudeSubprocessEnv = withCurrentHappierSessionId({
-            ...buildClaudeSubprocessEnv({ envOverlay: sessionEnvOverlay }),
-        }, opts.happySessionId ?? '');
         logClaudeRuntimeAuthEnvDiagnostic({
             logPrefix: 'claudeRemoteAgentSdk',
             sessionId: opts.sessionId ?? null,

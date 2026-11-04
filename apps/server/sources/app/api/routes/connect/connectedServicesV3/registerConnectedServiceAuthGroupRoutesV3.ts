@@ -11,6 +11,7 @@ import {
     CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY,
     CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY,
     CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY,
+    CONNECTED_SERVICE_CLAUDE_AUTO_CONTINUE_QUERY_KEY,
     CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE,
     CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER,
     type ConnectedServiceAuthGroupV1,
@@ -238,6 +239,10 @@ function projectAuthGroupForReader(
 ): ConnectedServiceAuthGroupV1 {
     // Released V1 readers are strict. Preserve each negotiated response shape, not a second policy owner.
     let policy = group.policy;
+    if (reader.query[CONNECTED_SERVICE_CLAUDE_AUTO_CONTINUE_QUERY_KEY] !== CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE) {
+        const { claudeCodeAutoContinueAtUsageLimit: _claudeAutoContinue, ...projected } = policy;
+        policy = projected;
+    }
     if (policy.strategy === 'expiry_first'
         && reader.query[CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY] !== CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE) {
         policy = { ...policy, strategy: 'least_limited' };

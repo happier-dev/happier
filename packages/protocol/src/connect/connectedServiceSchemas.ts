@@ -529,9 +529,13 @@ export const CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE = 'application/json
 export const CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY = 'happierAutoDisablePlanInvalidAccounts';
 export const CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY = 'happierPoolQuotaLimitSelection';
 export const CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY = 'happierPoolExpiryFirst';
+export const CONNECTED_SERVICE_CLAUDE_AUTO_CONTINUE_QUERY_KEY = 'happierClaudeCodeAutoContinueAtUsageLimit';
 export const CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE = '1';
 
 export const ConnectedServiceAuthGroupReaderCapabilitiesQueryV1Schema = lazySchema(() => z.object({
+    [CONNECTED_SERVICE_CLAUDE_AUTO_CONTINUE_QUERY_KEY]: z
+        .literal(CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE)
+        .optional(),
     [CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY]: z
         .literal(CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE)
         .optional(),
@@ -549,7 +553,7 @@ export type ConnectedServiceAuthGroupReaderCapabilitiesQueryV1 = z.infer<
 
 export function appendConnectedServiceAuthGroupReaderCapabilities(path: string): string {
     const separator = path.includes('?') ? '&' : '?';
-    return `${path}${separator}${CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}`;
+    return `${path}${separator}${CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_CLAUDE_AUTO_CONTINUE_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}`;
 }
 
 const ConnectedServiceSelectedProviderLimitIdsSchema = lazySchema(() => z
@@ -571,6 +575,8 @@ export const ConnectedServiceAuthGroupPolicyV1Schema = lazySchema(() => z
         v: z.literal(1).default(1),
         strategy: ConnectedServiceAuthGroupStrategyV1Schema.default('expiry_first'),
         autoSwitch: z.boolean().default(false),
+        // Absent means Happier manages Claude pool recovery. Negotiate for older strict readers.
+        claudeCodeAutoContinueAtUsageLimit: z.boolean().optional(),
         // Absence means false. Do not materialize a default in older-reader responses.
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
         // Absence means false. Reader negotiation keeps this out of older strict V1 responses.
@@ -616,6 +622,7 @@ export const ConnectedServiceAuthGroupPolicyPatchV1Schema = lazySchema(() => z
         v: z.literal(1).optional(),
         strategy: ConnectedServiceAuthGroupStrategyV1Schema.optional(),
         autoSwitch: z.boolean().optional(),
+        claudeCodeAutoContinueAtUsageLimit: z.boolean().optional(),
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
         autoDisablePlanInvalidAccounts: z.boolean().optional(),
         quotaLimitSelection: ConnectedServiceAuthGroupQuotaLimitSelectionV1Schema.optional(),

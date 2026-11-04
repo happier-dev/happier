@@ -2891,6 +2891,8 @@ export const en = {
                 membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} enabled`,
                 optionsTitle: 'Options',
                 autoSwitchTitle: 'Automatic fallback',
+                claudeCodeAutoContinueAtUsageLimitTitle: "Let Claude wait for usage limits",
+                claudeCodeAutoContinueAtUsageLimitSubtitle: "For new sessions, let Claude wait and continue automatically when a limit resets. Turn off to let Happier manage recovery.",
                 autoQuotaResetTitle: "Automatically use quota resets",
                 autoQuotaResetSubtitle: "Spend a banked reset only when no pool account is ready and quota exhaustion can be reset. Off by default.",
                 autoDisablePlanInvalidTitle: "Disable accounts that cannot use the selected model",

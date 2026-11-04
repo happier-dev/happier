@@ -274,6 +274,8 @@ function buildClaudeArgs<Mode extends EnhancedMode>(
   }
   const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(input.first.mode);
   const settingsOverlay = resolveClaudeLaunchSettingsOverlayArg({
+    // Connected-service markers belong to the runner and are stripped from Claude's env.
+    env: { ...process.env, ...input.envOverlay },
     settingsPath: input.hookSettingsPath,
     launchSettings: {
       ...(terminalOptions.ultracodeEnabled ? { ultracode: true } : {}),

@@ -16,6 +16,7 @@ import { resolveClaudeProjectId } from '../utils/path';
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import { createClaudeWorkflowActivitySource } from '../workflows/claudeWorkflowActivitySource';
 import { completedNativeChildTranscript } from '../workflows/claudeWorkflowActivitySource.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 
@@ -376,7 +377,16 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect(onEffectiveModel).toHaveBeenLastCalledWith({ modelId: 'claude-next' });
     });
 
-    it('passes ultracode through the --settings extraArg for xhigh-capable models', async () => {
+    it.each([false, true])('merges ultracode and the pool continuation default into one SDK settings argument (pool %s)', async (pool) => {
+        const envScope = createEnvKeyScope([HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, 'HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT']);
+        envScope.patch({
+            HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT: undefined,
+            [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: pool ? JSON.stringify([{
+                kind: 'group', serviceId: 'claude-subscription', groupId: 'pool',
+                activeProfileId: 'work', fallbackProfileId: 'work', generation: 1,
+            }]) : undefined,
+        });
+        try {
         let capturedOptions: any = null;
 
         const createQuery = vi.fn((_params: any) => {
@@ -421,8 +431,11 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.extraArgs).toMatchObject({
-            settings: JSON.stringify({ ultracode: true }),
+            settings: JSON.stringify({ ultracode: true, ...(pool ? { autoContinueAtUsageLimit: false } : {}) }),
         });
+        } finally {
+            envScope.restore();
+        }
     });
 
     it('omits the ultracode settings extraArg for models without xhigh support', async () => {

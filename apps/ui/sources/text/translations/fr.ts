@@ -2890,6 +2890,8 @@ export const fr: TranslationStructure = {
                 membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} activés`,
                 optionsTitle: 'Options',
                 autoSwitchTitle: 'Repli automatique',
+                claudeCodeAutoContinueAtUsageLimitTitle: "Laisser Claude attendre aux limites d’utilisation",
+                claudeCodeAutoContinueAtUsageLimitSubtitle: "Pour les nouvelles sessions, Claude attend et reprend automatiquement après la réinitialisation de la limite. Désactivez pour confier la reprise à Happier.",
                 autoQuotaResetTitle: "Utiliser automatiquement les resets de quota",
                 autoQuotaResetSubtitle: "Utilise un reset disponible uniquement si aucun compte du pool n’est prêt et que son quota épuisé peut être réinitialisé. Désactivé par défaut.",
                 autoDisablePlanInvalidTitle: "Désactiver les comptes incompatibles avec le modèle sélectionné",

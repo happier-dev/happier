@@ -3078,6 +3078,8 @@ export const ru: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} включено`,
         optionsTitle: "Параметры",
         autoSwitchTitle: "Автоматический резерв",
+        claudeCodeAutoContinueAtUsageLimitTitle: "Разрешить Claude ждать сброса лимита",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "В новых сессиях Claude ждёт сброса лимита и автоматически продолжает работу. Выключите, чтобы восстановлением управлял Happier.",
         autoQuotaResetTitle: "Автоматически использовать сбросы квоты",
         autoQuotaResetSubtitle: "Расходует доступный сброс, только когда ни один аккаунт пула не готов и исчерпанную квоту можно сбросить. По умолчанию отключено.",
         autoDisablePlanInvalidTitle: "Отключать аккаунты, которым недоступна выбранная модель",

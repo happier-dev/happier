@@ -39,13 +39,14 @@ describe('Claude selection configuration sharing', () => {
       },
     });
     const record = makeRecord();
-    const materialize = async (configMode?: 'linked' | 'copied' | 'isolated', incomingRecord = record, stateMode: 'shared' | 'isolated' = 'shared') => {
+    let lastEnv: Record<string, string> = {};
+    const materialize = async (configMode?: 'linked' | 'copied' | 'isolated', incomingRecord = record, stateMode: 'shared' | 'isolated' = 'shared', policy: unknown = {}) => {
       const result = await materializeClaudeConnectedServiceSelection({
         activeServerDir: join(root, 'server'), serviceId: 'claude-subscription',
         record: incomingRecord, fallbackProfileId: 'work',
         selection: kind === 'group' ? {
           kind, serviceId: 'claude-subscription', groupId: 'pool', activeProfileId: 'work',
-          fallbackProfileId: 'work', generation: 1, policy: {}, record: incomingRecord,
+          fallbackProfileId: 'work', generation: 1, policy, record: incomingRecord,
         } : { kind, serviceId: 'claude-subscription', profileId: 'work', record: incomingRecord },
         processEnv: { HOME: root, CLAUDE_CONFIG_DIR: source },
         ...(configMode ? { accountSettings: {
@@ -56,10 +57,20 @@ describe('Claude selection configuration sharing', () => {
       });
       expect(result?.diagnostics).toEqual([]);
       if (!result) throw new Error('Expected a materialized Claude home');
+      lastEnv = result.env;
       return result.targetMaterializedRoot;
     };
-    return { source, materialize, makeRecord };
+    return { source, materialize, makeRecord, getEnv: () => lastEnv };
   }
+
+  it.each(['profile', 'group'] as const)('carries the per-pool Claude wait preference without changing shared %s settings', async (kind) => {
+    const { source, materialize, makeRecord, getEnv } = await fixture(kind);
+    await materialize();
+    expect(getEnv().HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT).toBe(kind === 'group' ? '0' : undefined);
+    await materialize(undefined, makeRecord(), 'shared', { claudeCodeAutoContinueAtUsageLimit: true });
+    expect(getEnv().HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT).toBe(kind === 'group' ? '1' : undefined);
+    expect(await readFile(join(source, 'settings.json'), 'utf8')).toBe('{"theme":"dark"}');
+  });
 
   it.each(['profile', 'group'] as const)('retains private %s state and isolated config during a genuine credential refresh', async (kind) => {
     const { materialize, makeRecord } = await fixture(kind);

@@ -2890,6 +2890,8 @@ export const de: TranslationStructure = {
                 membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} aktiviert`,
                 optionsTitle: 'Optionen',
                 autoSwitchTitle: 'Automatischer Fallback',
+                claudeCodeAutoContinueAtUsageLimitTitle: "Claude bei Nutzungslimits warten lassen",
+                claudeCodeAutoContinueAtUsageLimitSubtitle: "In neuen Sitzungen wartet Claude und setzt nach dem Zurücksetzen des Limits automatisch fort. Deaktivieren, damit Happier die Wiederaufnahme verwaltet.",
                 autoQuotaResetTitle: "Kontingent-Resets automatisch nutzen",
                 autoQuotaResetSubtitle: "Verbraucht einen verfügbaren Reset nur, wenn kein Pool-Konto bereit ist und ein erschöpftes Kontingent zurückgesetzt werden kann. Standardmäßig aus.",
                 autoDisablePlanInvalidTitle: "Konten deaktivieren, die das ausgewählte Modell nicht nutzen können",

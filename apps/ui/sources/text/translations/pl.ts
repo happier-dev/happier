@@ -3155,6 +3155,8 @@ export const pl: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} włączonych`,
         optionsTitle: "Opcje",
         autoSwitchTitle: "Automatyczne przełączenie",
+        claudeCodeAutoContinueAtUsageLimitTitle: "Pozwól Claude czekać po osiągnięciu limitu",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "W nowych sesjach Claude czeka i automatycznie kontynuuje po odnowieniu limitu. Wyłącz, aby Happier zarządzał wznowieniem.",
         autoQuotaResetTitle: "Automatycznie używaj resetów limitu",
         autoQuotaResetSubtitle: "Zużywa dostępny reset tylko wtedy, gdy żadne konto w puli nie jest gotowe i można zresetować wyczerpany limit. Domyślnie wyłączone.",
         autoDisablePlanInvalidTitle: "Wyłączaj konta, które nie mogą używać wybranego modelu",

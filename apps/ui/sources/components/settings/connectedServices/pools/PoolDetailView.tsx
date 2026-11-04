@@ -5,6 +5,7 @@ import Animated, { useSharedValue } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AccountBlock } from '@/components/settings/connectedServices/account/AccountBlock';
+import { AGENTS_UI_BEHAVIOR } from '@/agents/registry/registryUiBehavior';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
@@ -961,6 +962,16 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
             </ItemGroup>
 
             <ItemGroup title={t('connectedServices.pools.detail.behaviorTitle')}>
+                {runtimeGroupCapability.groupConfigurationSupportingAgentIds.map((agentId) => (
+                    <React.Fragment key={agentId}>
+                        {AGENTS_UI_BEHAVIOR[agentId].connectedServices?.renderPoolSettings?.({
+                            serviceId,
+                            policy: group.policy,
+                            disabled: !fallbackControlsEnabled,
+                            onPatchPolicy: patchPolicy,
+                        })}
+                    </React.Fragment>
+                ))}
                 <Item
                     testID="connected-services-pool-detail:auto-switch"
                     title={t('connectedServices.detail.groupDetail.autoSwitchTitle')}

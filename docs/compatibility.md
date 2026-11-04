@@ -527,6 +527,23 @@ policy. Do not roll back a database containing this opt-in to that reader withou
 separately validated, authorized data reconciliation. No database rewrite is performed
 by the response projection.
 
+### Claude pool native waiting preference (development)
+
+The optional `claudeCodeAutoContinueAtUsageLimit` pool policy field defaults to
+Happier-managed recovery when absent. Updated V3 readers send
+`happierClaudeCodeAutoContinueAtUsageLimit=1`; the existing reader-capability
+projection omits the field for older strict clients. Older-client policy patches
+merge with the stored policy and preserve this preference. The predecessor query
+schema at `a2c45c86804b24e60ac0b76146a3ef36dfcaa15b` accepts and strips unknown
+query keys, so updated ordinary reads remain usable against that predecessor.
+This is source-schema evidence, not a live mixed-version deployment check.
+
+As with the other optional pool-policy extensions, this is forward coexistence,
+not old-server database rollback support. A pre-field server rejects the stored
+field and falls back to its whole default policy. A database containing the new
+preference needs separately validated, authorized reconciliation before such a
+rollback. The reader projection does not rewrite storage.
+
 ### Account-pool quota-limit selection (development)
 
 The development daemon's soft-switch target gate and live-session model exclusions

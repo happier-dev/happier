@@ -3476,6 +3476,8 @@ export const it: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} abilitati`,
         optionsTitle: "Opzioni",
         autoSwitchTitle: "Fallback automatico",
+        claudeCodeAutoContinueAtUsageLimitTitle: "Lascia che Claude attenda ai limiti di utilizzo",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "Nelle nuove sessioni, Claude attende e riprende automaticamente quando il limite si reimposta. Disattiva per affidare il recupero a Happier.",
         autoQuotaResetTitle: "Usa automaticamente i reset della quota",
         autoQuotaResetSubtitle: "Consuma un reset disponibile solo quando nessun account del pool è pronto e la quota esaurita può essere ripristinata. Disattivato per impostazione predefinita.",
         autoDisablePlanInvalidTitle: "Disattiva gli account che non possono usare il modello selezionato",

@@ -3,6 +3,9 @@ import type {
     AccountProfile,
     AcpConfigOptionOverridesV1,
     AgentRuntimeDescriptorV1,
+    ConnectedServiceAuthGroupPolicyPatchV1,
+    ConnectedServiceAuthGroupPolicyV1,
+    ConnectedServiceId,
     DirectSessionLinkEnsureRequest,
     DirectSessionsSource,
     PendingDeliveryDetailV1,
@@ -80,6 +83,14 @@ export type AgentSessionHandoffProviderPatch = Readonly<{
 }>;
 
 export type AgentUiBehavior = Readonly<{
+    connectedServices?: Readonly<{
+        renderPoolSettings?: (ctx: {
+            serviceId: ConnectedServiceId;
+            policy: ConnectedServiceAuthGroupPolicyV1;
+            disabled: boolean;
+            onPatchPolicy: (policy: ConnectedServiceAuthGroupPolicyPatchV1) => Promise<void>;
+        }) => ReactNode;
+    }>;
     pendingDelivery?: Readonly<{
         resolveLabelKey?: (ctx: {
             agentId: AgentId;
@@ -285,6 +296,9 @@ export type NewSessionPreflightIssue = Readonly<{
 
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
+        ...(a.connectedServices || b.connectedServices
+            ? { connectedServices: { ...(a.connectedServices ?? {}), ...(b.connectedServices ?? {}) } }
+            : {}),
         ...(a.pendingDelivery || b.pendingDelivery
             ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
             : {}),

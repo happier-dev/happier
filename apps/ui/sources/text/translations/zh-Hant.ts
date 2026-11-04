@@ -1778,6 +1778,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} 已啟用`,
                 optionsTitle: '選項',
                 autoSwitchTitle: '自動備援',
+                claudeCodeAutoContinueAtUsageLimitTitle: "讓Claude在達到用量上限時等待",
+                claudeCodeAutoContinueAtUsageLimitSubtitle: "對於新工作階段，讓Claude等待用量上限重設後自動繼續。關閉後由Happier管理復原。",
                 autoQuotaResetTitle: "自動使用配額重設",
                 autoQuotaResetSubtitle: "僅當集區中沒有可用帳戶且耗盡的配額可以重設時，才消耗已儲存的重設次數。預設關閉。",
                 autoDisablePlanInvalidTitle: "停用無法使用所選模型的帳戶",

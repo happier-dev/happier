@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { logger } from '@/ui/logger';
 import { claudeLocal } from './claudeLocal';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -788,7 +789,15 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs).not.toContain('--session-id');
     });
 
-    it('normalizes equals-form permission mode so resumed launches keep --resume before the permission flag', async () => {
+    it.each([false, true])('preserves resumed permission flags and pool launch settings (pool %s)', async (pool) => {
+        const envScope = createEnvKeyScope(['HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON', 'HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT']);
+        envScope.patch({
+            HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT: undefined,
+            HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: pool ? JSON.stringify([{
+                kind: 'group', serviceId: 'claude-subscription', groupId: 'pool',
+                activeProfileId: 'work', fallbackProfileId: 'work', generation: 1,
+            }]) : undefined,
+        });
         const root = mkdtempSync(join(tmpdir(), 'happier-claude-local-yolo-'));
         const hookSettingsPath = join(root, 'hooks.json');
         writeFileSync(hookSettingsPath, JSON.stringify({ permissions: { allow: ['mcp__happier__change_title'] } }));
@@ -818,9 +827,11 @@ describe('claudeLocal --continue handling', () => {
             expect(JSON.parse(readFileSync(spawnArgs[settingsIndex + 1]!, 'utf8'))).toEqual({
                 permissions: { allow: ['mcp__happier__change_title'] },
                 skipDangerousModePermissionPrompt: true,
+                ...(pool ? { autoContinueAtUsageLimit: false } : {}),
             });
             expect(JSON.parse(readFileSync(hookSettingsPath, 'utf8'))).not.toHaveProperty('skipDangerousModePermissionPrompt');
         } finally {
+            envScope.restore();
             rmSync(root, { recursive: true, force: true });
         }
     });

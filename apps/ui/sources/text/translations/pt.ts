@@ -3248,6 +3248,8 @@ export const pt: TranslationStructure = {
         membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} habilitados`,
         optionsTitle: "Opções",
         autoSwitchTitle: "Fallback automático",
+        claudeCodeAutoContinueAtUsageLimitTitle: "Permitir que Claude aguarde nos limites de uso",
+        claudeCodeAutoContinueAtUsageLimitSubtitle: "Nas novas sessões, Claude aguarda e continua automaticamente quando o limite é reposto. Desative para que o Happier gerencie a recuperação.",
         autoQuotaResetTitle: "Usar redefinições de quota automaticamente",
         autoQuotaResetSubtitle: "Consome uma redefinição disponível apenas quando nenhuma conta do grupo está pronta e a quota esgotada pode ser redefinida. Desativado por padrão.",
         autoDisablePlanInvalidTitle: "Desativar contas que não podem usar o modelo selecionado",
