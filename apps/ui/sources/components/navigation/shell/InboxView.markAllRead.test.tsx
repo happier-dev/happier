@@ -205,7 +205,8 @@ describe('InboxView mark as read', () => {
         standardCleanup();
         await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
         await harness?.dispose();
-        await setActiveServerId(initialServerId);
+        // A build without a default Home starts with none: the test's Homes are all there is to leave.
+        if (initialServerId) await setActiveServerId(initialServerId);
         for (const id of [homeA, homeB]) if (id && !initialProfileIds.has(id)) await removeServerProfile(id);
         storage.setState(initialStorageState, true);
     });

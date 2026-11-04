@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -49,7 +50,12 @@ vi.mock('@/track/tracking', () => ({ tracking: null }));
 const initialState = storage.getState();
 
 describe('InboxView focused item on a phone', () => {
-  beforeEach(() => {
+  let previousServerId = '';
+  let homeId = '';
+  beforeEach(async () => {
+    // The Inbox belongs to a signed-in Home; a build without a default Home has none until one is added.
+    previousServerId = getActiveServerSnapshot().serverId;
+    homeId = (await upsertAndActivateServer({ serverUrl: 'https://inbox-focused-item.test' })).id;
     routerMock.width = 390;
     routerMock.current?.spies.replace.mockClear();
     routerMock.current?.resetParams();
@@ -63,9 +69,11 @@ describe('InboxView focused item on a phone', () => {
       },
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
     standardCleanup();
     storage.setState(initialState, true);
+    if (previousServerId) await setActiveServerId(previousServerId);
+    await removeServerProfile(homeId);
   });
 
   it('opens a linked item on its own page, as a phone row does, instead of stopping at the list', async () => {
@@ -184,8 +192,9 @@ describe('InboxView focused item on a phone', () => {
 
   it('classifies a linked notice into Updates and retains that view when its owner resolves it', async () => {
     routerMock.width = 1200;
-    const { createUsageNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
-    const notice = createUsageNoticeArtifactFixture();
+    // A generic notice: an open usage notice has no row to classify, and its links open its own page.
+    const { createAccountNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
+    const notice = createAccountNoticeArtifactFixture();
     storage.setState({ artifacts: { [notice.id]: notice } });
     const { InboxView } = await import('./InboxView');
     const screen = await renderScreen(<InboxView focusedItem={{ kind: 'notice', serverId: getActiveServerSnapshot().serverId, id: notice.id }} />);
