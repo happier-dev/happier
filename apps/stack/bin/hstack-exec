@@ -1082,11 +1082,28 @@ preparation_component_relative_dir=$policy_component
 [ "$preparation_component_relative_dir" = . ] && preparation_component_relative_dir=
 preflight_command=$requested_command
 [ "$requires_remote_dependencies" -eq 1 ] && preflight_command=npm
+required_bun_version=
+case " $policy_requiredTools " in
+  *' bun '*)
+    if [ -r "$repo_root/apps/stack/scripts/provision/.bun-version" ]; then
+      required_bun_version=$(tr -d '[:space:]' < "$repo_root/apps/stack/scripts/provision/.bun-version")
+    fi
+    ;;
+esac
+go_toolchain_required=0
+if [ -n "$runtime_build_target" ]; then
+  case ",$runtime_build_components," in *,daemon,*) go_toolchain_required=1 ;; esac
+fi
+if [ "$go_toolchain_required" = 1 ]; then
+  . "$script_dir/../scripts/utils/dev_targets/native_go_toolchain.sh" || exit 1
+  go_toolchain_probe=$(cat "$script_dir/../scripts/utils/dev_targets/native_go_toolchain.sh") || exit 1
+fi
 relative_cwd=${invoked_cwd#"$repo_root"}
 relative_cwd=${relative_cwd#/}
 [ "$explicit_relative_cwd_set" -eq 1 ] && relative_cwd=$explicit_relative_cwd
 heavyweight_admission_required=0
 [ -n "$policy_heavyClass" ] && heavyweight_admission_required=1
+heavyweight_placement_class=${policy_placementHeavyClass:-$policy_heavyClass}
 minimum_memory_capacity_kib=0
 if [ -n "$policy_heavyClass" ]; then
   if [ "$policy_heavyClass" = source-web-export ]; then
@@ -1214,9 +1231,54 @@ remote_load_probe() {
   remote_executor_repo=$(value_for_target executor_repo_dir "$number")
   [ -n "$remote_executor_repo" ] || remote_executor_repo=$remote_repo
   remote_path=$(value_for_target remote_path "$number")
-  path_setup=
+  remote_home=$(value_for_target cli_home "$number")
+  remote_cwd=$remote_repo
+  [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
+  probe_source_repo=$remote_repo
+  if [ -n "$command_repo_root" ]; then
+    # Observe the established executor until the selected command replica has
+    # crossed root admission and its current-source barrier.
+    remote_cwd=$remote_executor_repo
+    probe_source_repo=$remote_executor_repo
+  fi
+  path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH; "
   if [ -n "$remote_path" ]; then
-    path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
+    path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin:$remote_path"):\$PATH; export PATH; "
+  fi
+  case "$preflight_command" in
+    /*) availability="[ -x $(quote_remote "$preflight_command") ]" ;;
+    */*)
+      if [ -n "$command_repo_root" ]; then
+        # Source-relative executables arrive at the selected source barrier;
+        # the OS checks the executable after that barrier completes.
+        availability=:
+      else
+        availability="[ -x $(quote_remote "$preflight_command") ]"
+      fi ;;
+    *) availability="command -v $(quote_remote "$preflight_command") >/dev/null 2>&1" ;;
+  esac
+  for required_tool in $policy_requiredTools; do
+    # An explicitly invoked compiler is already covered by availability.
+    [ "$required_tool" != bun ] || [ "$requested_command_name" != bun ] || continue
+    availability="$availability && command -v $(quote_remote "$required_tool") >/dev/null 2>&1"
+  done
+  if [ -n "$required_bun_version" ]; then
+    bun_compiler=bun
+    [ "$requested_command_name" != bun ] || bun_compiler=$requested_command
+    availability="{ installed_bun_version=\$($(quote_remote "$bun_compiler") --version 2>/dev/null) || exit 78; [ \"\$installed_bun_version\" = $(quote_remote "$required_bun_version") ] || exit 78; $availability; }"
+  fi
+  # Readiness belongs to the disk owner, including the class's write roots.
+  # Inspect before synchronization or memory queueing; this probe never reaps.
+  disk_probe_class=${heavyweight_placement_class:-source-replica}
+  availability="$availability && node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs") --check $(quote_remote "--class=$disk_probe_class") $(quote_remote "--repo=$remote_repo") $(quote_remote "--cache=$remote_home/cache") >/dev/null"
+  capability_setup='runtime_worker_target=-; '
+  if [ "$go_toolchain_required" = 1 ]; then
+    availability="{ $go_toolchain_probe
+native_go_toolchain_evidence_is_available $(quote_remote "$probe_source_repo/packages/plugins/cliproxyapi/managed-runtime") || exit 79; $availability; }"
+  fi
+  if [ -n "$runtime_build_target" ]; then
+    capability_script='const { getComponentArtifactBuildTargetUnavailableReason } = await import(process.argv[1]); const [os,arch] = process.argv[2].split("-"); const components = Object.fromEntries(process.argv[3].split(",").map(component => [component,true])); const reason = getComponentArtifactBuildTargetUnavailableReason({target:{os,arch},components}); if(reason){console.error(reason);process.exit(77)} console.log((process.platform === "win32" ? "windows" : process.platform) + "-" + process.arch)'
+    capability_setup="runtime_worker_target=\$(node --input-type=module -e $(quote_remote "$capability_script") $(quote_remote "$probe_source_repo/packages/cli-common/componentArtifactTarget.mjs") $(quote_remote "$runtime_build_target") $(quote_remote "$runtime_build_components")) || exit \$?; "
   fi
   probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); kernel=$(uname -s); case "$kernel" in Darwin) platform=darwin; load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\''); run_queue=0; mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || printf 0); memory=$(awk -v bytes="$mem_total_bytes" -v ratio="${free:-1}" '\''BEGIN {printf "%.0f %.0f", (bytes/1024)*ratio, bytes/1024}'\''); set -- $memory; mem_available_kib=${1-}; mem_total_kib=${2-}; swap_used_kib=0; swap_total_kib=0; psi_cpu=0; psi_memory=0; psi_io=0; swap_in_pages=0; swap_out_pages=0 ;; *) platform=linux; load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); run_queue=$(awk '\''{split($4,r,"/"); print r[1]}'\'' /proc/loadavg 2>/dev/null); memory=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} /SwapTotal:/ {st=$2} /SwapFree:/ {sf=$2} END {if(t>0) print a/t, a, t, st-sf, st}'\'' /proc/meminfo 2>/dev/null); set -- $memory; free=${1-}; mem_available_kib=${2-}; mem_total_kib=${3-}; swap_used_kib=${4-}; swap_total_kib=${5-}; psi_cpu=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/cpu 2>/dev/null); psi_memory=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/memory 2>/dev/null); psi_io=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/io 2>/dev/null); swap_pages=$(awk '\''/pswpin / {i=$2} /pswpout / {o=$2} END {print i+0, o+0}'\'' /proc/vmstat 2>/dev/null); set -- $swap_pages; swap_in_pages=${1-}; swap_out_pages=${2-} ;; esac; [ -n "$free" ] || free=1; disk=$(df -Pk . 2>/dev/null | awk '\''NR==2 {gsub(/%/,"",$5); print $4, $5}'\''); set -- $disk; disk_free=${1-}; disk_used=${2-}; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\\n" "$cpu" "$load" "$free" "$disk_free" "$disk_used" "${run_queue:-0}" "${mem_available_kib:-0}" "${mem_total_kib:-0}" "${swap_used_kib:-0}" "${swap_total_kib:-0}" "${psi_cpu:-0}" "${psi_memory:-0}" "${psi_io:-0}" "${swap_in_pages:-0}" "${swap_out_pages:-0}" "$platform"'
   probe="$probe
@@ -1235,144 +1297,87 @@ if [ \"\$platform\" = linux ]; then
 fi"
   fi
   probe="$probe
-printf '%s %s %s %s\\n' \"\$unreserved_memory\" 0 \"\$achievable_memory\" \"\$queued_memory\""
-  remote_command="${path_setup}cd -- $(quote_remote "$remote_repo") && bash -lc $(quote_remote "$probe")"
+dependency_busy=0"
+  if [ "$policy_bootstrap" = 1 ]; then
+    dependency_probe='const { isDependencyRefreshLockActive } = await import(process.argv[1]); console.log(isDependencyRefreshLockActive({ installDir: process.argv[2] }) ? 1 : 0)'
+    probe="$probe
+dependency_busy=\$(node --input-type=module -e $(quote_remote "$dependency_probe") $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/proc/dependency_refresh.mjs") $(quote_remote "$remote_repo")) || exit 1"
+  fi
+  probe="$probe
+printf '%s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\""
+  remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability && { ${capability_setup}bash -lc $(quote_remote "$probe") && printf '%s\\n' \"\$runtime_worker_target\"; }"
   remote_sample=$(run_remote_ssh_probe "$remote_command")
   remote_sample_status=$?
   [ "$remote_sample_status" -eq 0 ] || return "$remote_sample_status"
-  printf '%s\n' "$remote_sample" | awk 'NR == 1 {sample=$0} NR == 2 {sample=sample " " $0} END {print sample}'
-}
-
-remote_command_probe() {
-  number=$1
-  ssh_target=$(value_for_target ssh "$number")
-  ssh_config=$(value_for_target ssh_config "$number")
-  if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
-    ssh_config="$projection_mutagen_ssh_path/config"
-  fi
-  remote_repo=$(value_for_target repo_dir "$number")
-  remote_path=$(value_for_target remote_path "$number")
-  remote_cwd=$remote_repo
-  [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
-  remote_home=$(value_for_target cli_home "$number")
-  path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin"):\$PATH; export PATH; "
-  if [ -n "$remote_path" ]; then
-    path_setup="PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin:$remote_path"):\$PATH; export PATH; "
-  fi
-  case "$preflight_command" in
-    */*) availability="[ -x $(quote_remote "$preflight_command") ]" ;;
-    *) availability="command -v $(quote_remote "$preflight_command") >/dev/null 2>&1" ;;
-  esac
-  for required_tool in $policy_requiredTools; do
-    availability="$availability && command -v $(quote_remote "$required_tool") >/dev/null 2>&1"
-  done
-  remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability"
-  if [ -n "$runtime_build_target" ]; then
-    capability_script='const { getComponentArtifactBuildTargetUnavailableReason } = await import(process.argv[1]); const [os,arch] = process.argv[2].split("-"); const components = Object.fromEntries(process.argv[3].split(",").map(component => [component,true])); const reason = getComponentArtifactBuildTargetUnavailableReason({target:{os,arch},components}); if(reason){console.error(reason);process.exit(77)} console.log((process.platform === "win32" ? "windows" : process.platform) + "-" + process.arch)'
-    remote_command="$remote_command && node --input-type=module -e $(quote_remote "$capability_script") $(quote_remote "$remote_repo/packages/cli-common/componentArtifactTarget.mjs") $(quote_remote "$runtime_build_target") $(quote_remote "$runtime_build_components")"
-  fi
-  if [ -n "$runtime_build_target" ]; then
-    run_remote_ssh_probe "$remote_command"
-  else
-    run_remote_ssh_probe "$remote_command" >/dev/null 2>&1
-  fi
-}
-
-command_is_available() {
-  number=$1
-  name=$2
-  command_key=$(printf '%s %s %s %s' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" | cksum | awk '{print $1}')
-  cache_path="$cache_dir/$name.command.$command_key.cache"
-  now=$(date +%s)
-  runtime_worker_target=
-  if [ -r "$cache_path" ] && [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" != try ]; then
-    IFS=' ' read -r sampled available unavailable_reason runtime_worker_target < "$cache_path" || true
-    case "$sampled:$available" in
-      *[!0-9:]*|'':*) ;;
-      *)
-        if [ "$available" = 1 ] && [ "$requires_remote_dependencies" -eq 1 ]; then
-          ttl=5
-        elif [ "$available" = 1 ]; then
-          ttl=300
-        else
-          ttl=${unavailable_ttl_seconds-120}
-        fi
-        if [ $((now - sampled)) -lt "$ttl" ]; then
-          if [ "$available" = 1 ] && { [ -z "$runtime_build_target" ] || [ -n "$runtime_worker_target" ]; }; then return 0; fi
-          # An explicit request is also a recovery probe. Automatic routing
-          # keeps the negative TTL to avoid repeatedly hitting broken hosts,
-          # while a named target must observe a just-repaired SSH/tool state.
-          if [ -z "$explicit_target_number" ] && [ "$unavailable_reason" = unreachable ]; then
-            command_unavailable_reason=$unavailable_reason
-            return 1
-          fi
-        fi
-        ;;
-    esac
-  fi
-  temporary=$(create_cache_temporary "$cache_path" 2>/dev/null || true)
-  runtime_worker_target=$(remote_command_probe "$number")
-  probe_status=$?
-  if [ "$probe_status" -eq 0 ]; then
-    if [ -n "$temporary" ]; then
-      printf '%s 1 ready %s\n' "$now" "$runtime_worker_target" > "$temporary" && mv -f -- "$temporary" "$cache_path"
-      rm -f -- "$temporary" 2>/dev/null || true
-    fi
-    return 0
-  fi
-  if [ -n "$temporary" ]; then
-    if [ "$probe_status" -eq 255 ]; then command_unavailable_reason=unreachable; elif [ "$probe_status" -eq 77 ]; then command_unavailable_reason=capability; else command_unavailable_reason=prerequisite; fi
-    printf '%s 0 %s\n' "$now" "$command_unavailable_reason" > "$temporary" && mv -f -- "$temporary" "$cache_path"
-    rm -f -- "$temporary" 2>/dev/null || true
-  fi
-  if [ "$probe_status" -eq 255 ]; then command_unavailable_reason=unreachable; elif [ "$probe_status" -eq 77 ]; then command_unavailable_reason=capability; else command_unavailable_reason=prerequisite; fi
-  return 1
+  printf '%s\n' "$remote_sample" | awk 'NR == 1 {sample=$0} NR == 2 {sample=sample " " $0} NR == 3 {worker=$0} END {print sample; print (worker==""?"-":worker)}'
 }
 
 read_fresh_cache() {
   cache_path=$1
   now=$2
-  # Runtime alternatives are recovery probes at the retained waiter's cadence.
-  # Negative TTLs and old load must not hide a newly healthy native worker.
-  [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" != try ] || return 1
+  [ -z "$explicit_target_number" ] || return 1
   [ -r "$cache_path" ] || return 1
   IFS=' ' read -r sampled available score capacity cached_sample < "$cache_path" || return 1
   case "$sampled:$available" in *[!0-9:]*|'':*) return 1 ;; esac
   case "$capacity" in ''|*[!0-9]*|0) return 1 ;; esac
-  if [ "$available" = 0 ]; then ttl=${unavailable_ttl_seconds-120}; else ttl=${load_ttl_seconds-15}; fi
+  # One observation freshness rule shares completed samples across an AUTO
+  # burst. Explicit targets and retained recovery probes always observe anew.
+  ttl=${load_ttl_seconds-15}
+  if [ "$available" = 0 ]; then
+    case "${cached_sample%% *}" in
+      # A payload admission/transport refusal is a separate recovery fact,
+      # published by the dispatch owner using its existing unavailable budget.
+      admission|dispatch-ssh|dispatch-sync) ttl=${unavailable_ttl_seconds-120} ;;
+    esac
+  fi
   [ $((now - sampled)) -lt "$ttl" ] || return 1
   if [ "$available" = 0 ]; then
-    case "$cached_sample" in admission|prerequisite|unreachable|dispatch-ssh|dispatch-sync) ;; *) cached_sample=unreachable ;; esac
-    printf '0 - 1 %s\n' "$cached_sample"
+    cached_reason=${cached_sample%% *}
+    case "$cached_reason" in
+      admission|dispatch-ssh|dispatch-sync) ;;
+      go-toolchain) return 1 ;;
+      prerequisite|capability|bun-pin|unreachable)
+        [ -z "$required_bun_version" ] || return 1
+        [ "$go_toolchain_required" != 1 ] || return 1
+        [ "${cached_sample#* }" = "$command_key" ] || return 1 ;;
+      *) return 1 ;;
+    esac
+    printf '0 - 1 %s\n' "$cached_reason"
     return 0
   fi
   if [ "$available" != 0 ]; then
-    telemetry_path=${cache_path%.cache}.telemetry
-    if [ -n "$cached_sample" ] || [ -r "$telemetry_path" ]; then
-      [ -n "$cached_sample" ] || cached_sample=$(sed -n '1p' "$telemetry_path")
-      if [ "$heavyweight_admission_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && $17 == "" {exit 0} {exit 1}'; then
-        return 1
-      fi
-      score=$(score_load_sample "$cached_sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
-      if [ -z "$score" ]; then
-        # Capacity eligibility belongs to this invocation. Keep the healthy
-        # raw sample reusable by focused work on the same smaller machine.
-        [ -n "$(score_load_sample "$cached_sample" "$heavyweight_admission_required")" ] || return 1
-        printf '2 - %s\n' "$capacity"
-        return 0
-      fi
-      available=1
-    elif [ "$heavyweight_admission_required" -eq 1 ] || [ "$available" = 2 ]; then
-      # Refresh legacy samples so memory can participate in ranking.
+    # Eligible compiler requests require a current installed pin, including
+    # AUTO recovery after a repair. Dispatch refusals keep their own budget.
+    [ -z "$required_bun_version" ] || return 1
+    [ "$go_toolchain_required" != 1 ] || return 1
+    # Old samples and another command's prerequisites cannot prove this
+    # command/cwd/runtime contract. Preserve the first 20 telemetry fields.
+    cached_command_key=$(printf '%s\n' "$cached_sample" | awk '{print $22}')
+    [ "$cached_command_key" = "$command_key" ] || return 1
+    if [ "$heavyweight_admission_required" -eq 1 ] && printf '%s\n' "$cached_sample" | awk '$16 == "linux" && ($17 == "" || $20 == "" || $20 == "unknown") {exit 0} {exit 1}'; then
       return 1
     fi
+    score=$(score_load_sample "$cached_sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+    if [ -z "$score" ]; then
+      # Capacity eligibility belongs to this invocation. Keep the healthy
+      # raw sample reusable by focused work on the same smaller machine.
+      [ -n "$(score_load_sample "$cached_sample" "$heavyweight_admission_required")" ] || return 1
+      printf '2 - %s\n' "$capacity"
+      return 0
+    fi
+    available=1
   fi
-  printf '%s %s %s\n' "$available" "$score" "$capacity"
+  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $21}')"
 }
 
 report_insufficient_memory_capacity() {
   printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB total)\n' \
     "$1" "$policy_heavyClass" "$minimum_memory_capacity_kib" >&2
+}
+
+report_placement_exclusion() {
+  printf 'HSTACK_PLACEMENT_EXCLUDED target=%s reason=%s class=%s\n' \
+    "$1" "$2" "${heavyweight_placement_class:-$command_class}" >&2
 }
 
 probe_target() {
@@ -1418,37 +1423,63 @@ probe_target() {
       fi
       ;;
   esac
-  if ! command_is_available "$number" "$name"; then
-    printf '[preferred-execution] %s command preflight failed (%s); check target tools, repository cwd and install scratch.\n' "$name" "$command_unavailable_reason" >&2
-    printf '%s %s 0 - 1 %s\n' "$number" "$name" "$command_unavailable_reason"
-    return
+  command_key=$(printf '%s\n' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" "$required_bun_version" "$relative_cwd" | cksum | awk '{print $1}')
+  if [ -n "$heavyweight_placement_class" ]; then
+    command_key="$command_key:$heavyweight_placement_class"
   fi
-  runtime_native_preference=0
-  case ",$runtime_build_components," in
-    *,daemon,*) [ "$runtime_worker_target" = "$runtime_build_target" ] || runtime_native_preference=1 ;;
-  esac
   cache_path="$cache_dir/$name.cache"
   now=$(date +%s)
   cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
   if [ -n "$cached" ]; then
     cached_available=${cached%% *}
     if [ "$cached_available" = 1 ]; then
-      printf '%s %s %s %s cached %s\n' "$number" "$name" "$probe_available" "${cached#* }" "$runtime_native_preference"
+      IFS=' ' read -r _cached_available cached_score cached_capacity runtime_worker_target <<EOF
+$cached
+EOF
+      runtime_native_preference=0
+      case ",$runtime_build_components," in
+        *,daemon,*) [ "$runtime_worker_target" = "$runtime_build_target" ] || runtime_native_preference=1 ;;
+      esac
+      printf '%s %s %s %s %s cached %s\n' "$number" "$name" "$probe_available" "$cached_score" "$cached_capacity" "$runtime_native_preference"
       return
     elif [ "$cached_available" = 2 ]; then
       report_insufficient_memory_capacity "$name"
       printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
       return
-    elif [ "$cached_available" = 0 ] && [ "${cached##* }" = admission ] && [ -z "$explicit_target_number" ]; then
+    elif [ "$cached_available" = 0 ] && [ -z "$explicit_target_number" ]; then
       printf '%s %s 0 - 1 %s\n' "$number" "$name" "${cached##* }"
       return
     fi
   fi
   target_unavailable_reason=prerequisite
   if sync_is_available "$name" "$number"; then
-    sample=$(remote_load_probe "$number" 2>/dev/null)
+    if [ -n "$runtime_build_target" ]; then
+      observation=$(remote_load_probe "$number")
+    else
+      observation=$(remote_load_probe "$number" 2>/dev/null)
+    fi
     load_probe_status=$?
-    [ "$load_probe_status" -ne 255 ] || target_unavailable_reason=unreachable
+    sample=
+    runtime_worker_target=-
+    if [ "$load_probe_status" -eq 0 ]; then
+      {
+        IFS= read -r sample
+        IFS= read -r runtime_worker_target
+      } <<EOF
+$observation
+EOF
+    fi
+    case "$load_probe_status" in
+      0) ;;
+      255) target_unavailable_reason=unreachable ;;
+      76) target_unavailable_reason=disk ;;
+      77) target_unavailable_reason=capability ;;
+      78) target_unavailable_reason=bun-pin ;;
+      79) target_unavailable_reason=go-toolchain ;;
+    esac
+    if [ "$load_probe_status" -ne 0 ]; then
+      printf '[preferred-execution] %s command preflight failed (%s); check target tools, repository cwd and install scratch.\n' "$name" "$target_unavailable_reason" >&2
+    fi
   else
     printf '[preferred-execution] %s synchronization is not ready; run hstack dev-targets status for details.\n' "$name" >&2
     sample=
@@ -1458,12 +1489,17 @@ probe_target() {
   sample_score=
   capacity=
   if [ -n "$sample" ]; then
+    [ -n "$runtime_worker_target" ] || runtime_worker_target=-
+    runtime_native_preference=0
+    case ",$runtime_build_components," in
+      *,daemon,*) [ "$runtime_worker_target" = "$runtime_build_target" ] || runtime_native_preference=1 ;;
+    esac
     # APFS rounds capacity to 100% while still reporting multiple GiB as
     # available. Refuse exhaustion using the available-block count instead.
     sample_score=$(score_load_sample "$sample" "$heavyweight_admission_required")
     score=$(score_load_sample "$sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
-    telemetry=$(printf '%s\n' "$sample" | awk '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,$17}')
+    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_admission_required" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20)}')
     telemetry_cache="$cache_dir/$name.telemetry"
     telemetry_temporary=$(create_cache_temporary "$telemetry_cache" 2>/dev/null || true)
     if [ -n "$telemetry_temporary" ]; then
@@ -1475,7 +1511,7 @@ probe_target() {
   temporary=$(create_cache_temporary "$cache_path" 2>/dev/null || true)
   if [ -n "$sample_score" ] && [ -n "$capacity" ]; then
     if [ -n "$temporary" ]; then
-      printf '%s 1 %s %s %s\n' "$now" "$sample_score" "$capacity" "$sample" > "$temporary" && mv -f -- "$temporary" "$cache_path"
+      printf '%s 1 %s %s %s %s %s\n' "$now" "$sample_score" "$capacity" "$telemetry" "$runtime_worker_target" "$command_key" > "$temporary" && mv -f -- "$temporary" "$cache_path"
       rm -f -- "$temporary" 2>/dev/null || true
     fi
     if [ -n "$score" ]; then
@@ -1486,7 +1522,7 @@ probe_target() {
     fi
   else
     if [ -n "$temporary" ]; then
-      printf '%s 0 - 1 %s\n' "$now" "$target_unavailable_reason" > "$temporary"
+      printf '%s 0 - 1 %s %s\n' "$now" "$target_unavailable_reason" "$command_key" > "$temporary"
       mv -f -- "$temporary" "$cache_path"
       rm -f -- "$temporary" 2>/dev/null || true
     fi
@@ -1583,11 +1619,16 @@ EOF
     local_unreserved_memory=$(read_native_admission_fact --unreserved-memory) || local_budget_available=0
   fi
   local_score=
+  local_probe_reason=local
+  if [ "$go_toolchain_required" = 1 ] && ! native_go_toolchain_evidence_is_available "$repo_root/packages/plugins/cliproxyapi/managed-runtime"; then
+    local_budget_available=0
+    local_probe_reason=go-toolchain
+  fi
   if [ "$local_budget_available" = 1 ]; then
     local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-0} 0 0 ${local_mem_available:-0} ${local_mem_total:-0} 0 0 0 0 0 0 0 linux $local_unreserved_memory" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
   fi
   if [ -z "$local_score" ]; then
-    printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
+    printf '0 local 0 - %s %s\n' "$cpu" "$local_probe_reason" > "$probe_tmp/local"
   else
     printf '0 local 1 %s %s local %s\n' "$local_score" "$cpu" "$local_native_preference" > "$probe_tmp/local"
   fi
@@ -1691,6 +1732,9 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
       export HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED
       candidate_cache=prerequisite ;;
   esac
+  if [ "$candidate_available" != 1 ] && [ "$candidate_available" != busy ]; then
+    report_placement_exclusion "$candidate_name" "$candidate_cache"
+  fi
   if [ "$candidate_available" = 1 ] || [ "$candidate_available" = busy ]; then
     active_counts=$(count_active_dispatches "$candidate_name")
     candidate_active=${active_counts%% *}
