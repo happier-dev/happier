@@ -6,7 +6,9 @@ Decide each before building: first load, populated, refreshing, empty, partial, 
 unreachable scope, error with recovery, permission missing, and success. Loading and error of a whole
 surface use `SurfaceStateCard` (sized by its container: pane, details, page, phone); empty uses `EmptyState`;
 inside a list a section's state is `SurfaceStateCard size="line"` (the section title stays); stale content keeps
-its rows at full strength under one `SurfaceFreshnessLine`.
+its rows at full strength under one `SurfaceFreshnessLine`. A loading state's words are one quiet line,
+never a heading; a known shape holds `SkeletonRows` instead. A Home that does not answer is said once, by
+`HomeReachabilityGate`, whatever the page is waiting on.
 
 ## Unknown and partial data stay quiet
 

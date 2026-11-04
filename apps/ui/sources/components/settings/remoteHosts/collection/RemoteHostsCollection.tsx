@@ -79,7 +79,7 @@ const RemoteHostsUnavailablePage = React.memo(function RemoteHostsUnavailablePag
             <EmptyState
                 testID={desktopOnly ? 'settings.remoteHosts.desktopOnly' : 'settings.remoteHosts.managementDisabled'}
                 layout="page"
-                iconName={desktopOnly ? 'laptop' : 'lock'}
+                scene={desktopOnly ? 'handoff' : 'notAllowed'}
                 title={t(desktopOnly ? 'settings.remoteHostsDesktopOnlyTitle' : 'settings.remoteHostsManagementDisabledTitle')}
                 subtitle={t(desktopOnly ? 'settings.remoteHostsDesktopOnlySubtitle' : 'settings.remoteHostsManagementDisabledSubtitle')}
             />

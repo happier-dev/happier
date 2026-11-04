@@ -682,6 +682,16 @@ describe('FreshnessLine: stale content told in one line', () => {
     mount.unmount();
   });
 
+  it('takes the cause\'s own glyph, so an offline line reads like the host\'s', () => {
+    const host = { renderIcon: (input: Readonly<{ name: string }>) => <span data-testid={`glyph-${input.name}`} /> };
+    const plain = mountInHost(<FreshnessLine testID="fresh" reason="Can't reach Studio" />, host);
+    expect(plain.container.querySelector('[data-testid="glyph-refresh"]')).not.toBeNull();
+    plain.unmount();
+    const mount = mountInHost(<FreshnessLine testID="fresh" reason="Can't reach Studio" icon="unavailable" />, host);
+    expect(mount.container.querySelector('[data-testid="glyph-unavailable"]')).not.toBeNull();
+    mount.unmount();
+  });
+
   it('shows a reconnect in flight with the reason alone and no stale time', () => {
     const mount = mountSurface(<FreshnessLine testID="fresh" reason="Reconnecting…" busy />);
     const line = mount.container.querySelector<HTMLElement>('[data-testid="fresh"]');

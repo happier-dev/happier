@@ -166,6 +166,23 @@ describe('BoardsColumn collection search', () => {
         }
     });
 
+    it('re-reads the index quietly while the column already shows its rows', async () => {
+        const gate = createDeferred<void>();
+        indexGate = gate.promise;
+        try {
+            const { BoardReadState } = await import('./BoardReadState');
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+                <BoardReadState place="column" size="line" retained />
+            </InjectedAuthProvider>);
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(screen.getTextContent()).not.toContain('Opening Boards');
+        } finally {
+            indexGate = null;
+            gate.resolve();
+            await flushHookEffects();
+        }
+    });
+
     it('keeps the index read state on the page when no column is beside it', async () => {
         const gate = createDeferred<void>();
         indexGate = gate.promise;

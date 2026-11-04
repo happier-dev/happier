@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -278,8 +279,10 @@ export default function RunsScreen() {
               <Item title={t('common.error')} subtitle={state.error} showChevron={false} />
             </ItemGroup>
           ) : !serverEntries.some(([, machines]) => machines.length > 0) ? (
-            <ItemGroup>
-              <Item title={t('runs.noMachinesAvailable')} showChevron={false} />
+            <ItemGroup surface="none">
+              <EmptyState layout="line" title={t('runs.noMachinesAvailable')} primaryAction={{
+                label: t('settings.addMachine'), testID: 'runs.no-machines.add', onPress: () => router.push('/settings/machines/add' as never),
+              }} />
             </ItemGroup>
           ) : (
             serverEntries.flatMap(([serverId, machines]) => {

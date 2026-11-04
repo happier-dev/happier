@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierSkeletonBlock, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 
 import type { MachinePageTabBodyProps } from '@/components/machines/page/machinePageTabQuery';
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
@@ -163,17 +164,10 @@ function OfflineBanner(props: Readonly<{ machineName: string; asOf: number | nul
 
 /** Loading (G9-4): the sections and rows at their final size; only values and candidates are reserved. */
 function GuardLoading(props: Readonly<{ machineName: string }>) {
-    const { theme } = useUnistyles();
-    const color = theme.colors.surface.skeleton;
     return (
         <View testID="machine-guard-loading" accessibilityLabel={t('machineGuard.states.loading')} accessibilityRole="progressbar">
             <ItemGroup title={t('machineGuard.memory.title')} description={t('machineGuard.memory.description', { machine: props.machineName })}>
-                {Array.from({ length: 4 }, (_, index) => (
-                    <View key={index} style={styles.skeletonRow}>
-                        <HappierSkeletonBlock color={color} width="38%" height={14} />
-                        <HappierSkeletonBlock color={color} width="62%" height={12} />
-                    </View>
-                ))}
+                <ItemLoadStateRows state={{ kind: 'loading' }} rows={4} lines={2} />
             </ItemGroup>
         </View>
     );
@@ -209,10 +203,5 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         ...happierPageTextMetrics('rowDescription'),
         color: theme.colors.text.secondary,
-    },
-    skeletonRow: {
-        gap: theme.space.s8,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: 14,
     },
 }));

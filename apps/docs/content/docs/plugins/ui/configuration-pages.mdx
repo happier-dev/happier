@@ -517,7 +517,12 @@ when the rows were read (`asOf`), why they may be behind (`reason`), and offers
 one recovery (`action`, for example Retry). Pass `busy` while a reconnect or
 refresh is in flight and `tone="warning"` when a refresh failed. It is the same
 line Happier's own panes draw. Never show it over an empty body: a surface with
-nothing retained shows `LoadingState` or `ErrorState` instead.
+nothing retained shows `LoadingState` or `ErrorState` instead. Pass
+`icon="unavailable"` when the cause is that something can't be reached.
+
+`LoadingState` draws its words as one quiet line under the spinner, never as a
+heading. When you know the shape of what is coming, pass `rows` instead, so the
+rows land in place.
 
 In **unreleased 0.3 development source**, the public shared renderer
 `HappierFreshnessLine` also offers `presentation="chip"` for a compact status

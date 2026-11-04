@@ -41,11 +41,11 @@ beforeEach(() => {
 beforeAll(async () => { await import('./EmbedLivePreview'); }, 600_000);
 
 describe('native embed preview frame', () => {
-    it('uses the real preview bridge for the passive empty-state illustration and surfaces a load failure', async () => {
+    it('uses the real preview bridge for the pushed page and surfaces a load failure', async () => {
         const { EmbedLivePreview } = await import('./EmbedLivePreview');
         const screen = await renderScreen(
             <EmbedLivePreview
-                presentation="illustration"
+                presentation="page"
                 style={{ v: 1, preset: 'tokyoNight', radius: 'round' }}
                 ui={{ attachments: false }}
                 newChat={false}

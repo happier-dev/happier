@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -111,8 +112,9 @@ export function useFailureExplainedByUnreachableHome(homeServerIds: readonly str
  * Wraps a surface's quiet loading state (the home pane, the session list's skeleton rows). While the
  * Home is still being reached it shows that loading state; once the canonical connection summary
  * says the Home is unavailable (the same fact the footer's status shows), it says so by name and
- * offers Retry instead of loading forever. A list can also keep this gate mounted beside retained
- * rows, so the same Home fact and Retry remain visible while its last-known rows are shown.
+ * offers Retry instead of loading forever. A list or page can also keep this gate mounted beside
+ * retained rows or waiting widgets (with no children), so the same Home fact and Retry stay visible:
+ * the app's one offline line, drawn by the shared freshness line.
  */
 export function HomeReachabilityGate(props: Readonly<{
     /** `pane`: a whole pane (glyph, title, one line, Retry). `line`: one quiet line in a list. */
@@ -142,11 +144,11 @@ export function HomeReachabilityGate(props: Readonly<{
     if (!unavailable || !relevant) return <>{props.children}</>;
     if (props.variant === 'line') {
         return (
-            <EmptyState
-                layout="line"
+            <SurfaceFreshnessLine
                 testID="home-unreachable"
-                title={t('sidebarFooter.homeUnreachableLine', { home })}
-                primaryAction={retry}
+                glyph="cloud-slash"
+                reason={t('sidebarFooter.homeUnreachableLine', { home })}
+                action={retry}
             />
         );
     }

@@ -122,6 +122,18 @@ describe('HomeReachabilityGate', () => {
         expect(screen.findAllByTestId('home-unreachable-retry').length).toBeGreaterThan(0);
     });
 
+    it('draws the line as the shared freshness line beside a page that keeps its own content', async () => {
+        setHealth('server_unreachable');
+        const { HomeReachabilityGate } = await import('./HomeReachabilityGate');
+        const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+        const screen = await renderScreen(<HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>);
+
+        expect(screen.findAllByType(SurfaceFreshnessLine as never)).toHaveLength(1);
+        expect(screen.findAllByTestId('home-unreachable-retry').length).toBeGreaterThan(0);
+        await act(async () => { storage.setState({ endpointStatus: 'online', socketStatus: 'connected' }); });
+        expect(screen.findAllByType(SurfaceFreshnessLine as never)).toHaveLength(0);
+    });
+
     it('does not report the active Home for a list scoped only to another Home', async () => {
         setHealth('server_unreachable');
         const { HomeReachabilityGate } = await import('./HomeReachabilityGate');

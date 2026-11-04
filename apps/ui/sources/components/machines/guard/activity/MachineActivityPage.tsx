@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierSkeletonBlock, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import type { MachineGuardActivityListV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 
 import { useMachineTabCompactLayout } from '@/components/machines/page/useMachineTabCompactLayout';
@@ -184,17 +185,10 @@ function ActivitySummary(props: Readonly<{ list: MachineGuardActivityListV1 }>) 
 }
 
 function ActivityLoading() {
-    const { theme } = useUnistyles();
-    const color = theme.colors.surface.skeleton;
     return (
         <ItemGroup>
             <View testID="machine-activity-loading" accessibilityLabel={t('machineGuard.activity.loading')} accessibilityRole="progressbar">
-                {Array.from({ length: 4 }, (_, index) => (
-                    <View key={index} style={styles.skeletonRow}>
-                        <HappierSkeletonBlock color={color} width="44%" height={14} />
-                        <HappierSkeletonBlock color={color} width="30%" height={12} />
-                    </View>
-                ))}
+                <ItemLoadStateRows state={{ kind: 'loading' }} rows={4} lines={2} />
             </View>
         </ItemGroup>
     );
@@ -234,10 +228,5 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         ...happierPageTextMetrics('meta'),
         color: theme.colors.text.tertiary,
-    },
-    skeletonRow: {
-        gap: theme.space.s8,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: 14,
     },
 }));

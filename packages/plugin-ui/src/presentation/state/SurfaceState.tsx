@@ -98,6 +98,8 @@ export type HappierSurfaceStateBindings = Readonly<{
       size?: HappierStateSize;
       /** `null` for an inline state, which draws its glyph in a column of its own beside the whole state. */
       glyph: ReactNode;
+      /** A loading state's words read as one quiet line, not a heading: a wait is not an event. */
+      quietTitle: boolean;
       titleTestID?: string;
       reasonTestID?: string;
       action?: ReactNode;
@@ -467,6 +469,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
             layout: 'inline',
             size,
             glyph: null,
+            quietTitle: props.kind === 'loading',
             titleTestID,
             reasonTestID,
           }), false)}
@@ -536,6 +539,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
           layout: 'centered',
           size,
           glyph: iconSlot,
+          quietTitle: props.kind === 'loading',
           titleTestID,
           reasonTestID,
           action: actionSlot,

@@ -8,8 +8,8 @@ import { useWorkBoardReadState, useWorkBoardSummaries } from './model/useWorkBoa
 /**
  * A failed read is never an empty Board collection; last-known Boards remain visible with Retry.
  * Each read is said once: the column says the index's state wherever it stands beside the page, so the
- * page then speaks only for its own Board, by name. A Board already on screen re-reads quietly and
- * speaks only when that re-read fails.
+ * page then speaks only for its own Board, by name. Content already on screen (a Board, the column's
+ * rows) re-reads quietly and speaks only when that re-read fails.
  */
 export function BoardReadState(props: Readonly<{ size?: SurfaceStateSize; retained?: boolean; boardId?: string; place?: 'column' | 'page' }>) {
     const columnSaysIndex = useAppShellColumn().columnVisible && props.place !== 'column';
@@ -18,7 +18,7 @@ export function BoardReadState(props: Readonly<{ size?: SurfaceStateSize; retain
     const boardName = useWorkBoardSummaries().find(board => board.id === props.boardId)?.name;
     if (state.status === 'ready') return null;
     if (columnSaysIndex && index.status !== 'ready') return null;
-    if (props.retained && props.boardId && state.status === 'loading') return null;
+    if (props.retained && state.status === 'loading') return null;
     const name = index.status === 'ready' && boardName ? boardName : t('boards.title');
     // Shown content is open already: a failed re-read says the content is last-known, never "couldn't open".
     const title = state.status === 'loading' ? t('surfaceState.opening', { name })

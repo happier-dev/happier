@@ -285,6 +285,7 @@ export function SurfaceStateCard(props: Readonly<{
         ) : (
             <EmptyState
                 size={metrics ? tile.size : undefined}
+                quietTitle={tile.quietTitle}
                 icon={tile.glyph}
                 scene={props.scene}
                 animationEnabled={props.animationEnabled}

@@ -580,6 +580,7 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
       <HappierInfoState action={tile.action} size={tile.size}>
         <HappierInfoTile
           size={tile.size}
+          quietTitle={tile.quietTitle}
           icon={tile.glyph ? (
             <View style={{ marginBottom: tile.size ? HAPPIER_STATE_SIZE_METRICS[tile.size].glyphGapPx : UNSIZED_STATE_GLYPH_GAP_PX }}>{tile.glyph}</View>
           ) : undefined}
@@ -627,6 +628,8 @@ export type FreshnessLineProps = Readonly<{
   busy?: boolean;
   /** `warning` when the refresh failed rather than is merely pending. */
   tone?: 'neutral' | 'warning';
+  /** The line's own mark when the cause has one (`unavailable` for out of reach); defaults to the retained-content glyph. */
+  icon?: IconName;
   /** The one recovery (Retry). */
   action?: Readonly<{ label: string; onPress: () => void }>;
   testID?: string;
@@ -662,7 +665,7 @@ export function FreshnessLine(props: FreshnessLineProps): ReactElement {
       icon={props.busy ? (
         <HappierSpinnerGlyph color={glyphColor} animationEnabled={surfaceActivity.active} />
       ) : (
-        <PluginUiIconGlyph name={props.tone === 'warning' ? 'warning' : 'refresh'} size={metrics.glyphPx} tone={props.tone === 'warning' ? 'warning' : 'muted'} />
+        <PluginUiIconGlyph name={props.icon ?? (props.tone === 'warning' ? 'warning' : 'refresh')} size={metrics.glyphPx} tone={props.tone === 'warning' ? 'warning' : 'muted'} />
       )}
       action={props.action ? (
         <HappierPressable

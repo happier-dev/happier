@@ -8,7 +8,6 @@ import { resolveApiTokenListPresentation, resolveApiTokenOperationErrorMessageKe
 import { useApiTokenSettingsScopeController } from '@/components/settings/apiTokens/collection/ApiTokenSettingsScope';
 import { useApiTokenSettingsClock } from '@/components/settings/apiTokens/useApiTokenSettingsClock';
 import { useApiTokenSettingsControllerState } from '@/components/settings/apiTokens/useApiTokenSettingsControllerState';
-import { EmbedLivePreview } from './EmbedLivePreview';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -93,8 +92,7 @@ export const EmbedsListScreen = React.memo(function EmbedsListScreen() {
                 <EmptyState
                     testID="settings-embeds-empty"
                     layout="page"
-                    variant="add"
-                    icon={<EmbedLivePreview presentation="illustration" style={null} ui={{ attachments: false }} newChat={false} />}
+                    scene="handoff"
                     title={t('settingsEmbeds.emptyTitle')}
                     subtitle={t('settingsEmbeds.emptyBody')}
                     primaryAction={{ label: t('settingsEmbeds.newEmbed'), onPress: openNew, testID: 'settings-embeds-empty-new' }}

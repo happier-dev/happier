@@ -26,11 +26,6 @@ const PREVIEW_HEIGHT_PX = 560;
  * under the page header) scrolls the page to reach Send instead of clipping it.
  */
 export const EMBED_PREVIEW_PAGE_MIN_HEIGHT_PX = 320;
-// The empty-state illustration's width in settings lab L2; its contents are the real preview route.
-// Its height keeps the whole chat (the page minimum at phone width, scaled), so the art never cuts
-// the approval buttons or the composer through a line.
-const ILLUSTRATION_WIDTH_PX = 294;
-const ILLUSTRATION_HEIGHT_PX = Math.round(EMBED_PREVIEW_PAGE_MIN_HEIGHT_PX * ILLUSTRATION_WIDTH_PX / PREVIEW_FRAME_WIDTH.phone);
 
 const stylesheet = StyleSheet.create((theme) => ({
     column: {
@@ -102,9 +97,8 @@ export function EmbedLivePreview(props: Readonly<{
     /**
      * `interactive` (default): the framed widget with its Phone/Desktop toolbar beside the settings.
      * `page`: the pushed phone preview (lab P3), the chat filling the page at its own width.
-     * `illustration`: the empty state's passive compact art.
      */
-    presentation?: 'interactive' | 'page' | 'illustration';
+    presentation?: 'interactive' | 'page';
     /** An unsaved access edit: show what open chats show while they reconnect (lab D2). */
     reconnecting?: boolean;
     /** What the embed may do: an approve-only embed previews a view-only chat whose requests can be answered. */
@@ -112,12 +106,11 @@ export function EmbedLivePreview(props: Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const page = props.presentation === 'page';
-    const interactive = props.presentation !== 'illustration';
     // The framed widget carries the width toolbar and preview controls; a full page is only the chat.
-    const widget = interactive && !page;
+    const widget = !page;
     const [pageHeight, setPageHeight] = React.useState(PREVIEW_HEIGHT_PX);
-    const height = page ? Math.max(pageHeight, EMBED_PREVIEW_PAGE_MIN_HEIGHT_PX) : interactive ? PREVIEW_HEIGHT_PX : ILLUSTRATION_HEIGHT_PX;
-    const [columnWidth, setColumnWidth] = React.useState(interactive ? 344 : ILLUSTRATION_WIDTH_PX);
+    const height = page ? Math.max(pageHeight, EMBED_PREVIEW_PAGE_MIN_HEIGHT_PX) : PREVIEW_HEIGHT_PX;
+    const [columnWidth, setColumnWidth] = React.useState(344);
     const [width, setWidth] = React.useState<PreviewWidth>('phone');
     const [reduceMotion, setReduceMotion] = React.useState(false);
     const identity = React.useMemo(() => ({ instanceId: randomUUID(), mountNonce: randomUUID() }), []);
@@ -125,7 +118,7 @@ export function EmbedLivePreview(props: Readonly<{
 
     const frameWidth = page ? columnWidth : PREVIEW_FRAME_WIDTH[width];
     const scale = page ? 1 : Math.min(1, columnWidth / frameWidth);
-    const path = `${EMBED_PREVIEW_PATH}?${buildEmbedPreviewSearch({ identity, reduceMotion: !interactive || reduceMotion, newChat: props.newChat, reconnecting: props.reconnecting === true, send: props.access?.send !== false, approve: props.access?.approve !== false })}`;
+    const path = `${EMBED_PREVIEW_PATH}?${buildEmbedPreviewSearch({ identity, reduceMotion, newChat: props.newChat, reconnecting: props.reconnecting === true, send: props.access?.send !== false, approve: props.access?.approve !== false })}`;
     // A failure belongs to the route it happened on; the next route gets its own attempt. It never
     // blocks saving: the preview only says it cannot show (plan 04 §6.2).
     const [unavailablePath, setUnavailablePath] = React.useState<string | null>(null);
@@ -133,7 +126,7 @@ export function EmbedLivePreview(props: Readonly<{
 
     return (
         <View
-            style={page ? styles.page : [styles.column, !interactive ? { width: ILLUSTRATION_WIDTH_PX } : null]}
+            style={page ? styles.page : styles.column}
             onLayout={(event) => {
                 setColumnWidth(event.nativeEvent.layout.width);
                 if (page) setPageHeight(event.nativeEvent.layout.height);
@@ -155,7 +148,7 @@ export function EmbedLivePreview(props: Readonly<{
                     onSelectTab={setWidth}
                 />
             </View> : null}
-            <View style={page ? styles.pageFrame : [styles.frame, { height }]} pointerEvents={interactive ? 'auto' : 'none'} importantForAccessibility={interactive ? 'auto' : 'no-hide-descendants'} accessibilityElementsHidden={!interactive}>
+            <View style={page ? styles.pageFrame : [styles.frame, { height }]}>
                 {unavailablePath === path ? (
                     <View style={styles.unavailable} testID="settings-embed-preview-unavailable">
                         <Text style={styles.unavailableText}>{t('settingsEmbeds.preview.unavailable')}</Text>
@@ -171,7 +164,6 @@ export function EmbedLivePreview(props: Readonly<{
                         frameWidth={frameWidth}
                         height={height}
                         scale={scale}
-                        passive={!interactive}
                         onUnavailable={markUnavailable}
                     />
                     </View>

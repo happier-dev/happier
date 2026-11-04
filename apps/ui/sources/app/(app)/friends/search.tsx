@@ -1,8 +1,7 @@
-import { Typography } from '@/constants/Typography';
 import React, { useState, useCallback } from 'react';
 import type { ScrollView, ScrollViewProps } from 'react-native';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername } from '@/sync/api/social/apiFriends';
 import { readFriendMutationProfile } from '@/sync/ops/friends';
@@ -20,8 +19,11 @@ import { useSearch } from '@/hooks/search/useSearch';
 import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { HappyError } from '@/utils/errors/errors';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 
 type KeyboardAwareItemListProps = ScrollViewProps & Readonly<{
@@ -40,7 +42,6 @@ const FriendsSearchKeyboardAwareItemList = React.forwardRef<ScrollView, Keyboard
 
 export function SearchFriendsScreen() {
     useDestinationPageTitle(t('friends.addFriend'));
-    const { theme } = useUnistyles();
     const enabled = useRequireFriendsEnabled();
     const { credentials } = useAuth();
     const { serverId } = useActiveServerSnapshot();
@@ -124,75 +125,34 @@ export function SearchFriendsScreen() {
                 ScrollViewComponent={FriendsSearchKeyboardAwareItemList}
                 keyboardShouldPersistTaps="handled"
             >
-                <View style={{ paddingTop: 0 }}>
-                    <ItemGroup
-                        title={t('friends.searchInstructions')}
-                        style={styles.searchSection}
-                    >
-                        <View style={styles.searchContainer}>
-                            <TextInput
-                                style={styles.searchInput}
-                                placeholder={t('friends.searchPlaceholder')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                returnKeyType="search"
-                                editable={!processingUserId}
-                            />
-                            
-                            {isSearching && (
-                                <View style={styles.searchingIndicator}>
-                                    <ActivitySpinner size="small" color={theme.colors.text.link} />
-                                </View>
-                            )}
-                        </View>
-                        {searchErrorText ? (
-                            <Text style={styles.errorText}>{searchErrorText}</Text>
-                        ) : null}
+                <PageHeader title={t('friends.addFriend')} alwaysShowTitle description={t('friends.findInstructions')} />
+                <CompactSearchField
+                    placement="page"
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder={t('friends.searchPlaceholder')}
+                    editable={!processingUserId}
+                />
+                {searchErrorText ? (
+                    <SurfaceStateCard size="line" kind="error" title={searchErrorText} />
+                ) : searchResults.length > 0 ? (
+                    <ItemGroup>
+                        {searchResults.map((item, index) => (
+                            <React.Fragment key={item.id}>
+                                {index > 0 ? renderSeparator() : null}
+                                {renderUserItem({ item })}
+                            </React.Fragment>
+                        ))}
                     </ItemGroup>
-
-                    <ItemGroup
-                        style={styles.resultsGroup}
-                    >
-                        <View style={styles.resultsSection}>
-                            {isSearching && searchResults.length === 0 ? (
-                                <View style={styles.loadingContainer}>
-                                    <ActivitySpinner size="large" color={theme.colors.text.link} />
-                                    <Text style={styles.loadingText}>{t('friends.searching')}</Text>
-                                </View>
-                            ) : searchResults.length > 0 ? (
-                                <View style={styles.resultsList}>
-                                    {searchResults.map((item, index) => (
-                                        <React.Fragment key={item.id}>
-                                            {index > 0 ? renderSeparator() : null}
-                                            {renderUserItem({ item })}
-                                        </React.Fragment>
-                                    ))}
-                                </View>
-                            ) : hasSearched ? (
-                                <View style={styles.noResultsContainer}>
-                                    <Text style={styles.noResultsText}>
-                                        {t('friends.noUserFound')}
-                                    </Text>
-                                    <Text style={styles.noResultsHint}>
-                                        {t('friends.checkUsername')}
-                                    </Text>
-                                </View>
-                            ) : (
-                                <View style={styles.helpContainer}>
-                                    <Text style={styles.helpTitle}>
-                                        {t('friends.howToFind')}
-                                    </Text>
-                                    <Text style={styles.helpText}>
-                                        {t('friends.findInstructions')}
-                                    </Text>
-                                </View>
-                            )}
-                        </View>
+                ) : isSearching ? (
+                    <ItemGroup>
+                        <ItemLoadStateRows state={{ kind: 'loading' }} rows={2} lines={2} accessibilityLabel={t('friends.searching')} />
                     </ItemGroup>
-                </View>
+                ) : hasSearched ? (
+                    <ItemGroup surface="none">
+                        <EmptyState layout="line" title={t('friends.noUserFound')} subtitle={t('friends.checkUsername')} />
+                    </ItemGroup>
+                ) : null}
             </KeyboardAwareScrollView>
         </RequireFriendsIdentityForFriends>
     );
@@ -201,91 +161,11 @@ export function SearchFriendsScreen() {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.background.canvas,
-    },
-    searchSection: {
-        marginBottom: theme.space.s16,
-    },
-    searchContainer: {
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s8,
-        position: 'relative',
-    },
-    searchInput: {
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        borderRadius: 12,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s16,
-        fontSize: 16,
-        color: theme.colors.text.primary,
-    },
-    searchingIndicator: {
-        position: 'absolute',
-        right: 32,
-        top: 0,
-        bottom: 0,
-        justifyContent: 'center',
-    },
-    errorText: {
-        paddingHorizontal: theme.space.s16,
-        paddingTop: theme.space.s6,
-        fontSize: 13,
-        color: theme.colors.status.error,
-    },
-    resultsGroup: {
-        marginBottom: theme.space.s16,
-    },
-    resultsSection: {
-        minHeight: 200,
-    },
-    resultsList: {
-        paddingVertical: theme.space.s8,
     },
     separator: {
         height: 1,
         backgroundColor: theme.colors.border.default,
         marginHorizontal: theme.space.s16,
-        marginVertical: theme.space.s8,
-    },
-    loadingContainer: {
-        alignItems: 'center',
-        padding: theme.space.s32,
-    },
-    loadingText: {
-        marginTop: theme.space.s16,
-        fontSize: 16,
-        color: theme.colors.text.secondary,
-    },
-    noResultsContainer: {
-        alignItems: 'center',
-        padding: theme.space.s32,
-    },
-    noResultsText: {
-        fontSize: 16,
-        color: theme.colors.text.secondary,
-        marginBottom: theme.space.s8,
-    },
-    noResultsHint: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-    },
-    helpContainer: {
-        padding: theme.space.s32,
-        alignItems: 'center',
-    },
-    helpTitle: {
-        ...Typography.variant('heading'),
-        color: theme.colors.text.primary,
-        marginBottom: theme.space.s16,
-    },
-    helpText: {
-        fontSize: 15,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-        lineHeight: 22,
     },
 }));
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';

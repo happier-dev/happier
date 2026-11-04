@@ -20,6 +20,8 @@ type CenteredInfoTileProps = Readonly<{
     paddingVertical?: number;
     /** The container's size step (pane, details, page, phone): measure, glyph gap and type. */
     size?: HappierStateSize;
+    /** A wait's words: one quiet body line, the shared tile's `quietTitle`. */
+    quietTitle?: boolean;
 }>;
 
 /**
@@ -46,10 +48,10 @@ export const CenteredInfoTile = React.memo((props: CenteredInfoTileProps) => {
                 <Text
                     testID={props.titleTestID}
                     style={{
-                        fontSize: metrics?.title.fontSize ?? 18,
-                        ...(metrics ? { lineHeight: metrics.title.lineHeight } : null),
-                        ...Typography.default('semiBold'),
-                        color: theme.colors.text.primary,
+                        fontSize: props.quietTitle ? metrics?.body.fontSize ?? 14 : metrics?.title.fontSize ?? 18,
+                        ...(props.quietTitle ? { lineHeight: metrics?.body.lineHeight ?? 20 } : metrics ? { lineHeight: metrics.title.lineHeight } : null),
+                        ...Typography.default(props.quietTitle ? undefined : 'semiBold'),
+                        color: props.quietTitle ? theme.colors.text.secondary : theme.colors.text.primary,
                         textAlign: 'center',
                         marginBottom: metrics?.bodyGapPx ?? 6,
                         ...HAPPIER_BALANCED_TEXT_WRAP,

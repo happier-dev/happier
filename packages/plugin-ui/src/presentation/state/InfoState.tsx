@@ -414,6 +414,8 @@ export type HappierInfoTileProps = Readonly<{
   description?: ReactNode;
   /** Semantic colour for string slots. Ignored for slots the caller renders itself. */
   tone?: HappierTone;
+  /** A wait is not an event: its words read as one quiet body line, never with a heading's weight (lab `es-kit` K0). */
+  quietTitle?: boolean;
   paddingHorizontal?: number;
   /** Overrides the column's vertical padding (a framed page state supplies its own). */
   paddingVertical?: number;
@@ -438,7 +440,7 @@ export type HappierInfoStateProps = Readonly<{
 function renderSlot(
   slot: ReactNode,
   semantic: Readonly<{
-    variant: 'heading' | 'meta';
+    variant: 'heading' | 'meta' | 'body';
     tone: HappierTone;
     gap: number;
     /** A sized state's type step (`HAPPIER_STATE_SIZE_METRICS`); unsized keeps the variant's own. */
@@ -470,6 +472,7 @@ export function HappierInfoTile({
   title,
   description,
   tone,
+  quietTitle,
   paddingHorizontal,
   paddingVertical,
   size,
@@ -488,10 +491,10 @@ export function HappierInfoTile({
       {icon}
       <View style={{ width: '100%', maxWidth: measure }}>
         {renderSlot(title, {
-          variant: 'heading',
-          tone: tone ?? 'neutral',
+          variant: quietTitle ? 'body' : 'heading',
+          tone: tone ?? (quietTitle ? 'secondary' : 'neutral'),
           gap: size ? HAPPIER_STATE_SIZE_METRICS[size].bodyGapPx : INFO_STATE_TITLE_GAP,
-          type: size ? HAPPIER_STATE_SIZE_METRICS[size].title : undefined,
+          type: size ? HAPPIER_STATE_SIZE_METRICS[size][quietTitle ? 'body' : 'title'] : undefined,
         })}
         {renderSlot(description, {
           variant: 'meta',

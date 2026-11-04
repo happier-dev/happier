@@ -224,7 +224,7 @@ function DiscussionsIndexPage(props: Readonly<{ address: Readonly<{ serverId: st
         <EmptyState
             testID={none ? 'discussions-index-invite' : 'discussions-index-idle'}
             layout="centered"
-            iconName="chats-circle"
+            scene="invitePeople"
             title={none ? t('session.collaboration.discussion.home.inviteTitle') : t('session.collaboration.discussion.home.idleTitle')}
             subtitle={none ? t('session.collaboration.discussion.home.inviteBody') : t('session.collaboration.discussion.home.idleBody')}
             primaryAction={{ label: t('session.collaboration.discussion.newDiscussion'), onPress: openNewDiscussion }}

@@ -58,6 +58,8 @@ type EmptyStateProps = Readonly<{
     animationEnabled?: boolean;
     /** Already-translated title string. */
     title: string;
+    /** A loading state's words: one quiet line rather than a title (`SurfaceStateCard kind="loading"`). */
+    quietTitle?: boolean;
     /** Optional glyph decoration; the original title remains available as semantic copy. */
     titleContent?: React.ReactNode;
     /** Already-translated supporting copy: one line saying what would be here and why. */
@@ -264,6 +266,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
         >
             <CenteredInfoTile
                 size={page ? undefined : props.size}
+                quietTitle={props.quietTitle}
                 icon={glyph}
                 iconGap={sceneSize ? HAPPIER_SCENE_ART_METRICS[sceneSize].gapPx : undefined}
                 title={props.title}

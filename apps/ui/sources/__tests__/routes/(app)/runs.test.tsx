@@ -265,11 +265,12 @@ describe('Runs screen', () => {
         expect(runIds()).toEqual(['run-live', 'run-done']);
     });
 
-    it('says there are no machines when the signed-in Homes have none', async () => {
+    it('says there are no machines when the signed-in Homes have none, and offers to add one', async () => {
         machineListState.byServerId = { 'srv_server-a': [] };
         const screen = await renderRunsScreen();
 
-        expect(screen.findAllByType(Item).map((item) => item.props.title)).toContain('runs.noMachinesAvailable');
+        expect(screen.getTextContent()).toContain('runs.noMachinesAvailable');
+        expect(screen.findAllByTestId('runs.no-machines.add').length).toBeGreaterThan(0);
     });
 
     it('keeps daemon Run rows isolated when two Homes expose the same machine id', async () => {
