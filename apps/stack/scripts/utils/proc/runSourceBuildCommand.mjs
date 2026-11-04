@@ -41,7 +41,7 @@ export async function runSourceBuildCommand({ repoDir, scriptPath, command, cwd 
   };
   const observeStdout = observe(), observeStderr = observe();
   const result = await runWorkspaceBuildAdmission({ repoDir, launcherPath: launcher,
-    dependencyInstallDir: repoDir, command: payloadCommand, args: payloadArgs, cwd, env, signal,
+    command: payloadCommand, args: payloadArgs, cwd, env, signal,
     admissionClass, devStartup, stdio: ['ignore', 'pipe', 'pipe'], captureStdout, captureStderr,
     onStdout: value => { observeStdout(value); if (!captureStdout) stdoutStream.write(value); },
     onStderr: value => { observeStderr(value); process.stderr.write(value); } });

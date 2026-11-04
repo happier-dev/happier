@@ -7,7 +7,7 @@ import { callerHoldsWorkspaceBundleLock, createWorkspaceBundleLockPriorityScope,
 import { parseWorkspaceLockLeaseValue } from '../../../../../packages/cli-common/workspaceLockLease.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { spawnForegroundCommand } from './proc.mjs';
-import { callerHoldsDependencyConsumption, callerHoldsDependencyResourceBlocking, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { callerHoldsDependencyConsumption, callerHoldsDependencyResourceBlocking, resolveDependencyRefreshLockPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 
 const workerPath = fileURLToPath(import.meta.url);
@@ -84,9 +84,8 @@ export async function hasInheritedPackageBuildCustody(env) {
  */
 export function resolveWorkspaceBuildAdmissionInvocation({ command, args = [], locks = [],
   repoDir = sourceRoot, launcherPath = resolve(repoDir, 'apps/stack/bin/hstack-exec'), env = process.env,
-  admissionClass = 'package-dist', admissionRequired = true, dependencyInstallDir, devStartup = false,
+  admissionClass = 'package-dist', admissionRequired = true, devStartup = false,
   inheritedAdmission = false }) {
-  locks = workspaceBuildResources(locks, dependencyInstallDir, env);
   if (inheritedAdmission) {
     const workerArgs = [workerPath, '--inherited-resources', JSON.stringify(locks), launcherPath, admissionClass, '--', command, ...args];
     return { command: process.execPath, args: workerArgs };
@@ -109,11 +108,11 @@ export function resolveWorkspaceBuildAdmissionInvocation({ command, args = [], l
 
 export async function runWorkspaceBuildAdmission({ command, args = [], locks = [], cwd = process.cwd(),
   repoDir = sourceRoot, launcherPath = resolve(repoDir, 'apps/stack/bin/hstack-exec'), env = process.env,
-  signal, admissionClass = 'package-dist', admissionRequired = true, dependencyInstallDir, devStartup = false,
+  signal, admissionClass = 'package-dist', admissionRequired = true, devStartup = false,
   inheritedAdmission = false,
   stdio = 'inherit', onStdout, onStderr, captureStdout = true, captureStderr = true }) {
   const invocation = resolveWorkspaceBuildAdmissionInvocation({ command, args, locks, repoDir,
-    launcherPath, env, admissionClass, admissionRequired, dependencyInstallDir, devStartup, inheritedAdmission });
+    launcherPath, env, admissionClass, admissionRequired, devStartup, inheritedAdmission });
   if (isWorkspaceBuildStartup({ env, devStartup })) env = { ...env, HAPPIER_HSTACK_DISPATCH_CONTROL: '1' };
   return await new Promise(resolveResult => {
     const child = spawnForegroundCommand(invocation.command, invocation.args, {
@@ -138,12 +137,6 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
   });
 }
 
-function workspaceBuildResources(locks, dependencyInstallDir, env) {
-  if (!dependencyInstallDir) return locks;
-  const installDir = resolveDependencyInstallRoot(dependencyInstallDir);
-  return [{ kind: 'dependency', installDir, path: resolveDependencyRefreshLockPath(installDir, env) }, ...locks];
-}
-
 function parseLocks(raw) {
   const locks = JSON.parse(raw);
   if (!Array.isArray(locks)) throw new Error('Workspace admission requires a lock array');
@@ -161,8 +154,7 @@ function parseLocks(raw) {
 
 /** An admitted descendant cannot extend the batch's lock set, even when a
  * missing resource happens to be free. Reuse the owners' authentication. */
-export function assertInheritedWorkspaceBuildResources({ locks = [], dependencyInstallDir, env = process.env } = {}) {
-  locks = workspaceBuildResources(locks, dependencyInstallDir, env);
+export function assertInheritedWorkspaceBuildResources({ locks = [], env = process.env } = {}) {
   let leases;
   try { leases = JSON.parse(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]'); }
   catch { throw new Error('Workspace producer requires valid inherited publication custody'); }
@@ -225,9 +217,8 @@ export function createWorkspaceBuildResourceObservation({ locks = [], env = proc
  * native admission. Contention unwinds every new scope before observation;
  * errors from an entered publisher are terminal and never replayed.
  */
-export async function withWorkspaceBuildResources({ locks = [], dependencyInstallDir, env = process.env, signal,
+export async function withWorkspaceBuildResources({ locks = [], env = process.env, signal,
   typecheckDeclarationPhase = false, admittedResourceWait = false }, run) {
-  locks = workspaceBuildResources(locks, dependencyInstallDir, env);
   const priorityScope = createWorkspaceBuildResourcePriorityScope({ locks, env, signal });
   const resources = createWorkspaceBuildResourceObservation({ locks, env, priorityScope });
   const observation = { ...resources, observer: createFileChangeObserver(resources.directories, { isRelevant: resources.isRelevant }) };
