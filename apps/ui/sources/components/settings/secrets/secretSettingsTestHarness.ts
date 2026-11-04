@@ -17,6 +17,7 @@ import {
     type SavedSecretResourceEnvelopeCensusRecipientV1,
     type SavedSecretResourceMaterialV1,
 } from '@happier-dev/protocol';
+import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -28,7 +29,9 @@ import { encodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
-import { normalizeAccountSettingsForServerStorage, openAccountSettingsStoredContent, type OpenedAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
+import { normalizeAccountSettingsForLocalStorage, normalizeAccountSettingsForServerStorage, openAccountSettingsStoredContent, type OpenedAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
+import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
+import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
 import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -43,6 +46,9 @@ import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/co
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type SecretSettingsTestHarness = {
     credentials: AuthCredentials;
@@ -117,8 +123,9 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         id: 'personal-a', name: 'Personal', kind: 'token',
         encryptedValue: { _isSecretValue: true, value: 'value' }, createdAt: 1, updatedAt: 1,
     }] : [] });
-    const raw = options.rawSettings ?? normalizeAccountSettingsForServerStorage({ raw: settings, mode,
-        settingsSecretsKey: null, normalizeServerRaw: normalizeVoiceSettingsServerDelta }).value;
+    // Seed the synthetic Home's incoming document. Client write admission runs
+    // only after restoration has established this device's real local custody.
+    const raw = options.rawSettings ?? normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(settings));
     let settingsContent = AccountSettingsStoredContentEnvelopeSchema.parse(encryption ? {
         t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
             material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
@@ -148,10 +155,15 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         const artifactResponse = artifacts.handle(`${path}${url.search}`, init);
         if (artifactResponse) return await artifactResponse;
         if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+        if (path === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
+        if (path === '/v2/changes') return Response.json(ChangesResponseSchema.parse({ changes: [], nextCursor: 0 }));
         if (path === '/v1/account/profile') return new Headers(init?.headers).get('Authorization') === `Bearer ${token}`
             ? Response.json(AccountProfileSchema.parse({ id: accountId }))
             : Response.json({ error: 'Not authenticated' }, { status: 401 });
         if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
+        if (path === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
+            schemaVersion: 1, version: 0, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+        } }));
         if (path.startsWith('/v1/account/authoring-memory/')) return Response.json({ status: 'absent' });
         if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
         if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 1 });
@@ -297,31 +309,56 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         material: mode === 'e2ee' ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : null,
         settingsRequest: (url, init) => request(url, init),
     }) : null;
+    const serverUrl = `https://secrets-${crypto.randomUUID()}.example.test`;
+    // Account restoration publishes its coarse cursor wake after Settings has
+    // settled. Finish that real bootstrap before a test admits a catalog read.
+    let finishBootstrap!: () => void;
+    const bootstrapReady = new Promise<void>(resolve => { finishBootstrap = resolve; });
+    const detachBootstrap = subscribeHomeAccountChange(event => {
+        if (event.source === undefined && event.entityIds === undefined
+            && areServerProfileIdentifiersEquivalent(event.serverId, options.serverIdentityId ?? new URL(serverUrl).host)) finishBootstrap();
+    });
     const connection = await restoreServerAccountForTest({
-        serverUrl: `https://secrets-${crypto.randomUUID()}.example.test`, accountId, credentials, request,
+        serverUrl, accountId, credentials, request,
         ...(options.serverIdentityId ? { serverIdentityId: options.serverIdentityId } : {}),
         credentialScope: 'restored-home',
-    });
+    }).then(async connection => { await bootstrapReady; return connection; }).finally(detachBootstrap);
     const { sync } = await import('@/sync/sync');
     const queue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
     await queue.awaitQueue();
     const scope = { serverId: connection.serverId, accountId };
-    storage.setState({ settings, settingsScope: scope, settingsVersion });
+    const keys = await resolveSettingsSecretsKeySet({ credentials, scope });
+    if (!keys) throw new Error('Secret Settings fixture could not initialize local secret custody');
+    const localSettings = (source: Settings) => normalizeAccountSettingsForLocalStorage({ raw: source, mode,
+        settingsSecretsKey: keys.writeKey, settingsSecretsReadKeys: keys.readKeys,
+        normalizeServerRaw: normalizeVoiceSettingsServerDelta });
+    storage.setState({ settings: localSettings(settings), settingsScope: scope, settingsVersion });
     return {
         credentials, encryption, scope, request, resources, recipients, updates, creations, deletes, repairs, settingsWrites, promotions, catalogRows, artifacts, purposes,
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         setRejectSettingsWrites(next: boolean) { rejectSettingsWrites = next; },
         setLosePromotionResponse(next: boolean) { losePromotionResponse = next; },
         replaceSettings(next: Settings, options?: Readonly<{ version?: number; publish?: boolean }>) {
+            const previousVersion = settingsVersion;
             settingsVersion = options?.version ?? settingsVersion;
             const nextRaw = normalizeAccountSettingsForServerStorage({ raw: next, mode,
-                settingsSecretsKey: null, normalizeServerRaw: normalizeVoiceSettingsServerDelta }).value;
+                settingsSecretsKey: keys.writeKey, settingsSecretsReadKeys: keys.readKeys,
+                normalizeServerRaw: normalizeVoiceSettingsServerDelta }).value;
             settingsContent = AccountSettingsStoredContentEnvelopeSchema.parse(encryption ? {
                 t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
                     material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
                     payload: nextRaw, randomBytes: getRandomBytes }),
             } : { t: 'plain', v: nextRaw });
-            if (options?.publish !== false) storage.setState({ settings: next, settingsVersion, settingsScope: scope });
+            if (options?.publish !== false) {
+                if (options?.version !== undefined && options.version > previousVersion) {
+                    // Incoming revisions use the same scope, ordering and
+                    // unchanged-key reconciliation as real server settings.
+                    storage.getState().applySettingsForScope(scope, localSettings(next), settingsVersion);
+                } else {
+                    // Retain same-version fixture setup; it is not server ingress.
+                    storage.setState({ settings: localSettings(next), settingsVersion, settingsScope: scope });
+                }
+            }
             notify();
         },
         get persistedSettings() {

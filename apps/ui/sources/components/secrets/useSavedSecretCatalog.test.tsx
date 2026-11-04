@@ -8,7 +8,7 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { beginSavedSecretCatalogLoad, invalidateSavedSecretCatalog, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { beginSavedSecretCatalogLoad, getSavedSecretCatalogSnapshot, invalidateSavedSecretCatalog, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -177,14 +177,16 @@ describe('useSavedSecretCatalog resource authority', () => {
             expect(home.updates).toHaveLength(1);
         } else if (_kind === 'shared') {
             const { Modal } = await import('@/modal');
-            vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
+            vi.mocked(Modal.confirm).mockClear();
             await act(async () => {
                 const result = await hook.getCurrent().updateResource({ resourceId: resource.resourceId,
                     expectedRevision: entry.revision!, nextName: 'Shared rename', decryptDataKeyEnvelope: async () => null });
-                expect(result.ok).toBe(false);
+                expect(result.ok).toBe(true);
             });
-            expect(Modal.confirm).toHaveBeenCalledTimes(1);
-            expect(home.updates).toHaveLength(0);
+            // A reversible rename uses canonical Action admission; it has no
+            // extra caller confirmation (OWNER-RULINGS 2026-10-16).
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(home.updates).toHaveLength(1);
         }
         expect(home.settingsWrites).toEqual([]);
     });
@@ -361,6 +363,10 @@ describe('useSavedSecretCatalog resource authority', () => {
         expect(hook.getCurrent().usableSecrets.map(secret => secret.id)).toEqual([entry.ref]);
 
         const repair = hook.getCurrent().deleteCorruptResource;
+        // The finite reload resolves its usable foreground before legacy-import
+        // maintenance publishes. Measure unrelated Settings only once that
+        // independently owned catalog publication has settled.
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)?.legacyImport).not.toBeNull());
         const baseline = renders;
         const currentSettings = home.persistedSettings;
         for (let version = 2; version <= 21; version += 1) {
@@ -372,13 +378,23 @@ describe('useSavedSecretCatalog resource authority', () => {
         expect(await repair(corruptEntry)).toEqual({ ok: false, reason: 'unavailable' });
         expect(home.deletes).toEqual([]);
         await act(async () => { storage.setState({ settingsScope: scope }); });
-        await act(async () => expect(await repair(corruptEntry)).toEqual({ ok: true }));
+        await act(async () => {
+            const result = await repair(corruptEntry);
+            // Keep failures attributable to their real HTTP boundary without
+            // printing bodies, credentials or Saved Secret material.
+            const boundary = !result.ok ? await Promise.all(home!.request.mock.calls.map(async ([url, init], index) => {
+                const response = home!.request.mock.results[index];
+                return { path: new URL(String(url)).pathname, method: init?.method ?? 'GET',
+                    status: response?.type === 'return' ? (await response.value).status : response?.type };
+            })) : [];
+            expect(result, JSON.stringify(boundary)).toEqual({ ok: true });
+        });
         expect(home.deletes).toEqual([expect.objectContaining({
             resourceId: 'opaque-row-id', expectedRevision: -3, expectedSettingsVersion: 21,
             referenceCensus: expect.objectContaining({ notificationChannels: { revision: 'absent', resourceRefs: [] } }),
         })]);
         await vi.waitFor(() => expect(hook.getCurrent().corruptEntries).toEqual([]));
-        expect(hook.getCurrent().usableSecrets.map(secret => secret.id)).toEqual([entry.ref]);
+        await vi.waitFor(() => expect(hook.getCurrent().usableSecrets.map(secret => secret.id)).toEqual([entry.ref]));
     });
 });
 // Native filesystem classes are an OS boundary, not part of this source-driven UI journey.
