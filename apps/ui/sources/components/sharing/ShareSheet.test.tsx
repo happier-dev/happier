@@ -2,7 +2,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
-import { SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS } from '@/components/ui/selectionList/_constants';
 import { ShareSheet } from './ShareSheet';
 import { t } from '@/text';
 import { createDocumentShareAdapter } from './documents/documentShareAdapter';
@@ -15,8 +14,8 @@ vi.mock('react-native', async () => {
 });
 // The virtualized renderer is a third-party boundary; all sharing/list logic stays real.
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit');
-    return { LegendList: createCapturingLegendListMock({ renderItems: true }).module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
 });
 
 const noop = () => {};
@@ -50,7 +49,7 @@ describe('ShareSheet full presentation', () => {
         const screen = await renderScreen(<ShareSheet model={candidates} actions={{ ...actions, addPrincipal: add }}
             adapter={adapter} presentation="full" testID="document-share-editor" />);
         await startAdding(screen);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         await screen.pressByTestIdAsync('document-share-add:account:maya');
         expect(add).toHaveBeenCalledWith({ kind: 'account', accountId: 'maya' });
         expect(screen.findByTestId('document-share-grant-account:maya')).toBeNull();
@@ -129,7 +128,7 @@ describe('ShareSheet full presentation', () => {
             candidates: [{ principal: { ref: { kind: 'account', accountId: 'maya' }, key: 'account:maya',
                 displayName: 'Maya', accessibilityLabel: 'Maya' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }],
         }] } }} actions={actions} adapter={adapter} presentation="inline" testID="document-share-editor" />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.getTextContent()).toContain(heading);
     });
 
@@ -145,7 +144,7 @@ describe('ShareSheet full presentation', () => {
         ] } });
         const screen = await renderScreen(<ShareSheet model={directory('')} actions={actions}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         // At rest the sheet is the roster: no suggestion rows, but each directory stays browsable.
         expect(screen.findByTestId('document-share-candidate-account:grace')).toBeNull();
         expect(screen.findByTestId('document-share-candidate-team:design')).toBeNull();
@@ -154,7 +153,7 @@ describe('ShareSheet full presentation', () => {
         expect(screen.findByTestId('document-share-browse:team')).not.toBeNull();
 
         await startAdding(screen);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('document-share-candidate-account:grace')).not.toBeNull();
         expect(screen.findByTestId('document-share-candidate-team:design')).not.toBeNull();
         // Every person is already listed, so People needs no Browse entry while suggestions show.
@@ -203,7 +202,7 @@ describe('ShareSheet full presentation', () => {
         }] } };
         const screen = await renderScreen(<ShareSheet model={refused} actions={{ ...actions, explain, addPrincipal: add }}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('document-share-candidate-account:grace')).not.toBeNull();
         expect(screen.findByTestId('document-share-add:account:grace')).toBeNull();
         expect(screen.getTextContent()).toContain(t('shareSheet.cantAdd'));
@@ -221,7 +220,7 @@ describe('ShareSheet full presentation', () => {
         }] } };
         const screen = await renderScreen(<ShareSheet model={typed} actions={actions}
             adapter={adapter} presentation="inline" testID="document-share-editor" />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('document-share-candidate-account:grace')).not.toBeNull();
     });
 
