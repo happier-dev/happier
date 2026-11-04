@@ -88,6 +88,7 @@ import {
     type WorkflowOccurrenceCoordinate,
 } from './workflowInvocationStructure';
 import { workflowRunStyles as styles } from './workflowRunStyles';
+import { WorkflowRunNeedsYouDock } from './WorkflowRunNeedsYouDock';
 import {
     formatWorkflowRunOriginLabel,
     formatWorkflowRunOutcomeLabel,
@@ -787,6 +788,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         isWorkflowWaitForYouHold(invocation.lifecycle, { blockKind: invocationBlockKind(invocation) })
     ), [invocationBlockKind]);
     const firstAttention = attentionRows[0];
+    // A phone keeps what needs you in thumb reach while the Map scrolls.
+    const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
+    const [dockHeightPx, setDockHeightPx] = React.useState(0);
     // One primary per view: while a hold is open beside the Run, its own card carries the primary,
     // so the index's Review stays bordered; with nothing open, the first hold is the page's next step.
     const primaryReviewId = props.selectedInvocationId === null ? attentionIndexRows[0]?.invocation.id : undefined;
@@ -1242,7 +1246,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 </View>
             </View>
 
-            {attentionRows.length === 0 ? null : (
+            {attentionRows.length === 0 || phoneDock ? null : (
                 <View
                     testID={`${testIDPrefix}-needs-you`}
                     style={[styles.section, styles.pageSection]}
@@ -1517,6 +1521,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const footer = (
         <View style={styles.root}>
+            {/* The last row clears the dock and the shell's bottom chrome. */}
+            {phoneDock ? <View style={{ height: dockHeightPx }} /> : null}
             {technicalOpen ? (
             <View testID={`${testIDPrefix}-technical`} style={[styles.section, styles.pageSection]}>
                 <Text style={styles.sectionLabel}>{t('workflows.run.technicalDetails')}</Text>
@@ -1686,7 +1692,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         },
     }), [hideWorkflowLabel, showWorkflowLabel, runMarkColor, runName, runPaneState]);
 
-    const main = <View style={[styles.outline, maxWidthStyle]}>{outline}</View>;
+    const dockStep = attentionIndexRows[0]?.invocation;
+    const main = <View style={[styles.outline, maxWidthStyle]}>{outline}
+        {phoneDock && dockStep !== undefined ? <WorkflowRunNeedsYouDock testIDPrefix={`${testIDPrefix}-needs-you-dock`}
+            count={attentionIndexRows.length} steps={attentionIndexRows.map(({ invocation }) => invocationLabel(invocation)).filter((label): label is string => label !== null)}
+            onReview={(event) => selectInvocation(dockStep.id, event)} onHeight={setDockHeightPx} primary={primaryAction === null} /> : null}
+    </View>;
     if (!detailsPaneAvailable && props.invocationPage && inspector !== null) {
         return phone && selectedSessionId === null && props.renderReviewCard !== undefined
             ? <>{main}{inspector}</>
