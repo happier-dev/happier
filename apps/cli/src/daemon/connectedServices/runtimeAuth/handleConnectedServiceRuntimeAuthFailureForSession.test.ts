@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { buildObservedFailureMemberRuntimeState } from '../accountGroups/memberRuntimeState';
 import {
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
@@ -2048,6 +2049,114 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     }));
   });
 
+  it.each(['stale launch', 'newer registered source'] as const)(
+    'switches a stopped scheduler recovery away from the failed pool member despite its %s and waits for restart',
+    async (source) => {
+      const nowMs = 20_000;
+      let current: ConnectedServiceAuthGroupSwitchState = {
+        serviceId: 'claude-subscription', groupId: 'main', activeProfileId: 'ai1',
+        generation: 873, runtimeStateRevision: 1,
+        credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+        members: ['ai2', 'ai1', 'backup'].map((profileId, priority) => ({
+          profileId, priority, createdAtMs: priority + 1, enabled: true,
+        })),
+        memberStatesByProfileId: new Map([
+          ['ai2', { exhaustedUntilMs: 100_000 }],
+          ['ai1', { quotaSnapshot: { capturedAtMs: nowMs, effectiveRemainingPercent: 90 } }],
+          ['backup', { quotaSnapshot: { capturedAtMs: nowMs, effectiveRemainingPercent: 80 } }],
+        ]),
+      };
+      const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+        leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+        nowMs: () => nowMs, quotaFreshnessMs: 60_000,
+        // In-memory adapters replace group persistence and provider application;
+        // failure projection, selection, leases and switching remain real.
+        loadState: async () => current,
+        recordObservedFailureState: async (failure) => {
+          if (!failure.observedProfileId) throw new Error('Expected the failed account');
+          const memberState = buildObservedFailureMemberRuntimeState({
+            ...failure, existing: current.memberStatesByProfileId.get(failure.observedProfileId) ?? null,
+            policy: current.policy, retryAtMs: failure.resetsAtMs ?? null,
+            planType: failure.planType, observedAtMs: nowMs,
+          });
+          current = { ...current, memberStatesByProfileId: new Map(current.memberStatesByProfileId)
+            .set(failure.observedProfileId, memberState) };
+        },
+        commitSwitch: async ({ toProfileId }) => (current = {
+          ...current, activeProfileId: toProfileId, generation: current.generation + 1,
+        }),
+        applyGeneration: async () => ({ mode: 'spawn_next_turn' }),
+      });
+      const tracked = {
+        startedBy: 'daemon' as const, happySessionId: `failed-current-${source}`, pid: 123,
+        spawnOptions: { directory: '/tmp/project', environmentVariables: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group', serviceId: 'claude-subscription', groupId: 'main',
+            activeProfileId: 'ai2', fallbackProfileId: 'ai2', generation: 872,
+            credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+          }]),
+        } },
+      } satisfies TrackedSession;
+      let resolveRestart!: () => void;
+      let markRestartStarted!: () => void;
+      const restartCompletion = new Promise<void>((resolve) => { resolveRestart = resolve; });
+      const restartStarted = new Promise<void>((resolve) => { markRestartStarted = resolve; });
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+      const recovery = handleConnectedServiceRuntimeAuthFailureForSession({
+        getChildren: () => [tracked], switchCoordinator,
+        resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => (
+          await resolveRuntimeAuthFailureSourceProfile({
+            classification, getGroupMembers: async () => current.members,
+            resolveProviderAccountIdentity: async (profileId) => ({
+              providerAccountId: `account-${profileId}`, providerOrganizationId: `org-${profileId}`,
+            }),
+          })
+        ),
+        ...(source === 'newer registered source' ? {
+          resolveRegisteredRuntimeAuthFailureSource: () => ({
+            serviceId: 'claude-subscription' as const, groupId: 'main', profileId: 'ai2',
+            generation: 873, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+          }),
+        } : {}),
+        restartSession: async () => { markRestartStarted(); await restartCompletion; },
+        continueAfterRuntimeAuthSwitch,
+        sessionId: tracked.happySessionId, switchesThisTurn: 0,
+        recoveryInvocationSource: 'scheduler_retry',
+        classification: {
+          kind: 'usage_limit', limitCategory: 'usage_limit', serviceId: 'claude-subscription',
+          profileId: 'ai1', groupId: 'main',
+          ...(source === 'newer registered source' ? {
+            groupGeneration: 872, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+            sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+          } : { providerReportedOrganizationId: 'org-ai1' }),
+          resetsAtMs: 100_000, planType: null, rateLimits: null, source: 'structured_provider_error',
+        },
+      });
+      try {
+        expect(await Promise.race([
+          restartStarted.then(() => ({ phase: 'restarting' })),
+          recovery.then((result) => ({ phase: 'settled', result })),
+        ])).toEqual({ phase: 'restarting' });
+        expect(current.activeProfileId).toBe('backup');
+        expect(current.memberStatesByProfileId.get('ai1')).toMatchObject({
+          lastFailureKind: 'usage_limit', quotaExhaustedUntilMs: 100_000,
+        });
+        expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+      } finally {
+        resolveRestart();
+        await recovery;
+      }
+      await expect(recovery).resolves.toMatchObject({ status: 'switch_attempted', result: {
+        status: 'switched', activeProfileId: 'backup', generation: 874, mode: 'spawn_next_turn',
+      } });
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        sessionId: tracked.happySessionId, action: 'restart_requested',
+        target: { serviceId: 'claude-subscription', groupId: 'main', profileId: 'backup', generation: 874 },
+      }));
+    },
+  );
+
   it.each(['eligible', 'exhausted', 'unknown'] as const)(
     'keeps a stopped scheduler recovery alive on the current pool member (%s) without replaying the switch pipeline',
     async (state) => {
@@ -2127,7 +2236,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         source: 'structured_provider_error',
       },
     });
-    if (state === 'eligible') {
+    if (state !== 'exhausted') {
       expect(result).toMatchObject({ status: 'switch_attempted', result: {
         status: 'observed_generation', activeProfileId: 'current', generation: 7,
       } });
@@ -2137,11 +2246,8 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       }));
     } else {
       expect(result).toMatchObject({ status: 'switch_attempted', result: {
-        ...(state === 'unknown'
-          ? { status: 'quota_proof_unavailable', activeProfileId: 'current' }
-          : { status: 'no_eligible_member', groupExhausted: true }),
+        status: 'no_eligible_member', groupExhausted: true,
       } });
-      if (state === 'unknown') expect(result).not.toHaveProperty('result.groupExhausted');
       expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
     }
     expect(effects).toEqual(['record-failure']);

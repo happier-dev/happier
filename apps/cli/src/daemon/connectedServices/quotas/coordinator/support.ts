@@ -1,5 +1,4 @@
 import {
-  ConnectedServiceIdSchema,
   isConnectedServiceCredentialHealthStatusUsable,
   type ConnectedServiceAuthGroupRuntimeStatePatchRequestV1,
   type ConnectedServiceAuthGroupV1,
@@ -38,10 +37,6 @@ import {
   type DaemonServerWorkScheduler,
 } from '@/daemon/serverWork';
 
-import {
-  readConnectedServiceChildSelectionsFromEnv,
-  type ConnectedServiceChildSelection,
-} from '../../connectedServiceChildEnvironment';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
   normalizeConnectedServiceAuthGroupPolicy,
@@ -104,6 +99,7 @@ import { evaluateConnectedServiceSwitchApplyPolicy } from '../../accountGroups/s
 import {
   ConnectedServiceRuntimeRegistry,
   type ConnectedServiceRuntimeQuotaTarget,
+  type ConnectedServiceRuntimeTarget,
 } from '../../runtimeRegistry/registry';
 import type { ProviderAccountUsageStore } from '../../accountUsage/store';
 import type { ProviderAccountUsagePersistenceScheduler } from '../../accountUsage/persistence';
@@ -389,6 +385,7 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
   selectedRemainingPercent?: number | null;
   targetCount?: number;
   completedTargetCount?: number;
+  successfulTargetCount?: number;
   incompleteProfileIds?: ReadonlyArray<string>;
   allowedTargetCount?: number;
   durationMs?: number;
@@ -493,64 +490,17 @@ export type ConnectedServiceQuotaSoftSwitchPolicyGuard = (
   }>,
 ) => SoftSwitchPolicyGuardResult | Promise<SoftSwitchPolicyGuardResult>;
 
-export function buildResolvedSelectionProfilesByServiceId(
-  env: Pick<NodeJS.ProcessEnv, string> | undefined,
-): ReadonlyMap<ConnectedServiceId, ConnectedServiceChildSelection> {
-  const selections = env ? readConnectedServiceChildSelectionsFromEnv(env) : [];
-  return new Map(selections.map((selection) => [selection.serviceId, selection]));
-}
-
-export function resolveProfileIdFromSelection(input: Readonly<{
-  binding: Record<string, unknown>;
-  serviceId: ConnectedServiceId;
-  selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceChildSelection>;
-}>): string {
-  const selection = input.selectionsByServiceId.get(input.serviceId);
-  const explicitProfileId = typeof input.binding.profileId === 'string' ? String(input.binding.profileId).trim() : '';
-  const groupId = typeof input.binding.groupId === 'string' ? String(input.binding.groupId).trim() : '';
-  if (groupId) {
-    if (!selection || selection.kind !== 'group') return explicitProfileId;
-    if (selection.groupId !== groupId) return explicitProfileId;
-    return selection.activeProfileId;
-  }
-
-  if (explicitProfileId) return explicitProfileId;
-  if (!selection || selection.kind !== 'profile') return '';
-  return selection.profileId;
-}
-
 export function extractActiveBindings(
-  raw: ConnectedServicesBindingsV1Like,
-  connectedServiceSelectionsEnv?: Pick<NodeJS.ProcessEnv, string>,
+  target: Pick<ConnectedServiceRuntimeTarget, 'activeBindings'>,
 ): ActiveConnectedServiceBinding[] {
-  const out: ActiveConnectedServiceBinding[] = [];
-  const selectionsByServiceId = buildResolvedSelectionProfilesByServiceId(connectedServiceSelectionsEnv);
-  const bindings = raw?.bindingsByServiceId ?? {};
-  for (const [serviceId, binding] of Object.entries(bindings)) {
-    const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceId);
-    if (!parsedServiceId.success) continue;
-    const bindingObj = binding && typeof binding === 'object' ? (binding as Record<string, unknown>) : null;
-    const source = typeof bindingObj?.source === 'string' ? String(bindingObj.source) : '';
-    if (source !== 'connected') continue;
-    if (!bindingObj) continue;
-    const profileId = resolveProfileIdFromSelection({
-      binding: bindingObj,
-      serviceId: parsedServiceId.data,
-      selectionsByServiceId,
-    });
-    if (!profileId.trim()) continue;
-    const selection = selectionsByServiceId.get(parsedServiceId.data);
-    const groupId = selection?.kind === 'group' && selection.activeProfileId === profileId
-      ? selection.groupId.trim()
-      : '';
-    out.push({
-      serviceId: parsedServiceId.data,
-      profileId,
-      ...(groupId ? { groupId } : {}),
-      ...(selection?.kind === 'group' && groupId ? { groupGeneration: selection.generation } : {}),
-    });
-  }
-  return out;
+  // The registry owns effective bindings, including provider observations that invalidate
+  // a previously applied generation. Re-parsing launch selections would resurrect it.
+  return target.activeBindings.map((binding) => ({
+    serviceId: binding.serviceId,
+    profileId: binding.profileId,
+    ...(binding.groupId ? { groupId: binding.groupId } : {}),
+    groupGeneration: binding.generation,
+  }));
 }
 
 export function activeBindingMatchesRuntimeIdentity(

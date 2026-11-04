@@ -8,6 +8,7 @@ import { createPiUsageLimitRecoveryControlAdapter } from '@/backends/pi/connecte
 import { createOpenCodeUsageLimitRecoveryControlAdapter } from '@/backends/opencode/connectedServices/openCodeUsageLimitRecoveryControlAdapter';
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { logger } from '@/ui/logger';
 import { mergeUsageLimitRecoveryExplicitRearm } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { buildNativeProviderAccountUsageSourceProfileId } from '../accountUsage/nativeSourceIdentity';
 
@@ -681,6 +682,112 @@ describe('continueSessionAfterUsageLimitReset', () => {
     } finally { first.dispose(); replacement?.dispose(); await rm(directory, { recursive: true, force: true }); }
   });
 
+  it.each([
+    { status: 'failed', armedAtMs: 110, failureAt: 100 },
+    { status: 'failed', armedAtMs: 200, failureAt: 100 },
+    { status: 'failed', armedAtMs: 110, failureAt: 150 },
+    { status: 'failed', armedAtMs: 200, failureAt: 150 },
+    { status: 'failed', armedAtMs: 200, failureAt: null },
+    { status: 'completed', armedAtMs: 110, failureAt: null },
+    { status: 'completed', armedAtMs: 200, failureAt: null },
+  ] as const)('keeps failure identity across re-arming ($status/$armedAtMs/$failureAt)', async ({ status, armedAtMs, failureAt }) => {
+    fixture({ latestTurnId: 'projected-turn', latestTurnStatus: status, latestTurnStatusObservedAt: 160,
+      lastRuntimeIssue: failureAt === null ? null : { ...issue, occurredAt: failureAt } });
+    const classification: ConnectedServiceRuntimeFailureClassification = {
+      kind: 'usage_limit', serviceId: 'claude-subscription', groupId: 'pool', profileId: 'A',
+      resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
+      runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(issue),
+    };
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => armedAtMs,
+      recover: async ({ interruptedOriginId, classification: acceptedFailure }) => {
+        await dispatcher.enqueueInterruptedOriginContinuation({ sessionId, attemptId: 'switch-B',
+          interruptedOriginId: interruptedOriginId!, interruption: 'provider_failed_turn', resumePromptMode: 'standard',
+          runtimeAuthRecovery: { armedAtMs, runtimeIssueFingerprint: acceptedFailure.runtimeIssueFingerprint,
+            isCurrent: () => true, readActiveTurnId: () => null } });
+        return { status: 'switch_attempted', result: { status: 'observed_generation', activeProfileId: 'B', generation: 2 } };
+      },
+    });
+    try {
+      await scheduler.beginClassifiedFailure({ sessionId, classification, switchesThisTurn: 0 });
+      await scheduler.wake({ sessionId, reason: 'manual' });
+      const sameFailure = status === 'failed' && failureAt === issue.occurredAt;
+      const terminalReason = status === 'failed' && failureAt !== null
+        ? 'connected_service_continuation_failure_superseded' : 'connected_service_continuation_turn_projection_unavailable';
+      expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledTimes(sameFailure ? 1 : 0);
+      expect(scheduler.readForSession(sessionId)[0]).toMatchObject(sameFailure
+        ? { status: 'resumed_awaiting_proof' }
+        : { status: 'cancelled', nextRetryAtMs: null,
+          terminalReason,
+          pendingVisibleEvents: expect.arrayContaining([expect.objectContaining({ transition: 'terminal',
+            transcriptEvent: expect.objectContaining({ terminal: true, reason: terminalReason }) })]) });
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each(['archived', 'different_active_turn', 'unidentified_failure_after_rearm'])('settles a superseded interrupted recovery (%s)', async (supersededBy) => {
+    const unidentified = supersededBy === 'unidentified_failure_after_rearm';
+    fixture({ latestTurnId: 'interrupted-turn', latestTurnStatusObservedAt: 100,
+      lastRuntimeIssue: { ...issue, occurredAt: unidentified ? 150 : 100 },
+      archivedAt: supersededBy === 'archived' ? 150 : null });
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+    await expect(dispatcher.enqueueInterruptedOriginContinuation({
+      sessionId, attemptId: 'switch-B', interruptedOriginId: 'accepted-failure',
+      interruption: 'provider_failed_turn', resumePromptMode: 'standard',
+      runtimeAuthRecovery: { armedAtMs: unidentified ? 110 : 200,
+        runtimeIssueFingerprint: unidentified ? null : buildUsageLimitIssueFingerprint(issue),
+        isCurrent: () => true, readActiveTurnId: () => supersededBy === 'different_active_turn' ? 'new-turn' : null },
+    })).rejects.toMatchObject({ code: 'connected_service_continuation_failure_superseded', retryable: false });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 'in_progress', observedAt: 100, latestTurnId: 'interrupted-turn', activeTurnId: null },
+    { status: null, observedAt: null, latestTurnId: null, activeTurnId: null },
+    { status: 'completed', observedAt: 100, latestTurnId: 'interrupted-turn', activeTurnId: 'interrupted-turn' },
+    { status: 'cancelled', observedAt: 100, latestTurnId: 'interrupted-turn', activeTurnId: 'interrupted-turn' },
+  ] as const)('settles restored recovery when its failure projection has no pending turn witness ($status/$activeTurnId)', async ({ status, observedAt, latestTurnId, activeTurnId }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-continuation-unavailable-'));
+    const file = join(directory, 'recoveries.json');
+    fixture({ latestTurnId, latestTurnStatus: status, latestTurnStatusObservedAt: observedAt, lastRuntimeIssue: null });
+    const classification: ConnectedServiceRuntimeFailureClassification = {
+      kind: 'usage_limit', serviceId: 'claude-subscription', groupId: 'pool', profileId: 'A',
+      resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
+    };
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+    const diagnostic = vi.spyOn(logger, 'infoFile');
+    const makeScheduler = () => new RuntimeAuthRecoveryScheduler({ nowMs: () => 110,
+      durableStore: createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(file),
+      recover: async ({ interruptedOriginId }) => {
+        await dispatcher.enqueueInterruptedOriginContinuation({ sessionId, attemptId: 'switch-B',
+          interruptedOriginId: interruptedOriginId!, interruption: 'provider_failed_turn', resumePromptMode: 'standard',
+          runtimeAuthRecovery: { armedAtMs: 110, isCurrent: () => true, readActiveTurnId: () => activeTurnId } });
+        return { status: 'switch_attempted', result: { status: 'observed_generation', activeProfileId: 'B', generation: 2 } };
+      },
+    });
+    const first = makeScheduler();
+    let replacement: RuntimeAuthRecoveryScheduler | undefined;
+    try {
+      await first.beginClassifiedFailure({ sessionId, classification, switchesThisTurn: 0 });
+      first.dispose();
+      replacement = makeScheduler();
+      replacement.hydratePassive();
+      await expect(replacement.wake({ sessionId, reason: 'manual' })).resolves.toMatchObject({ status: 'terminal' });
+      const terminalReason = 'connected_service_continuation_turn_projection_unavailable';
+      expect(replacement.readForSession(sessionId)[0]).toMatchObject({ status: 'cancelled',
+        nextRetryAtMs: null, terminalReason, lastErrorClassification: { retryable: false },
+        pendingVisibleEvents: expect.arrayContaining([expect.objectContaining({ transition: 'terminal',
+          transcriptEvent: expect.objectContaining({ status: 'cancelled', terminal: true, reason: terminalReason }) })]),
+      });
+      expect(transport.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+      await expect(replacement.wake({ sessionId, reason: 'timer' })).resolves.toMatchObject({ status: 'inactive' });
+      await expect(replacement.wake({ sessionId, reason: 'manual' })).resolves.toMatchObject({ status: 'inactive' });
+      expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        sessionId, code: terminalReason, retryable: false, armedAtMs: 110, activeTurnId,
+        latestTurnId, latestTurnStatus: status, latestTurnStatusObservedAt: observedAt, runtimeIssueOccurredAt: null,
+      }));
+    } finally { diagnostic.mockRestore(); first.dispose(); replacement?.dispose(); await rm(directory, { recursive: true, force: true }); }
+  });
+
   it.each([90, 150])('retains correlation while the original failure projection is delayed (observedAt=%s)', async (observedAt) => {
     const input = fixture({ latestTurnId: 'interrupted-turn', latestTurnStatus: 'in_progress',
       latestTurnStatusObservedAt: observedAt, lastRuntimeIssue: null });
@@ -722,10 +829,6 @@ describe('continueSessionAfterUsageLimitReset', () => {
   });
 
   it.each([
-    { status: 'in_progress', observedAt: 150, failureAt: 100, activeTurn: 'new-user-turn', admitted: false },
-    { status: 'completed', observedAt: 150, failureAt: 100, activeTurn: null, admitted: false },
-    { status: 'failed', observedAt: 150, failureAt: 150, activeTurn: null, admitted: false },
-    { status: 'failed', observedAt: 100, failureAt: 100, activeTurn: 'new-user-turn', admitted: false },
     { status: 'failed', observedAt: 100, failureAt: 100, activeTurn: null, admitted: true },
     { status: 'failed', observedAt: 100, failureAt: 100, activeTurn: 'interrupted-turn', admitted: true },
     { status: 'failed', observedAt: 150, failureAt: 100, activeTurn: null, admitted: true },

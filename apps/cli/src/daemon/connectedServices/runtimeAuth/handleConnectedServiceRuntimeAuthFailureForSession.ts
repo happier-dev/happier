@@ -857,6 +857,11 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
     groupId: input.selection.groupId,
     windowMs: SESSION_SWITCH_LIMIT_WINDOW_MS,
   });
+  const recoveryProfileId = resolveAuthoritativeRecoveryProfileId({
+    selection: input.selection,
+    classifiedProfileId: input.classification.profileId,
+    providerQualified: Boolean(input.classification.sourceProviderAccountId || input.classification.providerReportedOrganizationId),
+  });
 
   return await handleConnectedServiceRuntimeAuthFailure({
     sessionId: input.sessionId,
@@ -864,20 +869,12 @@ async function runRuntimeGroupSwitchRecovery(input: Readonly<{
       kind: 'group',
       serviceId: input.selection.serviceId,
       groupId: input.selection.groupId,
-      activeProfileId: resolveAuthoritativeRecoveryProfileId({
-        selection: input.selection,
-        classifiedProfileId: input.classification.profileId,
-        providerQualified: Boolean(input.classification.sourceProviderAccountId),
-      }),
+      activeProfileId: recoveryProfileId,
     },
     classification: {
       ...input.classification,
       groupId: input.classification.groupId ?? input.selection.groupId,
-      profileId: input.classification.profileId === null ? null : normalizeNullableProfileId(resolveAuthoritativeRecoveryProfileId({
-        selection: input.selection,
-        classifiedProfileId: input.classification.profileId,
-        providerQualified: Boolean(input.classification.sourceProviderAccountId),
-      })),
+      profileId: input.classification.profileId === null ? null : normalizeNullableProfileId(recoveryProfileId),
     },
     switchesThisTurn: effectiveSwitchesThisTurn,
     sessionSwitchesThisHour,
@@ -1107,8 +1104,8 @@ async function continueRuntimeAuthRecoveryOnCurrentGroup(input: Readonly<{
   authorizedSource?: RuntimeAuthFailureSourceBinding | null;
   settleSupersedingRuntimeGroupGeneration?: RuntimeAuthSupersedingGenerationSettlement | null;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
-}>): Promise<Readonly<{ status: 'switch_attempted'; result: ConnectedServiceAuthGroupSwitchResult }>> {
-  let result = await input.switchCoordinator?.observeCurrentGenerationForRecovery?.({
+}>): Promise<Readonly<{ status: 'switch_attempted'; result: ConnectedServiceAuthGroupSwitchResult }> | null> {
+  const observed = await input.switchCoordinator?.observeCurrentGenerationForRecovery?.({
     serviceId: input.selection.serviceId,
     groupId: input.selection.groupId,
     observedProfileId: normalizeNullableProfileId(input.classification.profileId),
@@ -1123,7 +1120,11 @@ async function continueRuntimeAuthRecoveryOnCurrentGroup(input: Readonly<{
         planType: input.classification.planType,
       },
     } : {}),
-  }) ?? {
+  });
+  // The pool can have changed since source authorization. Its owner decides whether
+  // this is a fresh replacement or the failed current member needing normal selection.
+  if (observed === null) return null;
+  let result = observed ?? {
     status: 'quota_proof_unavailable' as const, generation: 0,
     activeProfileId: input.selection.activeProfileId ?? null,
   };
@@ -1415,11 +1416,12 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       blocker: 'CLI has no connected-service auth-group load/commit API in this branch.';
     }>
 > {
-  const sourceAuthorization = input.sourceAuthorization ?? await authorizeConnectedServiceRuntimeAuthFailureSource(input);
+  let sourceAuthorization = input.sourceAuthorization ?? await authorizeConnectedServiceRuntimeAuthFailureSource(input);
+  let failedCurrentProfileId: string | null = null;
   if (sourceAuthorization.status === 'recovery_superseded' && 'adoptedTarget' in sourceAuthorization) {
     const sourceBinding = sourceAuthorization.adoptedTarget.sourceBinding;
     if (input.recoveryInvocationSource === 'scheduler_retry' && input.classification) {
-      return await continueRuntimeAuthRecoveryOnCurrentGroup({
+      const continued = await continueRuntimeAuthRecoveryOnCurrentGroup({
         tracked: sourceAuthorization.adoptedTarget.tracked,
         sessionId: input.sessionId,
         selection: {
@@ -1432,11 +1434,19 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
         settleSupersedingRuntimeGroupGeneration: input.settleSupersedingRuntimeGroupGeneration,
         continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
       });
+      if (continued) return continued;
+      // Observation just proved the pool still runs the failing request's member.
+      // The adopted runtime tuple routes recovery, but must not rename that failure.
+      failedCurrentProfileId = normalizeNullableProfileId(input.classification.profileId);
+      sourceAuthorization = {
+        status: 'authorized', tracked: sourceAuthorization.adoptedTarget.tracked, sourceBinding,
+      };
+    } else {
+      // A late report has not established custody of an interrupted recovery.
+      // Only the durable scheduler path above may continue that stopped work.
+      const { adoptedTarget: _adoptedTarget, ...supersededResult } = sourceAuthorization;
+      return supersededResult;
     }
-    // A late report has not established custody of an interrupted recovery.
-    // Only the durable scheduler path above may continue that stopped work.
-    const { adoptedTarget: _adoptedTarget, ...supersededResult } = sourceAuthorization;
-    return supersededResult;
   }
   if (sourceAuthorization.status === 'current_credential_revision') {
     const sourceBinding = sourceAuthorization.sourceBinding;
@@ -1475,7 +1485,9 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   if (sourceAuthorization.status !== 'authorized') return sourceAuthorization;
   const tracked = sourceAuthorization.tracked;
   const classification = input.classification
-    ? applyAuthorizedRuntimeAuthFailureSourceBinding(input.classification, sourceAuthorization)
+    ? failedCurrentProfileId
+      ? input.classification
+      : applyAuthorizedRuntimeAuthFailureSourceBinding(input.classification, sourceAuthorization)
     : null;
   if (!tracked) {
     const { selection } = classification
@@ -1547,7 +1559,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
   // Exact source authorization is the single owner of a reattached runtime's current
   // binding. Do not let its stale launch descriptor win again while constructing the
   // recovery selection.
-  const selection: RuntimeRecoverySelection | null = sourceAuthorization.sourceBinding
+  let selection: RuntimeRecoverySelection | null = sourceAuthorization.sourceBinding
     ? sourceAuthorization.sourceBinding.groupId
       ? {
           kind: 'group',
@@ -1562,6 +1574,9 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
           profileId: sourceAuthorization.sourceBinding.profileId,
         }
     : resolvedRecoverySelection;
+  if (failedCurrentProfileId && selection && isGroupRuntimeRecoverySelection(selection)) {
+    selection = { ...selection, activeProfileId: failedCurrentProfileId };
+  }
   if (!selection) {
     return await handleConnectedServiceRuntimeAuthFailure({
       sessionId: input.sessionId,
@@ -1585,13 +1600,15 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     && isGroupRuntimeRecoverySelection(selection)
     && isRuntimeFailureForInactiveProfile({ selection, classification })
   ) {
-    return await continueRuntimeAuthRecoveryOnCurrentGroup({
+    const continued = await continueRuntimeAuthRecoveryOnCurrentGroup({
       tracked, sessionId: input.sessionId, selection, classification,
       switchCoordinator: input.switchCoordinator,
       authorizedSource: sourceAuthorization.status === 'authorized' ? sourceAuthorization.sourceBinding : null,
       settleSupersedingRuntimeGroupGeneration: input.settleSupersedingRuntimeGroupGeneration,
       continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
     });
+    if (continued) return continued;
+    selection = { ...selection, activeProfileId: normalizeNullableProfileId(classification.profileId) ?? undefined };
   }
 
   let groupRefreshReconnectAction: RuntimeAuthRecoveryActionRequired | null = null;

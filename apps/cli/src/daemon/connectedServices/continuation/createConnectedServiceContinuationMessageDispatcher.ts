@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  buildUsageLimitIssueFingerprint,
   readPendingLocalId,
   type SessionContinuationResumePromptModeV1,
 } from '@happier-dev/protocol';
@@ -25,6 +26,7 @@ type ConnectedServiceContinuationMessageDispatcherDeps = Readonly<{
 
 export type RuntimeAuthRecoveryContinuationAdmission = Readonly<{
   armedAtMs: number;
+  runtimeIssueFingerprint?: string | null;
   isCurrent: () => boolean;
   readActiveTurnId: () => string | null;
 }>;
@@ -109,6 +111,11 @@ export function createConnectedServiceContinuationMessageDispatcher(
         timeoutMs: 1,
       });
       if (!sent.ok) {
+        if (sent.code === 'session_archived') {
+          throw Object.assign(new Error(`continuation_prompt_send_failed:${sent.code}`), {
+            code: 'connected_service_continuation_failure_superseded', retryable: false,
+          });
+        }
         throw new Error(`continuation_prompt_send_failed:${sent.code}`);
       }
       return { suppressed: sent.suppressed === true };
@@ -150,22 +157,47 @@ export function createConnectedServiceContinuationMessageDispatcher(
             const session = context.rawSession;
             const activeTurnId = recovery.readActiveTurnId();
             const failedAtMs = session.lastRuntimeIssue?.occurredAt ?? session.latestTurnStatusObservedAt;
+            const projectedFailureFingerprint = session.lastRuntimeIssue
+              ? buildUsageLimitIssueFingerprint(session.lastRuntimeIssue) : null;
             // The latest turn projection covers consumed messages too; queued-input
             // admission alone cannot protect a newer running/completed/failed turn.
-            if (session.archivedAt != null
-              || (activeTurnId && session.latestTurnId && activeTurnId !== session.latestTurnId)) return false;
-            if (session.latestTurnStatus === 'failed' && typeof failedAtMs === 'number'
-              && Number.isFinite(recovery.armedAtMs)) return failedAtMs <= recovery.armedAtMs;
-            if ((session.latestTurnStatus === 'completed' || session.latestTurnStatus === 'cancelled')
-              && typeof session.latestTurnStatusObservedAt === 'number'
-              && session.latestTurnStatusObservedAt > recovery.armedAtMs) return false;
-            // Local failure reporting deliberately does not await the durable turn
-            // projection. An unresolved original turn is neither admission nor proof
-            // of newer user work. Reject retryably so correlation retains custody and
-            // the existing recovery scheduler can retry after the projection arrives.
-            const code = 'connected_service_continuation_turn_projection_pending';
-            logger.infoFile('[ConnectedServices] Runtime-auth continuation awaiting turn projection', { sessionId: input.sessionId, code });
-            throw Object.assign(new Error(code), { code, retryable: true });
+            // The accepted failure identity survives scheduler re-arming. Its lifecycle
+            // epoch is not a fence for a later failed turn, even before that re-arm.
+            const supersededRecovery = session.archivedAt != null
+              || Boolean(activeTurnId && session.latestTurnId && activeTurnId !== session.latestTurnId)
+              || (session.latestTurnStatus === 'failed' && (recovery.runtimeIssueFingerprint
+                ? projectedFailureFingerprint !== null && projectedFailureFingerprint !== recovery.runtimeIssueFingerprint
+                : typeof failedAtMs === 'number' && Number.isFinite(recovery.armedAtMs) && failedAtMs > recovery.armedAtMs));
+            if (!supersededRecovery && session.latestTurnStatus === 'failed' && recovery.runtimeIssueFingerprint
+              && projectedFailureFingerprint === recovery.runtimeIssueFingerprint) return true;
+            // Older reports carry no exact issue identity. Keep their existing admission
+            // rule; it cannot establish which failure preceded a daemon restart.
+            if (!supersededRecovery && session.latestTurnStatus === 'failed' && !recovery.runtimeIssueFingerprint
+              && typeof failedAtMs === 'number' && Number.isFinite(recovery.armedAtMs)) {
+              return true;
+            }
+            // Local failure reporting does not await its durable turn projection.
+            // Wait only while the original turn is still known to be in progress;
+            // a restored recovery without that witness cannot safely admit a turn
+            // or assume a projection producer remains. Settle through the scheduler.
+            const retryable = !supersededRecovery && session.latestTurnStatus === 'in_progress'
+              && Boolean(activeTurnId) && activeTurnId === session.latestTurnId;
+            const code = supersededRecovery
+              ? 'connected_service_continuation_failure_superseded'
+              : retryable ? 'connected_service_continuation_turn_projection_pending'
+                : 'connected_service_continuation_turn_projection_unavailable';
+            logger.infoFile(retryable
+              ? '[ConnectedServices] Runtime-auth continuation awaiting turn projection'
+              : '[ConnectedServices] Runtime-auth continuation cannot confirm failed turn', {
+              sessionId: input.sessionId, code, retryable, armedAtMs: recovery.armedAtMs, activeTurnId,
+              latestTurnId: session.latestTurnId ?? null,
+              latestTurnStatus: session.latestTurnStatus ?? null,
+              latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+              runtimeIssueOccurredAt: session.lastRuntimeIssue?.occurredAt ?? null,
+              expectedRuntimeIssueFingerprint: recovery.runtimeIssueFingerprint ?? null,
+              projectedFailureFingerprint,
+            });
+            throw Object.assign(new Error(code), { code, retryable });
           }
         : input.isCurrent;
       const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId, isCurrent });

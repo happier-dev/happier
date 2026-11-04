@@ -1,5 +1,6 @@
 import type { DaemonServerWorkErrorClassification, DaemonServerWorkErrorKind } from '@/daemon/serverWork/types';
 import { isDeepStrictEqual } from 'node:util';
+import { logger } from '@/ui/logger';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import {
   DurableBackoffRecoveryScheduler,
@@ -1421,9 +1422,17 @@ export class RuntimeAuthRecoveryScheduler {
             // additionally bounded by maxCoalescedReplays when the target profile
             // keeps changing under the same durable recovery.
             const coalescedReplayCount = intent.coalescedReplayCount ?? 0;
+            const untargetedProofRefresh = isUntargetedProviderOutcomeProofWaitRefresh({ intent, pendingTarget });
+            if (untargetedProofRefresh) {
+              logger.warnFile('[ConnectedServices] Local recovery repeated without a provider outcome producer proof', {
+                reason: 'untargeted_provider_outcome_proof_refresh', sessionId: intent.sessionId,
+                serviceId: intent.serviceId, groupId: intent.groupId, profileId: intent.profileId,
+                attemptId: intent.attemptId, attemptCount: intent.attemptCount,
+              });
+            }
             const rollbackAttempt = (awaitingContinuation && context.reason === 'manual')
               || (switchResultForHandoff?.status !== 'continuation_enqueued'
-                && (isUntargetedProviderOutcomeProofWaitRefresh({ intent, pendingTarget })
+                && (untargetedProofRefresh
                   || (coalescedReplay && coalescedReplayCount < this.maxCoalescedReplays)));
             return {
               status: 'wait',

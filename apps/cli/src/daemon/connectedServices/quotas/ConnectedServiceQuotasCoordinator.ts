@@ -57,7 +57,6 @@ import {
 } from '@/daemon/serverWork';
 
 import {
-  readConnectedServiceChildSelectionsFromEnv,
   type ConnectedServiceChildSelection,
 } from '../connectedServiceChildEnvironment';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
@@ -587,7 +586,7 @@ export class ConnectedServiceQuotasCoordinator {
     if (sessionId && params.runtimeAccountIdentitySelections) {
       this.recordRuntimeAccountIdentitySelections({
         sessionId,
-        bindings: extractActiveBindings(target.connectedServicesBindingsRaw, target.connectedServiceSelectionsEnv),
+        bindings: extractActiveBindings(target),
         selections: params.runtimeAccountIdentitySelections,
       });
     }
@@ -613,7 +612,7 @@ export class ConnectedServiceQuotasCoordinator {
     if (target.runtimeAccountIdentitySelections) {
       this.recordRuntimeAccountIdentitySelections({
         sessionId,
-        bindings: extractActiveBindings(nextTarget.connectedServicesBindingsRaw, nextTarget.connectedServiceSelectionsEnv),
+        bindings: extractActiveBindings(nextTarget),
         selections: target.runtimeAccountIdentitySelections,
       });
     }
@@ -1018,8 +1017,7 @@ export class ConnectedServiceQuotasCoordinator {
       if (!sessionId) continue;
       const binding = target.activeBindings.find((candidate) => (
         candidate.serviceId === input.serviceId && candidate.groupId === input.groupId
-      )) ?? extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv)
-        .find((candidate) => candidate.serviceId === input.serviceId && candidate.groupId === input.groupId);
+      ));
       if (!binding) continue;
       targetsBySessionId.set(sessionId, {
         sessionId,
@@ -1676,13 +1674,10 @@ export class ConnectedServiceQuotasCoordinator {
     const generations = new Map<string, number | null>();
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       if (!target.sessionId) continue;
-      const selection = readConnectedServiceChildSelectionsFromEnv(target.connectedServiceSelectionsEnv ?? {})
-        .find((candidate) => (
-          candidate.kind === 'group'
-          && candidate.serviceId === input.serviceId
-          && candidate.groupId === input.groupId
-        )) ?? null;
-      generations.set(target.sessionId, selection?.kind === 'group' ? selection.generation : null);
+      const binding = target.activeBindings.find((candidate) => (
+        candidate.serviceId === input.serviceId && candidate.groupId === input.groupId
+      ));
+      generations.set(target.sessionId, binding?.generation ?? null);
     }
     return generations;
   }
@@ -1690,7 +1685,7 @@ export class ConnectedServiceQuotasCoordinator {
   private hasActiveSpawnTargetForIdentity(entry: RuntimeAccountIdentityEntry): boolean {
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       if (target.sessionId !== entry.sessionId) continue;
-      const bindings = extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv);
+      const bindings = extractActiveBindings(target);
       return bindings.some((binding) => activeBindingMatchesRuntimeIdentity(binding, entry));
     }
     return false;
@@ -1717,7 +1712,7 @@ export class ConnectedServiceQuotasCoordinator {
       if (!sessionId || !target.runtimeAccountIdentitySelections?.length) continue;
       this.recordRuntimeAccountIdentitySelections({
         sessionId,
-        bindings: extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv),
+        bindings: extractActiveBindings(target),
         selections: target.runtimeAccountIdentitySelections,
       });
     }
@@ -1890,7 +1885,7 @@ export class ConnectedServiceQuotasCoordinator {
       if (!sessionId || sessionId === input.sourceSessionId || input.excludeSessionIds.has(sessionId) || seen.has(sessionId)) {
         continue;
       }
-      const binding = extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv)
+      const binding = extractActiveBindings(target)
         .find((candidate) => (
           candidate.serviceId === input.serviceId
           && candidate.groupId === input.groupId
@@ -2607,7 +2602,7 @@ export class ConnectedServiceQuotasCoordinator {
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
       if (!sessionId || sessionIds.includes(sessionId)) continue;
-      for (const entry of extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv)) {
+      for (const entry of extractActiveBindings(target)) {
         if (entry.serviceId !== serviceId) continue;
         if ((entry.groupId ?? '') !== groupId) continue;
         sessionIds.push(sessionId);
@@ -2656,14 +2651,7 @@ export class ConnectedServiceQuotasCoordinator {
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
       if (!sessionId) continue;
-      const bindings: ReadonlyArray<ActiveConnectedServiceBinding> = target.activeBindings.length > 0
-        ? target.activeBindings.map((binding) => ({
-          serviceId: binding.serviceId,
-          profileId: binding.profileId,
-          ...(binding.groupId ? { groupId: binding.groupId } : {}),
-          groupGeneration: binding.generation,
-        }))
-        : extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv);
+      const bindings = extractActiveBindings(target);
       for (const entry of bindings) {
         const groupId = typeof entry.groupId === 'string' ? entry.groupId.trim() : '';
         if (
@@ -3033,6 +3021,7 @@ export class ConnectedServiceQuotasCoordinator {
       .map((profileId) => String(profileId ?? '').trim())
       .filter((profileId) => profileId.length > 0)));
     const completedProfileIdSet = new Set<string>();
+    let successfulTargetCount = 0;
     const deferredProfiles = new Map<string, number>();
     let retryAtMs: number | undefined;
     const deadlineAtMs = typeof input.deadlineAtMs === 'number' && Number.isFinite(input.deadlineAtMs)
@@ -3149,6 +3138,7 @@ export class ConnectedServiceQuotasCoordinator {
             });
             if (deadlineExceeded()) return;
             if (observedSnapshot) {
+              successfulTargetCount += 1;
               runtimeQuotaSnapshots.recordSnapshot({
                 serviceId,
                 groupId,
@@ -3207,6 +3197,7 @@ export class ConnectedServiceQuotasCoordinator {
             return;
           }
           const snapshot = raced.snapshot;
+          successfulTargetCount += 1;
           this.failureStateByBindingKey.delete(bindingKey);
           runtimeQuotaSnapshots.recordSnapshot({
             serviceId,
@@ -3300,6 +3291,7 @@ export class ConnectedServiceQuotasCoordinator {
           : {}),
         targetCount: profileIds.length,
         completedTargetCount: outcome.completedProfileCount,
+        successfulTargetCount,
         ...(outcome.status === 'incomplete'
           ? { incompleteProfileIds: profileIds.filter((profileId) => !completedProfileIdSet.has(profileId)) }
           : {}),
@@ -4373,14 +4365,7 @@ export class ConnectedServiceQuotasCoordinator {
     }
 
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
-      const activeBindings: ReadonlyArray<ActiveConnectedServiceBinding> = target.activeBindings.length > 0
-        ? target.activeBindings.map((binding) => ({
-          serviceId: binding.serviceId,
-          profileId: binding.profileId,
-          ...(binding.groupId ? { groupId: binding.groupId } : {}),
-          groupGeneration: binding.generation,
-        }))
-        : extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv);
+      const activeBindings = extractActiveBindings(target);
       for (const entry of activeBindings) {
         const profileId = String(entry.profileId ?? '').trim();
         if (!profileId) continue;

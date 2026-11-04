@@ -1253,6 +1253,15 @@ live runtime application verifies that preparation without becoming another file
 writer. Refresh distribution checks pool generation and credential revision
 inside the existing materialization lock.
 
+Same-account quota fan-out reads effective pool bindings from the runtime
+registry for both the reporting session and its siblings. Exact application
+adoption updates those bindings even when launch selections were absent or
+older. A provider-observed account change alone leaves its applied generation
+unknown; launch selections cannot restore that proof. Same-account candidate
+proof fails closed for unknown or mismatched generations. Committed pool
+convergence remains with the existing generation consumer and does not depend
+on the number of same-account candidates.
+
 Execution-run isolation no longer assigns private XDG cache, data or state
 directories. User-configured locations and ordinary tool caches are preserved,
 while inherited connected-service authentication is still scrubbed. Account
@@ -1863,6 +1872,24 @@ availability fact; if no daemon serves an accepted request, that request can
 remain pending. The [compatibility notes](compatibility.md#quota-refresh-outcomes-02-development)
 describe the released plain/sealed wire shapes and mixed-version limits.
 
+### Claude pool launch settings (development)
+
+Claude connected-service pool launches set `autoContinueAtUsageLimit: false`
+through `resolveClaudeLaunchSettingsOverlayArg`, the existing per-launch settings
+owner used by local, unified-terminal and both remote SDK runners. This lets
+Happier handle pool switching and reset recovery. The optional pool policy
+`claudeCodeAutoContinueAtUsageLimit: true` restores Claude's native waiting for
+new launches; absence keeps Happier-managed behavior. The Claude materializer
+carries that preference in the child environment, and the launch owner applies it
+only when the connected-service selection identifies a pool. Native and individual
+profile launches retain their existing settings. Shared Claude home
+`settings.json` files are never rewritten for this setting.
+
+The strict V1 policy field uses the existing auth-group reader negotiation:
+current readers append `happierClaudeCodeAutoContinueAtUsageLimit=1`; the server
+omits it from older-reader responses and preserves its stored value across their
+unrelated edits.
+
 ### Usage-limit reset continuation (development)
 
 `createSessionUsageLimitRecoveryRuntime` owns ordinary usage-limit waits in a
@@ -1900,15 +1927,24 @@ on this superseded source. A different failed-turn report can start a new
 attempt after terminal recovery; replaying the settled report cannot revive it.
 The failed member's attributed evidence is retained
 through the coordinator's existing member-state writer; provider-scoped capacity
-does not penalize an individual member. Scheduler retries observe the pool's
-current member without replaying account selection or spending switch budget.
-Fresh eligible quota evidence is necessary but does not prove that this runner
+does not penalize an individual member. Scheduler retries that observe a different
+eligible replacement use that member without replaying account selection or
+spending switch budget. If the pool's current member is still the failed member, recovery
+uses normal failure persistence and selection, including existing switch budgets
+and restart handling.
+In development source, hard usage-limit recovery prefers fresh usable quota but
+can adopt an eligible replacement using last-known quota when probes are unavailable.
+The canonical selector excludes known exhaustion (including weekly allowances),
+credential/plan blockers and the failed member, and ranks fresh evidence before
+the healthiest last-known candidate. A pool member explicitly selected by the user
+can be adopted without a fresh probe, including under manual selection policy;
+known blockers still apply. These decisions do not prove that this runner
 adopted the account: when its authorized tuple differs, the existing generation
 consumer must settle the already-committed target before continuation. If that
 application redirects to newer committed truth, continuation and the recovery's
 provider-proof identity follow the recipient's actual settled target. Missing or
-stale current-member quota proof uses the existing recovery backoff and quota
-probe owner to recheck that member. Fresh exhaustion waits for that member's
+stale quota proof for the same failed member uses the existing recovery backoff
+and quota probe owner to recheck that member. Fresh exhaustion waits for that member's
 reset; a different failed member's classification reset cannot govern this wait.
 Equivalent concurrent quota reads share one provider fetch, bounded by the quota
 owner's fetch timeout. A waiter's cancellation leaves other waiters active, and
@@ -1922,13 +1958,34 @@ cannot reuse a quota read begun before the provider consumed the recovery credit
 
 In development source, group probes report provider-backoff deferrals per member
 with their retry boundaries. These are completed admission decisions rather than
-an incomplete group observation: the selector excludes deferred members while
-using other members' evidence. A genuine incomplete probe, including deadline
-expiry, returns `quota_proof_unavailable` from the switch owner for every trigger.
-Interrupted turns retain durable recovery at the existing unknown-quota backoff
-or a later provider boundary. New spawns retain their existing retryable launch
+an incomplete group observation: where fresh evidence is required, the selector
+excludes deferred members while using other members' evidence. A genuine
+incomplete probe, including deadline
+expiry, returns `quota_proof_unavailable` when fresh evidence is required. Hard
+usage-limit replacement selection instead reloads the latest member state and
+logs `hard_limit_last_known_quota`; soft switches retain fresh, meaningfully better
+quota admission. Resuming the same failed member still requires fresh usable
+proof. Interrupted turns without an eligible replacement retain durable recovery
+at the existing unknown-quota backoff or a later provider boundary. New spawns retain their existing retryable launch
 rejection for hard-limit uncertainty; predictive soft switching keeps the current
 selection. Consumers no longer catch a separate quota-probe exception.
+
+Permission to reconsider the failed member on scheduler replay does not gate
+replacement selection. An exhausted allowance whose recorded reset has elapsed
+becomes unknown for hard replacement or manual adoption, without supplying
+positive same-member proof. Active longer windows and credential, model, plan or
+later runtime blockers remain exclusionary. Exhaustion with no reset boundary
+remains known until a new observation changes it; age alone cannot prove a reset.
+When all members are exhausted, recovery wakes at the earliest member retry
+boundary rather than inheriting only the failed member's later reset.
+
+The daemon's single local-server storm owner observes completed local HTTP
+attempts. Stored recovery classifications replayed by waiting intents do not add
+failures. Its window expires independently of recovery traffic; local-server
+success, successful quota observation or completed recovery clears it. Recovery
+and quota admission read the same owner. A committed hard-limit switch fans out
+through the existing generation consumer for both initial reports and scheduler
+retries, so recovery after a server outage also carries reachable siblings.
 
 Initial intake and scheduler replay use the same durable recovery identity for
 Pending deduplication, even after the first continuation is consumed and the
@@ -1936,12 +1993,23 @@ daemon is replaced. The selected target and durable interrupted recovery determi
 that identity; quota reset receipts and snapshots only establish eligibility.
 A later independent recovery can continue at the same account and generation.
 Recovery continuations also recheck the current failed-turn
-projection and live turn at message admission, so an old wait cannot steer newer
-consumed user work. An unresolved original turn projection is retryable, not proof
-of newer work: the durable recovery retains custody until the failure projection arrives
-and Pending admits the continuation, or terminal supersession/disabled policy
-retires it. Failure reporting does not wait for that projection. Recovery remains
-pending until provider outcome proof arrives.
+projection and live turn at message admission. Reports carrying an exact runtime
+issue fingerprint must still match that failure; re-arming the scheduler does
+not authorize a later failed turn. Older reports without that identity retain
+the arming-time check, which cannot establish the original failure across a
+restart. A superseded live turn or archived session settles the old recovery
+terminally instead of waiting for provider proof after suppressing admission.
+Failure reporting does not wait for its durable projection.
+An unresolved projection is retryable while the live turn matches the projected
+in-progress turn. Without that witness, or when the projected turn is already
+completed or cancelled, recovery settles terminally without admitting a continuation.
+Completed projections omit both the failed issue and input origin; they cannot
+distinguish provider task notifications from newer human work. The terminal
+recovery event appears in the session transcript, but cancelled usage-limit
+recovery currently hides its dedicated Retry controls. The default diagnostic
+records the deciding turn ids, status, timestamps and failure fingerprints.
+Once Pending admits a continuation, recovery remains pending until provider
+outcome proof arrives.
 Application correlation only carries that guarded context into an early exact
 recipient acknowledgement; it does not decide admission or deduplication. A late
 superseded in-band report cannot author a continuation before durable recovery
@@ -1964,9 +2032,23 @@ Claude's provider-owned transcript mapper reads reset seconds and allowance iden
 from `apiErrorParams.rate_limit_info`, with `quotaLimits` as a fallback. It converts
 the reset to milliseconds for the existing runtime report, pool exclusion and
 recovery wait. An explicit `usage_limit_reached` remains a usage failure even when
-the accompanying meter is below 100 percent. Standard account-switch continuation
-uses neutral text; a resume after the reset retains the limits-lifted text. Both
-paths use the existing prompt owner and preserve custom resume prompts.
+the accompanying meter is below 100 percent. In current development source,
+standard usage-limit continuation uses the limits-lifted text after either an
+account switch or a reset wait. Transient rate-limit recovery uses neutral text
+unless it actually waited for a usage reset. Both paths use the existing prompt
+owner and preserve custom resume prompts.
+
+For Claude pools, the same transcript router recognizes structured `near_limit`
+and `wrap_up` meta user notes (`isMeta` and `turnCompanion`), even when no 429 or
+rejected rate-limit event follows. A fresh `wrap_up` enters hard usage recovery
+with request-issued identity and transcript organization evidence. A `near_limit`
+keeps the parent turn runnable and is file-logged with its issued account identity
+(or unattributed); it publishes no quota and requests no refresh or switch.
+Wrap-up supplies no numeric quota or reset. Historical
+replay, sidechains, other sessions, `release` notes and non-pool sessions do not
+trigger this path. Local and unified runners use their scanner's raw channel;
+the SDK runner shares its existing goal-status transcript tail.
+Follow-up: native near-limit notes have no session-to-daemon refresh path; switching relies on existing soft quota polling and wrap-up hard recovery.
 
 Claude's existing transcript router also reads `credential_org` attachments. A
 failure uses the latest organization observation at or before its timestamp.

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +27,7 @@ import { resolveConnectedServiceContinuationOriginId, settleSupersedingRuntimeAu
 import { createRuntimeAuthFailureReportIntake } from '@/daemon/controlServer';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { listProviderActivityRecoveryIdentitiesFromRuntimeBindings } from '../continuation/continuationRecoveryIdentity';
+import { buildObservedFailureMemberRuntimeState } from '../accountGroups/memberRuntimeState';
 
 function classification(): ConnectedServiceRuntimeFailureClassification {
   return {
@@ -230,26 +232,33 @@ describe('RuntimeAuthRecoveryScheduler', () => {
   });
 
   it.each([
-    { reason: 'deadline_exceeded', retryAtMs: undefined, expectedRetryAtMs: 33_000 },
-    { reason: 'probe_unavailable', retryAtMs: 90_000, expectedRetryAtMs: 90_000 },
-  ] as const)('retains classified probe incompleteness as a durable wait ($reason)', async ({ reason, retryAtMs, expectedRetryAtMs }) => {
+    { reason: 'deadline_exceeded', retryAtMs: undefined },
+    { reason: 'probe_unavailable', retryAtMs: 90_000 },
+  ] as const)('recovers a hard limit through incomplete quota probes ($reason)', async ({ reason, retryAtMs }) => {
     let nowMs = 1_000;
     const failure = classificationFor({ resetsAtMs: 604_800_000 });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary',
+      generation: 1, runtimeStateRevision: 0,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map(),
+    };
+    let commits = 0;
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs, quotaFreshnessMs: 60_000,
-      loadState: async () => ({ serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'primary',
-        generation: 1, runtimeStateRevision: 0,
-        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
-        members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
-        memberStatesByProfileId: new Map(),
-      }),
+      loadState: async () => current,
       // Provider/server probe boundary has not produced a complete group observation.
       probeQuotaSnapshotsForGroup: async ({ profileIds }) => ({ status: 'incomplete', reason,
         requestedProfileCount: profileIds.length, completedProfileCount: 0, completedProfileIds: [],
         ...(retryAtMs === undefined ? {} : { retryAtMs }),
       }),
-      commitSwitch: async () => { throw new Error('Incomplete evidence must not commit'); },
-      applyGeneration: async () => { throw new Error('Incomplete evidence must not apply'); },
+      commitSwitch: async ({ toProfileId }) => {
+        commits += 1;
+        current = { ...current, activeProfileId: toProfileId, generation: current.generation + 1 };
+        return current;
+      },
+      applyGeneration: async () => ({ mode: 'hot_apply' }),
     });
     const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
       recover: async () => ({ status: 'switch_attempted', result: await coordinator.switchAfterClassifiedFailure({
@@ -263,8 +272,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       nowMs = 3_000;
       const recoveryKey = buildRuntimeAuthRecoveryKey({ sessionId: 'probe-wait', ...failure });
       await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
+      expect(commits).toBe(1);
+      expect(current).toMatchObject({ activeProfileId: 'backup', generation: 2 });
       expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({
-        status: 'waiting', lastError: 'quota_proof_unavailable', nextRetryAtMs: expectedRetryAtMs,
+        status: 'resumed_awaiting_proof', pendingTargetProfileId: 'backup', pendingTargetGeneration: 2,
       });
     } finally { scheduler.dispose(); }
   });
@@ -273,7 +284,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     { remainingPercent: 60, incomplete: false },
     { remainingPercent: 0, incomplete: false },
     { remainingPercent: 60, incomplete: true },
-  ])('rechecks unknown current-member quota before the failed member reset, then consumes fresh evidence ($remainingPercent percent, incomplete=$incomplete)', async ({ remainingPercent, incomplete }) => {
+  ])('keeps a known-exhausted replacement blocked until usable quota evidence arrives ($remainingPercent percent, incomplete=$incomplete)', async ({ remainingPercent, incomplete }) => {
     let nowMs = 1_000;
     let publishFreshEvidence = false;
     const probes: ReadonlyArray<string>[] = [];
@@ -282,9 +293,12 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     let current: ConnectedServiceAuthGroupSwitchState = {
       serviceId: 'openai-codex', groupId: 'team', activeProfileId: 'backup', generation: 2,
       runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true,
+        preTurnProbeMode: 'always_for_group' },
       members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
-      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>(),
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([['backup', {
+        quotaSnapshot: { capturedAtMs: 1, effectiveRemainingPercent: 0, exhausted: true },
+      }]]),
     };
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs,
@@ -329,8 +343,9 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
       expect(continuations).toBe(0);
       expect(recovered).toMatchObject({ status: 'switch_attempted' });
-      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting', nextRetryAtMs: 33_000 });
-      expect(recovered).toMatchObject({ result: { status: 'quota_proof_unavailable', activeProfileId: 'backup' } });
+      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({ status: 'waiting' });
+      expect(scheduler.readByKeyPassive(recoveryKey)?.nextRetryAtMs).toBeGreaterThan(nowMs);
+      expect(recovered).toMatchObject({ result: { status: 'no_eligible_member' } });
       nowMs = 33_000;
       publishFreshEvidence = true;
       await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
@@ -625,14 +640,14 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     { eligible: true, source: 'predecessor' },
     { eligible: false, source: 'predecessor' },
     { eligible: true, source: 'returned_to_failed_member' },
-  ] as const)('retains a stopped pool recovery after another member becomes active ($source, eligible=$eligible)', async ({ eligible, source }) => {
+  ] as const)('retains a stopped pool recovery through pool changes ($source, eligible=$eligible)', async ({ eligible, source }) => {
     const failure = classificationFor(source === 'selection' || source === 'returned_to_failed_member' ? {} : {
       groupGeneration: 1,
       credentialRevision: source === 'registry' ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : null,
       recoveryAction: { kind: 'quota_recovery_required' },
     });
     const activeProfileId = source === 'returned_to_failed_member' ? 'primary' : 'backup';
-    const current: ConnectedServiceAuthGroupSwitchState = {
+    let current: ConnectedServiceAuthGroupSwitchState = {
       serviceId: 'openai-codex', groupId: 'team', activeProfileId, generation: 2,
       runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
       policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
@@ -644,11 +659,22 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         ['primary', source === 'returned_to_failed_member'
           ? { quotaSnapshot: { capturedAtMs: 20_000, effectiveRemainingPercent: 60 } }
           : { exhaustedUntilMs: 100_000 }],
-        ['backup', eligible ? { quotaSnapshot: { capturedAtMs: 20_000, effectiveRemainingPercent: 60 } } : {}],
+        ['backup', { quotaSnapshot: { capturedAtMs: 20_000, effectiveRemainingPercent: eligible ? 60 : 0 } }],
       ]),
     };
     const effects: string[] = [];
-    const recordObservedFailureState = vi.fn(async () => { effects.push('record-failure'); });
+    const recordObservedFailureState = vi.fn<NonNullable<ConstructorParameters<typeof ConnectedServiceAuthGroupSwitchCoordinator>[0]['recordObservedFailureState']>>(async (failure) => {
+      effects.push('record-failure');
+      if (!failure.observedProfileId) throw new Error('Expected the failed account');
+      // Persistence is the boundary; use the real projection to invalidate old positive quota evidence.
+      const state = buildObservedFailureMemberRuntimeState({
+        ...failure, existing: current.memberStatesByProfileId.get(failure.observedProfileId) ?? null,
+        policy: current.policy, retryAtMs: failure.resetsAtMs ?? null,
+        planType: failure.planType, observedAtMs: 20_000,
+      });
+      current = { ...current, memberStatesByProfileId: new Map(current.memberStatesByProfileId)
+        .set(failure.observedProfileId, state) };
+    });
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 20_000,
       quotaFreshnessMs: 60_000, loadState: async () => current,
@@ -698,10 +724,22 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }),
       });
       await scheduler.wakeByKey({ recoveryKey, reason: 'manual' });
-      expect(scheduler.readByKeyPassive(recoveryKey)).toMatchObject({
-        status: eligible ? 'resumed_awaiting_proof' : 'waiting',
+      const returnedToFailedMember = source === 'returned_to_failed_member';
+      const resumesReplacement = eligible && !returnedToFailedMember;
+      const intent = scheduler.readByKeyPassive(recoveryKey);
+      expect(intent).toMatchObject({
+        status: resumesReplacement ? 'resumed_awaiting_proof' : 'waiting',
       });
-      expect(continuedProfile).toBe(eligible ? activeProfileId : null);
+      expect(continuedProfile).toBe(resumesReplacement ? activeProfileId : null);
+      if (returnedToFailedMember) {
+        // Returning to the failed account supplies no recovery proof. A stopped turn
+        // must retain its wait when the normal switch budget prevents another switch.
+        expect(intent).toMatchObject({ lastError: 'switch_limit_reached', switchesThisTurn: 999 });
+        expect(intent?.nextRetryAtMs ?? 0).toBeGreaterThan(20_000);
+        expect(intent?.pendingTargetProfileId ?? null).toBeNull();
+        expect(current.activeProfileId).toBe('primary');
+        expect(current.memberStatesByProfileId.get('primary')).toMatchObject({ lastFailureKind: 'usage_limit' });
+      }
       expect(effects).toEqual(['record-failure']);
       expect(recordObservedFailureState).toHaveBeenCalledWith(expect.objectContaining({
         observedProfileId: failure.profileId,
@@ -3601,6 +3639,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
   });
 
   it('does not dead-letter repeated local completions while provider outcome proof is pending', async () => {
+    const warning = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
     let nowMs = 1_000;
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => nowMs,
@@ -3635,8 +3674,12 @@ describe('RuntimeAuthRecoveryScheduler', () => {
         attemptCount: 1,
       });
       expect(intent?.status).not.toBe('exhausted');
+      if (attempt > 0) expect(warning).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        reason: 'untargeted_provider_outcome_proof_refresh', sessionId: 'session-1',
+      }));
       nowMs += 250;
     }
+    warning.mockRestore();
   });
 
   it('keeps a credential-refresh continuation targeted and bounded while provider proof is absent', async () => {

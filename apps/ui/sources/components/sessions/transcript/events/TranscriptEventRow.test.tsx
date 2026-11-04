@@ -800,11 +800,15 @@ describe('TranscriptEventRow', () => {
         expect(serialized).not.toContain(t('message.unknownEvent'));
     });
 
-    it('does not describe a terminal policy decision as a user cancellation', async () => {
+    it.each([
+        'switch_reason_disabled',
+        'connected_service_continuation_turn_projection_unavailable',
+        'connected_service_continuation_failure_superseded',
+    ])('renders terminal recovery reason %s as a stopped notice', async (reason) => {
         const screen = await renderScreen(<TranscriptEventRow event={{
             type: 'connected-service-runtime-auth-recovery',
             status: 'cancelled', serviceId: 'claude-subscription', profileId: 'work',
-            terminal: true, reason: 'switch_reason_disabled',
+            terminal: true, reason,
         }} />);
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(serialized).not.toContain(t('message.connectedServiceRuntimeAuthRecoveryCancelled'));

@@ -1,3 +1,5 @@
+import axios, { AxiosError } from 'axios';
+import { createLocalServerStormTracker } from '../../serverWork/localServerStorm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -319,7 +321,8 @@ function createDeferred<T>(): Readonly<{
   return { promise, resolve, reject };
 }
 
-function createObservationProbeFixture(fetch: ConnectedServiceQuotaFetcher['fetch'], consumeRecoveryCredit?: ConnectedServiceQuotaFetcher['consumeRecoveryCredit']) {
+function createObservationProbeFixture(fetch: ConnectedServiceQuotaFetcher['fetch'], consumeRecoveryCredit?: ConnectedServiceQuotaFetcher['consumeRecoveryCredit'],
+  options: Pick<ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0], 'quotaWorkGate'> = {}) {
   let now = 1_000_000;
   let credentialRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
   let record = buildConnectedServiceCredentialRecord({ now, serviceId: 'openai-codex', profileId: 'backup',
@@ -344,7 +347,8 @@ function createObservationProbeFixture(fetch: ConnectedServiceQuotaFetcher['fetc
     // The server permits reacquisition by the same daemon owner.
     acquireConnectedServiceRefreshLease: async () => ({ acquired: true, leaseUntil: now + 30_000 }),
   } satisfies QuotaApi;
-  const quotas = new ConnectedServiceQuotasCoordinator({ api,
+  const diagnostics: unknown[] = [];
+  const quotas = new ConnectedServiceQuotasCoordinator({ api, ...options, recordDiagnostic: (event) => diagnostics.push(event),
     credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
     quotaFetchers: [{ serviceId: 'openai-codex', fetch, consumeRecoveryCredit }], now: () => now, randomBytes,
     discoveryEnabled: false, runtimeQuotaSnapshots, fetchTimeoutMs: 100,
@@ -363,14 +367,51 @@ function createObservationProbeFixture(fetch: ConnectedServiceQuotaFetcher['fetc
     commitSwitch: async () => { throw new Error('Unexpected selection'); },
     applyGeneration: async () => { throw new Error('Unexpected application'); },
   });
-  return { api, quotas, switching, requestRefresh: () => { requestedAt = now; }, observe: () => switching.observeCurrentGenerationForRecovery({
-    serviceId: 'openai-codex', groupId: 'team', observedProfileId: 'primary',
-  }), advance: (elapsedMs: number) => { now += elapsedMs; },
+  return { api, quotas, switching, diagnostics, requestRefresh: () => { requestedAt = now; }, observe: async () => {
+    const result = await switching.observeCurrentGenerationForRecovery({
+      serviceId: 'openai-codex', groupId: 'team', observedProfileId: 'primary',
+    });
+    if (result === null) throw new Error('A replacement observation must not request failure selection');
+    return result;
+  }, advance: (elapsedMs: number) => { now += elapsedMs; },
   replaceRecord: (next: typeof record) => { record = next; }, readRecord: () => record,
   replaceRevision: (next: string) => { credentialRevision = next; } };
 }
 
 describe('ConnectedServiceQuotasCoordinator', () => {
+  it.each([false, true])('reports actual successful quota observations separately from completed admission (snapshot=%s)', async (hasSnapshot) => {
+    const fixture = createObservationProbeFixture(async () => hasSnapshot ? buildQuotaSnapshotFixture({
+      serviceId: 'openai-codex', profileId: 'backup', now: 1_000_000, remainingPct: 100,
+    }) : null);
+    try {
+      await fixture.quotas.probeGroupQuotaSnapshots({ serviceId: 'openai-codex', groupId: 'team', profileIds: ['backup'] });
+      expect(fixture.diagnostics).toContainEqual(expect.objectContaining({
+        phase: 'probe_group', probeOutcome: 'complete', completedTargetCount: 1, successfulTargetCount: hasSnapshot ? 1 : 0,
+      }));
+    } finally { fixture.quotas.dispose(); }
+  });
+
+  it('resumes real quota probes when the shared local-server failure window drains', async () => {
+    let now = 1_000;
+    const client = axios.create({ adapter: async (config) => {
+      throw new AxiosError('unavailable', 'ERR_BAD_RESPONSE', config, undefined,
+        { data: {}, headers: {}, config, status: 503, statusText: '' });
+    } });
+    const tracker = createLocalServerStormTracker({ nowMs: () => now, windowMs: 60_000, serverUrl: 'http://local.test', client });
+    let fetches = 0;
+    const fixture = createObservationProbeFixture(async () => { fetches++; return null; }, undefined, {
+      quotaWorkGate: () => tracker.failureCount() >= 3 ? { status: 'deferred', reason: 'local_server_storm' } : { status: 'open' },
+    });
+    try {
+      for (let i = 0; i < 3; i++) await client.get('http://local.test/fail').catch(() => {});
+      await fixture.quotas.probeGroupQuotaSnapshots({ serviceId: 'openai-codex', groupId: 'team', profileIds: ['backup'] });
+      expect(fetches).toBe(0);
+      now += 60_001;
+      await fixture.quotas.probeGroupQuotaSnapshots({ serviceId: 'openai-codex', groupId: 'team', profileIds: ['backup'] });
+      expect(fetches).toBe(1);
+    } finally { tracker.dispose(); fixture.quotas.dispose(); }
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -456,14 +497,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         resetsAtMs: now + 7 * 24 * 60 * 60_000,
       });
       expect(fetches.filter((profileId) => deferred.includes(profileId))).toHaveLength(deferred.length);
-      if (scenario === 'usable_alternative') {
-        expect(result).toMatchObject({ status: 'switched', activeProfileId: 'member-0', generation: 2 });
-      } else {
-        expect(generation).toBe(1);
-        expect(resolveRuntimeAuthRecoveryResultDisposition({ result, nowMs: now,
-          classificationProfileId: 'leeroy_batiplus', classificationResetsAtMs: now + 7 * 24 * 60 * 60_000,
-        })).toMatchObject({ kind: 'durable_wait', nextRetryAtMs: now + (scenario === 'all_deferred' ? 120_000 : 121_000) });
-      }
+      expect(result).toMatchObject({ status: 'switched', generation: 2,
+        activeProfileId: scenario === 'usable_alternative' ? 'member-0' : 'ai3_bat',
+      });
+      expect(generation).toBe(2);
     },
   );
 
@@ -7492,6 +7529,79 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       phase: 'same_account_fanout',
       reason: 'same_account_fanout_no_matching_sessions',
     }));
+  });
+
+  it.each([
+    { spawnGeneration: null, unprovenSessionId: 'source' },
+    { spawnGeneration: 2, unprovenSessionId: 'shared-sibling' },
+  ])('uses applied registry generations after adoption from spawn generation $spawnGeneration and fails closed for $unprovenSessionId', async ({ spawnGeneration, unprovenSessionId }) => {
+    const now = 1_000_000;
+    const runtimeRegistry = new ConnectedServiceRuntimeRegistry({ nowMs: () => now });
+    const diagnostics: unknown[] = [];
+    // These server/process boundaries must remain unused: fanout consumes an existing decision.
+    const unexpectedDecision = async (): Promise<never> => { throw new Error('fanout must not decide another generation'); };
+    const switching = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => now,
+      quotaFreshnessMs: 60_000,
+      loadState: unexpectedDecision,
+      commitSwitch: unexpectedDecision,
+      applyGeneration: unexpectedDecision,
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: {
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null,
+      },
+      credentials: { token: 'synthetic', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+      quotaFetchers: [], now: () => now, randomBytes,
+      runtimeRegistry,
+      authGroupSwitchCoordinator: switching,
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: () => 'shared_group_auth_surface',
+      recordDiagnostic: (event) => diagnostics.push(event),
+    });
+    for (const [sessionId, pid] of [['source', 561], ['shared-sibling', 562]] as const) {
+      coordinator.registerSpawnTarget({
+        pid, sessionId,
+        connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'team' },
+        } },
+        connectedServiceSelectionsEnv: spawnGeneration === null ? {} : {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group', serviceId: 'claude-subscription', groupId: 'team',
+            activeProfileId: 'old', fallbackProfileId: 'primary', generation: spawnGeneration,
+          }]),
+        },
+      });
+      expect(runtimeRegistry.adoptExactGroupApplicationForSession({
+        sessionId, serviceId: 'claude-subscription', groupId: 'team',
+        profileId: 'primary', generation: 4, credentialRevision: null,
+      })?.activeBindings[0]).toMatchObject({ profileId: 'primary', generation: 4 });
+    }
+    const failure = {
+      sourceSessionId: 'source', serviceId: 'claude-subscription', groupId: 'team',
+      exhaustedProfileId: 'primary', resetAtMs: null,
+      committedGeneration: buildConnectedServiceAuthGroupCommittedGenerationFact({
+        decisionId: 'synthetic-hard-limit', provenance: 'hard_limit',
+        decisionCommittedTarget: { serviceId: 'claude-subscription', groupId: 'team', profileId: 'backup', generation: 5 },
+      }),
+    } as const;
+    try {
+      await expect(coordinator.recordRuntimeUsageLimitExhaustionAndFanout(failure))
+        .resolves.toMatchObject({ fanoutCandidates: 1 });
+      expect(runtimeRegistry.adoptProviderObservedGroupAccountForSession({
+        sessionId: unprovenSessionId, serviceId: 'claude-subscription', groupId: 'team',
+        profileId: 'provider-observed-member', observedAtMs: now + 1,
+      })?.activeBindings[0]).toMatchObject({ generation: null });
+      await expect(coordinator.recordRuntimeUsageLimitExhaustionAndFanout(failure))
+        .resolves.toMatchObject({ fanoutCandidates: 0 });
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        reason: 'registry_binding_missing_group_generation',
+      }));
+    } finally {
+      coordinator.dispose();
+    }
   });
 
   it('proves shared group auth-surface siblings from registry bindings without runtime probes', async () => {

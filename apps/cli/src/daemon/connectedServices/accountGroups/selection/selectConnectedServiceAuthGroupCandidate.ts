@@ -10,6 +10,7 @@ import {
 import {
   reconcileMemberRuntimeStateWithFreshQuotaEvidence,
   reconcileMemberRuntimeStateWithPositiveEvidence,
+  resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker,
   type ConnectedServiceAuthGroupPositiveEvidence,
 } from '../memberRuntimeState';
 
@@ -102,7 +103,7 @@ export type ConnectedServiceAuthGroupCandidateDecisionTraceEntry = Readonly<{
   exclusionReason?: ConnectedServiceAuthGroupCandidateExclusion['reason'];
   retryAtMs?: number | null;
   quotaEvidence: Readonly<{
-    status: 'fresh' | 'stale_or_missing';
+    status: 'fresh' | 'last_known' | 'stale_or_missing';
     remainingPercent?: number | null;
     capturedAtMs?: number;
     exhausted?: boolean;
@@ -240,37 +241,6 @@ function resolveRecentLimiterRetry(params: Readonly<{
   };
 }
 
-function resolveSnapshotEligibilityBlocker(
-  snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null,
-  nowMs: number,
-): ConnectedServiceAuthGroupCandidateExclusion['reason'] extends infer Reason
-  ? Readonly<{ reason: Extract<Reason, 'capacity_limited' | 'auth_invalid' | 'plan_unavailable' | 'validation_blocked'>; retryAtMs?: number | null }> | null
-  : never {
-  const meters = snapshot?.meters ?? [];
-  if (meters.length === 0) return null;
-  if (meters.some((meter) => meter.limitCategory === 'usage_limit' || meter.limitCategory === 'rate_limit' || meter.limitCategory === 'unknown')) {
-    return null;
-  }
-  const retryAtMs = meters
-    .map((meter) => numberOrNull(meter.resetAtMs))
-    .filter((value): value is number => value !== null && value > nowMs)
-    .sort((left, right) => left - right)[0] ?? null;
-  const categories = new Set(meters.map((meter) => meter.limitCategory));
-  if (categories.has('auth_invalid') || categories.has('disabled')) {
-    return { reason: 'auth_invalid', retryAtMs };
-  }
-  if (categories.has('plan_invalid')) {
-    return { reason: 'plan_unavailable', retryAtMs };
-  }
-  if (categories.has('validation_failed')) {
-    return { reason: 'validation_blocked', retryAtMs };
-  }
-  if (categories.has('capacity')) {
-    return { reason: 'capacity_limited', retryAtMs };
-  }
-  return null;
-}
-
 function isFreshQuotaSnapshot(
   snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null | undefined,
   nowMs: number,
@@ -335,6 +305,23 @@ function isQuotaExhausted(snapshot: ConnectedServiceAuthGroupQuotaSnapshot): boo
   return remaining !== null && remaining <= 0;
 }
 
+/** An elapsed allowance is unknown, never positive recovery proof. No reset means
+ * the observed exhaustion still applies; age alone cannot invent replenishment. */
+function ageElapsedExhaustedAllowances(
+  snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null,
+  nowMs: number,
+): ConnectedServiceAuthGroupQuotaSnapshot | null {
+  if (!snapshot) return null;
+  const expired = (snapshot.meters ?? []).filter((meter) => (
+    (isQuotaMeter(meter) || isRateLimitMeter(meter)) && meterIsExhausted(meter)
+    && meter.resetAtMs !== null && meter.resetAtMs <= nowMs
+  ));
+  if (expired.length === 0) return snapshot;
+  return { ...snapshot, exhausted: false, effectiveRemainingPercent: null,
+    meters: snapshot.meters?.map((meter) => expired.includes(meter) ? { ...meter, remainingPct: null } : meter),
+  };
+}
+
 /** A reset is a quota remedy, not a fallback for every reason a pool cannot select. */
 export function resolveConnectedServiceAuthGroupQuotaResetCandidates(
   params: Parameters<typeof selectConnectedServiceAuthGroupCandidate>[0],
@@ -380,12 +367,12 @@ function resolveLeastLimitedScore(snapshot: ConnectedServiceAuthGroupQuotaSnapsh
   return numberOrNull(snapshot.effectiveRemainingPercent);
 }
 
-function buildCandidateQuotaEvidenceTrace(snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null): ConnectedServiceAuthGroupCandidateDecisionTraceEntry['quotaEvidence'] {
+function buildCandidateQuotaEvidenceTrace(snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null, fresh = true): ConnectedServiceAuthGroupCandidateDecisionTraceEntry['quotaEvidence'] {
   if (!snapshot) {
     return { status: 'stale_or_missing' };
   }
   return {
-    status: 'fresh',
+    status: fresh ? 'fresh' : 'last_known',
     remainingPercent: resolveLeastLimitedScore(snapshot),
     capturedAtMs: snapshot.capturedAtMs,
     exhausted: isQuotaExhausted(snapshot),
@@ -421,8 +408,8 @@ export function hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason(
     ? state?.quotaSnapshot ?? null
     : null;
   if (!quotaSnapshot) return allowsUnknownQuotaEvidenceForSwitchReason(params.reason);
-  if (quotaSnapshot.planUnavailable) return false;
-  if (resolveSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs)) return false;
+  if (quotaSnapshot.planUnavailable && !allowsUnknownQuotaEvidenceForSwitchReason(params.reason)) return false;
+  if (resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs)) return false;
   return !isQuotaExhausted(quotaSnapshot);
 }
 
@@ -666,8 +653,10 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   requiredModelIds?: ReadonlyArray<string>;
   quotaProbeDeferredUntilMsByProfileId?: ReadonlyMap<string, number>;
   switchReason?: string;
+  /** Adoption of the pool's explicit user selection still enforces all known blockers. */
+  acceptLastKnownQuota?: boolean;
 }>): ConnectedServiceAuthGroupCandidateSelection {
-  if (params.policy.strategy === 'manual') {
+  if (params.policy.strategy === 'manual' && !params.acceptLastKnownQuota) {
     return {
       selected: null,
       reason: 'manual_strategy',
@@ -690,19 +679,24 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     quotaEvidence: ConnectedServiceAuthGroupCandidateDecisionTraceEntry['quotaEvidence'];
   }> = [];
 
+  const hardLimitRecovery = params.switchReason === 'usage_limit' || params.switchReason === 'same_provider_account_exhausted';
+  const acceptLastKnownQuota = hardLimitRecovery || params.acceptLastKnownQuota === true;
   for (const member of params.members) {
     const state = params.memberStatesByProfileId.get(member.profileId) ?? null;
-    const quotaSnapshot = isFreshQuotaSnapshot(state?.quotaSnapshot, params.nowMs, params.quotaFreshnessMs)
+    const freshQuotaSnapshot = isFreshQuotaSnapshot(state?.quotaSnapshot, params.nowMs, params.quotaFreshnessMs)
       ? state?.quotaSnapshot ?? null
       : null;
+    const observedQuotaSnapshot = freshQuotaSnapshot ?? (acceptLastKnownQuota ? state?.quotaSnapshot ?? null : null);
+    const quotaSnapshot = acceptLastKnownQuota
+      ? ageElapsedExhaustedAllowances(observedQuotaSnapshot, params.nowMs) : observedQuotaSnapshot;
     const effectiveState = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
       state,
-      quotaSnapshot,
+      quotaSnapshot: freshQuotaSnapshot,
       quotaFreshnessMs: params.quotaFreshnessMs,
       policy: params.policy,
       nowMs: params.nowMs,
     });
-    const quotaEvidence = buildCandidateQuotaEvidenceTrace(quotaSnapshot);
+    const quotaEvidence = buildCandidateQuotaEvidenceTrace(quotaSnapshot, freshQuotaSnapshot !== null);
     if (!member.enabled || effectiveState?.autoDisabledReason === 'model_not_entitled') {
       excluded.push({ profileId: member.profileId, reason: 'disabled' });
       decisionTraceCandidates.push({
@@ -714,7 +708,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       continue;
     }
     const probeRetryAtMs = params.quotaProbeDeferredUntilMsByProfileId?.get(member.profileId);
-    if (probeRetryAtMs !== undefined && probeRetryAtMs > params.nowMs) {
+    if (!acceptLastKnownQuota && probeRetryAtMs !== undefined && probeRetryAtMs > params.nowMs) {
       excluded.push({ profileId: member.profileId, reason: 'quota_probe_deferred', retryAtMs: probeRetryAtMs });
       decisionTraceCandidates.push({ profileId: member.profileId, decision: 'excluded',
         exclusionReason: 'quota_probe_deferred', retryAtMs: probeRetryAtMs, quotaEvidence });
@@ -778,7 +772,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       });
       continue;
     }
-    const snapshotBlocker = resolveSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs);
+    const snapshotBlocker = resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs);
     if (snapshotBlocker) {
       excluded.push({
         profileId: member.profileId,
@@ -889,7 +883,15 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     candidates.push(candidate);
   }
 
-  if (params.policy.strategy === 'expiry_first') {
+  if (hardLimitRecovery) {
+    // Prefer fresh usable evidence. If probes cannot supply it, leave the failed member
+    // using the healthiest last-known account rather than waiting indefinitely for proof.
+    candidates.sort((left, right) => {
+      const fresh = (profileId: string) => isFreshQuotaSnapshot(params.memberStatesByProfileId.get(profileId)?.quotaSnapshot,
+        params.nowMs, params.quotaFreshnessMs);
+      return Number(fresh(right.profileId)) - Number(fresh(left.profileId)) || compareLeastLimited(left, right);
+    });
+  } else if (params.policy.strategy === 'expiry_first') {
     candidates.sort((left, right) => {
       const leftAdequate = left.leastLimitedScore !== null && left.leastLimitedScore > params.policy.softSwitchRemainingPercent;
       const rightAdequate = right.leastLimitedScore !== null && right.leastLimitedScore > params.policy.softSwitchRemainingPercent;

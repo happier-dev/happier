@@ -347,6 +347,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     activeProfileId?: string | null;
     allowCurrentProfileRetry: boolean;
   }>): Promise<QuotaProbeSelection> {
+    if (input.loaded.lastSwitchReason === 'manual' && input.activeProfileId
+      && input.activeProfileId !== input.loaded.activeProfileId) {
+      return { status: 'ready', state: input.loaded };
+    }
     if (!this.deps.probeQuotaSnapshotsForGroup) return { status: 'ready', state: input.loaded };
     const profileIds = resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
       activeProfileId: input.activeProfileId ?? input.loaded.activeProfileId,
@@ -368,6 +372,20 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     const deferred = probeResult?.deferredProfiles ?? [];
     if (probeResult?.status === 'incomplete' || (probeResult?.completedProfileCount === 0 && deferred.length > 0)) {
       const retryAtMs = resolveEarliestRetryAtMs(deferred) ?? probeResult?.retryAtMs;
+      if (input.trigger === 'classified_failure'
+        && input.loaded.members.some((member) => member.profileId !== (input.activeProfileId ?? input.loaded.activeProfileId))
+        && (input.request.reason === 'usage_limit' || input.loaded.lastSwitchReason === 'manual')) {
+        logger.infoFile('[ConnectedServices] Pool recovery using last-known quota evidence', {
+          serviceId: input.request.serviceId, groupId: input.request.groupId,
+          reason: 'hard_limit_last_known_quota', probeReason: probeResult?.reason ?? 'provider_backoff',
+        });
+        // A partially completed probe may have published useful fresh evidence. Reload it,
+        // retaining deferred facts for other consumers; the selector owns fallback eligibility.
+        const state = await this.deps.loadState({ serviceId: input.request.serviceId, groupId: input.request.groupId, trigger: input.trigger });
+        return { status: 'ready', state: { ...state,
+          quotaProbeDeferredUntilMsByProfileId: new Map(deferred.map(({ profileId, retryAtMs }) => [profileId, retryAtMs])),
+        } };
+      }
       logger.infoFile('[ConnectedServices] Pool quota probe waiting for evidence', {
         serviceId: input.request.serviceId, groupId: input.request.groupId, trigger: input.trigger,
         reason: probeResult?.reason ?? 'provider_backoff', deferredProfiles: deferred,
@@ -927,16 +945,19 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     return null;
   }
 
-  /** Observes an already-selected member, preserving failed-member evidence without replaying a switch. */
+  /** Observes a replacement; null leaves a failed current member to the normal switch pipeline. */
   async observeCurrentGenerationForRecovery(input: Readonly<{
     serviceId: string;
     groupId: string;
     observedProfileId: string | null;
     failure?: Pick<ConnectedServiceAuthGroupSwitchPipelineRequest,
       'reason' | 'limitCategory' | 'quotaScope' | 'providerLimitId' | 'retryAfterMs' | 'resetsAtMs' | 'planType'>;
-  }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
+  }>): Promise<ConnectedServiceAuthGroupSwitchResult | null> {
     const startedAtMs = this.deps.nowMs();
     let initial = await this.deps.loadState(input);
+    if (input.failure && input.observedProfileId && input.observedProfileId === initial.activeProfileId) {
+      return null;
+    }
     const complete = (result: ConnectedServiceAuthGroupSwitchResult, decisionTrace = readSwitchResultDecisionTrace(result)) => {
       this.logSwitchPipelineResult({
         trigger: 'classified_failure', phase: 'observed_divergence',
@@ -953,8 +974,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       initial = await this.deps.loadState(input);
     }
     const probe = await this.probeQuotaSnapshotsBeforeSelection({
-      trigger: 'classified_failure', request: { ...input, reason: 'usage_limit' },
+      trigger: 'classified_failure', request: { ...input, reason: input.failure?.reason ?? 'usage_limit' },
       loaded: { ...initial, members: initial.members.filter((member) => member.profileId === initial.activeProfileId) },
+      activeProfileId: input.observedProfileId,
       allowCurrentProfileRetry: true,
     });
     if (probe.status === 'waiting') return complete(probe.result);
@@ -972,17 +994,22 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       quotaProbeDeferredUntilMsByProfileId: loaded.quotaProbeDeferredUntilMsByProfileId,
       lastSwitchReason: loaded.lastSwitchReason,
       lastSwitchAt: loaded.lastSwitchAt,
+      switchReason: input.failure?.reason ?? 'usage_limit',
+      acceptLastKnownQuota: loaded.lastSwitchReason === 'manual' && loaded.activeProfileId !== input.observedProfileId,
     });
     // Selection can allow an unknown quota when choosing a replacement. Resuming
     // a previously stopped turn needs the existing fresh, usable-quota proof.
     const quotaRecovery = resolveCurrentProfileQuotaRecoveryProof({ selected, loaded });
-    if (selected.selected && !quotaRecovery) {
+    const acceptsReplacement = loaded.activeProfileId !== input.observedProfileId
+      && (input.failure?.reason === 'usage_limit' || loaded.lastSwitchReason === 'manual');
+    if (selected.selected && !quotaRecovery && !acceptsReplacement) {
       return complete({
         status: 'quota_proof_unavailable', activeProfileId: loaded.activeProfileId, generation: loaded.generation,
+        retryAtMs: loaded.activeProfileId ? loaded.quotaProbeDeferredUntilMsByProfileId?.get(loaded.activeProfileId) : undefined,
         diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
       });
     }
-    if (!loaded.activeProfileId || !quotaRecovery) {
+    if (!loaded.activeProfileId || !selected.selected || (!quotaRecovery && !acceptsReplacement)) {
       return complete({
         status: 'no_eligible_member', generation: loaded.generation, groupExhausted: true,
         activeProfileId: loaded.activeProfileId,
@@ -995,7 +1022,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       generation: loaded.generation, credentialRevision: loaded.credentialRevision ?? null,
       // A reset may make the original failed member current again. Reuse the
       // existing quota-proof continuation identity only for that same-account retry.
-      ...(loaded.activeProfileId === input.observedProfileId ? { quotaRecovery } : {}),
+      ...(loaded.activeProfileId === input.observedProfileId && quotaRecovery ? { quotaRecovery } : {}),
     }, selected.decisionTrace);
   }
 
@@ -1246,6 +1273,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             switchReason: input.reason,
             providerLimitId: input.providerLimitId,
             requiredModelIds: loaded.requiredModelIds,
+            acceptLastKnownQuota: loaded.lastSwitchReason === 'manual',
             allowCurrentProfileRetry: input.allowCurrentProfileRetry === true,
             quotaProbeDeferredUntilMsByProfileId: loaded.quotaProbeDeferredUntilMsByProfileId,
           });

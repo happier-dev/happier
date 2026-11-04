@@ -66,24 +66,23 @@ function snapshotProvesRateLimitUsable(snapshot: ConnectedServiceAuthGroupQuotaS
   return rateLimitMeters.length > 0 && rateLimitMeters.every(meterHasRemainingQuota);
 }
 
-function resolveSnapshotEligibilityBlocker(
+/** One blocker interpretation for selection and positive-evidence reconciliation. */
+export function resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker(
   snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null,
   nowMs: number,
-): boolean {
-  const meters = snapshot?.meters ?? [];
-  if (meters.length === 0) return false;
-  if (meters.some((meter) => meter.limitCategory === 'usage_limit' || meter.limitCategory === 'rate_limit' || meter.limitCategory === 'unknown')) {
-    return false;
+): Readonly<{ reason: 'capacity_limited' | 'auth_invalid' | 'plan_unavailable' | 'validation_blocked'; retryAtMs: number | null }> | null {
+  const active = (snapshot?.meters ?? []).filter((meter) => meter.resetAtMs === null || meter.resetAtMs > nowMs);
+  for (const [categories, reason] of [
+    [['auth_invalid', 'disabled'], 'auth_invalid'],
+    [['plan_invalid'], 'plan_unavailable'],
+    [['validation_failed'], 'validation_blocked'],
+    [['capacity'], 'capacity_limited'],
+  ] as const) {
+    const blocking = active.filter((meter) => categories.some((category) => category === meter.limitCategory));
+    if (blocking.length > 0) return { reason, retryAtMs: blocking.some((meter) => meter.resetAtMs === null)
+      ? null : Math.max(...blocking.map((meter) => meter.resetAtMs!)) };
   }
-  if (meters.some((meter) => numberOrNull(meter.resetAtMs) !== null && numberOrNull(meter.resetAtMs)! <= nowMs)) {
-    return false;
-  }
-  const categories = new Set(meters.map((meter) => meter.limitCategory));
-  return categories.has('auth_invalid')
-    || categories.has('disabled')
-    || categories.has('plan_invalid')
-    || categories.has('validation_failed')
-    || categories.has('capacity');
+  return null;
 }
 
 export type ConnectedServiceAuthGroupPositiveEvidence = Readonly<
@@ -319,7 +318,7 @@ function reconcileMemberRuntimeStateWithQuotaEvidence(params: Readonly<{
     incomingObservedAtMs: quotaSnapshot.capturedAtMs,
     nowMs: params.nowMs,
   }) !== 'incoming_newer') return state;
-  if (quotaSnapshot.planUnavailable || resolveSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs)) return state;
+  if (quotaSnapshot.planUnavailable || resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker(quotaSnapshot, params.nowMs)) return state;
   // A probe must itself follow the existing limiter cooldown. Waiting until later cannot
   // turn a potentially lagging observation captured just after a failure into new proof.
   if (state.lastFailureKind === 'usage_limit' && lastObservedAtMs !== null
