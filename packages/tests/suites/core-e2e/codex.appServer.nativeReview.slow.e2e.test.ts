@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -87,7 +87,13 @@ describe('core e2e: Codex app-server native review', () => {
     await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
 
     const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
-    const fakeAppServer = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath });
+    const fakeAppServerScript = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath });
+    // The real availability probe executes the command directly; Windows cannot
+    // launch a .mjs shebang, so expose the same fixture through a command shim.
+    const fakeAppServer = process.platform === 'win32' ? `${fakeAppServerScript}.cmd` : fakeAppServerScript;
+    if (process.platform === 'win32') {
+      await writeFile(fakeAppServer, `@echo off\r\n"${process.execPath}" "${fakeAppServerScript}" %*\r\n`, 'utf8');
+    }
     const codexEnv = {
       CI: '1',
       HAPPIER_VARIANT: 'dev',
