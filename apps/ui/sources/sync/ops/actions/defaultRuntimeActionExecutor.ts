@@ -1,4 +1,5 @@
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
+import { isPeerMediationRuntimeActionId } from '@happier-dev/protocol/actions/executor/peerMediation';
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 
 import {
@@ -71,9 +72,15 @@ export function createDefaultRuntimeActionExecutor(
     executeOnMachine?: RuntimeActionExecute,
 ): RuntimeActionExecute {
     const fallback = createUnavailableRuntimeActionExecutor();
+    // The daemon owns observability availability and scope; reuse the captured-Account
+    // Machine Action transport and preserve its result for every member of the family.
+    const peerMediation: RuntimeActionExecute = async (args) =>
+        isPeerMediationRuntimeActionId(args.actionId) && executeOnMachine
+            ? await executeOnMachine(args)
+            : await fallback(args);
     const simulator = createSimulatorPreviewRuntimeActionExecutor({
         resolveMachineId: resolveSessionMachineId,
-        fallback,
+        fallback: peerMediation,
     });
     // The person's computer controls (choose a window, stop, hand back) go to the machine they name.
     const computer = createComputerRuntimeActionExecutor({
