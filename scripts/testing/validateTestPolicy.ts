@@ -9,6 +9,7 @@ import { type ValidateExtensionImportBoundariesResult } from './migrations/lib/e
 export interface PolicyReport {
   enforcedFindings: readonly PolicyFinding[];
   reportOnlyFindings: readonly PolicyFinding[];
+  internalModuleMocks: ReturnType<typeof collectPolicyFindings>['internalModuleMocks'];
 }
 
 export interface TestPolicyReport {
@@ -18,10 +19,11 @@ export interface TestPolicyReport {
 }
 
 export function collectPolicyReport(files: readonly InventoryFile[]): PolicyReport {
-  const findings = collectPolicyFindings(files).findings;
+  const { findings, internalModuleMocks } = collectPolicyFindings(files);
   return {
     enforcedFindings: findings.filter((finding) => finding.mode === 'enforce'),
     reportOnlyFindings: findings.filter((finding) => finding.mode === 'report-only'),
+    internalModuleMocks,
   };
 }
 
@@ -34,6 +36,12 @@ export function resolveTestPolicyExitCode(report: PolicyReport, extensionImportB
 }
 
 function printPolicyReport(report: PolicyReport, includeAdvisory: boolean): void {
+  for (const entry of report.internalModuleMocks) {
+    console.log(`${entry.packagePath}: ${entry.count} internal-module vi.mock call(s) in ${entry.files.length} file(s).`);
+    if (includeAdvisory) {
+      for (const file of entry.files) console.log(`- ${file.filePath}: ${file.count}`);
+    }
+  }
   if (report.enforcedFindings.length === 0 && (!includeAdvisory || report.reportOnlyFindings.length === 0)) {
     console.log('test:policy passed: no enforced policy findings detected.');
     return;

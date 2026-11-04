@@ -11,6 +11,8 @@ import {
   stripStringsAndComments,
 } from './testPolicySurface.ts';
 import { collectInlineMockFamilyStats, type InlineMockFamilyName } from '../../../apps/ui/tools/migrations/inlineMockClassifier.ts';
+import internalModuleMockBaseline from './internalModuleMockBaseline.json' with { type: 'json' };
+import { collectInternalModuleMockInventory, type InternalModuleMockPackage } from './internalModuleMocks.ts';
 
 export interface PolicyFinding {
   ruleId: string;
@@ -21,6 +23,7 @@ export interface PolicyFinding {
 
 export interface PolicyFindingReport {
   findings: readonly PolicyFinding[];
+  internalModuleMocks: readonly InternalModuleMockPackage[];
 }
 
 function hasPattern(content: string, pattern: RegExp): boolean {
@@ -67,8 +70,26 @@ function shouldReportUiTreeWalk(file: InventoryFile, codeText: string): boolean 
   );
 }
 
-export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFindingReport {
+export function collectPolicyFindings(
+  files: readonly InventoryFile[],
+  options?: { internalModuleMockBaseline?: Readonly<Record<string, number>> },
+): PolicyFindingReport {
   const findings: PolicyFinding[] = [];
+  const internalModuleMocks = collectInternalModuleMockInventory(files);
+  const baseline: Readonly<Record<string, number>> = options?.internalModuleMockBaseline ?? internalModuleMockBaseline;
+  for (const entry of internalModuleMocks) {
+    for (const file of entry.files) {
+      const allowed = baseline[file.filePath] ?? 0;
+      if (file.count > allowed) {
+        findings.push({
+          ruleId: 'no-new-internal-module-mocks',
+          mode: 'enforce',
+          filePath: file.filePath,
+          message: `${file.count} internal-module vi.mock call(s), baseline ${allowed}; replace internal mocks with composed tests.`,
+        });
+      }
+    }
+  }
 
   for (const file of files) {
     const testFile = isTestPolicyFile(file.filePath);
@@ -222,5 +243,5 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
     }
   }
 
-  return { findings };
+  return { findings, internalModuleMocks };
 }

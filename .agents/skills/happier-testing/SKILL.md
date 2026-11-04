@@ -127,6 +127,8 @@ Most live failures in 0.3 were correct owners wired together wrongly: an empty e
 
 ## Fixture And Mock Policy
 
+- `test:policy` reports internal-module `vi.mock` counts per package (`--report-only` lists files) and rejects per-file growth above `scripts/testing/lib/internalModuleMockBaseline.json`; replace internal mocks with composed tests, and identify a genuine otherwise-unrecognized system adapter with an immediately preceding `test-policy-boundary:` comment explaining the boundary.
+
 - Do not partially mock central shared modules such as `@/sync/domains/state/storage`.
 - Prefer package-local shared factories/testkits for repeated boundary mocks.
 - Keep cross-repo primitives in `packages/tests/src/testkit`.

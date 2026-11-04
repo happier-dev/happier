@@ -3,6 +3,59 @@ import test from 'node:test';
 
 import { collectPolicyFindings } from './testPolicyRules.ts';
 
+test('internal-module mock ratchet reports package totals and rejects growth in each file', () => {
+  const files = [
+    { filePath: 'apps/cli/src/session/one.test.ts', content: "vi.mock('./owner'); vi.mock(import('@/session/other')); vi.mock('node:fs');" },
+    { filePath: 'packages/plugins/example/src/two.test.ts', content: "vi.mock('../logic');" },
+  ];
+  const baseline = { 'apps/cli/src/session/one.test.ts': 1, 'packages/plugins/example/src/two.test.ts': 1 };
+  const report = collectPolicyFindings(files, { internalModuleMockBaseline: baseline });
+  assert.deepEqual(report.internalModuleMocks, [
+    { packagePath: 'apps/cli', count: 2, files: [{ filePath: files[0]!.filePath, count: 2 }] },
+    { packagePath: 'packages/plugins/example', count: 1, files: [{ filePath: files[1]!.filePath, count: 1 }] },
+  ]);
+  assert.deepEqual(report.findings.filter((f) => f.ruleId === 'no-new-internal-module-mocks').map((f) => [f.filePath, f.mode]), [
+    [files[0]!.filePath, 'enforce'],
+  ]);
+  // Removing another file's mocks does not buy permission for a new file.
+  const moved = collectPolicyFindings([{ ...files[1]!, filePath: 'packages/plugins/example/src/new.test.ts' }], { internalModuleMockBaseline: baseline });
+  assert.equal(moved.findings.filter((f) => f.ruleId === 'no-new-internal-module-mocks').length, 1);
+});
+
+test('internal-module mock ratchet permits its baseline and true external boundaries, but counts real syntax', () => {
+  const filePath = 'apps/cli/src/session/example.test.ts';
+  const content = `
+    import { vi as mocker } from 'vitest';
+    // vi.mock('./comment');
+    const example = "vi.mock('./string')";
+    vi.mock('node:child_process'); vi.mock('axios'); vi.mock('react-native');
+    // test-policy-boundary: OS process adapter; the real owner runs above this boundary.
+    vi.mock('@/platform/processAdapter');
+    mocker.mock('./owner');
+    vi['mock'](import('../otherOwner'));
+    vi.mock('@happier-dev/protocol');
+  `;
+  const report = collectPolicyFindings([
+    { filePath, content },
+    { filePath: 'apps/cli/src/session/example.ts', content: "vi.mock('./nonTest');" },
+  ], { internalModuleMockBaseline: { [filePath]: 3 } });
+  assert.equal(report.internalModuleMocks[0]?.count, 3);
+  assert.equal(report.findings.filter((f) => f.ruleId === 'no-new-internal-module-mocks').length, 0);
+});
+
+test('internal-module mock ratchet counts application modules even with canonical fixture factories', () => {
+  const report = collectPolicyFindings([{
+    filePath: 'apps/ui/sources/example.test.tsx',
+    content: `
+      vi.mock('@/text', async () => { const { createTextModuleMock } = await import('@/dev/testkit/mocks/text'); return createTextModuleMock(); });
+      vi.mock('@/modal', async () => { const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal'); return createModalModuleMock().module; });
+      vi.mock('@/sync/domains/state/storage', () => ({}));
+    `,
+  }], { internalModuleMockBaseline: {} });
+  assert.equal(report.internalModuleMocks[0]?.count, 3);
+  assert.equal(report.findings.filter((f) => f.ruleId === 'no-new-internal-module-mocks').length, 1);
+});
+
 test('collectPolicyFindings detects direct policy violations in tests', () => {
   const report = collectPolicyFindings([
     {
@@ -81,6 +134,7 @@ test('collectPolicyFindings enforces ad hoc UI inline mock families and reports 
 
   const ids = report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`).sort();
   assert.deepEqual(ids, [
+    'no-new-internal-module-mocks:enforce',
     'no-ui-ad-hoc-inline-mock-family:enforce',
     'ui-inline-mock-family-report:report-only',
   ]);
@@ -187,6 +241,17 @@ test('collectPolicyFindings enforces canonical helpers for detached background s
   const finding = report.findings.find((item) => item.ruleId === 'no-raw-detached-background-test-spawn');
   assert.ok(finding);
   assert.equal(finding.mode, 'enforce');
+});
+
+test('CommonJS spawn bindings reach detached-process enforcement with and without aliases', () => {
+  for (const binding of ['spawn', 'spawn: launch']) {
+    const callable = binding === 'spawn' ? 'spawn' : 'launch';
+    const report = collectPolicyFindings([{
+      filePath: 'scripts/example.test.cjs',
+      content: `const { ${binding} } = require('node:child_process'); ${callable}(process.execPath, [], { detached: true });`,
+    }]);
+    assert.equal(report.findings.filter((finding) => finding.ruleId === 'no-raw-detached-background-test-spawn').length, 1);
+  }
 });
 
 test('collectPolicyFindings ignores canonical detached test spawn helper modules', () => {

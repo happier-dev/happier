@@ -91,7 +91,7 @@ function collectSpawnBindings(sourceFile: ts.SourceFile): { identifiers: Set<str
 
       if (ts.isObjectBindingPattern(declaration.name)) {
         for (const element of declaration.name.elements) {
-          const importedName = ts.isIdentifier(element.propertyName) ? element.propertyName.text : element.name.text;
+          const importedName = element.propertyName && ts.isIdentifier(element.propertyName) ? element.propertyName.text : element.name.text;
           if (importedName === 'spawn') {
             identifiers.add(element.name.text);
           }

@@ -8,6 +8,19 @@ import { fileURLToPath } from 'node:url';
 
 import { collectPolicyReport, resolvePolicyExitCode, runTestPolicy } from './validateTestPolicy.ts';
 
+test('CLI rejects a new internal-module mock and reports its package, count and file', (t) => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-internal-mock-policy-'));
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+  mkdirSync(join(rootDir, 'apps/cli/src'), { recursive: true });
+  writeFileSync(join(rootDir, 'apps/cli/src/new-mock.test.ts'), "vi.mock('./domainOwner');\n");
+  const command = fileURLToPath(new URL('./validateTestPolicy.ts', import.meta.url));
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', command], { cwd: rootDir, encoding: 'utf8' });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /apps\/cli: 1 internal-module vi\.mock call\(s\) in 1 file\(s\)/);
+  assert.match(result.stderr, /apps\/cli\/src\/new-mock\.test\.ts/);
+});
+
 test('advisory CLI output is opt-in without changing the policy verdict', (t) => {
   const rootDir = mkdtempSync(join(tmpdir(), 'happier-policy-output-'));
   t.after(() => rmSync(rootDir, { recursive: true, force: true }));
@@ -51,7 +64,7 @@ test('resolvePolicyExitCode fails when enforced findings exist', () => {
   assert.equal(resolvePolicyExitCode(report), 1);
 });
 
-test('resolvePolicyExitCode still ignores report-only UI inline mock findings', () => {
+test('resolvePolicyExitCode rejects a new internal mock even with a canonical UI fixture factory', () => {
   const report = collectPolicyReport([
     {
       filePath: 'apps/ui/sources/example.test.tsx',
@@ -64,9 +77,9 @@ test('resolvePolicyExitCode still ignores report-only UI inline mock findings', 
     },
   ]);
 
-  assert.equal(report.enforcedFindings.length, 0);
+  assert.equal(report.enforcedFindings.length, 1);
   assert.equal(report.reportOnlyFindings.length, 1);
-  assert.equal(resolvePolicyExitCode(report), 0);
+  assert.equal(resolvePolicyExitCode(report), 1);
 });
 
 test('test:policy fails when an extension violates import boundaries', async () => {
