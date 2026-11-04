@@ -26,8 +26,9 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1 = plain) {
   const lists: unknown[] = [];
   let fail: 'conflict' | 'lost-receipt' | null = null;
   let editMetadataBeforeWrite = false;
-  const seed = (id: string, managed = false, known = false) => {
+  const seed = (id: string, managed = false, known = false, visibleTeamId: string | null = null) => {
     const payload = { workspace: { directory: '/private/repo' }, executionTarget: { kind: 'detached_run' },
+      visibleTeamId,
       ...(managed ? { inlineDefinition: managedDefinition } : {}) };
     const workflow = isAvailableE2eeAutomationAccountEncryptionV1(encryption)
       ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
@@ -35,7 +36,7 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1 = plain) {
       : { t: 'plain', v: payload };
     const metadata = known ? { managedTarget: managed ? target : null } : {};
     const row = AutomationDefinitionDetailSchema.parse({ id, name: 'Private name', description: null, enabled: false,
-      workflowDefinitionId: managed ? null : 'builtin:unrelated', scopeSessionId: null, targetType: null, existingSessionId: null,
+      workflowDefinitionId: managed ? null : visibleTeamId ? '13a629b8-d285-40eb-acfe-91451d9cc6cb' : 'builtin:unrelated', scopeSessionId: null, targetType: null, existingSessionId: null,
       templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], triggers: [], ...metadata,
       executionRecipe: { v: 2, templateVersion: 1, workflow, triggerEvidence: null, ...metadata } });
     rows.set(id, row);
@@ -94,7 +95,7 @@ describe('Automation managed-target migration', () => {
     const f = fixture(mode);
     for (let index = 0; index < 1000; index++) f.seed(`unrelated-${index}`, false, true);
     f.seed('old-managed', true);
-    f.seed('old-unrelated');
+    f.seed('old-unrelated', false, false, 'team-one');
     expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 2, unresolved: 0 });
     expect(f.writes).toEqual(['old-managed', 'old-unrelated']);
     expect(f.reads).toEqual(['old-managed', 'old-unrelated']);
@@ -108,7 +109,9 @@ describe('Automation managed-target migration', () => {
     const recipe = f.rows.get('old-managed')!.executionRecipe!;
     if (recipe.v !== 2) throw new Error('Current recipe required');
     expect(recipe.managedTarget).toEqual(target);
-    expect(Object.keys(recipe).sort()).toEqual(['managedTarget', 'templateVersion', 'triggerEvidence', 'v', 'workflow']);
+    expect(Object.keys(recipe).sort()).toEqual(['managedTarget', 'templateVersion', 'triggerEvidence', 'v', 'visibleTeamId', 'workflow']);
+    expect(recipe.visibleTeamId).toBeNull();
+    expect(f.rows.get('old-unrelated')!.executionRecipe).toMatchObject({ v: 2, visibleTeamId: 'team-one' });
     const opened = recipe.workflow.t === 'plain' ? recipe.workflow.v : isAvailableE2eeAutomationAccountEncryptionV1(mode)
       ? openAccountScopedBlobCiphertext({ kind: 'automation_template_payload', material: mode.material.material, ciphertext: recipe.workflow.c })?.value : null;
     expect(AutomationStoredWorkflowDefinitionV2ReadSchema.parse(opened).workspace.directory).toBe('/private/repo');

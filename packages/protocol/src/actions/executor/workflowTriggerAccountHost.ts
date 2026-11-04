@@ -85,7 +85,7 @@ async function sealWorkflowContext(params: WorkflowCodecParams, input: Readonly<
     : { t: 'plain' as const, v: payload };
   const managed = payload.inlineDefinition && readManagedMachineTriggerAction({ kind: 'inline', definition: payload.inlineDefinition });
   return AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: input.templateVersion,
-    workflow, triggerEvidence: null,
+    workflow, triggerEvidence: null, visibleTeamId: payload.visibleTeamId ?? null,
     managedTarget: managed ? { homeId: managed.input.homeId, managedId: managed.input.managedId } : null });
 }
 

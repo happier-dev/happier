@@ -19,6 +19,7 @@ import {
 } from './automationStoredContentEnvelopeV1.js';
 
 const UTF8_ENCODER = new TextEncoder();
+const visibleTeamIdSchema = lazyZodSchema(() => z.optional(z.nullable(preservedBoundedNfcString(191, 'Team ids'))));
 
 /** Server-visible structural relationship; never private Workflow content. */
 export const AutomationManagedTargetV1Schema = lazyZodSchema(() => z.strictObject({
@@ -50,7 +51,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   }),
   executionTarget: WorkflowRunExecutionTargetV1Schema,
   inputs: zMini.optional(WorkflowResolvedInputsV1Schema),
-  visibleTeamId: zMini.optional(zMini.nullable(preservedBoundedNfcString(191, 'Team ids'))),
+  visibleTeamId: visibleTeamIdSchema,
   roleOverrides: zMini.optional(WorkflowRoleOverridesV1Schema),
   inlineDefinition: zMini.optional(WorkflowDefinitionV1Schema),
   onComplete: z.optional(z.strictObject({ kind: z.literal('originating_session') })),
@@ -73,6 +74,8 @@ function createAutomationStoredWorkflowDefinitionRecipeV2Schema(definitionSchema
     templateVersion: z.number().check(z.int(), z.nonnegative(), z.int()),
     workflow: AutomationStoredContentEnvelopeV1Schema,
     managedTarget: z.optional(z.nullable(AutomationManagedTargetV1Schema)),
+    /** Selected Run audience, readable without opening the private trigger context. */
+    visibleTeamId: visibleTeamIdSchema,
     triggerEvidence: z.null(),
   }).check(z.superRefine((value, context) => {
     addAutomationStoredEnvelopeUtf8LimitIssue(
