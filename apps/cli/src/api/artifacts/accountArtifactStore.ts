@@ -1446,7 +1446,6 @@ export function createAccountArtifactStore(params: Readonly<{
         mode, credentials: contentCredentials });
       for (;;) {
         input.signal?.throwIfAborted();
-        await input.beforeWrite?.();
         const current: AccountArtifact | null = await store.read(artifactId, { signal: input.signal, includeSharedAudience: false })
           ?? await findRetainedNotice(accountId, occurrence, input.signal);
         if (current) artifactId = current.artifactId;

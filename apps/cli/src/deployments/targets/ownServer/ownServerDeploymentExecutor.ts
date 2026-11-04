@@ -813,14 +813,17 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         try {
             const snapshot = await read(request);
             const result = await executeOwnServerRollout(host.dispatchMember ? host : { ...host, dispatchMember: executeMember }, request, snapshot);
+            let settled: Parameters<typeof publishSettlementNotice>[2];
             // Local success cannot authorize retention. Reopen the settled
             // aggregate and its current uniform pointer before dispatching it.
+            // Notice admission consumes this same fresh pair without reopening Source access.
             if (result.ok && ['succeeded', 'running_unverified', 'failed'].includes(result.state)) {
                 try {
                     const [environment, receipt] = await Promise.all([
                         host.readEnvironment({ environmentId: request.input.environmentId, context: request.context }),
                         host.readReceipt({ environmentId: request.input.environmentId, deploymentId: request.receipt.deploymentId, context: request.context }),
                     ]);
+                    settled = { environment, receipt };
                     const link = environment.targetLinks.find(value => value.targetLink.id === request.input.targetLinkId)?.targetLink;
                     if (link?.activeDeploymentId && readDeploymentUniformTargetLinkRevisionV1({ deploymentId: link.activeDeploymentId, targetLink: link, content: receipt.content }) !== null) {
                         const placements = new Map(link.members.map(member => [member.machineId, member]));
@@ -836,7 +839,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     }
                 } catch (error) { logger.infoFile('[Deployment] Source retention did not complete', { code: codeOf(error) }); }
             }
-            await publishSettlementNotice(request, snapshot);
+            await publishSettlementNotice(request, snapshot, settled);
             return result;
         } catch (error) { return failure(failureCode(error, request.context.signal?.aborted === true), error); }
     }

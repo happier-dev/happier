@@ -13,16 +13,11 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
   const deliver = createCommittedServiceHealthDelivery(host);
   return async (request: OwnServerDeploymentRequest, admitted: Readonly<{
     environment: DeploymentEnvironmentDetailV1; receipt: DeploymentReceiptDetailV1;
-  }>) => {
+  }>, settled?: typeof admitted) => {
     if (!accountId) return;
     const signal = host.signal ?? new AbortController().signal;
     const context = { signal };
-    const readCurrent = async () => {
-      if (signal.aborted) return null;
-      const [environment, receipt] = await Promise.all([
-        host.readEnvironment({ environmentId: request.input.environmentId, context }),
-        host.readReceipt({ environmentId: request.input.environmentId, deploymentId: admitted.receipt.deployment.id, context }),
-      ]);
+    const admit = ({ environment, receipt }: typeof admitted) => {
       const owner = environment.environment;
       const link = environment.targetLinks.find(value => value.targetLink.id === request.input.targetLinkId)?.targetLink;
       if (signal.aborted || owner.id !== admitted.environment.environment.id || owner.serverId !== host.serverId
@@ -38,18 +33,24 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
       if (receipt.deployment.state === 'succeeded' && link.activeDeploymentId !== receipt.deployment.id) return null;
       return { environment, receipt, link };
     };
+    const readCurrent = async () => {
+      if (signal.aborted) return null;
+      const [environment, receipt] = await Promise.all([
+        host.readEnvironment({ environmentId: request.input.environmentId, context }),
+        host.readReceipt({ environmentId: request.input.environmentId, deploymentId: admitted.receipt.deployment.id, context }),
+      ]);
+      return admit({ environment, receipt });
+    };
     try {
-      const current = await readCurrent();
+      // Retention and notice preparation consume the same settled observation.
+      // A failed/missing retention read still uses the notice's own opener.
+      const current = settled ? admit(settled) : await readCurrent();
       if (!current) return;
       const { environment, receipt, link } = current;
       const recovered = receipt.deployment.state === 'succeeded';
       const healthyIncumbent = link.activeDeploymentId !== undefined && link.members.length > 0 && link.members.every(member =>
         receipt.content.machineResults.some(row => row.machineId === member.machineId && row.installationId === member.installationId
           && row.currentDeploymentId === link.activeDeploymentId && row.health === 'healthy'));
-      const isCurrent = async () => {
-        const fresh = await readCurrent();
-        return fresh?.receipt.deployment.revision === receipt.deployment.revision ? fresh : null;
-      };
       // The current Environment read admits Source access; its ownership does
       // not select the private notice recipient, which remains this Account.
       const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({
@@ -66,7 +67,6 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
           ...[...receipt.content.machineResults].sort((left, right) => left.machineId.localeCompare(right.machineId)).map(row =>
             `Machine ${row.machineId}: ${row.health}${row.restoration ? `; restoration ${row.restoration}` : ''}.`),
         ].join(' '), signal,
-        beforeWrite: async () => { if (!await isCurrent()) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); },
       }));
       await deliver({ receipt: committed, signal, controllerMachineId: environment.environment.controllerMachineId });
     } catch (error) {
