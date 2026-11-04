@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { describe, expect, it } from 'vitest';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionMachineRpcExecutionV1Schema, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions';
@@ -65,14 +66,15 @@ async function withConnectedTransport(run: (bridge: ReturnType<typeof createMana
     const connected = new Promise<Socket>(resolve => server.once('connection', resolve));
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Missing activity socket endpoint');
-    const bridge = createManagedGuestActivityTransport({ token: 'owner-token',
+    let bridge: ReturnType<typeof createManagedGuestActivityTransport> | undefined;
+    try {
+        bridge = createManagedGuestActivityTransport({ token: 'owner-token',
         serverUrl: `http://127.0.0.1:${address.port}`,
         credentials: { token: 'owner-token', encryption: null },
         ...(signingKey ? { externalActionMachineRequestPrivateKey: signingKey } : {}) }, options, current);
-    try {
         await run(bridge, await connected, () => httpReads);
     } finally {
-        await bridge.dispose?.();
+        await bridge?.dispose?.();
         await new Promise<void>(resolve => server.close(() => resolve()));
     }
 }
@@ -111,24 +113,34 @@ describe('managed activity transport lifetime', () => {
         }, { requestId: 'retention', context: { externalActionExecutionAuthorization: authorization,
             externalActionTarget: { kind: 'machine', machineId: 'controller' } } }, current, keys.secretKey);
     });
-    it.each(['missing-executor', 'foreign-guest', 'foreign-row', 'foreign-account', 'mismatched-intent', 'replayed-request'] as const)(
-        'refuses %s before opening an Account after-idle activity transport', async mismatch => {
+    it('sends the Home authorization unchanged when the local retained snapshot differs', async () => {
+        const { keys, authorization, current } = signedAccountAfterIdle('machines.managed.power.set');
+        await withConnectedTransport(async (bridge, socket) => {
+            const sentAuthorizations: unknown[] = [];
+            socket.on(SOCKET_RPC_EVENTS.CALL, (request: { externalActionExecution: unknown }, reply: (result: unknown) => void) => {
+                const execution = ExternalActionMachineRpcExecutionV1Schema.parse(request.externalActionExecution);
+                sentAuthorizations.push(execution.authorization);
+                reply({ ok: false, error: 'access_denied' });
+            });
+            await expect(bridge.read(current)).rejects.toBeDefined();
+            expect(sentAuthorizations).toEqual([authorization]);
+        }, { requestId: 'local-reconcile-request', context: { externalActionExecutionAuthorization: authorization,
+            externalActionTarget: { kind: 'machine', machineId: 'controller' } } },
+        { ...current, desired: 'suspend' }, keys.secretKey);
+    });
+    it.each(['authorization', 'signer', 'target'] as const)(
+        'requires the %s needed to construct a signed activity call', async missing => {
             const { keys, authorization, current } = signedAccountAfterIdle('machines.managed.power.set');
-            const binding = authorization.binding;
-            if (mismatch === 'missing-executor') delete binding.managedAccountExecutor;
-            if (mismatch === 'foreign-guest') binding.managedAccountExecutor = { enrolledMachineId: 'foreign-guest' };
-            if (mismatch === 'foreign-account') binding.accountId = 'foreign-account';
-            if (binding.managedAdmission?.actionId === 'machines.managed.power.set') {
-                if (mismatch === 'foreign-row') binding.managedAdmission.input.managedId = 'foreign-row';
-                if (mismatch === 'mismatched-intent') binding.managedAdmission.input.intent = 'suspend';
-            }
             let bridge: ReturnType<typeof createManagedGuestActivityTransport> | undefined;
             try {
                 expect(() => { bridge = createManagedGuestActivityTransport({ token: 'owner-token', serverUrl: 'http://127.0.0.1:1',
-                    credentials: { token: 'owner-token', encryption: null }, externalActionMachineRequestPrivateKey: keys.secretKey },
-                { requestId: mismatch === 'replayed-request' ? 'new-request' : 'retention', context: {
-                    externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse(authorization),
-                    externalActionTarget: { kind: 'machine', machineId: 'controller' },
+                    credentials: { token: 'owner-token', encryption: null },
+                    ...(missing === 'signer' ? {} : { externalActionMachineRequestPrivateKey: keys.secretKey }) },
+                { requestId: 'retention', context: {
+                    ...(missing === 'authorization' ? { externalActionCredential: {
+                        accountId: 'owner', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1 } }
+                        : { externalActionExecutionAuthorization: authorization }),
+                    ...(missing === 'target' ? {} : { externalActionTarget: { kind: 'machine' as const, machineId: 'controller' } }),
                 } }, current); }).toThrow(ManagedMachineControllerError);
             } finally { await bridge?.dispose?.(); }
         });

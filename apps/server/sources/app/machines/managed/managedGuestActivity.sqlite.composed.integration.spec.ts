@@ -419,6 +419,42 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(await verifyExternalActionMachineRpcExecution(wrongRoot.execution, wrongRoot)).toBeNull();
     });
 
+    it.each(['plain', 'e2ee'] as const)('rejects a Home-issued Account binding after its managed admission no longer matches the %s row at RPC ingress', async mode => {
+        const test = await setup('account', 'machines.managed.power.set', mode, false, false, 'daemon');
+        const effect = vi.fn(async () => ({ kind: 'idle', since: 1 }));
+        const target = { id: randomUUID(), data: { clientType: 'machine-scoped', userId: test.owner.id,
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId },
+            timeout: () => ({ emitWithAck: effect }) };
+        qualifyCurrentAccountStoredContentSocket(target);
+        const io = createSocketRoomDiscoveryHarness(async room =>
+            room === target.id || room.startsWith(`rpc:${test.owner.id}:${test.guest.id}:`) ? [target] : []);
+        const caller = createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped' } });
+        qualifyCurrentAccountStoredContentSocket(caller);
+        registerSocketRpcHandlers({ userId: test.owner.id, socket: caller as unknown as Socket, io });
+        const call = async () => {
+            const request = test.rpc(MANAGED_ACTIVITY_READ_RPC_METHOD);
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL,
+                { ...request, externalActionExecution: request.execution }, callback);
+            return callback.mock.calls[0]?.[0];
+        };
+        // Real issuance, request signing, stored admission and RPC ingress;
+        // only delivery to the guest's native activity observer is substituted.
+        expect(await call()).toMatchObject({ ok: true, result: { kind: 'idle' } });
+        const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } });
+        const state = readManagedAdmissionState(stored.admittedInput);
+        const admission = state.currentAdmission;
+        if (admission?.kind !== 'control' || admission.request.action !== 'machines.managed.power.set') {
+            throw new Error('Missing power control fixture');
+        }
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: { ...state,
+            currentAdmission: { ...admission, request: { ...admission.request,
+                input: { ...admission.request.input, intent: 'suspend' } } } } } });
+        effect.mockClear();
+        expect(await call()).toMatchObject({ ok: false });
+        expect(effect).not.toHaveBeenCalled();
+    });
+
     it('forwards busy then idle and reversible drain from the signed controller, retiring before guest IO on access loss', async () => {
         const test = await setup('account', 'machines.managed.power.set');
         let idle = false;

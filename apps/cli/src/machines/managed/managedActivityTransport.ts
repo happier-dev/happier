@@ -16,26 +16,8 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     // the admitted Machine signs that exact destination with the original root.
     const authorization = options.context?.externalActionExecutionAuthorization;
     const target = options.context?.externalActionTarget;
-    const managedAdmission = authorization?.binding.managedAdmission;
     if (options.context?.externalActionCredential && !authorization || authorization && (
         !input.externalActionMachineRequestPrivateKey || !target || target.kind !== 'machine'
-        || target.machineId !== authorization.binding.machineId
-        || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== target.machineId
-        || authorization.binding.serverIdentityId !== machine.homeId
-        || authorization.binding.custodianAccountId !== machine.custodianAccountId
-        || machine.controller && (authorization.binding.machineId !== machine.controller.machineId
-            || authorization.binding.installationId !== machine.controller.installationId)
-        || !machine.controller && (authorization.binding.accountId !== machine.custodianAccountId
-            || !machine.enrolledMachineId
-            || authorization.binding.managedAccountExecutor?.enrolledMachineId !== machine.enrolledMachineId
-            || !managedAdmission || managedAdmission.actionId !== 'machines.managed.power.set' && managedAdmission.actionId !== 'machines.managed.delete'
-            || managedAdmission.actionId !== authorization.binding.actionId
-            || managedAdmission.input.homeId !== machine.homeId || managedAdmission.input.managedId !== machine.id
-            || managedAdmission.input.when !== machine.desiredWhen || managedAdmission.input.intent !== machine.desired)
-        || authorization.binding.requestId !== options.requestId
-        || machine.desiredWhen !== 'after-idle'
-        || !(authorization.binding.actionId === 'machines.managed.power.set' && (machine.desired === 'stop' || machine.desired === 'suspend')
-            || authorization.binding.actionId === 'machines.managed.delete' && machine.desired === 'delete')
     )) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
