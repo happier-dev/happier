@@ -1325,7 +1325,8 @@ for (const { problem, flushes, selectRoomy = false } of [
   { problem: 'unable to swap file: unable to set staged file permissions: unable to set permission bits: chmod /staging/source: no such file or directory', flushes: 3 },
   { problem: 'unable to set staged file permissions: chmod /staging/source: no such file or directory', flushes: 3, selectRoomy: true },
 ]) test(selectRoomy ? 'automatic placement never flushes an unselected transient mirror'
-  : `automatic placement recovers and surfaces a transient staged-file problem after ${flushes} synchronization cycles`, async t => {
+  : flushes === 1 ? 'automatic placement recovers a transient staged-file problem in its requested cycle'
+    : 'automatic placement reports a remaining staged-file problem after its requested cycle', async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
   if (selectRoomy) {
     const sample = (await readFile(fixture.samplePath, 'utf8')).trim().split(' ');
@@ -1348,8 +1349,10 @@ for (const { problem, flushes, selectRoomy = false } of [
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command'], {
     ...fixture.invocation, env: { ...fixture.invocation.env, COLLISION_MARKER: marker },
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), selectRoomy ? 'remote:roomy' : 'remote:starved', 'transient synchronization must preserve load-based selection');
+  const unresolved = !selectRoomy && flushes > 1;
+  assert.equal(result.status, unresolved ? 1 : 0, result.stderr);
+  assert.equal(result.stdout.trim(), unresolved ? '' : selectRoomy ? 'remote:roomy' : 'remote:starved',
+    'an unresolved transfer must settle before dispatch while recovery preserves load-based selection');
   const trace = await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8');
   if (selectRoomy) {
     assert.equal((trace.match(/mutagen:sync flush happier-starved\b/g) ?? []).length, 0,
@@ -1359,9 +1362,14 @@ for (const { problem, flushes, selectRoomy = false } of [
   }
   assert.match(result.stderr, /needs a fresh scan/);
   assert.match(result.stderr, /Forcing synchronization cycle/, 'flush progress must stay observable on the diagnostic stream');
-  assert.ok(trace.indexOf('mutagen:sync flush') < trace.lastIndexOf('remote_execution_custody.sh'), trace);
-  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, flushes,
-    'only the selected worker crosses the converging dispatch flush barrier');
+  if (unresolved) {
+    assert.match(result.stderr, /HSTACK_SYNC_PROBLEM:.*fixture\/source\.mjs/);
+    assert.doesNotMatch(trace, /remote_execution_custody\.sh/);
+  } else {
+    assert.ok(trace.indexOf('mutagen:sync flush') < trace.lastIndexOf('remote_execution_custody.sh'), trace);
+  }
+  assert.equal((trace.match(/mutagen:sync flush/g) ?? []).length, 1,
+    'the selected worker crosses one requested cycle, without restarting for later churn');
 });
 
 test('remote admission state failure is typed before payload dispatch', async (t) => {

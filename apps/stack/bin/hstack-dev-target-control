@@ -202,7 +202,7 @@ EOF
   fi
   if [ "$blocking_scan_count" -gt 0 ]; then
     if ! classify_transient_mutagen_scan_errors "$scan_errors"; then
-      printf '%s\n' "hstack-dev-target-control: $session_name synchronization has unsafe scan problems: $problem_details" >&2
+      printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name synchronization has unsafe scan problems: $problem_details" >&2
       return 1
     fi
     sync_fact_transientScanProblems=1
@@ -214,7 +214,7 @@ EOF
   fi
   if [ "$blocking_transition_count" -gt 0 ]; then
     if ! classify_transient_mutagen_transition_errors "$transition_errors"; then
-      printf '%s\n' "hstack-dev-target-control: $session_name synchronization has unsafe transition problems: $problem_details" >&2
+      printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name synchronization has unsafe transition problems: $problem_details" >&2
       return 1
     fi
     sync_fact_transientTransitionProblems=1
@@ -255,20 +255,24 @@ flush_and_check_sync() {
     exit 130
   }
   trap 'cancel_control_flush' HUP INT TERM
-  while :; do
-    # Synchronization progress is diagnostic; callers reserve stdout for the
-    # exact-session health record or their command payload.
-    "$control_path" -- "$@" >&2 &
-    control_child=$!
-    wait "$control_child"
-    status=$?
-    control_child=''
-    [ "$status" -eq 0 ] || break
+  # Mutagen acknowledges the cycle triggered after this request, even when
+  # later alpha changes have already started another cycle. Do not restart
+  # the caller's barrier for a quiet/problem-free period: a remaining failed
+  # transfer settles with its path and can be retried by the next request.
+  # Progress stays diagnostic; stdout belongs to health records or payloads.
+  "$control_path" -- "$@" >&2 &
+  control_child=$!
+  wait "$control_child"
+  status=$?
+  control_child=''
+  if [ "$status" -eq 0 ]; then
     check_sync_session_clean "$session_name"
     status=$?
-    [ "$status" -eq 2 ] || break
-    printf '%s\n' "hstack-dev-target-control: $session_name continuing synchronization after transient filesystem churn" >&2
-  done
+    if [ "$status" -eq 2 ]; then
+      printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name: $problem_details" >&2
+      status=1
+    fi
+  fi
   trap - HUP INT TERM
   return "$status"
 }
