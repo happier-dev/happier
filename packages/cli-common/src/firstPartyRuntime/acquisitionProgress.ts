@@ -3,6 +3,8 @@ import type { CliAcquisitionPhase, CliAcquisitionProgress } from '@happier-dev/p
 export type FirstPartyAcquisitionOptions = Readonly<{
   signal?: AbortSignal;
   onProgress?: (progress: CliAcquisitionProgress) => void;
+  /** Optional cleanup could not complete; defaults to a visible warning on stderr. */
+  onWarning?: (message: string) => void;
 }>;
 
 /** Keep diagnostic context without exposing signed download URLs or URL credentials. */

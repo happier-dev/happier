@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,10 +9,63 @@ import {
   buildRemoteFirstPartyPromotionCommand,
   buildRemoteFirstPartyRetentionCommand,
   buildRemoteFirstPartyVersionInventoryCommand,
+  pruneRemoteFirstPartyVersions,
   resolveRemoteFirstPartyInstallLayout,
 } from './remoteFirstPartyInstallPath.js';
 
 describe('remote first-party install layout', () => {
+  it.skipIf(process.platform === 'win32').each([true, false])('retains remote versions, warning only when lsof is unavailable: %s', async (unavailable) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-remote-retention-warning-'));
+    const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '3.0.0', remoteHomeDir: home });
+    const warning = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const tools = join(home, 'tools');
+      await mkdir(tools);
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf fixture-process\n', { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), unavailable ? '#!/bin/sh\nexit 127\n' : '#!/bin/sh\nprintf "p1234\\nn%s\\n" "$active_path"\n', { mode: 0o755 });
+      for (const id of ['1.0.0', '2.0.0', '3.0.0']) await mkdir(join(layout.versionsDir, id), { recursive: true });
+      await symlink('versions/3.0.0', layout.currentPath);
+      await symlink('versions/2.0.0', layout.previousPath);
+      await pruneRemoteFirstPartyVersions({ layout, runRemoteText: async command => {
+        const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, PATH: `${tools}:${process.env.PATH}`,
+          active_path: join(layout.versionsDir, '1.0.0', 'support.so') } });
+        return { status: 0, stdout: result.stdout };
+      } });
+      if (unavailable) {
+        expect(warning).toHaveBeenCalledOnce();
+        expect(String(warning.mock.calls[0]?.[0])).toContain('lsof');
+        expect(String(warning.mock.calls[0]?.[0])).not.toContain(home);
+      } else expect(warning).not.toHaveBeenCalled();
+      expect((await readdir(layout.versionsDir)).sort()).toEqual(['1.0.0', '2.0.0', '3.0.0']);
+    } finally { warning.mockRestore(); await rm(home, { recursive: true, force: true }); }
+  });
+  it.skipIf(process.platform === 'win32')('shares one native census across remote candidates while protecting active payloads', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-remote-retention-'));
+    const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', versionId: '6.0.0', remoteHomeDir: home });
+    const ids = ['6.0.0', '5.0.0', '4.0.0', '3.0.0', '2.0.0', '1.0.0'];
+    try {
+      const tools = join(home, 'tools');
+      const censusLog = join(home, 'census.log');
+      await mkdir(tools);
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "ps\\n" >> "$census_log"\nprintf "%s\\n" "external-node $script_path"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), '#!/bin/sh\nprintf "lsof\\n" >> "$census_log"\nprintf "p1234\\nn%s\\n" "$open_path"\n', { mode: 0o755 });
+      for (const id of ids) await mkdir(join(layout.versionsDir, id), { recursive: true });
+      await writeFile(join(layout.versionsDir, '1.0.0', 'entry.mjs'), 'export {};');
+      await writeFile(join(layout.versionsDir, '2.0.0', 'support.so'), 'support');
+      await symlink('versions/6.0.0', layout.currentPath);
+      await symlink('versions/5.0.0', layout.previousPath);
+      const command = buildRemoteFirstPartyRetentionCommand({
+        layout, inventory: `current=6.0.0\nprevious=5.0.0\n${ids.map((id) => `version=${id}`).join('\n')}\n`,
+      });
+      expect(command).not.toBeNull();
+      await promisify(execFile)('/bin/sh', ['-c', command!], {
+        env: { ...process.env, PATH: `${tools}:${process.env.PATH}`, census_log: censusLog,
+          script_path: join(layout.versionsDir, '1.0.0', 'entry.mjs'), open_path: join(layout.versionsDir, '2.0.0', 'support.so') },
+      });
+      expect((await readFile(censusLog, 'utf8')).trim().split('\n')).toEqual(['ps', 'lsof']);
+      expect((await readdir(layout.versionsDir)).sort()).toEqual(['1.0.0', '2.0.0', '5.0.0', '6.0.0']);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
   it('does not remove current or previous when promotion retries a protected version or has an invalid payload', async () => {
     if (process.platform === 'win32') return;
     const home = await mkdtemp(join(tmpdir(), 'happier-promote-failure-'));

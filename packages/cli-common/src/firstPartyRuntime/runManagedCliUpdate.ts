@@ -59,8 +59,6 @@ export type ManagedCliUpdateParams = FirstPartyAcquisitionOptions & Readonly<{
    * failure on stderr (the updater's log when the daemon started it).
    */
   onRecordFailure?: (error: unknown) => void;
-  /** Something after commit did not complete (pruning old versions); the default reports it on stderr. */
-  onWarning?: (message: string) => void;
   /** Called once the attempt holds its locks, before it downloads anything. */
   onAdmitted?: () => void;
   /** Runs under the install lock right before activation (Windows `self update` stops the payload's processes). */
@@ -398,6 +396,7 @@ async function activateAndProve(input: Readonly<{
     processEnv: params.processEnv,
     currentVersionId: targetVersion,
     previousVersionId: previousVersion,
+    onWarning: params.onWarning,
   }).catch((error: unknown) => {
     (params.onWarning ?? reportWarning)(`Happier CLI ${targetVersion} is installed; an older version could not be removed: ${describeError(error)}`);
   });

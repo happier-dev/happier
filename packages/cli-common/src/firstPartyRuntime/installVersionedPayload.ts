@@ -276,6 +276,7 @@ async function installVersionedPayloadOnce(params: VersionedPayloadActivationPar
     processEnv: params.processEnv,
     currentVersionId: promotion.currentVersionId,
     previousVersionId: promotion.previousVersionId,
+    onWarning: params.onWarning,
   });
   return promotion;
 }
@@ -335,6 +336,7 @@ export async function pruneInstalledVersionsAfterActivation(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   currentVersionId: string;
   previousVersionId: string | null;
+  onWarning?: (message: string) => void;
 }>): Promise<void> {
   const orderedVersionIdsNewestFirst = await listInstalledVersionIdsNewestFirst({
     componentId: params.componentId,
@@ -351,5 +353,6 @@ export async function pruneInstalledVersionsAfterActivation(params: Readonly<{
     orderedVersionIdsNewestFirst,
     currentVersionId: params.currentVersionId,
     previousVersionId: params.previousVersionId,
+    onWarning: params.onWarning,
   });
 }

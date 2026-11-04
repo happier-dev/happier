@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -40,9 +40,39 @@ describe('runManagedCliUpdate after commit', () => {
     homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-update-prune-'));
   });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     fault.failPrunePathPart = '';
     fault.failLockRelease = false;
     await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform === 'win32').each(['install', 'update'] as const)('warns without failing %s when lsof is unavailable, and retains uncertain versions', async (operation) => {
+    const tools = join(homeDir, 'tools');
+    await mkdir(tools);
+    // Native observation is the boundary: no active argv match, unavailable lsof.
+    await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf fixture-process\n', { mode: 0o755 });
+    await writeFile(join(tools, 'lsof'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
+    vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
+    const env = { HAPPIER_HOME_DIR: homeDir };
+    for (const versionId of ['0.9.0', '1.0.0']) {
+      await installVersionedPayload({ componentId: 'happier-cli', versionId, processEnv: env, payloadRoot: await createPayload(homeDir, versionId) });
+    }
+    const warnings: string[] = [];
+    if (operation === 'install') {
+      await installVersionedPayload({ componentId: 'happier-cli', versionId: '2.0.0', processEnv: env,
+        payloadRoot: await createPayload(homeDir, '2.0.0'), onWarning: (message: string) => { warnings.push(message); } });
+    } else {
+      const result = await runManagedCliUpdate({ channel: 'stable', processEnv: env,
+        preparePayload: async () => ({ versionId: '2.0.0', payloadRoot: await createPayload(homeDir, '2.0.0'), cleanup: async () => {} }),
+        readVersion: async command => (await readFile(command, 'utf8')).replace('binary-', ''),
+        restartServiceDaemon: null, onWarning: message => { warnings.push(message); } });
+      expect(result.outcome).toBe('succeeded');
+      expect(readLastCliUpdateResult({ channel: 'stable', processEnv: env })).toMatchObject({ outcome: 'succeeded' });
+    }
+    expect(warnings).toEqual([expect.stringContaining('lsof')]);
+    const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', processEnv: env });
+    expect(await readInstalledVersionMarkers(layout)).toEqual({ currentVersionId: '2.0.0', previousVersionId: '1.0.0' });
+    expect((await readdir(layout.versionsDir)).sort()).toEqual(['0.9.0', '1.0.0', '2.0.0']);
   });
 
   it('records a proven update as succeeded when pruning an old version fails, and reports the prune as a warning', async () => {

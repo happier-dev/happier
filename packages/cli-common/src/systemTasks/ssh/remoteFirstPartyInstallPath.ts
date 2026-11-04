@@ -1,7 +1,8 @@
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
 import { resolveRetainedVersionIds } from '../../firstPartyRuntime/retentionPolicy.js';
-import { FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION } from '../../firstPartyRuntime/versionUse.js';
+import { FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS } from '../../firstPartyRuntime/versionUse.js';
+import { warnFirstPartyRetentionObservationUnavailable } from '../../firstPartyRuntime/pruneRetainedVersions.js';
 import { compareVersions } from '../../update/compareVersions.js';
 
 import {
@@ -13,6 +14,8 @@ import {
 function normalizeBootstrapReleaseChannel(raw: unknown): PublicReleaseRingId {
   return normalizePublicReleaseRingId(raw) || 'stable';
 }
+
+const RETENTION_OBSERVATION_UNAVAILABLE = 'happier_retention_observation_unavailable';
 
 export function normalizeRemoteFirstPartyHomeDir(raw: unknown): string {
   const trimmed = String(raw ?? '').trim();
@@ -170,19 +173,24 @@ export function buildRemoteFirstPartyRetentionCommand(params: Readonly<{
     'set -eu',
     `test ! -L ${quoteRemotePathWithHomeExpansion(params.layout.versionsDir)}`,
     buildRemoteFirstPartyProtectedVersionFunction(params.layout),
-    FIRST_PARTY_VERSION_UNUSED_SHELL_FUNCTION,
+    FIRST_PARTY_VERSION_USE_SHELL_FUNCTIONS,
+    `if observe_version_use ${quoteRemotePathWithHomeExpansion(params.layout.versionsDir)}; then`,
     ...prune.map((id) => {
       // Keep the candidate out of this shell's argv as a complete path, so
       // native PID observation does not mistake the reaper for a payload user.
       const path = `${quoteRemotePathWithHomeExpansion(params.layout.versionsDir)}/${quoteRemotePathWithHomeExpansion(id)}`;
       return `retention_path=${path}; if [ -d "$retention_path" ] && [ ! -L "$retention_path" ] && ! is_protected_version "$retention_path" && is_version_unused "$retention_path"; then rm -rf "$retention_path"; fi`;
     }),
-  ].join('; ');
+    'else',
+    `printf '%s\\n' '${RETENTION_OBSERVATION_UNAVAILABLE}'`,
+    'fi',
+  ].join('\n');
 }
 
 export async function pruneRemoteFirstPartyVersions(params: Readonly<{
   layout: RemoteFirstPartyInstallLayout;
   runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string }>>;
+  onWarning?: (message: string) => void;
 }>): Promise<void> {
   const inventory = await params.runRemoteText(buildRemoteFirstPartyVersionInventoryCommand(params.layout));
   if (inventory.status !== 0) throw new Error('Remote version inventory failed.');
@@ -190,6 +198,9 @@ export async function pruneRemoteFirstPartyVersions(params: Readonly<{
   if (!command) return;
   const result = await params.runRemoteText(command);
   if (result.status !== 0) throw new Error('Remote version retention failed.');
+  if (result.stdout.split('\n').includes(RETENTION_OBSERVATION_UNAVAILABLE)) {
+    warnFirstPartyRetentionObservationUnavailable(params.onWarning);
+  }
 }
 
 export function resolveRemoteInstalledFirstPartyBinaryPath(params: Readonly<{
