@@ -49,6 +49,8 @@ export function settleQualifiedConnectedAccountCredentialMetadata(
             | undefined;
         incoming: QualifiedConnectedAccountCredentialMetadataV4;
         allowProviderIdentityChange: boolean;
+        /** Refresh may retain authentication evidence, but never replace or manufacture it. */
+        preserveAuthenticationProvenance?: boolean;
     }>,
 ):
     | Readonly<{
@@ -69,11 +71,16 @@ export function settleQualifiedConnectedAccountCredentialMetadata(
         params.current?.providerIdentity,
         params.incoming.providerIdentity,
     );
+    const { authenticationProvenance: incomingProvenance, ...presentation } = params.incoming;
+    const authenticationProvenance = params.preserveAuthenticationProvenance
+        ? params.current?.authenticationProvenance
+        : incomingProvenance;
     return {
         status: "settled",
         metadata: {
-            ...params.incoming,
+            ...presentation,
             ...(providerIdentity ? { providerIdentity } : {}),
+            ...(authenticationProvenance ? { authenticationProvenance } : {}),
         },
     };
 }

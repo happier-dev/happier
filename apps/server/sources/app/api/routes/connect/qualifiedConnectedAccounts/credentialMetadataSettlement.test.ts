@@ -12,6 +12,52 @@ const current = {
 };
 
 describe("qualified Connected Account credential metadata settlement", () => {
+    it('clears the previous sign-in provenance when re-authentication omits provenance', () => {
+        const result = settleQualifiedConnectedAccountCredentialMetadata({
+            current: { ...current, authenticationProvenance: {
+                authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' },
+            } },
+            incoming: current,
+            allowProviderIdentityChange: false,
+        });
+        expect(result).toEqual({ status: 'settled', metadata: current });
+    });
+
+    it('records fresh re-authentication provenance for the same provider identity', () => {
+        const authenticationProvenance = {
+            authenticatedAt: 2_000, machine: { serverId: 'home-b', machineId: 'machine-b' },
+        };
+        expect(settleQualifiedConnectedAccountCredentialMetadata({
+            current: { ...current, authenticationProvenance: {
+                authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' },
+            } },
+            incoming: { ...current, authenticationProvenance },
+            allowProviderIdentityChange: false,
+        })).toEqual({ status: 'settled', metadata: { ...current, authenticationProvenance } });
+    });
+
+    it('preserves refresh history without manufacturing or replacing sign-in provenance', () => {
+        const authenticationProvenance = { authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' } };
+        const known = { ...current, authenticationProvenance };
+        expect(settleQualifiedConnectedAccountCredentialMetadata({ current: known, incoming: current,
+            allowProviderIdentityChange: false, preserveAuthenticationProvenance: true }))
+            .toMatchObject({ status: 'settled', metadata: { authenticationProvenance } });
+        const refresh = { current: known, incoming: { ...current,
+            authenticationProvenance: { authenticatedAt: 2_000, machine: { serverId: 'other-home', machineId: 'other-machine' } } },
+            allowProviderIdentityChange: false, preserveAuthenticationProvenance: true };
+        expect(settleQualifiedConnectedAccountCredentialMetadata(refresh))
+            .toMatchObject({ status: 'settled', metadata: { authenticationProvenance } });
+        expect(settleQualifiedConnectedAccountCredentialMetadata({ ...refresh, current, incoming: refresh.incoming }))
+            .toEqual({ status: 'settled', metadata: current });
+        expect(settleQualifiedConnectedAccountCredentialMetadata({ ...refresh, preserveAuthenticationProvenance: false }))
+            .toMatchObject({ status: 'settled', metadata: { authenticationProvenance: refresh.incoming.authenticationProvenance } });
+        const replacement = settleQualifiedConnectedAccountCredentialMetadata({ current: known,
+            incoming: { scopes: [], providerIdentity: { accountId: 'different-provider-account' } }, allowProviderIdentityChange: true });
+        expect(replacement.status).toBe('settled');
+        if (replacement.status !== 'settled') throw new Error('Expected explicit identity replacement');
+        expect(replacement.metadata).not.toHaveProperty('authenticationProvenance');
+    });
+
     it('admits fresh identity attestation after explicitly unknown identity', () => {
         expect(settleQualifiedConnectedAccountCredentialMetadata({
             current: { scopes: [], providerIdentity: { accountId: null, email: null, organizationId: null } },

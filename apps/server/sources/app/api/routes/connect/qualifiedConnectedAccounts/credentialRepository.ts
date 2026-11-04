@@ -961,6 +961,7 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             incoming: params.metadata,
             allowProviderIdentityChange:
                 params.reconnect?.allowProviderIdentityChange === true,
+            preserveAuthenticationProvenance: params.refreshLeaseOwnerId !== undefined,
         });
     if (metadataSettlement.status === "provider_identity_mismatch") {
         return metadataSettlement;

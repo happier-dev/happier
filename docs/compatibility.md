@@ -155,6 +155,9 @@ without either field; persistence readers use the existing unknown-field-drop
 projection. Native import, quota work and provider reconciliation do not invent
 a sign-in time. A prepared settlement retains its captured fact through retry
 and restart, and refresh retains existing provenance instead of replacing it.
+A successful re-authentication replaces that provenance with its newly observed
+sign-in fact. If the executing Machine binding is unknown, the replacement leaves
+provenance absent rather than inheriting the previous sign-in.
 No row-timestamp backfill, database migration or second health writer is added.
 
 V4 is current development source, absent from the inspected 0.2.16 and moving
