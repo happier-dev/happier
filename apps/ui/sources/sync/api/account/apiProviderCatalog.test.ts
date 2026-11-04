@@ -74,6 +74,7 @@ describe('Provider catalog captured Account HTTP', () => {
                     revision += 1;
                     return Response.json({ status: 'updated', revision, cursor: revision });
                 }
+                if (rowWrites > 0) throw new Error('Reads unavailable after acknowledged import');
                 return Response.json({ status: 'present', revision, content: { t: 'plain', v: catalog } });
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
@@ -91,7 +92,7 @@ describe('Provider catalog captured Account HTTP', () => {
                 isCurrent: context.accountLifetime.isCurrent,
                 commitCatalog: async input => {
                     const receipt = await writeProviderCatalogInContext(context, input);
-                    return receipt.status === 'updated' ? { status: 'applied' } : { status: 'refused', reason: receipt.status };
+                    return receipt.status === 'updated' ? { status: 'applied', revision: receipt.revision } : { status: 'refused', reason: receipt.status };
                 },
             };
             // The same scoped snapshot publication used by mounted readers must receive
@@ -261,6 +262,7 @@ describe('Provider catalog captured Account HTTP', () => {
         expect(rowWrites).toBe(3);
         expect(await readProviderCatalog(scope)).toMatchObject({ status: 'ready', revision: 3 });
         readStatus = 401;
-        expect(await readProviderCatalog(scope)).toMatchObject({ status: 'unavailable', reason: 'unauthorized' });
+        expect(await readProviderCatalog(scope)).toMatchObject({ status: 'unavailable', reason: 'scope-retired' });
+        expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toBeNull();
     });
 });

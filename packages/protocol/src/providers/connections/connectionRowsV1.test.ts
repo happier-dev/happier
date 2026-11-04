@@ -24,6 +24,29 @@ const catalog = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [conn
   manualModelsByConnectionId: { pc_one: [{ id: 'model/a', addedAt: 1 }] } };
 
 describe('Provider connection catalog row owner', () => {
+  it.each(['updated', 'conflict'] as const)('uses the initialization ACK or reads the actual conflict winner (%s)', async outcome => {
+    let writes = 0;
+    let reads = 0;
+    const loaded = await loadProviderConnectionsCatalogV1({ mode: 'plain', material: null,
+      readRow: async () => {
+        reads++;
+        if (writes === 0) return { status: 'absent' };
+        if (outcome === 'updated') throw new Error('Reads unavailable after acknowledged initialization');
+        return { status: 'present', revision: 7, content: { t: 'plain', v: catalog } };
+      },
+      transfer: { readSourceSnapshot: async () => ({ raw: {}, version: 8 }),
+        initializeCatalog: async () => {
+          writes++;
+          return { status: outcome, revision: 7, cursor: 1 };
+        },
+      },
+    });
+    expect(loaded).toMatchObject({ status: 'ready', revision: 7,
+      catalog: outcome === 'updated' ? DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 : catalog });
+    expect(reads).toBe(outcome === 'updated' ? 1 : 2);
+    expect(writes).toBe(1);
+  });
+
   it.each(['present', 'deleted', 'absent'] as const)('skips post-cutover maintenance but still initializes an absent destination (%s)', async state => {
     let initialized = false;
     let sourceReads = 0;
@@ -255,8 +278,11 @@ describe('Provider catalog explicit connection import', () => {
     let revision = 3;
     let commits = 0;
     const input = { mode: 'plain' as const, material: null,
-      readRow: async () => current ? { status: 'present' as const, revision, content: { t: 'plain' as const, v: current } }
-        : { status: 'absent' as const },
+      readRow: async () => {
+        if (commits > 0) throw new Error('Reads unavailable after acknowledged import');
+        return current ? { status: 'present' as const, revision, content: { t: 'plain' as const, v: current } }
+          : { status: 'absent' as const };
+      },
       transfer: { readSourceSnapshot: async () => ({ raw: source, version: 8 }),
         initializeCatalog: async (mutation: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: 'absent'; sourceSettingsVersion: number }>) => {
           expect(mutation).toMatchObject({ expectedRevision: 'absent', sourceSettingsVersion: 8 });
@@ -269,11 +295,12 @@ describe('Provider catalog explicit connection import', () => {
           commits += 1;
           current = mutation.catalog;
           revision += 1;
-          return { status: 'applied' as const };
+          return { status: 'applied' as const, revision };
         } },
     };
     await expect(loadProviderConnectionsCatalogV1(input)).resolves.toMatchObject({ status: 'applied',
-      connectionId: candidate.connection.id, catalog: { status: 'ready', revision: 4 } });
+      connectionId: candidate.connection.id, catalog: { status: 'ready', revision: 4,
+        catalog: expect.objectContaining({ connections: expect.arrayContaining([candidate.connection]) }) } });
     expect(current?.connections.map(entry => entry.id)).toEqual(initial === 'ready' ? ['pc_one', candidate.connection.id] : [candidate.connection.id]);
     expect(current?.secretBindingsByConnectionId[candidate.connection.id]).toEqual(candidate.secretBindings);
     expect(current?.manualModelsByConnectionId[candidate.connection.id]).toEqual(candidate.manualModels);
@@ -282,7 +309,7 @@ describe('Provider catalog explicit connection import', () => {
     expect(commits).toBe(1);
   });
 
-  it.each(['conflict', 'refused', 'outcome_unknown', 'different-winner'] as const)('keeps an explicit %s outcome instead of authorizing Voice selection', async outcome => {
+  it.each(['conflict', 'refused', 'outcome_unknown'] as const)('keeps an explicit %s outcome instead of authorizing Voice selection', async outcome => {
     let current: ProviderConnectionsCatalogV1 = catalog;
     let commits = 0;
     const input = { mode: 'plain' as const, material: null,
@@ -290,7 +317,6 @@ describe('Provider catalog explicit connection import', () => {
       importConnection: { candidate, isCurrent: () => true,
         commitCatalog: async (mutation: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: number }>) => {
           commits += 1;
-          if (outcome === 'different-winner') return { status: 'applied' as const };
           if (outcome === 'outcome_unknown') { current = mutation.catalog; return { status: 'outcome_unknown' as const }; }
           return outcome === 'refused' ? { status: 'refused' as const, reason: 'material-unavailable' }
             : { status: 'conflict' as const };
@@ -298,7 +324,7 @@ describe('Provider catalog explicit connection import', () => {
     };
     const result = await loadProviderConnectionsCatalogV1(input);
     expect(result).toMatchObject(outcome === 'refused' ? { status: 'unavailable', reason: 'material-unavailable' }
-      : { status: outcome === 'different-winner' ? 'conflict' : outcome });
+      : { status: outcome });
     expect(commits).toBe(1);
   });
 
@@ -311,7 +337,7 @@ describe('Provider catalog explicit connection import', () => {
         return { status: 'present' as const, revision: 5, content: { t: 'plain' as const, v: catalog } };
       },
       importConnection: { candidate: refusal === 'personal-reference' ? { ...candidate, secretBindings: { account: { apiKey: 'old-personal-id' } } } : candidate,
-        isCurrent: () => refusal !== 'scope-retired', commitCatalog: async () => { commits += 1; return { status: 'applied' as const }; } },
+        isCurrent: () => refusal !== 'scope-retired', commitCatalog: async () => { commits += 1; return { status: 'applied' as const, revision: 6 }; } },
     };
     await expect(loadProviderConnectionsCatalogV1(input)).resolves.toMatchObject(refusal === 'personal-reference'
       ? { status: 'invalid' } : refusal === 'cancelled' ? { status: 'cancelled' }
@@ -332,7 +358,7 @@ describe('Provider catalog explicit connection import', () => {
       readRow: async () => refusal === 'deleted-row' ? { status: 'deleted' as const, revision: 5 }
         : { status: 'present' as const, revision: 5, content: { t: 'plain' as const, v: current } },
       importConnection: { candidate, isCurrent: () => true,
-        commitCatalog: async () => { commits += 1; return { status: 'applied' as const }; } },
+        commitCatalog: async () => { commits += 1; return { status: 'applied' as const, revision: 6 }; } },
     };
     await expect(loadProviderConnectionsCatalogV1(input)).resolves.toMatchObject({
       status: refusal === 'partial-catalog' ? 'unavailable' : 'conflict',
@@ -350,7 +376,7 @@ describe('Provider catalog explicit connection import', () => {
     const input = { mode: 'plain' as const, material: null,
       readRow: async () => ({ status: 'present' as const, revision: 5, content: { t: 'plain' as const, v: current } }),
       importConnection: { candidate, isCurrent: () => true,
-        commitCatalog: async () => { commits += 1; return { status: 'applied' as const }; } },
+        commitCatalog: async () => { commits += 1; return { status: 'applied' as const, revision: 6 }; } },
     };
     await expect(loadProviderConnectionsCatalogV1(input)).resolves.toMatchObject({ status: 'unchanged',
       connectionId: candidate.connection.id, catalog: { catalog: current } });
@@ -375,7 +401,7 @@ describe('Provider catalog explicit connection import', () => {
         content: sealProviderConnectionsContentV1({ mode: 'plain', material: null, catalog: current }) }),
       importConnection: { candidate: { ...candidate,
         manualModels: candidate.manualModels.map(model => ({ ...model, ...(levels ? { reasoningEffortLevels: levels } : {}) })) },
-        isCurrent: () => true, commitCatalog: async () => { commits++; return { status: 'applied' }; } },
+        isCurrent: () => true, commitCatalog: async () => { commits++; return { status: 'applied', revision: 6 }; } },
     });
     await expect(read(['high'])).resolves.toEqual({ status: 'conflict' });
     for (const levels of [undefined, ['low', 'high'] as Array<'low' | 'high'>]) {

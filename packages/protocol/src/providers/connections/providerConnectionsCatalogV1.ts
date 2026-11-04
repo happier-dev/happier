@@ -45,7 +45,8 @@ export type ProviderConnectionImportPreparationV1 =
   | Readonly<{ status: 'prepared'; connectionId: string; catalog: ProviderConnectionsCatalogV1; changed: boolean }>
   | Readonly<{ status: 'invalid' | 'conflict' }>;
 type ReadyCatalog = Extract<ProviderConnectionsCatalogSnapshotV1, { status: 'ready' }>;
-export type ProviderConnectionImportCommitResultV1 = Readonly<{ status: 'applied' | 'conflict' | 'cancelled' | 'outcome_unknown' }>
+export type ProviderConnectionImportCommitResultV1 = Readonly<{ status: 'applied'; revision: number }>
+  | Readonly<{ status: 'conflict' }> | Readonly<{ status: 'cancelled' }> | Readonly<{ status: 'outcome_unknown' }>
   | Readonly<{ status: 'refused'; reason: string }>;
 export type ProviderConnectionImportIntentV1 = Readonly<{
   candidate: ProviderConnectionImportCandidateV1;
@@ -187,14 +188,8 @@ export async function loadProviderConnectionsCatalogV1(input: LoadInput | Provid
   if (!current()) return { status: 'unavailable', reason: 'scope-retired' };
   if (receipt.status === 'refused') return { status: 'unavailable', reason: receipt.reason };
   if (receipt.status === 'conflict') return { status: 'conflict' };
-  const winner = await readCatalog(input);
-  if (input.signal?.aborted) return { status: 'cancelled' };
-  if (!current()) return { status: 'unavailable', reason: 'scope-retired' };
-  if (winner.status !== 'ready') return { status: 'unavailable', reason: winner.status === 'unavailable'
-    ? winner.reason : 'catalog-not-ready' };
-  const verified = prepareProviderConnectionImportV1(winner.catalog, intent.candidate);
-  return verified.status === 'prepared' && !verified.changed
-    ? { status: 'applied', connectionId: verified.connectionId, catalog: winner } : { status: 'conflict' };
+  return { status: 'applied', connectionId: prepared.connectionId,
+    catalog: { ...captured, revision: receipt.revision, catalog: prepared.catalog } };
 }
 
 /** The undeployed root is opened once into its sole row; no fallback or transfer control. */
@@ -213,8 +208,9 @@ async function loadTransferredCatalog(input: LoadInput): Promise<ProviderConnect
     const receipt = await transfer.initializeCatalog({ catalog: retained.catalog, expectedRevision: 'absent', sourceSettingsVersion: source.version });
     if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
     if (receipt.status === 'settings-conflict') return { status: 'unavailable', reason: 'source-version-conflict' };
-    // An ACK is not an opened authoritative snapshot. Read the actual concurrent winner.
-    catalog = await readCatalog(input);
+    catalog = receipt.status === 'updated'
+      ? { status: 'ready', revision: receipt.revision, catalog: retained.catalog }
+      : await readCatalog(input);
   }
   if (catalog.status !== 'ready') return catalog;
   if (!source && transfer.needsSourceCleanup?.() === false) {

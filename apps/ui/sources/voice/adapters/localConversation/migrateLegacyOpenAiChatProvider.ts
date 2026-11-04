@@ -108,7 +108,7 @@ export async function importLegacyVoiceOpenAiChatProvider(
           const result = await providerApi.writeProviderCatalogInContext(context, { ...input,
             ...(captures ? { savedSecretRevisions: captures.savedSecretRevisions } : {}),
           });
-          if (result.status === 'updated') return { status: 'applied' };
+          if (result.status === 'updated') return { status: 'applied', revision: result.revision };
           if (result.status === 'conflict' || result.status === 'settings-conflict') return { status: 'conflict' };
           return { status: 'refused', reason: result.status };
         } catch (error) {
