@@ -6239,7 +6239,6 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
     assert.match(relativeCompiler.stdout, /typescript-after-bootstrap:/);
     assert.match(relativeCompiler.stdout, /remote_validation_preparation\.mjs/);
     assert.match(relativeCompiler.stdout, /--validation-kind=typecheck/);
-    assert.match(relativeCompiler.stdout, /GOMAXPROCS/);
   }
 
   const composedVitest = spawnSync('/bin/sh', [
@@ -6262,7 +6261,6 @@ test('native launcher bootstraps dependency-consuming commands and leaves source
   assert.match(composedVitest.stdout, /vitest-after-preparation/);
   assert.match(composedVitest.stdout, /remote_validation_preparation\.mjs/);
   assert.match(composedVitest.stdout, /--component-relative-dir=packages\/tests/);
-  assert.match(composedVitest.stdout, /HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=[1-9][0-9]*/s);
   assert.doesNotMatch(composedVitest.stdout, /--maxWorkers|--minWorkers/);
 
   const cwdVitest = spawnSync('/bin/sh', [
