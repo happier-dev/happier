@@ -1,3 +1,4 @@
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
   AgentSessionCompactRequest,
   AgentSessionCompactResult,
@@ -87,6 +88,7 @@ export type CodexAppServerEvent =
   | (CodexAppServerTurnEventBase & Readonly<{ kind: 'turn-complete' }>)
   | (CodexAppServerTurnEventBase & Readonly<{
       kind: 'turn-failed';
+      providerError?: ProviderErrorV1;
       issue: CodexAppServerRuntimeIssue;
       runtimeAuthClassification?: ReturnType<typeof sanitizeCodexAppServerRuntimeAuthClassification>;
     }>)

@@ -13,6 +13,19 @@ import {
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it('retains Provider transport retryability at the turn-start boundary', () => {
+    const failure = createCodexAppServerTurnFailure({
+      phase: 'turn_start',
+      inputNotDispatched: true,
+      providerConnectionId: 'pc_work',
+      value: { error: { message: 'PRIVATE_SOCKET_CLOSED',
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: null } } } },
+    });
+    expect(failure).toMatchObject({ code: 'provider_endpoint_unreachable', retryable: true,
+      inputNotDispatched: true, providerError: { connectionId: 'pc_work', action: 'retry' } });
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+  });
+
   it('bounds retained provider text to the existing sanitized preview budget after redaction', () => {
     const rejection = createJsonRpcApplicationError({
       method: 'thread/start',

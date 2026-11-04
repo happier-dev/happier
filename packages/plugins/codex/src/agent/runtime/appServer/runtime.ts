@@ -120,6 +120,7 @@ import {
   createCodexAppServerTurnFailure,
   readCodexAppServerFailureCause,
   readCodexAppServerFailureCode,
+  readCodexAppServerProviderError,
   readCodexAppServerRuntimeIssueSource,
   readCodexAppServerTurnFailureDiagnostic,
   sanitizeCodexAppServerRuntimeAuthClassification,
@@ -332,6 +333,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   initialWorkspaceWrites?: 'allow' | 'deny';
   initialPermissionMode?: string;
   initialProviderBinding?: CodexProviderBindingEngineConfigV1 | null;
+  initialProviderConnectionId?: string | null;
   initialProviderModel?: NonNullable<AgentSessionOpenRequest['providerBinding']>['model'];
   connectedAccountService?: Readonly<{ pluginId: string; localId: string }>;
   processEnv?: Readonly<Record<string, string | undefined>>;
@@ -857,9 +859,11 @@ function pendingProviderPromptHasDeliveryIdentity(
 function createErrorFromAppServerNotification(
   value: unknown,
   sourceAccountIdentity: CodexConnectedServiceRuntimeIdentity | null,
+  providerConnectionId?: string | null,
 ): Error {
   return createCodexAppServerTurnFailure({
     value,
+    providerConnectionId,
     sourceAccountIdentity: sourceAccountIdentity
       ? {
           providerAccountId: sourceAccountIdentity.providerAccountId,
@@ -2072,7 +2076,8 @@ export function createCodexAppServerRuntime(
     }, settleMs);
   };
 
-  const failPendingTurn = (error: Error, diagnostic = readCodexAppServerTurnFailureDiagnostic(error)): void => {
+  const failPendingTurn = (error: Error, failure = createCodexAppServerTurnFailure({ value: error, providerConnectionId: params.initialProviderConnectionId })): void => {
+    const diagnostic = readCodexAppServerTurnFailureDiagnostic(failure);
     const activeTurn = pendingTurn;
     if (!activeTurn || activeTurn.failureSettling) return;
     if (activeTurn.compaction) {
@@ -2083,6 +2088,8 @@ export function createCodexAppServerRuntime(
       activeTurn.resolve();
       return;
     }
+    const issue = buildCodexAppServerTurnFailureIssue(failure, activeTurn);
+    Object.assign(error, { runtimeIssueV1: issue });
     activeTurn.failureSettling = true;
     publishToolEventsFromNotification('turn/interrupted', { threadId: activeTurn.threadId, turnId: activeTurn.agentTurnId });
     if (activeTurn.agentTurnId) terminatedProviderTurnIds.set(activeTurn.agentTurnId, activeTurn.sessionTurnId);
@@ -2103,13 +2110,15 @@ export function createCodexAppServerRuntime(
       setActive(false);
       terminalPendingTurnFailure = error;
       const runtimeAuthClassification = sanitizeCodexAppServerRuntimeAuthClassification(
-        (error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
+        (failure as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
       );
+      const providerError = readCodexAppServerProviderError(failure);
       publishRuntimeEvent({
         kind: 'turn-failed',
+        ...(providerError ? { providerError } : {}),
         turnId: activeTurn.sessionTurnId,
         ...(agentTurnId ? { agentTurnId } : {}),
-        issue: buildCodexAppServerTurnFailureIssue(terminalPendingTurnFailure, activeTurn),
+        issue,
         ...(runtimeAuthClassification ? { runtimeAuthClassification } : {}),
       });
       activeTurn.reject(error);
@@ -2131,6 +2140,7 @@ export function createCodexAppServerRuntime(
       const failure = createErrorFromAppServerNotification(
         notificationParams,
         pendingTurn?.providerOperationIdentity ?? null,
+        params.initialProviderConnectionId,
       );
       failPendingTurn(failure);
       return;
@@ -2358,6 +2368,7 @@ export function createCodexAppServerRuntime(
       const providerError = createErrorFromAppServerNotification(
         notificationParams,
         pendingTurn?.providerOperationIdentity ?? null,
+        params.initialProviderConnectionId,
       );
       if (record?.willRetry === true && pendingTurn) {
         assistantReasoningProjector.supersedeUnfinishedAssistantMessages({
@@ -3031,6 +3042,7 @@ export function createCodexAppServerRuntime(
         ? createCodexAppServerTurnFailure({
             value: error,
             phase: 'turn_start',
+            providerConnectionId: params.initialProviderConnectionId,
             sourceAccountIdentity: activeTurn.providerOperationIdentity,
             providerStartRejected: pendingTurn === activeTurn
               && !activeTurn.providerStartAcknowledged
@@ -3041,7 +3053,7 @@ export function createCodexAppServerRuntime(
       const failure = isCodexAppServerRejectedStartModelEntitlementError(classifiedFailure)
         ? classifiedFailure
         : error instanceof Error ? error : new Error(String(error));
-      failPendingTurn(failure, readCodexAppServerTurnFailureDiagnostic(classifiedFailure ?? failure));
+      failPendingTurn(failure, classifiedFailure ?? createCodexAppServerTurnFailure({ value: failure, providerConnectionId: params.initialProviderConnectionId }));
       throw failure;
     }
   };

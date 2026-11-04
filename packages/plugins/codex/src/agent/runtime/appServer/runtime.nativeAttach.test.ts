@@ -20,6 +20,56 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it.each([
+    { variant: 'httpConnectionFailed', status: 401, providerCode: 'provider_endpoint_unauthorized' },
+    { variant: 'responseStreamConnectionFailed', status: 401, providerCode: 'provider_endpoint_unauthorized' },
+    { variant: 'httpConnectionFailed', status: 403, providerCode: null },
+    { variant: 'httpConnectionFailed', status: 500, providerCode: null },
+    { variant: 'httpConnectionFailed', status: null, providerCode: 'provider_endpoint_unreachable' },
+    { variant: 'responseStreamConnectionFailed', status: null, providerCode: 'provider_endpoint_unreachable' },
+    { variant: 'responseStreamDisconnected', status: null, providerCode: 'provider_endpoint_unreachable' },
+    { variant: 'responseTooManyFailedAttempts', status: null, providerCode: null },
+    { variant: 'other', status: null, providerCode: null },
+  ])('attributes a Provider terminal transport failure without native sign-in recovery ($variant/$status)', async ({ variant, status, providerCode }) => {
+    await withFixture(async ({ openConfiguredSession, emitNotification }) => {
+      const session = await openConfiguredSession();
+      const events: AgentSessionRuntimeEvent[] = [];
+      session.watch(event => events.push(event));
+      await session.send({ inputIds: ['provider-auth-input'], input: { text: 'hello' },
+        delivery: { kind: 'newTurn', turnId: 'provider-auth-turn' } });
+      emitNotification('turn/completed', { threadId: 'fresh-thread', turn: {
+        id: 'provider-turn-1', status: 'failed', error: {
+          message: 'PRIVATE_PROVIDER_RESPONSE invalid API key',
+          codexErrorInfo: variant === 'other' ? 'other' : { [variant]: { httpStatusCode: status } },
+        },
+      } });
+      await vi.waitFor(() => expect(events.some(event => event.kind === 'turn-failed')).toBe(true));
+      const failed = events.find(event => event.kind === 'turn-failed');
+      if (failed?.kind !== 'turn-failed') throw new Error('Missing terminal failure');
+      expect(failed.diagnostic.details).not.toHaveProperty('runtimeAuthClassification');
+      if (providerCode) {
+        const retryable = providerCode === 'provider_endpoint_unreachable';
+        expect(failed.diagnostic).toMatchObject({ code: providerCode, details: {
+          providerError: { v: 1, code: providerCode, connectionId: 'pc_work',
+            retryable, action: retryable ? 'retry' : 'replace_secret' },
+          failureCause: { code: providerCode,
+            ...(status === null ? {} : { httpStatus: status }) },
+        } });
+        expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failed.diagnostic,
+          provider: 'codex', occurredAt: 100 })).toMatchObject({ code: providerCode, source: 'agent_session_error' });
+      } else {
+        expect(failed.diagnostic.code).not.toBe('provider_endpoint_unauthorized');
+        expect(failed.diagnostic.code).not.toBe('provider_endpoint_unreachable');
+        expect(failed.diagnostic.details).not.toHaveProperty('providerError');
+      }
+      expect(JSON.stringify(events)).not.toContain('PRIVATE_');
+    }, { providerBinding: {
+      connectionId: 'pc_work', model: { id: 'fixture-model', name: 'Fixture' },
+      upstream: { protocol: 'openai-responses', normalizedUrl: 'https://gateway.example.test/v1', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'engineConfig', engineConfig: { v: 1, modelProvider: 'ollama', config: {} } },
+    } });
+  });
+
   it('retains redacted provider rejection details through public native startup and issue publication', async () => {
     await withFixture(async ({ openConfiguredSession, requests }) => {
       const failure = await openConfiguredSession().then(

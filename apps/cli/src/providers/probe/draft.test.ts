@@ -79,6 +79,11 @@ function snapshotWithoutSecrets() {
   };
 }
 
+function snapshotReader() {
+  const current = snapshot();
+  return () => current;
+}
+
 function sharedSecretSnapshot() {
   return {
     ...snapshot(),
@@ -112,6 +117,30 @@ function request(actionNonce = 'draft-action-0001', withCredential = false) {
 }
 
 describe('draft provider probe service', () => {
+  it.each(['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET'] as const)(
+    'settles an unreachable draft Test with its typed Provider cause (%s)',
+    async (code) => {
+      // DNS and HTTP transport are external boundaries; draft admission stays real.
+      const resolveAddresses = async () => {
+        if (code === 'ENOTFOUND') throw Object.assign(new Error('lookup failed'), { code });
+        return ['1.1.1.1'];
+      };
+      const transport = vi.fn(async () => { throw Object.assign(new Error('transport failed'), { code }); });
+      const service = createProviderDraftProbeService({
+        machineId: 'machine-a',
+        getAccountSettingsSnapshot: snapshotReader(),
+        resolveAddresses,
+        client: createProviderProbeHttpClient({ resolveAddresses, transport }),
+      });
+
+      await expect(service.probe(request())).resolves.toMatchObject({
+        status: 'error',
+        error: { code: 'provider_endpoint_unreachable', connectionId: 'pc_draft_1', retryable: true, action: 'retry' },
+      });
+      expect(transport).toHaveBeenCalledTimes(code === 'ENOTFOUND' ? 0 : 1);
+    },
+  );
+
   it('rejects the exact private dispatch address set before transport when it differs from the set revalidated by the draft owner', async () => {
     const privateRequest = request('draft-action-private-address');
     privateRequest.template.endpointTemplates[0]!.baseUrl = 'http://gateway.internal:1234/';

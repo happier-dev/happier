@@ -1,3 +1,5 @@
+import { createProviderErrorV1, ProviderErrorCodeV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readCodexAppServerErrorPayload, type CodexAppServerErrorPayload } from './errorPayload.js';
 import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -76,18 +78,13 @@ const CODEX_APP_SERVER_SAFE_PLAN_TYPES = new Set([
     'edu',
 ]);
 
-type CodexAppServerErrorPayload = Readonly<{
-    message: string | null;
-    additionalDetails: string | null;
-    codexErrorInfo: string | null;
-    httpStatus?: number;
-    providerErrorCode?: 'model_not_found';
-}>;
-
 class CodexAppServerTurnFailure extends Error {
     declare readonly code?: string;
     declare readonly details?: Readonly<{ failureCause?: CodexFailureCause }>;
     readonly failurePhase: CodexFailureCause['phase'];
+    readonly providerError: ProviderErrorV1 | null;
+    readonly retryable: boolean;
+    readonly inputNotDispatched: boolean;
     readonly failureReason: CodexTurnFailureReason;
     declare readonly providerErrorCode?: string | number;
     declare readonly httpStatus?: number;
@@ -99,6 +96,9 @@ class CodexAppServerTurnFailure extends Error {
     readonly isRejectedStartModelEntitlement: boolean;
 
     constructor(message: string, options: Readonly<{
+        providerError?: ProviderErrorV1 | null;
+        inputNotDispatched?: boolean;
+        retryable?: boolean;
         code?: string;
         phase?: CodexFailureCause['phase'];
         isAuthAccountChanged: boolean;
@@ -113,6 +113,9 @@ class CodexAppServerTurnFailure extends Error {
         super(message);
         this.name = 'CodexAppServerTurnFailure';
         this.failurePhase = options.phase ?? 'turn';
+        this.providerError = options.providerError ?? null;
+        this.retryable = options.retryable === true;
+        this.inputNotDispatched = options.inputNotDispatched === true;
         if (options.code) this.code = options.code;
         this.isAuthAccountChanged = options.isAuthAccountChanged;
         this.contextWindowExhaustionEvidence = options.contextWindowExhaustionEvidence;
@@ -126,7 +129,8 @@ class CodexAppServerTurnFailure extends Error {
                 : options.isAuthAccountChanged ? 'auth_account_changed'
                     : CODEX_APP_SERVER_RUNTIME_AUTH_KIND_VALUES.find(kind => kind === classification?.kind) ?? 'unclassified_provider_error';
         if (options.providerErrorCode !== undefined) this.providerErrorCode = options.providerErrorCode;
-        if (options.providerErrorCode === 'model_not_found') this.code = 'provider_model_not_found';
+        if (this.providerError) this.code = this.providerError.code;
+        else if (options.providerErrorCode === 'model_not_found') this.code = 'provider_model_not_found';
         if (options.httpStatus !== undefined) this.httpStatus = options.httpStatus;
     }
 }
@@ -191,6 +195,10 @@ export function readCodexAppServerFailureCode(error: unknown): string | null {
   return error instanceof CodexAppServerTurnFailure
     ? (error.code ?? null)
     : null;
+}
+
+export function readCodexAppServerProviderError(error: unknown): ProviderErrorV1 | null {
+  return error instanceof CodexAppServerTurnFailure ? error.providerError : null;
 }
 
 export function readCodexAppServerRuntimeIssueSource(
@@ -312,46 +320,6 @@ export function sanitizeCodexAppServerRuntimeAuthClassification(
     };
 }
 
-function readCodexAppServerErrorPayload(value: unknown): CodexAppServerErrorPayload | null {
-    const record = readRecord(value);
-    if (!record) return null;
-
-    const directError = readRecord(record.error);
-    const turn = readRecord(record.turn);
-    const turnError = readRecord(turn?.error);
-    const data = readRecord(record.data);
-    const dataTurn = readRecord(data?.turn);
-    const error = directError ?? turnError ?? readRecord(data?.error)
-        ?? readRecord(dataTurn?.error) ?? data ?? (value instanceof Error ? record : null);
-    if (!error) return null;
-
-    const errorInfo = error.codexErrorInfo ?? error.codex_error_info;
-    const structuredInfo = readRecord(errorInfo);
-    const httpFailure = readRecord(structuredInfo?.httpConnectionFailed ?? structuredInfo?.http_connection_failed);
-    const httpStatus = httpFailure?.httpStatusCode ?? httpFailure?.http_status_code;
-    // Codex 0.162.1 flattens an upstream 400 JSON error into message and labels
-    // it `other`. Read the envelope's stable code; never classify its prose.
-    let upstreamError = error;
-    if (upstreamError.code !== 'model_not_found' && typeof error.message === 'string') {
-        const start = error.message.indexOf('{');
-        const end = error.message.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            try {
-                upstreamError = readRecord(readRecord(JSON.parse(error.message.slice(start, end + 1)))?.error) ?? error;
-            } catch { /* Malformed provider text supplies no structured evidence. */ }
-        }
-    }
-
-    return {
-        message: trimStringValue(error.message) ?? (value instanceof Error ? value.message : null),
-        additionalDetails: trimStringValue(error.additionalDetails ?? error.additional_details),
-        codexErrorInfo: httpFailure ? 'HttpConnectionFailed' : trimStringValue(errorInfo),
-        ...(upstreamError.code === 'model_not_found' ? { providerErrorCode: 'model_not_found' as const } : {}),
-        ...(typeof httpStatus === 'number' && Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599
-            ? { httpStatus } : {}),
-    };
-}
-
 function isCodexAppServerAuthAccountChangedPayload(payload: CodexAppServerErrorPayload): boolean {
     const codexErrorInfo = payload.codexErrorInfo?.toLowerCase() ?? null;
     const hasAuthAccountChangedMessage = [payload.message, payload.additionalDetails].some((value) =>
@@ -415,6 +383,8 @@ export function shouldDeferCodexAppServerTurnFailureToPromptLoop(error: unknown)
 
 export function createCodexAppServerTurnFailure(params: Readonly<{
     value: unknown;
+    providerConnectionId?: string | null;
+    inputNotDispatched?: boolean;
     phase?: CodexFailureCause['phase'];
     authContext?: CodexAppServerTurnFailureAuthContext | null;
     sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
@@ -441,6 +411,17 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     const preparationCause = retainedCause?.preparationCause
         ?? (daemonPreparationCause.success ? daemonPreparationCause.data : undefined);
     const payload = readCodexAppServerErrorPayload(params.value);
+    const providerCode = ProviderErrorCodeV1Schema.safeParse(rawCode);
+  // The same structured native HTTP evidence targets the admitted model source.
+  // A forbidden response alone does not prove that its credential is invalid.
+  const providerError = params.providerConnectionId
+    ? payload?.httpStatus === 401
+      ? createProviderErrorV1('provider_endpoint_unauthorized', { connectionId: params.providerConnectionId })
+      : payload?.transportFailureWithoutResponse && !payload.providerErrorCode && !providerCode.success
+        ? createProviderErrorV1('provider_endpoint_unreachable', { connectionId: params.providerConnectionId })
+        : null
+    : null;
+
     const authContext = params.authContext ?? {
         profileId: params.sourceAccountIdentity?.profileId ?? null,
         groupId: params.sourceAccountIdentity?.groupId ?? null,
@@ -474,10 +455,13 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         {
             ...(code ? { code } : {}),
             phase,
+            providerError,
+            retryable: providerError?.retryable,
+            inputNotDispatched: params.inputNotDispatched,
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
             contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
-            runtimeAuthClassification: sanitizedClassification,
+            runtimeAuthClassification: providerError ? null : sanitizedClassification,
             isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),
             isRejectedStartModelEntitlement: params.providerStartRejected === true
                 && sanitizedClassification?.kind === 'plan'
@@ -492,6 +476,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     const startupDetails = readAgentStartupFailureDetails(params.value);
     if (startupDetails) Object.assign(failure, { reason: startupDetails.reason });
     Object.assign(failure, { details: {
+        ...(providerError ? { providerError } : {}),
         v: 1, agentId: 'codex', source: readCodexAppServerRuntimeIssueSource(failure), ...startupDetails,
         failureCause: { ...readCodexAppServerFailureCause(failure), ...retainedCause,
             ...(providerErrorMessage ? { providerErrorMessage } : {}),

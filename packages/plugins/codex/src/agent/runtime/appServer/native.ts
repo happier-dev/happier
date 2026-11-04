@@ -510,6 +510,7 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
           event.issue.sanitizedPreview ?? event.issue.code,
           { v: 1, source: event.issue.source,
             ...(event.issue.failureCause ? { failureCause: event.issue.failureCause } : {}),
+            ...(event.providerError ? { providerError: event.providerError } : {}),
             ...(event.runtimeAuthClassification ? { runtimeAuthClassification: toJsonValue(event.runtimeAuthClassification) } : {}) },
         ),
       };
@@ -1098,6 +1099,7 @@ export async function openCodexNativeAppServerSession(
     appServerTransport,
     initialModelId: readInitialModelId(request),
     initialProviderModel: request.providerBinding?.model,
+    initialProviderConnectionId: request.providerBinding?.connectionId,
     connectedAccountService: request.connectedAccounts?.find(selection => selection.account.service.pluginId === 'happier.agent.codex'
       && selection.account.service.localId === 'openai-codex')?.account.service,
     initialCollaborationModeId: request.configuration?.mode.value,
@@ -1258,6 +1260,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     appServerEndpoint: sharedAppServer?.endpoint,
     initialModelId: readInitialModelId(request),
     initialProviderModel: request.providerBinding?.model,
+    initialProviderConnectionId: request.providerBinding?.connectionId,
     initialCollaborationModeId: request.configuration?.mode.value,
     initialWorkspaceWrites: request.configuration?.workspaceWrites,
     initialPermissionMode: readPermissionMode(request),

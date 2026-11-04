@@ -1401,6 +1401,21 @@ Tier declaration is currently authored through the Action or CLI.
 
 ## Session lifecycle
 
+In 0.3 development, Codex app-server turns bound to a Provider connection map
+structured upstream HTTP 401 evidence to `provider_endpoint_unauthorized`.
+The native turn diagnostic carries the existing `ProviderErrorV1` with the
+connection id and `replace_secret` recovery; the Session issue preserves the code
+for the existing Saved Secret presenter. Native Codex sign-in failures retain
+their separate recovery. HTTP 403 alone, a missing HTTP status, or error prose
+does not establish an invalid Provider credential.
+
+Structured Codex endpoint connection/stream failures without an HTTP response
+map to `provider_endpoint_unreachable` for the admitted Provider connection,
+with the existing retryable `retry` recovery. A retry-exhaustion marker alone
+does not establish reachability. This attribution does not change Codex's native
+request/stream retry policy; Session input settlement owns whether a retry
+control can safely resubmit the retained input.
+
 At launch, Happier persists the structured model selection plus exact non-secret resolution metadata: connection revision, chosen protocol, `compatibilityFingerprint`, `bindingSecurityFingerprint`, and the materialization kind. It does not persist a transient compatibility status, a derived materialization fingerprint, or credentials in session metadata.
 
 In the development Session-creation Action path, a daemon Provider rejection retains its validated `ProviderErrorV1` in the `spawn_failed` result, including the Provider's retryability. The ordinary New Session composer uses that result for its existing inline recovery controls. Recovery stays bound to the original launch context; changing the Home, Machine, or Provider selection must not retry the previous request against the new target.
