@@ -27,6 +27,89 @@ async function withQaPlacementFixture(run) {
   try { await run({ root, config, env }); } finally { await rm(root, { recursive: true, force: true }); }
 }
 
+test('reload reconciles saved target snapshots and pools against the producer registry', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    const registry = { ...config, targets: config.targets.filter(target => ['nl1', 'nl2'].includes(target.name))
+      .map(target => ({ ...target, ssh: `current-${target.name}` })),
+      runtimePlacement: {}, commandExecution: { mode: 'auto', targets: ['nl2', 'nl1'] } };
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), registry);
+    await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => target.name !== 'nl2'), runtimePlacement: {
+      qa: { mode: 'prefer-target', targets: ['linux2', 'nl1'] },
+      server: { mode: 'prefer-target', target: 'nl1' }, daemon: { mode: 'local' },
+    }, commandExecution: { mode: 'auto', targets: ['linux2', 'nl1'] } });
+    const probes = [];
+    const dependencies = { logger: { warn() {} }, runCaptureResult: async (_command, args) => {
+      probes.push(args.find(arg => arg.startsWith('--target=')));
+      return { ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' };
+    } };
+    const loaded = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, dependencies);
+    assert.deepEqual(loaded.config.targets.map(target => target.name), ['nl1', 'nl2']);
+    assert.deepEqual(loaded.config.targets.map(target => target.ssh), ['current-nl1', 'current-nl2']);
+    assert.deepEqual(loaded.config.commandExecution.targets, ['nl1']);
+    assert.deepEqual(loaded.config.runtimePlacement.qa.targets, ['nl1']);
+    assert.deepEqual(probes, ['--target=nl1']);
+    const saved = JSON.parse(await readFile(path, 'utf8'));
+    assert.deepEqual(saved.targets, loaded.config.targets);
+    assert.deepEqual(saved.commandExecution.targets, ['nl1']);
+    assert.equal(saved.runtimePlacement.server.target, 'nl1');
+    assert.equal(saved.runtimePlacement.daemon.mode, 'local');
+    await placement.persistControlledServerPlacement({ stackName: 'qa', sourceDir: '/repo', targetName: 'nl1', env });
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')).targets, loaded.config.targets);
+    const beforeReload = await lstat(path);
+    const reloaded = await placement.loadControlledRuntimeConfig({ stackName: 'qa', sourceDir: '/repo', env }, dependencies);
+    assert.deepEqual(reloaded.config.targets, loaded.config.targets);
+    assert.equal((await lstat(path)).ino, beforeReload.ino, 'an unchanged reload must not rewrite the saved registry');
+  });
+});
+
+test('reload drops unknown pool references before parsing and retains local data and implicit daemon placement', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    await writeJsonAtomic(path, { ...config, runtimePlacement: {
+      qa: { mode: 'auto', targets: ['unknown', 'linux2'] },
+    }, commandExecution: { mode: 'prefer-target', target: 'unknown' } });
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
+      targets: config.targets.filter(target => ['nl1', 'nl2'].includes(target.name)),
+      runtimePlacement: {}, commandExecution: { mode: 'auto', targets: ['nl2'] } });
+    await mkdir(join(root, 'qa', 'server-light'), { recursive: true });
+    await writeFile(join(root, 'qa', 'server-light', 'retained.db'), 'retained bytes');
+    const loaded = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
+      logger: { warn() {} }, runCaptureResult: async () => assert.fail('retained local data must remain local'),
+    });
+    assert.equal(loaded.target, null);
+    assert.deepEqual(loaded.config.targets.map(target => target.name), ['nl1', 'nl2']);
+    assert.deepEqual(loaded.config.commandExecution.targets, ['nl2']);
+    assert.equal(loaded.config.runtimePlacement.qa.mode, 'local');
+    const saved = JSON.parse(await readFile(path, 'utf8'));
+    assert.equal(saved.runtimePlacement.daemon, undefined);
+    assert.equal(await readFile(join(root, 'qa', 'server-light', 'retained.db'), 'utf8'), 'retained bytes');
+  });
+});
+
+test('absent producer registries preserve standalone authority and retired saved Machine pins never move silently', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    await writeJsonAtomic(path, { ...config, runtimePlacement: {
+      daemon: { mode: 'prefer-target', target: 'linux2' },
+    } });
+    const before = await readFile(path);
+    const noProbe = { logger: { warn() {} }, runCaptureResult: async () => assert.fail('authority cannot move') };
+    const standalone = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo',
+      env: { ...env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'absent' } }, {
+      logger: { warn() {} }, runCaptureResult: async () => ({ ok: true,
+        out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' }),
+    });
+    assert.equal(standalone.daemonTarget?.name, 'linux2');
+    assert.deepEqual(await readFile(path), before);
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { version: 3,
+      targets: config.targets.filter(target => target.name === 'nl1') });
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, noProbe),
+      /runtimePlacement.daemon references unknown target: linux2/);
+    assert.deepEqual(await readFile(path), before);
+  });
+});
+
 test('local QA daemon browser selects the most unreserved QA pool host without writing any placement', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
     const path = join(root, 'qa', 'dev-targets.json');
@@ -58,6 +141,8 @@ test('remote QA daemon browser ranks the pool without moving its fixed Machine',
   await withQaPlacementFixture(async ({ root, config, env }) => {
     const path = join(root, 'qa', 'dev-targets.json');
     for (const [daemonHostUnavailable, registeredHosts] of [[false, ['nl1', 'nl2']], [true, ['nl1', 'nl2']], [false, ['nl1']], [false, []]]) {
+      await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
+        targets: config.targets.filter(target => !['nl1', 'nl2'].includes(target.name) || registeredHosts.includes(target.name)) });
       await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => !['nl1', 'nl2'].includes(target.name) || registeredHosts.includes(target.name)),
         runtimePlacement: { daemon: { mode: 'prefer-target', target: 'linux3' } } });
       const before = await readFile(path);
@@ -114,6 +199,8 @@ test('local QA daemon browser never falls back to the controller when no pool ho
     assert.deepEqual(await readFile(path), before);
     await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => target.name === 'builder'),
       runtimePlacement: { daemon: { mode: 'local' } }, commandExecution: { mode: 'local' } });
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { version: 3,
+      targets: config.targets.filter(target => target.name === 'builder'), commandExecution: { mode: 'local' } });
     const withoutDefaultHosts = await readFile(path);
     const noProbe = { runCaptureResult: async () => assert.fail('an empty or invalid pool must not execute on another host'), logger: { warn() {} } };
     await assert.rejects(placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, noProbe),
@@ -162,18 +249,20 @@ test('consumer target registries never borrow producer build placement or overri
         runtimePlacement: { qa: { mode: 'prefer-target', targets: [targetName] }, ...(build ? { build } : {}) },
         commandExecution: { mode: 'local' },
       });
-      const consumerBefore = await readFile(consumerPath);
       const warnings = [];
       const loaded = await placement.loadControlledRuntimeConfig({ stackName, sourceDir: '/repo', env },
         { logger: { warn: message => warnings.push(message) } });
-      assert.deepEqual(loaded.config.targets.map(target => target.name), [targetName]);
+      assert.deepEqual(loaded.config.targets.map(target => target.name), config.targets.map(target => target.name));
       assert.equal(loaded.config.runtimePlacement.build, undefined);
       if (build) assert.ok(warnings.some(message => message.includes('ignored')
         && message.includes('runtimePlacement.build') && message.includes(join(root, 'producer', 'dev-targets.json'))));
-      else assert.deepEqual(warnings, []);
+      assert.ok(warnings.some(message => message.includes('reconciling saved targets')));
       const producer = await loadDevTargetsConfig({ path: join(loaded.authority.producerStackBaseDir, 'dev-targets.json'), env });
       decisions.push(producer.config.runtimePlacement.build);
-      assert.deepEqual(await readFile(consumerPath), consumerBefore);
+      const persisted = JSON.parse(await readFile(consumerPath, 'utf8'));
+      assert.deepEqual(persisted.targets, loaded.config.targets);
+      assert.equal(persisted.runtimePlacement.build, undefined);
+      assert.equal(persisted.runtimePlacement.daemon, undefined);
     }
     assert.deepEqual(decisions[0].targets, ['builder']);
     assert.deepEqual(decisions[1], decisions[0]);
@@ -188,7 +277,8 @@ test('consumer target registries never borrow producer build placement or overri
       preserveLocalPlacement: true, env }, { logger: { warn: message => warnings.push(message) } });
     assert.equal(local.localPlacementReason, 'explicit-local');
     assert.equal(local.config.runtimePlacement.build, undefined);
-    assert.equal(warnings.length, 1);
+    assert.ok(warnings.some(message => message.includes('runtimePlacement.build')));
+    assert.ok(warnings.some(message => message.includes('reconciling saved targets')));
     const producer = await placement.loadControlledRuntimeConfig({ stackName: 'producer', sourceDir: '/repo', env });
     assert.deepEqual(producer.config.runtimePlacement.build.targets, ['builder']);
     assert.deepEqual(await readFile(join(root, 'producer', 'dev-targets.json')), producerBefore);

@@ -46,8 +46,14 @@ export async function loadControlledRuntimeConfig({ stackName, sourceDir, preser
     env: { ...env, ...(sourceDir ? { HAPPIER_STACK_REPO_DIR: sourceDir } : {}) }, createRepoIdentityIfMissing: false });
   const isProducer = stackName === authority.producerStackName;
   const own = await loadDevTargetsConfig({ stackName, env, logger,
-    ...(!isProducer ? { buildPlacementOwnerPath: join(authority.producerStackBaseDir, 'dev-targets.json') } : {}),
+    ...(!isProducer ? { buildPlacementOwnerPath: join(authority.producerStackBaseDir, 'dev-targets.json'),
+      registryPath: join(authority.producerStackBaseDir, 'dev-targets.json') } : {}),
   });
+  if (own.registryReconciled) {
+    const persisted = { ...own.config, runtimePlacement: { ...own.config.runtimePlacement } };
+    if (!own.daemonExplicitlySet) delete persisted.runtimePlacement.daemon;
+    await writeJsonAtomic(own.path, persisted);
+  }
   const qaExplicitlySet = own.config.runtimePlacement?.qa != null;
   if (preserveLocalPlacement && own.config.runtimePlacement?.server?.mode !== 'prefer-target') {
     const explicitLocalQa = qaExplicitlySet && own.config.runtimePlacement.qa.mode === 'local';
@@ -60,7 +66,7 @@ export async function loadControlledRuntimeConfig({ stackName, sourceDir, preser
       localPlacementReason: localData ? 'retained-local-data' : 'explicit-local' };
     }
   }
-  const producer = await loadDevTargetsConfig({ stackName: authority.producerStackName, env });
+  const producer = own.config.targets.length ? own : await loadDevTargetsConfig({ stackName: authority.producerStackName, env });
   const targets = own.config.targets.length ? own.config.targets : producer.config.targets;
   // Commands can move between workers; a Machine's sessions and workspace
   // cannot. Only this consumer's explicit daemon pin can place its Machine.

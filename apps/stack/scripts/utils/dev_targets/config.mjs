@@ -526,7 +526,7 @@ export async function loadDevTargetExecutionConfig({ stackName, env = process.en
 }
 
 export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true,
-  buildPlacementOwnerPath, logger = console }) {
+  buildPlacementOwnerPath, registryPath, logger = console }) {
   // Runtime/service callers select a Stack resource, not command policy.
   const path = configPath ?? resolveDevTargetsConfigPath({ stackName, env, useExecutionOverride: false });
   try {
@@ -537,7 +537,43 @@ export async function loadDevTargetsConfig({ stackName, path: configPath, env = 
       delete raw.runtimePlacement.build;
       logger.warn?.(`[dev-targets] runtimePlacement.build in ${path} ignored; configure the producer's runtimePlacement.build in ${buildPlacementOwnerPath}`);
     }
-    return { path, config: parseDevTargetsConfig(raw), daemonExplicitlySet: raw?.runtimePlacement?.daemon != null };
+    let registryReconciled = false;
+    const producer = registryPath ? await readFile(registryPath, 'utf8').then(JSON.parse).catch(error => {
+      // Standalone Stacks can own a registry without a configured producer.
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }) : null;
+    if (producer) {
+      // The producer owns fleet membership; saved consumer lists are snapshots.
+      // Read only its registry/command policy, never its service placement.
+      const registry = upgradeDevTargetsConfigToVersion3(parseDevTargetsConfig({
+        version: producer.version, targets: producer.targets, commandExecution: producer.commandExecution,
+      }));
+      const previousTargets = parseDevTargetsConfig({ version: raw.version, targets: raw.targets }).targets;
+      registryReconciled = JSON.stringify(previousTargets) !== JSON.stringify(registry.targets);
+      raw.version = 3;
+      raw.targets = registry.targets;
+      const names = new Set(registry.targets.map(target => target.name));
+      const reconcilePool = (policy, fallback) => {
+        if (!policy || !['auto', 'prefer-target'].includes(policy.mode)) return policy;
+        const requested = policy.targets ?? (policy.target == null ? [] : [policy.target]);
+        if (!Array.isArray(requested)) return policy; // The parser reports malformed policies.
+        const retained = requested.filter(name => names.has(String(name).trim().toLowerCase()));
+        if (retained.length === requested.length) return policy;
+        registryReconciled = true;
+        return retained.length ? { ...policy, targets: retained } : fallback;
+      };
+      raw.commandExecution = reconcilePool(raw.commandExecution, registry.commandExecution)
+        ?? registry.commandExecution;
+      if (raw.runtimePlacement?.qa) {
+        raw.runtimePlacement.qa = reconcilePool(raw.runtimePlacement.qa, { mode: 'local' });
+      }
+      // Server and Machine pins retain authority: never move their data or
+      // sessions by dropping a pin when its host leaves the registry.
+      if (registryReconciled) logger.warn?.(`[dev-targets] reconciling saved targets with producer registry ${registryPath}`);
+    }
+    return { path, config: parseDevTargetsConfig(raw), daemonExplicitlySet: raw?.runtimePlacement?.daemon != null,
+      ...(registryPath ? { registryReconciled } : {}) };
   } catch (error) {
     if (allowMissing && error?.code === 'ENOENT') {
       return { path, config: { version: 1, targets: [] } };
