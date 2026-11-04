@@ -580,7 +580,7 @@ esac
     if (typecheck) {
       await waitForRuntime(() => /HSTACK_(?:[A-Z_]*_)?BUSY|queued on /.test(stderr),
         () => `public typecheck never reported its placement outcome:\n${stderr}`);
-      assert.doesNotMatch(stderr, /HSTACK_(?:[A-Z_]*_)?BUSY/, 'pool probes must not look like terminal refusals');
+      assert.match(stderr, /HSTACK_MEMORY_BUSY/, 'abandoned pool attempts expose their native reason');
     }
     await waitForRuntime(async () => (await waitingWorker.brokerStatus()).waitingCount === 1,
       () => `full busy sweep never retained its native queue position:\n${stderr}`);
@@ -596,7 +596,7 @@ esac
     };
     const initialCosts = await costs();
     assert.deepEqual(initialCosts.dispatches, ['starved', 'roomy', 'starved'], 'one full capacity sweep, then the best eligible native queue');
-    assert.doesNotMatch(stderr, /HSTACK_(?:[A-Z_]*_)?BUSY/, 'pool probes must not look like terminal refusals');
+    assert.match(stderr, /HSTACK_MEMORY_BUSY/, 'abandoned pool attempts expose their native reason');
     assert.equal((stderr.match(/queued on starved for memory, waiting \(Ctrl-C cancels\)/g) ?? []).length, 1,
       'the retained queue must be visible exactly once before any verdict');
     assert.doesNotMatch(stderr, /admitted on /, 'waiting is not admission');
