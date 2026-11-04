@@ -2704,6 +2704,30 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             startupGraceMs: configuration.claudeUnifiedTerminalStartupReadinessTimeoutMs,
             startupGraceActive: () => startupHostLivenessGraceActive,
             isExpectedHostExit: (liveness) => expectedPromptInputExit && isCleanTerminalExit(liveness),
+            // The adapter-derived command identity from the provider launch argv (herdr: the
+            // executable; zellij: the launcher proof fragments) — the same convention the hosts
+            // themselves use for pane-command matching.
+            providerCommandFragments: activeHandle.expectedCommandFragments,
+            onProviderGone: ({ liveness }) => {
+              if (expectedPromptInputExit) {
+                if (!runtimeAbortController.signal.aborted) {
+                  runtimeAbortController.abort('claude-unified-terminal-graceful-exit');
+                }
+                return;
+              }
+              // The pane outlived the provider: reuse the host-dead consequence chain (issue
+              // surfacing, failed turn, park-for-recovery) — the liveness payload (paneAlive true,
+              // foreground lineage present) distinguishes this shape in diagnostics.
+              const error = new ClaudeUnifiedTerminalHostDeadError(liveness);
+              if (!currentTerminalProcess) {
+                observeUnverifiedProviderExit(error);
+              }
+              void publishHostDeadHealth(activeHandle, liveness);
+              fatalRuntimeError ??= error;
+              if (!runtimeAbortController.signal.aborted) {
+                runtimeAbortController.abort(error);
+              }
+            },
             onHostExited: () => {
               if (!currentTerminalProcess) {
                 void opts.runtimeActivityAdapter?.handleRuntimeLoss('claude_process_exit').catch((error) => {

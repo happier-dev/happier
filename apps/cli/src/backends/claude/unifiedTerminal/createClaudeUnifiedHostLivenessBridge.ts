@@ -43,6 +43,19 @@ function stableJitterOffsetMs(handle: TerminalHostHandle, jitterWindowMs: number
   return (hash >>> 0) % (jitterWindowMs + 1);
 }
 
+function foregroundArgvIncludesCommandFragment(
+  paneForegroundArgv: readonly (readonly string[])[],
+  fragments: readonly string[],
+): boolean {
+  const proofFragments = fragments.length > 2
+    ? fragments.slice(2)
+    : fragments.length > 1
+      ? fragments.slice(1)
+      : fragments;
+  return proofFragments.some((fragment) => fragment.length > 0
+    && paneForegroundArgv.some((argv) => argv.some((arg) => arg.includes(fragment))));
+}
+
 export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
   hostAdapter: Pick<TerminalHostAdapter, 'evaluateLiveness'>;
   handle: TerminalHostHandle;
@@ -54,6 +67,11 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
   }>) => void | Promise<void>) | undefined;
   onHostExited?: ((liveness: TerminalHostLiveness) => void | Promise<void>) | undefined;
   isExpectedHostExit?: ((liveness: TerminalHostLiveness) => boolean) | undefined;
+  providerCommandFragments?: readonly string[] | undefined;
+  onProviderGone?: ((params: Readonly<{
+    liveness: TerminalHostLiveness;
+    providerCommandFragments: readonly string[];
+  }>) => void | Promise<void>) | undefined;
   telemetry?: ClaudeUnifiedTelemetrySink | undefined;
   pollIntervalMs?: number | undefined;
   confirmDeadPollIntervalMs?: number | undefined;
@@ -89,6 +107,8 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
   let pendingDeadLiveness: TerminalHostLiveness | null = null;
   let probeFailureStreakStartedAtMs: number | null = null;
   let probeFailureStarvationEscalated = false;
+  let pendingProviderGoneLiveness: TerminalHostLiveness | null = null;
+  let providerGoneReported = false;
   let startupGracePreviouslyActive = opts.startupGraceActive?.() === true;
 
   const reportHostExited = async (liveness: TerminalHostLiveness): Promise<void> => {
@@ -138,6 +158,7 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
           || probeFailureStreakStartedAtMs !== null
           || startupGraceSignalActive
           || startupGraceJustEnded
+          || pendingProviderGoneLiveness !== null
           ? confirmDeadPollIntervalMs
           : steadyStatePollDelayMs,
         abortSignal,
@@ -187,6 +208,39 @@ export function createClaudeUnifiedHostLivenessBridge(opts: Readonly<{
       pendingDeadLiveness = null;
       probeFailureStreakStartedAtMs = null;
       probeFailureStarvationEscalated = false;
+      // Provider-presence classification: a live pane whose reported foreground lineage no longer
+      // contains the provider command means the provider exited while the terminal host stays
+      // usable. Confirm like dead-pane evidence (two conclusive observations) and report once as
+      // a fact; the caller owns the consequences. Hosts that cannot report the lineage are
+      // fail-open (no classification), and absence of evidence resets a pending confirmation.
+      const providerFragments = opts.providerCommandFragments ?? [];
+      const foregroundArgv = liveness.paneForegroundArgv;
+      const providerGoneEvidence = opts.onProviderGone !== undefined
+        && providerFragments.length > 0
+        && Array.isArray(foregroundArgv)
+        && foregroundArgv.length > 0
+        && !foregroundArgvIncludesCommandFragment(foregroundArgv, providerFragments);
+      if (providerGoneEvidence) {
+        const graceActive = opts.startupGraceActive?.() ?? true;
+        if (graceActive && startupGraceMs > 0 && nowMs() - startedAtMs < startupGraceMs) {
+          pendingProviderGoneLiveness = null;
+        } else if (pendingProviderGoneLiveness === null) {
+          pendingProviderGoneLiveness = liveness;
+        } else if (!providerGoneReported) {
+          providerGoneReported = true;
+          try {
+            await opts.onProviderGone?.({
+              liveness: mergeDeadLivenessDiagnostics(pendingProviderGoneLiveness, liveness),
+              providerCommandFragments: providerFragments,
+            });
+          } catch {
+            // The provider-gone report is a fact notification; a failing consumer must not
+            // stop the liveness loop that still owns pane-death detection.
+          }
+        }
+      } else {
+        pendingProviderGoneLiveness = null;
+      }
     }
   };
 
