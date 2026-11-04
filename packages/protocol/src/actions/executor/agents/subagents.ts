@@ -14,7 +14,7 @@ import type { ActionExecuteResult } from '../types.js';
 
 
 export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'actionId' | 'data' | 'parsed' | 'ctx' | 'deps'> & Readonly<{
-  startExecutionRunWithSelection: (sessionId: Parameters<ActionExecutorDeps['executionRunStart']>[0], input: Parameters<ActionExecutorDeps['executionRunStart']>[1], opts: Parameters<ActionExecutorDeps['executionRunStart']>[2], context: ActionExecutorContext) => ReturnType<ActionExecutorDeps['executionRunStart']>;
+  startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, data, parsed, ctx, deps, startExecutionRunWithSelection } = inv;
 

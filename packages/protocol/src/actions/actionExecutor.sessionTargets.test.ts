@@ -29,13 +29,13 @@ function harness() {
   const deps = {
     resolveSessionReference: async ({ sessionId, context }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) =>
       ({ kind: 'unique' as const, address: { serverId: context.serverId!, sessionId: sessionId! } }),
-    sessionList: async ({ query }: Parameters<ActionExecutorDeps['sessionList']>[0]) => markSessionListQueryResultV1({
+    sessionList: async ({ query }: Parameters<NonNullable<ActionExecutorDeps['sessionList']>>[0]) => markSessionListQueryResultV1({
       sessions: workers.map(id => ({ id, active: false, presence: 'offline', updatedAt: 1, manager: { sessionId: query?.underSessionId } })),
       nextCursor: incomplete ? 'missing-page' : null, hasNext: incomplete,
       attentionNextCursor: null, attentionHasNext: false,
     }),
     readSessionManager: async () => ({ kind: 'manager' as const, address: { serverId: 'home', sessionId: 'manager' } }),
-    sessionSendMessage: async (args: Parameters<ActionExecutorDeps['sessionSendMessage']>[0]) => {
+    sessionSendMessage: async (args: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) => {
       if (args.sessionId === inaccessible) return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
       effects.push(args);
       return { status: 'accepted' as const, localId: `input-${args.sessionId}` };

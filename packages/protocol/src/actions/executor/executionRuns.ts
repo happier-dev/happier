@@ -39,7 +39,7 @@ export function resolveExecutionRunLaunchOrigin(ctx: ActionExecutorContext): Exe
 }
 
 export type ExecutionRunCallOptions = NonNullable<
-  Parameters<ActionExecutorDeps['executionRunStart']>[2]
+  Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2]
 >;
 
 export function buildExecutionRunCallOptions(

@@ -81,6 +81,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
         }
 
         if (actionId === 'session.fork') {
+          if (!deps.sessionFork) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const forkRequest = SessionForkRpcParamsSchema.safeParse({
@@ -130,6 +131,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
         }
 
         if (actionId === 'session.rollback') {
+          if (!deps.sessionRollback) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
@@ -233,6 +235,10 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
           let reportsError: { errorCode: string; error: string } | undefined;
           let reportsWithheld = false;
           do {
+            if (!deps.sessionList) {
+              reportsError = { errorCode: 'unsupported_action', error: 'unsupported_action:session.list' };
+              break;
+            }
             let page: ReturnType<typeof parseSessionListQueryActionResultV1>;
             try {
               ctx.signal?.throwIfAborted();

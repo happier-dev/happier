@@ -22,11 +22,13 @@ import type { CoreInvocation, PreparedCoreAdmission } from '../coreInvocation.js
 
 export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'deps' | 'data'> & Readonly<{
   dispatchFacts: DispatchFacts;
-  startExecutionRunWithSelection: (sessionId: Parameters<ActionExecutorDeps['executionRunStart']>[0], input: Parameters<ActionExecutorDeps['executionRunStart']>[1], opts: Parameters<ActionExecutorDeps['executionRunStart']>[2], context: ActionExecutorContext) => ReturnType<ActionExecutorDeps['executionRunStart']>;
+  startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, parsed, ctx, deps, data, dispatchFacts, startExecutionRunWithSelection } = inv;
 
         if (actionId === 'execution.run.start') {
+          const waitForCompletion = data.waitForCompletion === true ? deps.executionRunWait : undefined;
+          if (data.waitForCompletion === true && !waitForCompletion) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -203,14 +205,14 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             ok: true,
             result: parsedStartResponse.data,
           };
-          if (data.waitForCompletion !== true) return admittedStartResult;
+          if (!waitForCompletion) return admittedStartResult;
 
           const runId = parsedStartResponse.data.runId;
           // The waiter is a client concern: compose the existing scoped waiter
           // after a successful start without turning caller cancellation into a
           // run stop. A typed timeout remains nested under the accepted run.
           try {
-            const rawWait = await deps.executionRunWait(sessionId, {
+            const rawWait = await waitForCompletion(sessionId, {
               runId,
               ...(typeof data.waitTimeoutSeconds === 'number'
                 ? { timeoutSeconds: data.waitTimeoutSeconds }
@@ -244,6 +246,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'execution.run.list') {
+          if (!deps.executionRunList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -263,6 +266,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'execution.run.get') {
+          if (!deps.executionRunGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -288,6 +292,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'execution.run.send') {
+          if (!deps.detachedExecutionRunSend) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const detachedInput = DetachedExecutionRunSendInputSchema.parse(parsed.data);
           const sessionId = detachedInput.sessionId;
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
@@ -523,6 +528,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'execution.run.stop') {
+          if (!deps.executionRunStop) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -550,6 +556,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'execution.run.action') {
+          if (!deps.executionRunAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveExecutionRunScope(parsed.data, ctx);
           const serverId = resolveServerIdForExecutionRunScope(deps, ctx, sessionId);
           const opts = buildExecutionRunCallOptions(
@@ -590,6 +597,7 @@ export async function dispatchRunsDispatch2(inv: Pick<CoreInvocation, 'actionId'
   const { actionId, data, parsed, ctx, deps } = inv;
 
         if (actionId === 'execution.run.wait') {
+          if (!deps.executionRunWait) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           if (typeof data.runId !== 'string') {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }

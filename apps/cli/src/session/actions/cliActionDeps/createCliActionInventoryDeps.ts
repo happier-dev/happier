@@ -389,7 +389,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'spawnProfilesList'
   | 'spawnConnectedServicesList'
   | 'spawnMcpServersPreview'
-> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog'>> {
+> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog' | 'agentsModelsList' | 'machinesList'>> {
   const metadataReaders = new Map<string, () => Promise<Record<string, unknown> | null>>();
   let accountProfilePromise: Promise<AccountProfile | null> | null = null;
   if (params.readCurrentSessionMetadata) metadataReaders.set(params.sessionId, params.readCurrentSessionMetadata);

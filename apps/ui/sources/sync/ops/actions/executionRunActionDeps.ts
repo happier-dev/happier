@@ -24,7 +24,7 @@ import { withActionAccountRequestSignal, type LazyActionAccountContext } from '.
 import { createUiAccountActionTransport } from './accountActionTransport';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
-type UiExecutionRunActionDeps = Pick<
+type UiExecutionRunActionDeps = Required<Pick<
     ActionExecutorDeps,
     | 'executionRunCheckProtocolV2'
     | 'executionRunStart'
@@ -37,9 +37,9 @@ type UiExecutionRunActionDeps = Pick<
     | 'executionRunAction'
     | 'executionRunPermissionRespond'
     | 'executionRunWait'
->;
+>>;
 
-type ExecutionRunOptions = Parameters<UiExecutionRunActionDeps['executionRunStart']>[2];
+type ExecutionRunOptions = Parameters<NonNullable<UiExecutionRunActionDeps['executionRunStart']>>[2];
 
 function normalizeId(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;

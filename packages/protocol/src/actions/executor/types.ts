@@ -1486,23 +1486,23 @@ export type ActionExecutorDeps = Readonly<{
     | Readonly<{ ok: true; exactMachineId?: string }>
     | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>
   >;
-  executionRunStart: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
-  executionRunList: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
-  executionRunGet: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
-  detachedExecutionRunSend: (sessionId: null, request: ExecutionRunSendRequest, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  executionRunStart?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  executionRunList?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  executionRunGet?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  detachedExecutionRunSend?: (sessionId: null, request: ExecutionRunSendRequest, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunEnsure?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunEnsureOrStart?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunStreamStart?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunStreamRead?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunStreamCancel?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
-  executionRunStop: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  executionRunStop?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunCancelTurn?: (sessionId: string | null, request: ExecutionRunCancelTurnRequest, opts?: ExecutionRunActionOptions) => Promise<unknown>;
-  executionRunAction: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
+  executionRunAction?: (sessionId: string | null, request: any, opts?: ExecutionRunActionOptions) => Promise<unknown>;
   executionRunPermissionRespond?: (
     request: ExecutionRunPermissionRespondActionInput,
     context: ActionExecutorContext,
   ) => Promise<unknown>;
-  executionRunWait: (
+  executionRunWait?: (
     sessionId: string | null,
     request: ExecutionRunWaitActionRequest,
     opts?: ExecutionRunActionOptions & Readonly<{
@@ -1697,7 +1697,7 @@ export type ActionExecutorDeps = Readonly<{
     actionId: ActionId;
     signal?: AbortSignal;
   }>) => Promise<Readonly<{ kind: 'manager'; address: ActionSessionAddress | null }> | Readonly<{ kind: 'unavailable' }>>;
-  sessionOpen: (args: ActionSessionAddress & Readonly<{
+  sessionOpen?: (args: ActionSessionAddress & Readonly<{
     presentation?: PublicActionInputById['session.open']['presentation'];
     tabId?: string;
     destination?: PublicActionInputById['session.open']['destination'];
@@ -1707,7 +1707,7 @@ export type ActionExecutorDeps = Readonly<{
     resumeRequest?: SessionResumeRequestV1;
     signal?: AbortSignal;
   }>, context?: ActionExecutorContext) => Promise<unknown>;
-  sessionFork: (args: Readonly<
+  sessionFork?: (args: Readonly<
     Omit<SessionForkRpcParams, 'v' | 'parentSessionId'> & {
       sessionId: string;
       serverId?: string | null;
@@ -1715,7 +1715,7 @@ export type ActionExecutorDeps = Readonly<{
     }
   >) => Promise<unknown>;
   sessionContinueWithReplay?: (args: SessionContinueWithReplayRpcParams & Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
-  sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionRollback?: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget; signal?: AbortSignal }>) => Promise<unknown>;
   checkpointCodeRollback?: (args: Readonly<{
     request: CheckpointCodeRollbackRequest;
     serverId?: string | null;
@@ -1923,7 +1923,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<ActionExecuteResult | null>;
   // Local inventory + discovery (voice)
-  pathsListRecent: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
+  pathsListRecent?: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
   projectSourcesList?: (input: ProjectSourcesListInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesListOutputV1 | ActionExecuteFailure>;
   projectSourcesRead?: (input: ProjectSourcesReadInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesReadOutputV1 | ActionExecuteFailure>;
   projectSourcesCreate?: (input: ProjectSourcesCreateInputV1, context: ActionExecutorContext) => Promise<ProjectSourcesCreateOutputV1 | ActionExecuteFailure>;
@@ -1952,7 +1952,7 @@ export type ActionExecutorDeps = Readonly<{
   projectsWorkspaceForget?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetOutputV1>;
   promptInvocationsList?: (args: Readonly<{ limit?: number; signal?: AbortSignal }>) => Promise<unknown>;
   promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string; sessionId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
-  machinesList: (args: Readonly<{ serverId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>) => Promise<unknown>;
+  machinesList?: (args: Readonly<{ serverId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>) => Promise<unknown>;
   homeConnect?: (input: z.infer<typeof HomeConnectInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof HomeConnectOutputSchema> | ActionExecuteFailure>;
   homeReconnect?: (input: z.infer<typeof HomeReconnectInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof HomeReconnectOutputSchema> | ActionExecuteFailure>;
   machineAddCommand?: (input: z.infer<typeof MachineAddCommandInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachineAddCommandOutputSchema> | ActionExecuteFailure>;
@@ -1961,8 +1961,8 @@ export type ActionExecutorDeps = Readonly<{
   machinePairingCreate?: (input: z.infer<typeof MachinePairingCreateInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCreateOutputSchema> | ActionExecuteFailure>;
   machinePageAction?: (request: Readonly<{ actionId: MachinePageActionId; input: MachinePageActionInput; context: ActionExecutorContext }>) => Promise<unknown>;
   machineTerminalAction?: (request: Readonly<{ actionId: MachineTerminalActionId; input: MachineTerminalActionInput; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
-  serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
-  reviewEnginesList: (args: Readonly<{ sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths' }>) => Promise<unknown>;
+  serversList?: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  reviewEnginesList?: (args: Readonly<{ sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths' }>) => Promise<unknown>;
   /** Caller-owned Account delivery; the host checks visibility of any deep link. */
   notificationsNotifyMe?: (
     input: NotificationsNotifyMeInputV1,
@@ -1991,7 +1991,7 @@ export type ActionExecutorDeps = Readonly<{
     agentId: string;
     backendTargetKey: string;
   }> | null;
-  agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
+  agentsBackendsList?: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
   machineAgentSignInStart?: (args: MachinesAgentsSignInStartInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
   machineAgentSignInStatus?: (args: MachinesAgentsSignInStatusInput & { serverId?: string; signal?: AbortSignal }) => Promise<AgentSignInStatusResponse>;
   machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInCancelOutput>;
@@ -2007,7 +2007,7 @@ export type ActionExecutorDeps = Readonly<{
   machineAgentInstallStart?: (args: DaemonAgentInstallStartRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallStartResponse | ActionExecuteFailure>;
   machineAgentInstallRead?: (args: DaemonAgentInstallReadRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallReadResponse>;
   machineAgentInstallCancel?: (args: DaemonAgentInstallCancelRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallCancelResponse>;
-  agentsModelsList: (args: Readonly<{
+  agentsModelsList?: (args: Readonly<{
     purpose?: 'scm_diff_summary';
     discoveryTargetKey?: string;
     modelSelector?: import('../../scm/diffSummary.js').ScmDiffSummaryModelSelector;
@@ -2047,9 +2047,9 @@ export type ActionExecutorDeps = Readonly<{
     request: SessionAgentTransitionRequestV1;
     context: ActionExecutorContext;
     serverId?: string | null;
-    sessionInputSource?: NonNullable<Parameters<ActionExecutorDeps['sessionSendMessage']>[0]['sessionInputSource']>;
+    sessionInputSource?: NonNullable<Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]['sessionInputSource']>;
   }>) => Promise<unknown>;
-  sessionSendMessage: (args: Readonly<{
+  sessionSendMessage?: (args: Readonly<{
     context: ActionExecutorContext;
     /** Validated author intent retained for same-Action transport relays. */
     authoredInput?: SessionMessageSendAuthoredInput;
@@ -2388,7 +2388,7 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
-  sessionModeSet: (args: Readonly<{ sessionId: string; modeId: string }>) => Promise<unknown>;
+  sessionModeSet?: (args: Readonly<{ sessionId: string; modeId: string }>) => Promise<unknown>;
   sessionControlSwitch?: (args: Readonly<{
     sessionId: string;
     to: 'remote' | 'local';
@@ -2398,7 +2398,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
   sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string }>) => Promise<unknown>;
   sessionConnectedServicesAuthSet?: (args: SessionConnectedServiceAuthSwitchRpcParams & Readonly<{ machineId: string; serverId?: string | null }>) => Promise<unknown>;
-  sessionModesList: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
+  sessionModesList?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Voice panel targeting + session query tools
   sessionTargetPrimarySet?: (args: ActionSessionAddress | Readonly<{ sessionId: null; serverId?: null }>) => Promise<unknown>;
@@ -2413,7 +2413,7 @@ export type ActionExecutorDeps = Readonly<{
   ) => Promise<
     import('../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js').VoiceTrackedTargetsActionResultV1
   >;
-  sessionList: (args: Readonly<{
+  sessionList?: (args: Readonly<{
     context: ActionExecutorContext;
     project?: import('../../workspaces/workspaceRefV1.js').QualifiedProjectKeyV1;
     query?: SessionListQueryV1;
@@ -2435,8 +2435,8 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<SessionManagerSetResultV1 | ActionExecuteFailure>;
   sessionUpdatePost?: (args: SessionUpdatePostInputV1 & Readonly<{ context: ActionExecutorContext }>) => Promise<unknown>;
-  sessionActivityGet: (args: Readonly<{ context: ActionExecutorContext; sessionId: string; view?: SessionListViewV1; windowSeconds?: number; serverId?: string; signal?: AbortSignal }>) => Promise<unknown>;
-  sessionRecentMessagesGet: (args: Readonly<{
+  sessionActivityGet?: (args: Readonly<{ context: ActionExecutorContext; sessionId: string; view?: SessionListViewV1; windowSeconds?: number; serverId?: string; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionRecentMessagesGet?: (args: Readonly<{
     sessionId: string;
     serverId?: string | null;
     limit?: number;
@@ -2447,7 +2447,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   // Global voice controls
-  resetGlobalVoiceAgent: () => Promise<void> | void;
+  resetGlobalVoiceAgent?: () => Promise<void> | void;
   teleportVoiceAgentToSessionRoot?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Daemon-local memory (machine-scoped RPC)
@@ -2456,18 +2456,18 @@ export type ActionExecutorDeps = Readonly<{
   daemonMemoryStatus?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<MemoryStatusV1>;
   daemonMemoryClearIndex?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<{ ok: true }>;
   searchConversations?: (args: Readonly<{ input: SearchConversationsInputV1; context: ActionExecutorContext }>) => Promise<unknown>;
-  daemonMemorySearch: (args: Readonly<{
+  daemonMemorySearch?: (args: Readonly<{
     machineId: string;
     query: MemorySearchQueryV1;
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<MemorySearchResultV1>;
-  daemonMemoryGetWindow: (args: Readonly<MemoryWindowRequestV1 & {
+  daemonMemoryGetWindow?: (args: Readonly<MemoryWindowRequestV1 & {
     machineId: string;
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<MemoryWindowV1>;
-  daemonMemoryEnsureUpToDate: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
+  daemonMemoryEnsureUpToDate?: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
 
   // Approval queue (optional)
   approvalsList?: (args: Readonly<{

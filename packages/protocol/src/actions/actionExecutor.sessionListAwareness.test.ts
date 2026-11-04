@@ -145,7 +145,7 @@ describe('session.list execution', () => {
       v: 1, sessionId, title: `Title ${sessionId}`, lifecycle: 'active', runtime, freshness: 'live',
       operational: { primary, reasons: [] }, encryption: 'plain', availability: 'complete',
     });
-    const requests: Parameters<ActionExecutorDeps['sessionList']>[0][] = [];
+    const requests: Parameters<NonNullable<ActionExecutorDeps['sessionList']>>[0][] = [];
     const cursor = encodeV2SessionListCursorV1('recent');
     const executor = createExecutor({ machinesList: async () => { throw new Error('Session choices must not query machines'); },
       sessionList: async (request) => {

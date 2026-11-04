@@ -77,7 +77,7 @@ describe('Voice run caller-turn admission', () => {
   ] satisfies Array<
     | { kind: 'stream'; sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStreamStart']>>[0] }
     | { kind: 'send'; sessionId: Parameters<NonNullable<ActionExecutorDeps['detachedExecutionRunSend']>>[0] }
-    | { kind: 'welcome'; sessionId: Parameters<ActionExecutorDeps['executionRunAction']>[0] }
+    | { kind: 'welcome'; sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunAction']>>[0] }
   >)('refuses automation $kind input before the real manager receives it', async (input) => {
     const { sessionId } = input;
     await retainRun('voice_agent', sessionId);

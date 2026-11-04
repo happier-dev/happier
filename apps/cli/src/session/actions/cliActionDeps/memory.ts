@@ -17,7 +17,7 @@ export function createCliMemoryActionDeps(
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
     notSupported: () => never;
   }>,
-): Pick<ActionExecutorDeps, 'daemonMemorySettingsGet' | 'daemonMemorySettingsSet' | 'daemonMemoryStatus' | 'daemonMemoryClearIndex' | 'daemonMemorySearch' | 'daemonMemoryGetWindow' | 'daemonMemoryEnsureUpToDate'> {
+): Pick<ActionExecutorDeps, 'daemonMemorySettingsGet' | 'daemonMemorySettingsSet' | 'daemonMemoryStatus' | 'daemonMemoryClearIndex' | 'daemonMemorySearch' | 'daemonMemoryGetWindow' | 'daemonMemoryEnsureUpToDate'> & Required<Pick<ActionExecutorDeps, 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'daemonMemoryGetWindow'>> {
   return {
 
     daemonMemorySettingsGet: async ({ machineId, context, serverId, signal }) => {

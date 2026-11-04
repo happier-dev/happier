@@ -243,7 +243,7 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
   return Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue>;
 }
 
-export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
+export type CliActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew' | 'sessionSendMessage' | 'sessionList' | 'daemonMemorySearch' | 'daemonMemoryEnsureUpToDate' | 'executionRunStart' | 'agentsModelsList' | 'sessionActivityGet' | 'executionRunList' | 'detachedExecutionRunSend' | 'executionRunWait' | 'executionRunGet' | 'sessionFork' | 'daemonMemoryGetWindow' | 'sessionOpen' | 'sessionRollback'>>;
 
 export function createCliActionDeps(params: CliActionDepsParams,
   readEffectiveDeps?: () => ActionExecutorDeps,

@@ -37,6 +37,7 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
         }
         if (actionId === 'agents.acp.backends.upsert' && data.dryRun === true) {
           if (!deps.readAccountAcpCatalog) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const request = AgentsAcpBackendsUpsertInputV1Schema.parse(data);
           const catalog = await deps.readAccountAcpCatalog({ ...(ctx.signal ? { signal: ctx.signal } : {}) });
           if (catalog.status !== 'ready') return { ok: false, errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable' };

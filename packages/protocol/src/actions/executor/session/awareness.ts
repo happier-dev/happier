@@ -57,6 +57,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.list') {
+          if (!deps.sessionList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           // Parse through the canonical Action input owner: `query` reaches the listing
           // dependency as a typed `SessionListQueryV1`, never as an untyped record cast.
           const listInput = SessionListActionInputV1Schema.safeParse(admittedInput);
@@ -145,6 +146,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.activity.get') {
+          if (!deps.sessionActivityGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = normalizeId(data.sessionId);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           // The admitted input already satisfied the Action's strict schema, so read the selector

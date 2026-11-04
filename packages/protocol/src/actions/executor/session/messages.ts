@@ -49,6 +49,7 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
           }));
         }
         if (actionId === 'session.message.send') {
+          if (!deps.sessionSendMessage) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const actionCaller = ctx.actionCaller ?? { kind: 'host' as const };

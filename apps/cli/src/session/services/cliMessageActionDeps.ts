@@ -42,7 +42,7 @@ type LifecycleHookSessionContext = Readonly<{
     cwd?: string;
     workspaceId?: string;
   }>;
-type MessageActionDeps = Pick<ActionExecutorDeps, 'sessionSendMessage' | 'sessionMessageReply'>;
+type MessageActionDeps = Required<Pick<ActionExecutorDeps, 'sessionSendMessage'>> & Pick<ActionExecutorDeps, 'sessionMessageReply'>;
 
 
 /**

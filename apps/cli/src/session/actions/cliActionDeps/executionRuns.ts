@@ -35,7 +35,7 @@ const DETACHED_EXECUTION_RUN_CALLER_LIFECYCLE_METHODS = new Set<string>([
   SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
   SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
 ]);
-export type CliExecutionRunActionDeps = Pick<ActionExecutorDeps, "executionRunCheckProtocolV2" | "executionRunStart" | "executionRunList" | "executionRunGet" | "detachedExecutionRunSend" | "executionRunEnsure" | "executionRunEnsureOrStart" | "executionRunStreamStart" | "executionRunStreamRead" | "executionRunStreamCancel" | "executionRunCancelTurn" | "executionRunStop" | "executionRunAction" | "executionRunPermissionRespond" | "executionRunWait">;
+export type CliExecutionRunActionDeps = Pick<ActionExecutorDeps, "executionRunCheckProtocolV2" | "executionRunStart" | "executionRunList" | "executionRunGet" | "detachedExecutionRunSend" | "executionRunEnsure" | "executionRunEnsureOrStart" | "executionRunStreamStart" | "executionRunStreamRead" | "executionRunStreamCancel" | "executionRunCancelTurn" | "executionRunStop" | "executionRunAction" | "executionRunPermissionRespond" | "executionRunWait"> & Required<Pick<ActionExecutorDeps, 'executionRunStart' | 'executionRunList' | 'executionRunGet' | 'detachedExecutionRunSend' | 'executionRunWait'>>;
 export type CliExecutionRunHost = Readonly<{
   resolveTransportForSession: (idOrPrefix: string, signal?: AbortSignal, caller?: Readonly<{ context: ActionExecutorContext; actionId: ActionId }>, expectedSessionAddress?: ActionExecutorContext['expectedSessionAddress']) => Promise<ResolvedSessionTransport | Readonly<{
     ok: false;

@@ -167,7 +167,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
 
 export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'data' | 'deps'> & Readonly<{
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
-  startExecutionRunWithSelection: (sessionId: Parameters<ActionExecutorDeps['executionRunStart']>[0], input: Parameters<ActionExecutorDeps['executionRunStart']>[1], opts: Parameters<ActionExecutorDeps['executionRunStart']>[2], context: ActionExecutorContext) => ReturnType<ActionExecutorDeps['executionRunStart']>;
+  startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, parsed, ctx, executeHostChild, data, deps, startExecutionRunWithSelection } = inv;
 
@@ -201,6 +201,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
       }
 
       if (actionId === 'review.start') {
+        if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const detached = readRecord(data.target).kind === 'detached'
           || (ctx.actionCaller?.kind === 'workflowRun' && data.sessionId === undefined);
         const sessionId = detached ? null : resolveSessionIdFromInput(parsed.data, ctx);
@@ -420,6 +421,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const launchFailures = results.flatMap((item) => item.ok ? [] : [{
           engineId: item.key, errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
         }]);
+        if (!deps.executionRunAction) return { ok: true, result: { intent: 'review', sessionId, results,
+          narration: { state: 'failed', errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.action' } } };
         let narration: unknown;
         try {
           const response = await deps.executionRunAction(sessionId, {

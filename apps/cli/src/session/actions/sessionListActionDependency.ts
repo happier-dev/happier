@@ -41,7 +41,7 @@ export function createRestrictedCurrentSessionListActionDependency(params: Reado
   serverId: string;
   serverHttpBaseUrl: string;
   material: SessionTransportEncryptionMaterial;
-}>): ActionExecutorDeps['sessionList'] {
+}>): NonNullable<ActionExecutorDeps['sessionList']> {
   return async (input) => {
     if (input.project) return { ok: false, errorCode: 'session_list_project_filter_unsupported', error: 'session_list_project_filter_unsupported' };
     const underSelf = input.query?.underSessionId === params.sessionId;
@@ -170,12 +170,12 @@ export function createRestrictedCurrentSessionListActionDependency(params: Reado
 
 /** One CLI/daemon adapter from the shared Action contract to Session listing. */
 export function createSessionListActionDeps(params: Readonly<{
-  readWorkspaceRefs?: (input: Parameters<ActionExecutorDeps['sessionList']>[0]) => Promise<readonly WorkspaceRefV1[]>;
+  readWorkspaceRefs?: (input: Parameters<NonNullable<ActionExecutorDeps['sessionList']>>[0]) => Promise<readonly WorkspaceRefV1[]>;
   credentials: StoredCredentials;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   resolveAccountSettings?: () => AccountSettings | null;
   serverHttpBaseUrl?: string;
-}> & ExternalActionHomeBinding): Pick<ActionExecutorDeps, 'sessionList' | 'sessionFollowPreview'> {
+}> & ExternalActionHomeBinding): Required<Pick<ActionExecutorDeps, 'sessionList'>> & Pick<ActionExecutorDeps, 'sessionFollowPreview'> {
   const serverId = params.serverId ?? configuration.activeServerId;
   const read = async ({
     project,
@@ -192,7 +192,7 @@ export function createSessionListActionDeps(params: Readonly<{
     includeRows,
     includeLastMessagePreview,
     signal,
-  }: Parameters<ActionExecutorDeps['sessionList']>[0], filterCandidates?: Parameters<typeof listSessions>[0]['filterCandidates'],
+  }: Parameters<NonNullable<ActionExecutorDeps['sessionList']>>[0], filterCandidates?: Parameters<typeof listSessions>[0]['filterCandidates'],
   workspaceRefs?: readonly WorkspaceRefV1[], sourceSessionId?: string) => {
     const normalizedActiveOnly = activeOnly === true;
     const normalizedArchivedOnly = archivedOnly === true;

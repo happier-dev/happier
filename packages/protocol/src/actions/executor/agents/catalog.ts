@@ -20,6 +20,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
   const { actionId, deps, data, parsed, ctx } = inv;
 
         if (actionId === 'agents.backends.list') {
+          if (!deps.agentsBackendsList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const res = await deps.agentsBackendsList({
             ...(typeof data.includeDisabled === 'boolean' ? { includeDisabled: data.includeDisabled } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
@@ -83,6 +84,7 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
         }
 
         if (actionId === 'agents.models.list') {
+          if (!deps.agentsModelsList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           if (data.purpose === 'scm_diff_summary') {
             return completeActionResult(await deps.agentsModelsList({ purpose: 'scm_diff_summary',
               ...(typeof data.discoveryTargetKey === 'string' ? { discoveryTargetKey: data.discoveryTargetKey } : {}),

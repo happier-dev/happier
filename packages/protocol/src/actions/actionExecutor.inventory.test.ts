@@ -383,6 +383,26 @@ describe('createActionExecutor (inventory/discovery)', () => {
       { value: { id: 'ws-2', serverId: 'home', machineId: 'm2', rootPath: '/srv/happier', label: 'Happier (server)', createdAtMs: 1 }, label: 'Happier (server)', description: 'Dev box · /srv/happier' },
     ]);
   });
+  it('retains checkout paths when the host has no Machine label catalog', async () => {
+    const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };
+    const executor = createActionExecutor({
+      projectWorkspaceRefs: async () => ({ workspaceRefs: [
+        { id: 'ws-1', serverId: 'home', machineId: 'm1', rootPath: '/work/happier', label: null, createdAtMs: 1, lastOpenedAtMs: 99 },
+        { id: 'ws-2', serverId: 'home', machineId: 'm2', rootPath: '/srv/happier', label: null, createdAtMs: 1, lastOpenedAtMs: 99 },
+      ] }),
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
+    });
+    const result = await executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface, definition: { kind: 'builtin', id: 'project_checkouts' } },
+      fieldPath: 'checkout',
+    }, { serverId: 'home' });
+    expect(result).toMatchObject({ ok: true, result: { optionsSourceId: 'host-input:workspace' } });
+    if (!result.ok) return;
+    expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(result.result).options).toEqual([
+      { value: { id: 'ws-1', serverId: 'home', machineId: 'm1', rootPath: '/work/happier', label: null, createdAtMs: 1 }, label: 'happier', description: '/work/happier' },
+      { value: { id: 'ws-2', serverId: 'home', machineId: 'm2', rootPath: '/srv/happier', label: null, createdAtMs: 1 }, label: 'happier', description: '/srv/happier' },
+    ]);
+  });
   it('names a checkout whose machine is not a named listed machine with the host\'s unlisted word, never a placeholder label', async () => {
     const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };
     const ref = (id: string, machineId: string, rootPath: string) => ({ id, serverId: 'home', machineId, rootPath, label: null, createdAtMs: 1, lastOpenedAtMs: 99 });

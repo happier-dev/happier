@@ -743,6 +743,19 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     expect(executionRunStart).not.toHaveBeenCalled();
   });
 
+  it('refuses start-and-wait before starting a run when its host has no waiter', async () => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const deps = createDeps({ executionRunStart });
+    delete deps.executionRunWait;
+    const result = await createActionExecutor(deps).execute(
+      'execution.run.start',
+      { ...RUN_START_BASE, waitForCompletion: true },
+      { ...UI_CALLER, defaultSessionId: 's1' },
+    );
+    expect(executionRunStart).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+
   it('preserves explicit detached scope and composes start-and-wait through the incumbent waiter', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
     const executionRunWait = vi.fn(async () => EXECUTION_RUN_WAIT_SUCCEEDED);

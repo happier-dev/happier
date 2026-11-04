@@ -36,6 +36,8 @@ export async function readActionCallerLedSubtreeSessions(
     && context.externalActionExecutionAuthorization?.binding.workflowActionOrigin?.sessionAuthority
     ? { ...context, externalActionExecutionAuthorization: undefined }
     : context;
+  const sessionList = deps.sessionList;
+  if (!sessionList) return null;
   // Storage partitions are independent Home reads. Preserve pagination within
   // each partition and require both to complete before admitting membership.
   const partitions = await Promise.all((['active', 'archived'] as const).map(async storage => {
@@ -50,7 +52,7 @@ export async function readActionCallerLedSubtreeSessions(
       };
       let result: ReturnType<typeof parseSessionListQueryActionResultV1>;
       try {
-        result = parseSessionListQueryActionResultV1(await deps.sessionList({
+        result = parseSessionListQueryActionResultV1(await sessionList({
           context: readContext, query, includeSystem: true,
           ...(context.serverId !== undefined ? { serverId: context.serverId } : {}),
           ...(context.signal ? { signal: context.signal } : {}),

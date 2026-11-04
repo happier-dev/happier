@@ -203,9 +203,9 @@ describe('ActionSpec-generated plugin action types', () => {
     expectTypeOf<PluginActionResultById['execution.run.send']>().toEqualTypeOf<ExecutionRunSendResponse>();
     expectTypeOf<PluginActionResultById['execution.run.stop']>().toEqualTypeOf<ExecutionRunStopResponse>();
     expectTypeOf<PluginActionResultById['execution.run.wait']>().toEqualTypeOf<ExecutionRunWaitResult>();
-    expectTypeOf<IsAny<Parameters<ActionExecutorDeps['executionRunWait']>[1]>>()
+    expectTypeOf<IsAny<Parameters<NonNullable<ActionExecutorDeps['executionRunWait']>>[1]>>()
       .toEqualTypeOf<false>();
-    expectTypeOf<Parameters<ActionExecutorDeps['executionRunWait']>[1]>()
+    expectTypeOf<Parameters<NonNullable<ActionExecutorDeps['executionRunWait']>>[1]>()
       .toEqualTypeOf<Omit<PublicActionInputById['execution.run.wait'], 'sessionId'>>();
     expectTypeOf<Extract<ExecutionRunWaitResult, { ok: true; status: 'succeeded' }>['result']>()
       .toEqualTypeOf<ExecutionRunGetResponse>();

@@ -237,7 +237,10 @@ function readPermissionRequestStore(value: unknown): ExecutionRunPermissionReque
     : null;
 }
 
-export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams): ActionExecutorDeps {
+type ExecutionRunRpcInstalledActionDeps = ActionExecutorDeps & Required<Pick<ActionExecutorDeps,
+  'executionRunStart' | 'executionRunGet' | 'executionRunWait' | 'executionRunAction'>>;
+
+export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams): ExecutionRunRpcInstalledActionDeps {
   const actionsSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider();
   const ensureEnabled = (): ExecutionRunRpcFailure | null => params.isExecutionRunsEnabled()
     ? null
@@ -252,7 +255,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     }),
     resolveServerFeaturesSnapshot: () => params.context.getServerFeaturesSnapshot?.(),
   });
-  let actionDeps: ActionExecutorDeps | null = null;
+  let actionDeps: ExecutionRunRpcInstalledActionDeps | null = null;
   let runtimeActionExecutorForRunActions: ReturnType<typeof createActionExecutor> | null = null;
 
   async function executeRuntimeActionFromRunAction(
@@ -334,7 +337,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
   async function startRun(
     raw: unknown,
     sessionId: string | null,
-    actionOptions?: Parameters<ActionExecutorDeps['executionRunStart']>[2],
+    actionOptions?: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
   ): Promise<ExecutionRunStartResult> {
     const classifyFailure = (
       failure: ExecutionRunRpcFailure,

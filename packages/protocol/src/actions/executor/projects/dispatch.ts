@@ -56,6 +56,7 @@ export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actio
   const { actionId, deps, data, ctx } = inv;
 
         if (actionId === 'paths.list_recent') {
+          if (!deps.pathsListRecent) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const res = await deps.pathsListRecent({
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),

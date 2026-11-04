@@ -328,7 +328,7 @@ export function createHappierMcpServer(
   const executionRunStartRpc = async (
     sessionId: string | null,
     request: unknown,
-    actionOptions?: Parameters<ActionExecutorDeps['executionRunStart']>[2],
+    actionOptions?: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
   ) => {
     const hasCausalPermissionAuthority = Boolean(
       actionOptions

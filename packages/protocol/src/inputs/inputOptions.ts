@@ -326,7 +326,7 @@ export async function resolveInputOptions(params: Readonly<{
     const batch = UsageQueryBatchResultSchema.parse(result.result);
     const selected = Array.isArray(draft[usageField]) ? draft[usageField].filter((value): value is string => typeof value === 'string') : [];
     const labels = readUsageScopeOptions(batch.results, usageField, selected);
-    if (usageField === 'machines') {
+    if (usageField === 'machines' && deps.machinesList) {
       if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
       const machines = await deps.machinesList({ serverId, purpose: 'input' });
       const failure = params.readFailure(machines);
@@ -354,10 +354,10 @@ export async function resolveInputOptions(params: Readonly<{
     // Machine names only tell apart the same checkout on two machines; an unreadable list leaves the path to do that.
     // A host marks a row `named: false` when its label is not a real name (hidden or still loading), and supplies the word
     // for a machine it does not list (`unlistedLabel`), so every checkout is named the way the host's own screens name it.
-    const machineList = await deps.machinesList({ serverId: selectedServerId, purpose: 'input' });
+    const machineList = deps.machinesList ? await deps.machinesList({ serverId: selectedServerId, purpose: 'input' }) : undefined;
     const machineLabels = new Map<string, string>();
     let unlistedLabel: string | undefined;
-    if (!params.readFailure(machineList)) {
+    if (machineList !== undefined && !params.readFailure(machineList)) {
       unlistedLabel = readNonEmptyString(readRecord(machineList).unlistedLabel);
       for (const machine of readRecordListProperty(machineList, 'items')) {
         const id = readNonEmptyString(machine.machineId) ?? readNonEmptyString(machine.id);
@@ -381,6 +381,7 @@ export async function resolveInputOptions(params: Readonly<{
   if (optionsSourceId === 'host-input:machine') {
     const selectedServerId = readNonEmptyString(ctx.serverId);
     if (!selectedServerId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
+    if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' };
     const result = await deps.machinesList({ serverId: selectedServerId,
       ...(ctx.surface === 'voice' ? {} : { purpose: 'input' as const }) });
     const failure = params.readFailure(result);
@@ -538,6 +539,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'execution.backends.enabled' || optionsSourceId === 'agents.backends.enabled') {
+    if (!deps.agentsBackendsList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.backends.list' };
     const result = await deps.agentsBackendsList({
       ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : { includeDisabled: false }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
@@ -563,6 +565,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'review.engines.available') {
+    if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.engines.list' };
     const target = resolveReviewEngineInventoryTarget(input, ctx, params.resolveSessionId);
     if (!target.ok) return target;
     const result = await deps.reviewEnginesList({
@@ -583,6 +586,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'session.modes.available') {
+    if (!deps.sessionModesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.modes.list' };
     const sessionId = params.resolveSessionId(input, ctx);
     if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
     const result = await deps.sessionModesList({ sessionId });
@@ -600,6 +604,7 @@ export async function resolveInputOptions(params: Readonly<{
   });
 
   if (optionsSourceId === 'agents.models.available') {
+    if (!deps.agentsModelsList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.models.list' };
     const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if ('ok' in selectionArgs) return selectionArgs;
     // Configured model inventory is selected by definition, as on direct reads.
@@ -671,6 +676,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'sessions.spawn.paths.recent') {
+    if (!deps.pathsListRecent) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:paths.list_recent' };
     const result = await deps.pathsListRecent({
       ...(machineId === undefined ? {} : { machineId }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
@@ -688,6 +694,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'sessions.spawn.machines.available') {
+    if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' };
     const result = await deps.machinesList({
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });
@@ -697,6 +704,7 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'sessions.spawn.servers.available') {
+    if (!deps.serversList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:servers.list' };
     const result = await deps.serversList({
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });

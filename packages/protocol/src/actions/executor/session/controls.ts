@@ -321,6 +321,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
         }
 
         if (actionId === 'session.mode.set') {
+          if (!deps.sessionModesList || !deps.sessionModeSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const modeIdRaw = normalizeId(data.modeId);

@@ -587,12 +587,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     currentAccount?: Readonly<{ accountId: string; serverId: string; serverIdentityId: string }>;
   }>) => Promise<ActionExecuteResult>;
 }> {
-  const startExecutionRunWithSelection = (
-    sessionId: Parameters<ActionExecutorDeps['executionRunStart']>[0],
-    input: Parameters<ActionExecutorDeps['executionRunStart']>[1],
-    opts: Parameters<ActionExecutorDeps['executionRunStart']>[2],
+  const startExecutionRunWithSelection = async (
+    sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0],
+    input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1],
+    opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
     context: ActionExecutorContext,
   ) => {
+    if (!deps.executionRunStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.start' };
     const resolved = context.agentStartContext;
     const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
     const current = resolved && machineId && machineId !== resolved.baseline.machineId
@@ -5601,6 +5602,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'machines.list') {
+          if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const requestedServerId = normalizeId(data.serverId);
           const currentServerId = normalizeId(ctx.serverId);
           if (requestedServerId && currentServerId && !isSameHome(requestedServerId, currentServerId, ctx)) {
@@ -5616,6 +5618,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'servers.list') {
+          if (!deps.serversList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const res = await deps.serversList({
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
@@ -5623,6 +5626,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'review.engines.list') {
+          if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const target = resolveReviewEngineInventoryTarget(parsed.data, ctx, resolveSessionIdFromInput);
           if (!target.ok) return target;
           const res = await deps.reviewEnginesList({
@@ -5713,6 +5717,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'memory.search') {
+          if (!deps.daemonMemorySearch) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const machineId = normalizeId(data.machineId);
           if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const query = data.query as MemorySearchQueryV1;
@@ -5726,6 +5731,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'memory.get_window') {
+          if (!deps.daemonMemoryGetWindow) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const machineId = normalizeId(data.machineId);
           if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const { machineId: _machineId, ...request } = data;
@@ -5740,6 +5746,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'memory.ensure_up_to_date') {
+          if (!deps.daemonMemoryEnsureUpToDate) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const machineId = normalizeId(data.machineId);
           if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const sessionId = normalizeId(data.sessionId);
@@ -5752,6 +5759,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'ui.voice_global.reset') {
+          if (!deps.resetGlobalVoiceAgent) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           await deps.resetGlobalVoiceAgent();
           return { ok: true, result: { ok: true } };
         }

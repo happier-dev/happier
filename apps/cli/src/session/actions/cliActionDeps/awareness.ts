@@ -16,7 +16,7 @@ export function createCliAwarenessActionDeps(
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
   }>,
-): Pick<ActionExecutorDeps, 'sessionAwarenessWait' | 'sessionActivityGet'> {
+): Pick<ActionExecutorDeps, 'sessionAwarenessWait' | 'sessionActivityGet'> & Required<Pick<ActionExecutorDeps, 'sessionActivityGet'>> {
   return {
 
     sessionAwarenessWait: async ({ context, input, options, readAwareness }) => {

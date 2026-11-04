@@ -19,7 +19,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { InactiveSessionResumeResult } from '@/session/services/requestInactiveSessionResume';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'> & Required<Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionRollback'>>;
 
 export function createCliSessionLifecycleActionDeps(
   params: CliActionDepsParams,

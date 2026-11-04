@@ -9,7 +9,7 @@ import type { createCliActionInventoryDeps } from './createCliActionInventoryDep
 /** The selected Machine, not the calling MCP process, owns native inventory. */
 export function createMachineInventoryProbe(params: Pick<Parameters<typeof createCliActionInventoryDeps>[0], 'callMachineAction' | 'serverId'>) {
   return async <T extends { agentId?: string; source?: 'static' | 'dynamic' | 'unavailable'; runtimeDescriptorV1Accepted?: boolean }>(input: Readonly<{
-    args: Parameters<ActionExecutorDeps['agentsModelsList']>[0];
+    args: Parameters<NonNullable<ActionExecutorDeps['agentsModelsList']>>[0];
     context?: ActionExecutorContext;
     agentId: string;
     backendTarget: BackendTargetRefV2 | null;
