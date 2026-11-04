@@ -71,6 +71,9 @@ The three optional Account preference maps preserve missing-as-inherited values
 and require no stored-data migration. This is development-source compatibility,
 not a release certification.
 
+HTTP 431 is a typed `request_headers_too_large` transport refusal, not a
+deployment output schema failure; no server header limit is raised.
+
 ## Trigger
 
 Apply this policy when a change affects a cross-component wire shape or semantic, persisted/session/settings data, schema or migration, feature/capability negotiation, installer or service state, upgrade/coexistence, or rollback. Routine internal refactors that leave these seams unchanged do not need a compatibility matrix or shim.

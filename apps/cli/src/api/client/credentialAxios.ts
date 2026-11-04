@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import { assertCredentialRequestRedirectAllowed, CREDENTIAL_REQUEST_REDIRECT_POLICY } from '@happier-dev/cli-common/homeTarget';
-import { readHttpStatus } from './httpStatusError';
+import { createHttpStatusError, readHttpStatus } from './httpStatusError';
 
 function refuseRedirects(config: AxiosRequestConfig | undefined): AxiosRequestConfig {
   return {
@@ -10,15 +10,20 @@ function refuseRedirects(config: AxiosRequestConfig | undefined): AxiosRequestCo
   };
 }
 
+function assertCredentialResponseAllowed(status: number): void {
+  assertCredentialRequestRedirectAllowed(status);
+  if (status === 431) throw createHttpStatusError(status, 'request_headers_too_large', 'request_headers_too_large');
+}
+
 async function settle(response: Promise<AxiosResponse<unknown>>): Promise<AxiosResponse<unknown>> {
   try {
     const result = await response;
-    assertCredentialRequestRedirectAllowed(result.status);
+    assertCredentialResponseAllowed(result.status);
     return result;
   } catch (error) {
     // Both Axios validateStatus branches must produce the same secret-free error.
     const status = readHttpStatus(error);
-    if (status !== null) assertCredentialRequestRedirectAllowed(status);
+    if (status !== null) assertCredentialResponseAllowed(status);
     throw error;
   }
 }

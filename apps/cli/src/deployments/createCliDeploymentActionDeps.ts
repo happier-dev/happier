@@ -2,6 +2,7 @@ import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import axios from '@/api/client/credentialAxios';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 import {
   DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
   DeploymentTargetLinkInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
@@ -45,6 +46,8 @@ export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironm
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
 ) => Promise<DeploymentEnvironmentAccessResultV1 | ActionExecuteFailure>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+const transportRefusal = (error: unknown): ActionExecuteFailure | null => readHttpStatus(error) === 431
+  ? { ...failure('request_headers_too_large'), details: { httpStatus: 431 } } : null;
 const rejectedHomeAuthentication = (headers: Readonly<Record<string, string>>): ActionExecuteFailure =>
   Object.entries(headers).some(([name, value]) => name.toLowerCase() === EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER
     && value.length > 0) ? deploymentAuthorizationFailure('home_signed_authorization_rejected') : failure('action_home_signed_out');
@@ -109,7 +112,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       return parsed.data;
     } catch (error) {
-      return context.signal?.aborted ? failure('cancelled') : localAdmissionFailure(error) ?? failure('home_unreachable');
+      return context.signal?.aborted ? failure('cancelled')
+        : transportRefusal(error) ?? localAdmissionFailure(error) ?? failure('home_unreachable');
     }
   };
   async function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
@@ -242,6 +246,11 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       return parsed.data;
     } catch (error) {
+      // HTTP rejected these headers before routing, including for mutations.
+      if (!context.signal?.aborted) {
+        const refused = transportRefusal(error);
+        if (refused) return refused;
+      }
       // A local admission refusal is not a Home outage. Issued mutations
       // retain their existing cancellation/outcome-unknown classification.
       if (!context.signal?.aborted && (!issued || method === 'GET')) {
