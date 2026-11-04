@@ -1151,36 +1151,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       throw currentness.error;
     }
     if (currentness.status === 'stale') return stale(currentness.reason);
-    if (!origin.data.runId || !origin.data.runOccurrenceId) return true;
-    const runCurrentness = await classifyApprovalExecutionOriginCurrentness({
-      check: async reportStale => {
-        const currentRun = await deps.executionRunGet(
-          origin.data.sessionId ?? null,
-          { runId: origin.data.runId, includeStructured: false },
-          { ...(args.signal ? { signal: args.signal } : {}) },
-        );
-        // The CLI Session adapter returns its service envelope; Machine and app
-        // adapters return the payload. Use the public Run Action's one normalizer.
-        const observed = completeExecutionRunServiceActionResult('execution.run.get', currentRun);
-        if (!observed.ok) {
-          if (observed.errorCode === 'execution_run_not_found') {
-            reportStale('currentness_read_failed');
-            return false;
-          }
-          throw Object.assign(new Error(observed.error), observed);
-        }
-        const run = readRecord(readRecord(observed.result).run);
-        const inputTurns = readRecord(run.inputTurns);
-        const matches = normalizeId(run.runId) === origin.data.runId
-          && normalizeId(inputTurns.occurrenceId) === origin.data.runOccurrenceId;
-        if (!matches) reportStale('run_occurrence_changed');
-        return matches;
-      },
-    });
-    if (runCurrentness.status === 'requester_home_unavailable' || runCurrentness.status === 'read_failed') {
-      throw runCurrentness.error;
-    }
-    return runCurrentness.status === 'current' || stale(runCurrentness.reason);
+    // The person approved the exact Action and input. A later Run input
+    // occurrence does not withdraw that approval; the requester admission above does.
+    return true;
   }
 
   async function readMatchingApprovalRequestReceipt(args: Readonly<{

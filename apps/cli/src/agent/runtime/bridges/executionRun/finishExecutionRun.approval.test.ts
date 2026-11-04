@@ -56,7 +56,7 @@ describe('terminal Run approval occurrence custody', () => {
     { kind: 'voice_agent', status: 'succeeded', replacement: false },
     { kind: 'backend', status: 'succeeded', replacement: true },
     { kind: 'voice_agent', status: 'succeeded', replacement: true },
-  ] as const)('replays $kind/$status approval only for its exact settled occurrence (replacement=$replacement)', async ({ kind, status, replacement }) => {
+  ] as const)('replays $kind/$status approval once after its Run settles, even after a later occurrence (replacement=$replacement)', async ({ kind, status, replacement }) => {
     const run: ExecutionRunState = {
       runId: 'run', callId: 'call', sidechainId: 'sidechain', sessionId: 'session', depth: 0,
       intent: kind === 'voice_agent' ? 'voice_agent' : 'delegate', backendId: 'codex',
@@ -143,12 +143,11 @@ describe('terminal Run approval occurrence custody', () => {
       runtimeAccountId: 'account', actionCaller: { kind: 'host' },
     });
     const decision = await decide();
-    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: replacement
-      ? { status: 'failed', execution: { ok: false, errorCode: 'approval_stale', details: { reason: 'run_occurrence_changed' } } }
-      : { status: 'executed', execution: { ok: true } } });
-    expect(body).toBe(replacement ? 'Original finding' : 'Approved edit');
-    expect(effects).toBe(replacement ? 0 : 1);
+    // The exact reviewed edit is approved; a later Run occurrence does not withdraw it.
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(body).toBe('Approved edit');
+    expect(effects).toBe(1);
     await decide();
-    expect(effects).toBe(replacement ? 0 : 1);
+    expect(effects).toBe(1);
   });
 });

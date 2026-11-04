@@ -1534,14 +1534,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
   });
 
   it.each([
-    { scenario: 'changed', firstRead: { run: { runId: 'run-1', inputTurns: { occurrenceId: 'occurrence-replaced' } } },
-      firstErrorCode: 'approval_stale', staleReason: 'run_occurrence_changed' },
-    { scenario: 'not-found', firstRead: { ok: false, code: 'execution_run_not_found', message: 'Execution run not found' },
-      firstErrorCode: 'approval_stale', staleReason: 'currentness_read_failed' },
-    { scenario: 'home-envelope', firstRead: { ok: false, code: 'project_requester_home_unavailable', message: 'Home unavailable' },
-      firstErrorCode: 'project_requester_home_unavailable' },
-  ] as const)('classifies execution-run occurrence currentness reads ($scenario)', async ({
-    firstRead, firstErrorCode, staleReason,
+    { requesterCurrent: true },
+    { requesterCurrent: false },
+  ] as const)('executes a deferred Run approval after a later Run input only while its requester is current ($requesterCurrent)', async ({
+    requesterCurrent,
   }) => {
     let storedRequest: ApprovalRequest = ApprovalRequestV2Schema.parse({
       v: 2,
@@ -1570,44 +1566,32 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       storedRequest = request;
       return { ok: true as const };
     });
-    const currentRead = { run: { runId: 'run-1', inputTurns: { occurrenceId: 'occurrence-original' } } };
-    const executionRunGet = vi.fn(async () => executionRunGet.mock.calls.length === 1 ? firstRead : currentRead);
+    // The Run has since accepted another input; its occurrence is not a revocation fact.
+    const executionRunGet = vi.fn(async () => ({ run: { runId: 'run-1', inputTurns: { occurrenceId: 'occurrence-later' } } }));
     const executionRunStop = vi.fn(async () => ({ ok: true }));
     const executor = createActionExecutor({
       approvalsGet: async () => storedRequest,
       approvalsUpdate,
-      isApprovalExecutionOriginCurrent: async () => true,
+      isApprovalExecutionOriginCurrent: async () => requesterCurrent,
       executionRunGet,
       executionRunStop,
     } as unknown as ActionExecutorDeps);
-
     const decide = () => executor.execute('approval.request.decide', {
       artifactId: 'approval-run-stop-1',
       decision: 'approve',
     }, { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'server-1' });
-    const firstDecision = await decide();
-    if (staleReason) {
-      expect(firstDecision).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-        ok: false, errorCode: firstErrorCode, details: { reason: staleReason },
-      } } });
-    } else {
-      expect(firstDecision).toMatchObject({ ok: false, errorCode: firstErrorCode });
-    }
-    expect(executionRunGet).toHaveBeenCalledWith(
-      'session-1',
-      { runId: 'run-1', includeStructured: false },
-      {},
-    );
-    if (staleReason) {
-      expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-      expect(storedRequest).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
-      expect(executionRunStop).not.toHaveBeenCalled();
-    } else {
-      expect(storedRequest).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
-      expect(executionRunStop).not.toHaveBeenCalled();
-      await expect(decide()).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+    const decision = await decide();
+    if (requesterCurrent) {
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: { status: 'executed' } });
       expect(executionRunStop).toHaveBeenCalledOnce();
+    } else {
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable',
+        effectAttempted: false });
+      expect(executionRunStop).not.toHaveBeenCalled();
     }
+    expect(executionRunGet).not.toHaveBeenCalled();
+    await decide();
+    expect(executionRunStop).toHaveBeenCalledTimes(requesterCurrent ? 1 : 0);
   });
 
   it('keeps legacy PAT approvals readable but refuses replay from descriptive credential IDs alone', async () => {
