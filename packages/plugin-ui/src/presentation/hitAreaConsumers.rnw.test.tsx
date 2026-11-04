@@ -6,7 +6,6 @@ import type { PluginUiPlatform } from '@happier-dev/plugin-sdk/ui';
 import { SURFACE_CONTEXT_THEME_FIXTURE } from '../../../plugin-sdk/src/ui/surfaceContext.fixture.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { HappierUiPlatformProvider } from '../environment/context.js';
-import { resetHappierPrimaryPointerForTesting } from '../environment/interactiveTarget.js';
 import { HappierListItem } from './collection/List.js';
 import { resolveHappierCollectionRowHeight } from './collection/CollectionRowContent.js';
 import { HappierCollectionConditionEditor, type HappierCollectionConditionEditorHost } from './collection/CollectionConditionEditor.js';
@@ -33,12 +32,10 @@ function mountIn(platform: PluginUiPlatform, children: ReactNode) {
 
 function emulateCoarsePointer() {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
-  resetHappierPrimaryPointerForTesting();
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  resetHappierPrimaryPointerForTesting();
 });
 
 const px = (value: string) => Number.parseFloat(value) || 0;

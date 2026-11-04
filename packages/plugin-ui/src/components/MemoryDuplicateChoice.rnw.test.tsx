@@ -7,7 +7,6 @@ import { MemoryDuplicateChoiceExample } from '../../fixtures/external-authoring/
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
-import { resetHappierPrimaryPointerForTesting } from '../environment/interactiveTarget.js';
 import { readHitAreaReach } from '../presentation/interaction/hitArea.testSupport.js';
 
 const byId = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -69,7 +68,6 @@ describe('external author memory duplicate choice', () => {
 
   it('lets a finger reach the small View action through the shared hit area (web ignores a raw hitSlop)', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
-    resetHappierPrimaryPointerForTesting();
     const context = createSurfaceContext();
     const mounted = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
       <MemoryDuplicateChoiceExample onView={() => {}} />
@@ -83,7 +81,6 @@ describe('external author memory duplicate choice', () => {
     } finally {
       mounted.unmount();
       vi.unstubAllGlobals();
-      resetHappierPrimaryPointerForTesting();
     }
   });
 

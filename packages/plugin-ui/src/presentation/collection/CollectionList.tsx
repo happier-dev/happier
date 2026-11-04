@@ -5,7 +5,7 @@ import { useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
 import { HappierPressable } from '../interaction/Pressable.js';
-import { hasHappierPrecisePointer } from '../interaction/precisePointer.js';
+import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { HappierDisclosureChevron } from './DisclosureChevron.js';
 import { resolveHappierCollectionTitleAccessoryFits } from './collectionTitleRoom.js';
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
@@ -579,6 +579,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   // (`HappierPageSheetGroup`): the sub-heading step, on the rows' inset.
   const pageSection = useHappierPageSection();
   const glyphColor = props.host.useGroupGlyphColor?.();
+  const precisePointer = useHappierPrecisePointer();
   const [hovered, setHovered] = useState(false);
   const containerStyle = pageSection
     ? [groupLabelRowStyle, {
@@ -599,7 +600,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
     );
     const opens = disclosure.onOpen !== undefined;
     // Under a precise pointer the actions come with it; on touch nothing hovers, so they stay.
-    const actionsShown = !hasHappierPrecisePointer() || hovered || props.actionsHeld === true;
+    const actionsShown = !precisePointer || hovered || props.actionsHeld === true;
     // Siblings, never nested: the lead, the fold control and each action are their own targets.
     return (
       <View

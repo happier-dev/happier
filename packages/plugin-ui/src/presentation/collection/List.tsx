@@ -1,6 +1,6 @@
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { createContext, useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
-import { hasHappierPrecisePointer } from '../interaction/precisePointer.js';
+import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { Platform, View, type TextStyle, type ViewStyle } from 'react-native';
 
 import {
@@ -977,7 +977,8 @@ export function HappierListItem({
   // A grid card's actions sit at its title line's end; a precise pointer reveals them, touch always shows them.
   const cardCornerAccessory = isGridRow && cardCorner !== null && behavior.accessoryPlacement === 'outside' && accessory
     ? cardCorner : null;
-  const cardActionsVisible = cardCornerAccessory === null || !hasHappierPrecisePointer()
+  const precisePointer = useHappierPrecisePointer();
+  const cardActionsVisible = cardCornerAccessory === null || !precisePointer
     || cardActionsShown.hovered || cardActionsShown.focused || accessoryHeld === true;
   // A touch row, and every row of a resting list (a phone, a narrow page), keeps its actions out of the
   // row's flow: rows run to the page's margin and the age keeps the trailing edge (lab phone list). A `•••`
@@ -985,7 +986,6 @@ export function HappierListItem({
   // menu) and a precise pointer sees them over the row's end while the row is the pointer's. The trigger
   // stays mounted and announced, so the menu anchors to the row's end, focus reveals it and assistive
   // technology reaches it; it shows while its menu is open.
-  const precisePointer = hasHappierPrecisePointer();
   const overlayRowActions = collectionRow && hasSecondaryActions && accessoryIsRowActions === true && cardCornerAccessory === null
     && behavior.accessoryPlacement === 'outside'
     && (!precisePointer || collectionItem?.hairline === false);
@@ -1215,7 +1215,7 @@ export function HappierListItem({
         onMouseEnter: () => { setCollectionRowHovered(true); },
         onMouseLeave: () => { setCollectionRowHovered(false); },
       } : {})}
-      {...(cardCornerAccessory !== null && hasHappierPrecisePointer() ? {
+      {...(cardCornerAccessory !== null && precisePointer ? {
         onMouseEnter: () => { setCardActionsShown(state => state.hovered ? state : { ...state, hovered: true }); },
         onMouseLeave: () => { setCardActionsShown(state => state.hovered ? { ...state, hovered: false } : state); },
         onFocus: () => { setCardActionsShown(state => state.focused ? state : { ...state, focused: true }); },

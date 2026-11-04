@@ -43,6 +43,7 @@ export {
   resolveHappierHitInsets,
   resolveHappierMinimumInteractiveTargetSize,
   useHappierNativeMinimumInteractiveTargetSize,
+  useHappierTouchPrimaryPointer,
   useHappierTouchTargetSize,
   type HappierHitInsets,
   type HappierHitReach,

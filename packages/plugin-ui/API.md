@@ -3603,6 +3603,7 @@ Declaration: `dist/environment/index.d.ts`
 - value `resolveHappierUiPalette` from `dist/environment/index.d.ts`
 - value `resolveHappierUiPresentationTheme` from `dist/environment/index.d.ts`
 - value `useHappierNativeMinimumInteractiveTargetSize` from `dist/environment/index.d.ts`
+- value `useHappierTouchPrimaryPointer` from `dist/environment/index.d.ts`
 - value `useHappierTouchTargetSize` from `dist/environment/index.d.ts`
 - value `useHappierUiAccessibility` from `dist/environment/index.d.ts`
 - value `useHappierUiInsets` from `dist/environment/index.d.ts`

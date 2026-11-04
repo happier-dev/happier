@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { useOptionalHappierUiPlatform } from './context.js';
 
 /** The baseline used by iOS and pointer-oriented platform adapters. */
@@ -53,39 +54,99 @@ export function useHappierNativeMinimumInteractiveTargetSize(): 44 | 48 | undefi
     : undefined;
 }
 
-let coarsePrimaryPointer: boolean | null = null;
+type PointerMediaQuery = {
+  readonly matches?: boolean;
+  addEventListener?: (type: 'change', listener: () => void) => void;
+  removeEventListener?: (type: 'change', listener: () => void) => void;
+  addListener?: (listener: () => void) => void;
+  removeListener?: (listener: () => void) => void;
+};
 
-function matchesMedia(query: string): boolean {
-  const match = (globalThis as { matchMedia?: (query: string) => { matches?: boolean } | null }).matchMedia;
-  if (typeof match !== 'function') return false;
+function readMediaQuery(query: string): PointerMediaQuery | null {
+  const match = (globalThis as { matchMedia?: (query: string) => PointerMediaQuery | null }).matchMedia;
+  if (typeof match !== 'function') return null;
   try {
-    return match.call(globalThis, query)?.matches === true;
+    return match.call(globalThis, query);
   } catch {
-    return false;
+    return null;
   }
+}
+
+function classifyCoarsePrimaryPointer(matches: (query: string) => boolean): boolean {
+  if (matches('(pointer: fine)') || matches('(hover: hover)')) return false;
+  if (matches('(pointer: coarse)') || matches('(hover: none)')) return true;
+  const touchPoints = (globalThis as { navigator?: { maxTouchPoints?: unknown } }).navigator?.maxTouchPoints;
+  return typeof touchPoints === 'number' && touchPoints > 0;
 }
 
 /**
  * Whether a browser's PRIMARY pointer is a finger (a phone or tablet browser). Only `pointer:` and
  * `hover:` describe the primary pointer: a hover-capable laptop that merely has a touchscreen keeps
- * its precise-pointer density. Read once: the primary pointer does not change under a running app.
+ * its precise-pointer density. This synchronous read also works outside React; mounted consumers
+ * subscribe through {@link useHappierTouchPrimaryPointer}.
  */
 export function isHappierCoarsePrimaryPointer(): boolean {
-  if (coarsePrimaryPointer !== null) return coarsePrimaryPointer;
-  let coarse: boolean;
-  if (matchesMedia('(pointer: fine)') || matchesMedia('(hover: hover)')) coarse = false;
-  else if (matchesMedia('(pointer: coarse)') || matchesMedia('(hover: none)')) coarse = true;
-  else {
-    const touchPoints = (globalThis as { navigator?: { maxTouchPoints?: unknown } }).navigator?.maxTouchPoints;
-    coarse = typeof touchPoints === 'number' && touchPoints > 0;
-  }
-  coarsePrimaryPointer = coarse;
-  return coarse;
+  return classifyCoarsePrimaryPointer(query => readMediaQuery(query)?.matches === true);
 }
 
-/** @internal Tests switch the emulated primary pointer between mounts. */
-export function resetHappierPrimaryPointerForTesting(): void {
-  coarsePrimaryPointer = null;
+const primaryPointerListeners = new Set<() => void>();
+let primaryPointerMedia: Map<string, PointerMediaQuery | null> | null = null;
+let coarsePrimaryPointer = false;
+let precisePrimaryPointer = false;
+
+function readCoarsePrimaryPointerSnapshot(): boolean {
+  return primaryPointerMedia === null ? isHappierCoarsePrimaryPointer() : coarsePrimaryPointer;
+}
+
+function publishPrimaryPointerChange(): void {
+  const coarse = classifyCoarsePrimaryPointer(query => primaryPointerMedia?.get(query)?.matches === true);
+  const precise = primaryPointerMedia?.get('(pointer: fine)')?.matches === true && primaryPointerMedia.get('(hover: hover)')?.matches === true;
+  if (coarse === coarsePrimaryPointer && precise === precisePrimaryPointer) return;
+  coarsePrimaryPointer = coarse;
+  precisePrimaryPointer = precise;
+  for (const listener of primaryPointerListeners) listener();
+}
+
+function subscribePrimaryPointer(listener: () => void): () => void {
+  if (primaryPointerMedia === null) {
+    primaryPointerMedia = new Map(['(pointer: fine)', '(hover: hover)', '(pointer: coarse)', '(hover: none)']
+      .map(query => [query, readMediaQuery(query)]));
+    coarsePrimaryPointer = classifyCoarsePrimaryPointer(query => primaryPointerMedia?.get(query)?.matches === true);
+    precisePrimaryPointer = primaryPointerMedia.get('(pointer: fine)')?.matches === true && primaryPointerMedia.get('(hover: hover)')?.matches === true;
+    for (const media of primaryPointerMedia.values()) {
+      if (media?.addEventListener) media.addEventListener('change', publishPrimaryPointerChange);
+      else media?.addListener?.(publishPrimaryPointerChange);
+    }
+  }
+  primaryPointerListeners.add(listener);
+  return () => {
+    primaryPointerListeners.delete(listener);
+    if (primaryPointerListeners.size !== 0) return;
+    for (const media of primaryPointerMedia?.values() ?? []) {
+      if (media?.removeEventListener) media.removeEventListener('change', publishPrimaryPointerChange);
+      else media?.removeListener?.(publishPrimaryPointerChange);
+    }
+    primaryPointerMedia = null;
+  };
+}
+
+const readNativeTouchPointer = () => true;
+const readServerPointer = () => false;
+const subscribeNativePointer = () => () => {};
+
+function readPrecisePrimaryPointerSnapshot(): boolean {
+  return primaryPointerMedia === null
+    ? readMediaQuery('(pointer: fine)')?.matches === true && readMediaQuery('(hover: hover)')?.matches === true
+    : precisePrimaryPointer;
+}
+
+/** @internal A hover reveal needs both fine pointing and hover; it shares the pointer store's lifetime. */
+export function useHappierPrecisePrimaryPointer(platform: string): boolean {
+  return useSyncExternalStore(
+    platform === 'web' ? subscribePrimaryPointer : subscribeNativePointer,
+    platform === 'web' ? readPrecisePrimaryPointerSnapshot : readServerPointer,
+    readServerPointer,
+  );
 }
 
 /**
@@ -97,6 +158,16 @@ export function isHappierTouchPrimaryPointer(platform: string | undefined): bool
   return platform === 'android' || platform === 'ios' || isHappierCoarsePrimaryPointer();
 }
 
+/** The shared primary-pointer fact, updated when a browser attaches or removes a pointing device. */
+export function useHappierTouchPrimaryPointer(platform: string | undefined): boolean {
+  const nativeTouch = platform === 'android' || platform === 'ios';
+  return useSyncExternalStore(
+    nativeTouch ? subscribeNativePointer : subscribePrimaryPointer,
+    nativeTouch ? readNativeTouchPointer : readCoarsePrimaryPointerSnapshot,
+    nativeTouch ? readNativeTouchPointer : readServerPointer,
+  );
+}
+
 /**
  * The hit area a finger needs here: 44 (48 on Android) on a native touch platform and in a browser
  * whose primary pointer is a finger, `undefined` under a precise pointer, whose dense layout keeps its
@@ -105,7 +176,7 @@ export function isHappierTouchPrimaryPointer(platform: string | undefined): bool
  */
 export function useHappierTouchTargetSize(): 44 | 48 | undefined {
   const platform = useOptionalHappierUiPlatform()?.platform;
-  return isHappierTouchPrimaryPointer(platform) ? resolveHappierMinimumInteractiveTargetSize(platform ?? 'web') : undefined;
+  return useHappierTouchPrimaryPointer(platform) ? resolveHappierMinimumInteractiveTargetSize(platform ?? 'web') : undefined;
 }
 
 /**

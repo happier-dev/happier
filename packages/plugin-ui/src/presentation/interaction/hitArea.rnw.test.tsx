@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierUiPlatformProvider } from '../../environment/context.js';
-import { resetHappierPrimaryPointerForTesting } from '../../environment/interactiveTarget.js';
 import type { PluginUiPlatform } from '@happier-dev/plugin-sdk/ui';
 import { HappierPressable } from './Pressable.js';
 
@@ -24,12 +23,10 @@ function emulatePrimaryPointer(pointer: 'coarse' | 'fine') {
       ? query === '(pointer: coarse)' || query === '(hover: none)'
       : query === '(pointer: fine)' || query === '(hover: hover)',
   }));
-  resetHappierPrimaryPointerForTesting();
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  resetHappierPrimaryPointerForTesting();
 });
 
 function px(value: string): number {

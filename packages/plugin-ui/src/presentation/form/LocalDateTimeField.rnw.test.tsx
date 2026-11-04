@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { createSurfaceContext } from '../../surfaceFixture.testSupport.js';
-import { resetHappierPrimaryPointerForTesting } from '../../environment/interactiveTarget.js';
 import { readHitAreaReach } from '../interaction/hitArea.testSupport.js';
 import {
   HappierLocalDateTimeField,
@@ -49,13 +48,11 @@ const query = (
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  resetHappierPrimaryPointerForTesting();
 });
 
 describe('local date-time field', () => {
   it('keeps a finger on the picker button out of the text it shares the field with', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
-    resetHappierPrimaryPointerForTesting();
     const picker: HappierLocalDateTimePickerHost = { renderGlyph: (mode) => <Text>{mode}</Text>, renderPicker: () => null };
     const view = mountThroughReactNativeWeb(<Harness picker={picker} />);
     expect(readHitAreaReach(query(view, 'lease-date-picker-button')!)?.left).toBe(0);

@@ -8,7 +8,7 @@ import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../presentation/interaction/pressFeedback.js';
 import { happierFocusRingStyle } from '../presentation/interaction/focusVisible.js';
 import { HappierText } from '../presentation/text/Text.js';
-import { hasHappierPrecisePointer } from '../presentation/interaction/precisePointer.js';
+import { useHappierPrecisePointer } from '../presentation/interaction/precisePointer.js';
 import { Button } from './Button.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
@@ -192,8 +192,9 @@ const keyCapStyle = { borderWidth: 1, alignItems: 'center' } as const;
 export function useListSelectionModeControl(store: ListMultiSelectionStore | null, selectable: boolean): ReactNode {
   const snapshot = useListMultiSelectionStoreSnapshot(store);
   const translate = usePluginTranslation();
+  const precisePointer = useHappierPrecisePointer();
   if (store === null || !selectable) return null;
-  if (!snapshot.isSelectionMode && hasHappierPrecisePointer()) return null;
+  if (!snapshot.isSelectionMode && precisePointer) return null;
   return (
     <Button title={snapshot.isSelectionMode
       ? translate('happier.plugin-ui.list.finishSelection', 'Done selecting')

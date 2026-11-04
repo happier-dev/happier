@@ -1,10 +1,10 @@
 import { Platform } from 'react-native';
+import { useHappierPrecisePrimaryPointer } from '../../environment/interactiveTarget.js';
 
 /**
  * Whether the primary pointer can hover (a mouse or trackpad on the web). Native and touch-first browsers
- * answer false. Read per render (one media query), so the page's own environment decides.
+ * answer false. Uses the shared pointer store so mounted hover affordances update with the device.
  */
-export function hasHappierPrecisePointer(): boolean {
-  const match = (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia;
-  return Platform.OS === 'web' && typeof match === 'function' && match('(hover: hover) and (pointer: fine)').matches;
+export function useHappierPrecisePointer(): boolean {
+  return useHappierPrecisePrimaryPointer(Platform.OS);
 }
