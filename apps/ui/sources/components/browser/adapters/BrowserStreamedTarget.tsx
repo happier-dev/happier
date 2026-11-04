@@ -1,3 +1,6 @@
+import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserInputEventV1, BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
+import { BrowserPageInteractions } from '../streamed/BrowserPageInteractions';
 import * as React from 'react';
 import type { RemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
 import { Animated, Image, Platform, View, type LayoutChangeEvent } from 'react-native';
@@ -64,10 +67,23 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
         sourceId: string;
         streamId: string;
         send: (control: MachineLiveStreamControlSidebandV1) => void;
+        viewport?: BrowserEventBatchV1['viewport'] | null;
+        viewerInput?: BrowserEventBatchV1['viewerInput'] | null;
+        editableTarget?: BrowserEventBatchV1['editableTarget'] | null;
+        /** The page's open dialog, file request and downloads, as the daemon last projected them. */
+        interaction?: BrowserInteractionStateV1 | null;
+        /** Answers the page as this viewer at the admitted control epoch; absent until one is known. */
+        sendInput?: (event: BrowserViewerInputEvent) => void;
+        /** Fetches a finished download's bytes and saves them on this device; absent where it cannot. */
+        saveDownload?: (downloadId: string) => void;
         /** Focused controlling-viewer clipboard intent; never encoded as a letter key. */
         clipboardShortcut?: RemoteViewerClipboardShortcut;
     }> | null;
 }>;
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+/** A human page input before the runtime stamps its target and sequence. */
+export type BrowserViewerInputEvent = DistributiveOmit<BrowserInputEventV1, 'target' | 'sequence'>;
 
 /** The gestures a browser source turns into page input (tap, scroll, typed text, keys). */
 const BROWSER_INPUT_KINDS: ReadonlySet<MachineLiveStreamInputControlKindV1> = new Set([
@@ -181,6 +197,7 @@ function BrowserStreamInput(props: Readonly<{
                 viewport={viewport}
                 content={content}
                 onGesture={onGesture}
+                onClipboardShortcut={props.input.clipboardShortcut}
                 accessibilityLabel={t('browserPresence.stream.inputA11y')}
                 testID={props.testID}
             />
@@ -242,6 +259,10 @@ export function BrowserStreamedTarget(props: Readonly<{
      * `contain`, so the agent cursor and viewer input both map through this one rect.
      */
     onPageRectChange?: (rect: BrowserStreamedPageRect | null) => void;
+    /** The page's host for the page's own dialogs ("localhost:5173 says"). */
+    pageHost?: string | null;
+    /** A person is driving the page; when that is not this viewer, another viewer answers the page. */
+    humanInControl?: boolean;
     testID: string;
 }>): React.ReactElement {
     const playerState = props.runtime?.playerState ?? null;
@@ -259,6 +280,10 @@ export function BrowserStreamedTarget(props: Readonly<{
     const wantsPageRect = Boolean(props.runtime?.input) || Boolean(props.onPageRectChange);
     const frameSize = useFirstFrameSize(pictureUp && wantsPageRect ? playerState?.lastFrameUrl : null, playerState?.phase);
     const pageRect = pictureUp && viewport ? containRect(viewport, frameSize) : null;
+    const input = props.runtime?.input ?? null;
+    const controlling = input?.viewerInput?.controlling === true;
+    const sendInput = input?.sendInput;
+    const otherViewerControls = props.humanInControl === true && !controlling;
     const onPageRectChange = props.onPageRectChange;
     React.useEffect(() => {
         onPageRectChange?.(pageRect);
@@ -323,6 +348,15 @@ export function BrowserStreamedTarget(props: Readonly<{
                     viewport={viewport}
                     content={pageRect}
                     testID={`${props.testID}-input`}
+                />
+            ) : null}
+            {input ? (
+                <BrowserPageInteractions
+                    interaction={input.interaction}
+                    pageHost={props.pageHost ?? null}
+                    answer={otherViewerControls ? undefined : sendInput}
+                    onSaveDownload={input.saveDownload ? download => input.saveDownload?.(download.downloadId) : undefined}
+                    testID={`${props.testID}-interaction`}
                 />
             ) : null}
             <BrowserFrameStatusCapsule

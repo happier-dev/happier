@@ -9,8 +9,8 @@ import {
 import { BrowserHttpOriginV1Schema, BrowserHttpUrlV1Schema } from '../url.js';
 import { BrowserPlatformV1Schema } from '../view/v1.js';
 import { BrowserViewTargetV1Schema } from '../target/v1.js';
-import { BrowserAutomationControllerStateV1Schema } from '../automation/v1.js';
-import { BrowserEditableTargetV1Schema, BrowserViewportV1Schema } from '../input/v1.js';
+import { BrowserAutomationControllerStateV1Schema, BrowserAutomationActionResultV1Schema } from '../automation/v1.js';
+import { BrowserInteractionStateV1Schema, BrowserEditableTargetV1Schema, BrowserViewportV1Schema } from '../input/v1.js';
 
 const BrowserEventBaseV1Schema = lazyZodSchema(() => z.strictObject({
     eventId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -208,6 +208,9 @@ export type BrowserEventV1 = z.infer<typeof BrowserEventV1Schema>;
 /** One metadata observation includes both authorities so stream startup can retain just the latest. */
 export const BrowserEventBatchV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), events: z.array(BrowserEventV1Schema),
+  /** Human-only transient state, carried by the watched view's sealed stream. */
+  interactionState: z.optional(BrowserInteractionStateV1Schema),
+  inputResult: z.optional(BrowserAutomationActionResultV1Schema),
   viewport: z.optional(BrowserViewportV1Schema),
   /** Per-stream projection of the browser owner's controller, never viewer-decided. */
   viewerInput: z.optional(z.strictObject({ controlling: z.boolean(), controlEpoch: z.number().check(z.int(), z.nonnegative()) })),

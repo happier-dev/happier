@@ -1,12 +1,18 @@
 import * as React from 'react';
-import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
 import type {
-    BrowserDaemonViewV1,
-    MachineLiveStreamCapsV1,
-    MachineLiveStreamControlSidebandV1,
+    BrowserDaemonViewV1} from '@happier-dev/protocol/browser/control/v1';
+import type {
+    MachineLiveStreamCapsV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type {
+    MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
     BrowserEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/events/v1';
 import { BrowserEventBatchV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserInputEventV1 } from '@happier-dev/protocol';
 import { decodeBase64 } from '@/encryption/base64';
 
 import { useSimulatorRelayIngestion, type SimulatorRelayTransport } from '@/components/devices/simulator/relay/useSimulatorRelayIngestion';
@@ -22,11 +28,14 @@ import type { BrowserOpenFirstUse } from '@/sync/domains/browser/firstUse/browse
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 import { BrowserStreamedSurfaceScope } from './BrowserStreamedSurfaceScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { createBrowserStreamInputRelay, saveBrowserStreamDownload } from './inputRelay';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 /** The live-stream family every browser capture source registers under (`_CONTRACTS.md`). */
 const BROWSER_STREAM_FAMILY = 'browser.streamed';
 /** No viewer-proposed ceilings: the registered source and the server grant own the policy. */
 const NO_VIEWER_CAPS: MachineLiveStreamCapsV1 = {};
+type ViewerMetadata = Pick<NonNullable<BrowserStreamedSurfaceRuntime['input']>, 'viewport' | 'viewerInput' | 'editableTarget' | 'interaction'>;
 
 /** The retained picture owns the frame subscription; shell imports stay presentation-only. */
 export function BrowserStreamedSurfaceRuntimeHost(props: Readonly<{
@@ -74,6 +83,11 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const viewId = view?.viewId ?? null;
     const [discovery, setDiscovery] = React.useState<Discovery>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
+    const [viewerMetadata, setViewerMetadata] = React.useState<Readonly<{
+        sourceId: string; streamId: string; value: ViewerMetadata;
+    }> | null>(null);
+    const inputSequence = React.useRef(0);
+    const inputRelayRef = React.useRef<ReturnType<typeof createBrowserStreamInputRelay> | null>(null);
     const onBrowserEventRef = React.useRef(input.onBrowserEvent);
     onBrowserEventRef.current = input.onBrowserEvent;
     const discoveredView = discovery.status === 'ready' && discovery.machineId === machineId && discovery.serverId === serverId
@@ -172,7 +186,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         onMetadataFrame: frame => {
             try {
                 const batch = BrowserEventBatchV1Schema.safeParse(JSON.parse(new TextDecoder().decode(decodeBase64(frame.payloadBase64, 'base64'))));
-                if (batch.success) for (const event of batch.data.events) {
+                if (!batch.success) return;
+                if (batch.data.inputResult) inputRelayRef.current?.accept(batch.data.inputResult);
+                for (const event of batch.data.events) {
                     if (event.kind === 'viewOpened' && event.browserSessionId === browserSessionId && event.openerViewId === viewId) {
                         // The child event announces adoption. Discovery supplies its registered
                         // capture source and daemon tuple before the workspace opens its tab.
@@ -181,6 +197,34 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                     }
                     if (event.browserSessionId === browserSessionId && 'viewId' in event && event.viewId === viewId) onBrowserEventRef.current?.(event);
                 }
+                if (!sourceId || !streamId) return;
+                const resetTarget = batch.data.events.some(event => event.browserSessionId === browserSessionId
+                    && 'viewId' in event && event.viewId === viewId
+                    && (event.kind === 'navigationStarted' || event.kind === 'navigationCommitted' || event.kind === 'viewClosed'));
+                setViewerMetadata(previous => {
+                    const current = previous?.sourceId === sourceId && previous.streamId === streamId ? previous.value : null;
+                    const viewport = batch.data.viewport ?? current?.viewport ?? null;
+                    const viewerInput = batch.data.viewerInput ?? current?.viewerInput ?? null;
+                    // Latest-wins: a batch without interaction state leaves the last one standing.
+                    const nextInteraction = batch.data.interactionState ?? current?.interaction ?? null;
+                    const interaction = current?.interaction && nextInteraction
+                        && JSON.stringify(current.interaction) === JSON.stringify(nextInteraction) ? current.interaction : nextInteraction;
+                    const editableTarget = resetTarget || !viewerInput?.controlling ? null : batch.data.editableTarget
+                        ?? (viewerInput.controlEpoch === current?.viewerInput?.controlEpoch ? current?.editableTarget ?? null : null);
+                    const sameViewport = current?.viewport?.width === viewport?.width && current?.viewport?.height === viewport?.height
+                        && current?.viewport?.deviceScaleFactor === viewport?.deviceScaleFactor
+                        && current?.viewport?.emulation?.kind === viewport?.emulation?.kind
+                        && (current?.viewport?.emulation?.kind !== 'preset' || viewport?.emulation?.kind === 'preset'
+                            && current.viewport.emulation.presetId === viewport.emulation.presetId);
+                    const sameViewer = current?.viewerInput?.controlling === viewerInput?.controlling
+                        && current?.viewerInput?.controlEpoch === viewerInput?.controlEpoch;
+                    const oldTarget = current?.editableTarget;
+                    const sameTarget = oldTarget?.editable === editableTarget?.editable && (!oldTarget?.editable
+                        || editableTarget?.editable && oldTarget.inputMode === editableTarget.inputMode
+                            && oldTarget.multiline === editableTarget.multiline && oldTarget.secret === editableTarget.secret);
+                    if (current && sameViewport && sameViewer && sameTarget && interaction === current.interaction) return previous;
+                    return { sourceId, streamId, value: { viewport, viewerInput, editableTarget, interaction } };
+                });
             } catch { /* Malformed metadata never changes controller or view state. */ }
         },
     });
@@ -197,6 +241,38 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     }, [captureSource?.inputMode, socket, sourceId, streamId, viewerSocketId]);
 
     const playerState = sourceId ? ingestion.playerStatesBySimulatorId[sourceId] ?? null : null;
+    const metadata = viewerMetadata?.sourceId === sourceId && viewerMetadata.streamId === streamId ? viewerMetadata.value : null;
+    // Human interactions (dialog answers, chosen files, download ranges, viewport) carry the epoch the
+    // daemon last projected to this stream; it refuses a stale one, so no epoch means nothing to send.
+    const controlEpoch = metadata?.viewerInput?.controlEpoch;
+    const inputStopped = playerState?.phase === 'stopped' || playerState?.phase === 'error';
+    const inputRelay = React.useMemo(() => {
+        if (!sendControl || !sourceId || !streamId || controlEpoch === undefined || input.enabled === false || inputStopped) return null;
+        return createBrowserStreamInputRelay({ streamId, nextSequence: () => inputSequence.current++, send: (event, eventId, sequence) => {
+            sendControl({ v: 1, kind: 'browser_input', streamId, sourceId, eventId,
+                // Spreading a member of the operand union keeps its kind; TS cannot re-narrow the spread.
+                controlEpoch, event: { ...event, target: 'page', sequence } as BrowserInputEventV1 });
+        } });
+    }, [controlEpoch, input.enabled, inputStopped, sendControl, sourceId, streamId]);
+    inputRelayRef.current = inputRelay;
+    React.useEffect(() => () => inputRelay?.dispose(), [inputRelay]);
+    const sendInput = inputRelay?.send;
+    const saveDownload = React.useMemo(() => inputRelay ? async (downloadId: string) => {
+        const download = metadata?.interaction?.downloads.find(candidate => candidate.downloadId === downloadId);
+        if (download?.state !== 'completed') return;
+        try { await saveBrowserStreamDownload({ download, request: inputRelay.request,
+            maxFrameBytes: ingestion.negotiatedCaps?.maxFrameBytes }); }
+        catch { Modal.alert(t('common.error'), t('errors.operationFailed')); }
+    } : undefined, [ingestion.negotiatedCaps?.maxFrameBytes, inputRelay, metadata?.interaction]);
+    const clipboardShortcut = React.useMemo(() => inputRelay && metadata?.viewerInput?.controlling
+        ? createRemoteViewerClipboardShortcut({
+            write: async text => { await inputRelay.request({ kind: 'clipboard', action: 'paste', text }); },
+            read: async action => {
+                const result = await inputRelay.request({ kind: 'clipboard', action });
+                if (result?.kind !== 'clipboard') throw new Error('clipboard_unavailable');
+                return result.text;
+            },
+        }) : undefined, [inputRelay, metadata?.viewerInput?.controlling]);
     const retry = React.useCallback(() => setAttempt((current) => current + 1), []);
     const machineName = input.machineName ?? null;
     const unavailableReason = discovery.status === 'failed' ? discovery.reason : undefined;
@@ -226,8 +302,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             playerState,
             onRetry: retry,
             input: sendControl && sourceId && streamId
-                ? { sourceId, streamId, send: sendControl }
+                ? { sourceId, streamId, send: sendControl, ...metadata, ...(sendInput ? { sendInput } : {}),
+                    saveDownload, clipboardShortcut }
                 : null,
         };
-    }, [discovery.status, firstUse, firstUseTargetUrl, machineName, playerState, retry, sendControl, socket, sourceId, streamId, unavailableReason, view]);
+    }, [clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view]);
 }

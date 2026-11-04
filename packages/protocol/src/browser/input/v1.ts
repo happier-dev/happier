@@ -30,6 +30,16 @@ export const BrowserTextInputEventV1Schema = z.strictObject({
     sequence: z.number().check(z.int(), z.nonnegative()),
   });
 
+export const BrowserWheelInputEventV1Schema = z.strictObject({
+  kind: z.literal('wheel'), target: BrowserInputTargetV1Schema,
+  x: z.number().check(z.minimum(0), z.maximum(1)), y: z.number().check(z.minimum(0), z.maximum(1)),
+  deltaX: z.number(), deltaY: z.number(), sequence: z.number().check(z.int(), z.nonnegative()),
+});
+export const BrowserClipboardInputEventV1Schema = z.strictObject({
+  kind: z.literal('clipboard'), target: BrowserInputTargetV1Schema,
+  action: z.enum(['copy', 'cut', 'paste']), text: z.optional(z.string()),
+  sequence: z.number().check(z.int(), z.nonnegative()),
+}).check(z.refine(event => event.action !== 'paste' || event.text !== undefined));
 /** Uploads carry bytes, never a caller-selected path on the browser's Machine. */
 export const BrowserUploadFileV1Schema = z.strictObject({
   name: z.string().check(z.minLength(1), z.refine(name => !/[\\/\x00]/u.test(name) && name !== '.' && name !== '..')),
@@ -91,6 +101,11 @@ export const BrowserInputEventV1Schema = z.discriminatedUnion('kind', [
   BrowserKeyInputEventV1Schema,
   BrowserPointerInputEventV1Schema,
   BrowserTextInputEventV1Schema,
+  BrowserWheelInputEventV1Schema,
+  BrowserClipboardInputEventV1Schema,
+  BrowserFileChooserInputEventV1Schema,
+  BrowserDialogInputEventV1Schema,
+  BrowserDownloadInputEventV1Schema,
   z.extend(z.omit(BrowserViewportV1Schema, { emulation: true }), {
     kind: z.literal('viewport'),
     target: BrowserInputTargetV1Schema,

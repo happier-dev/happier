@@ -1,3 +1,10 @@
+import { createBrowserSidecarInteractions } from '../sidecar/interactions';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { resolveMachineLiveStreamFramePayloadByteLimit } from '@/api/machine/liveStreamFrameBudget';
+import { sealMachineLiveStreamEnvelopeV1, openMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createBrowserDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { createBrowserDaemonFeatureGate } from '../featureGate';
@@ -5,11 +12,11 @@ import { createBrowserDaemonControlRoutes } from '../control/routes';
 import { createBrowserDaemonControlBroker } from '../control/broker';
 import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { describe, expect, it, vi } from 'vitest';
-import type { MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import { BrowserEventBatchV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
-import { MachineLiveStreamReceiptV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
+import { MachineLiveStreamReceiptV1Schema, type MachineLiveStreamReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserAutomationDaemonService } from '../automation/service';
 import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
@@ -25,6 +32,219 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 
 describe('browser live capture', () => {
+    it.each([
+        { mode: 'plain', maxFrameBytes: 1024, admitted: true },
+        { mode: 'legacy', maxFrameBytes: 1024, admitted: false },
+        { mode: 'dataKey', maxFrameBytes: 1024, admitted: false },
+        { mode: 'legacy', maxFrameBytes: 2048, admitted: true },
+        { mode: 'dataKey', maxFrameBytes: 2048, admitted: true },
+    ] as const)('pages binary downloads or explicitly rejects inadequate metadata capacity ($mode, $maxFrameBytes)', async ({ mode, maxFrameBytes, admitted }) => {
+        const codec = createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
+            : { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: mode });
+        const content = { mode: codec.mode, ...(codec.mode === 'e2ee' ? { cipher: { encryptRaw: codec.encodeRpc, decryptRaw: codec.decodeRpc } } : {}) };
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        const pageCommands: string[] = [];
+        let downloadPath = '';
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async ({ method }: { method: string }) => {
+                pageCommands.push(method);
+                return method === 'Page.getFrameTree' ? { frameTree: { frame: { id: 'frame' } } } : {};
+            },
+            dispatchBrowserCommand: async ({ params }: { params?: Record<string, unknown> }) => {
+                if (typeof params?.downloadPath === 'string') downloadPath = params.downloadPath;
+                return { success: true };
+            },
+            subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
+                listeners.add(listener); return () => { listeners.delete(listener); };
+            },
+        };
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const interactions = createBrowserSidecarInteractions({ transport, resolvePageHandle: adapter.resolvePageHandle,
+            subscribeViewLifecycle: adapter.subscribeViewLifecycle });
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, interactions, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
+        }) });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const producer = createBrowserCdpScreencastProducer({ contextCapture });
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
+        let stop: (() => void | Promise<void>) | undefined;
+        try {
+            await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            await vi.waitFor(() => expect(downloadPath).not.toBe(''));
+            const bytes = Buffer.from(Array.from({ length: 8192 }, (_, i) => i % 256));
+            await writeFile(join(downloadPath, 'dl'), bytes);
+            for (const listener of listeners) listener({ method: 'Browser.downloadWillBegin', params: { guid: 'dl', frameId: 'frame', suggestedFilename: 'binary.dat' } });
+            for (const listener of listeners) listener({ method: 'Browser.downloadProgress', params: { guid: 'dl', state: 'completed', receivedBytes: bytes.length, totalBytes: bytes.length } });
+            const sourceId = browserViewKey(view);
+            const source = registry.resolve({ sourceId, streamFamily: 'browser.streamed' });
+            if (!source.ok) throw new Error('capture source missing');
+            const streamId = 'download-viewer';
+            const startRequest = MachineLiveStreamStartRequestV1Schema.parse({ v: 1, streamId, sourceId, streamFamily: 'browser.streamed',
+                sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'loopback_direct', maxFrameBytes });
+            const results: BrowserEventBatchV1[] = [];
+            const frameSizes: Array<{ bytes: number; facts: string[] }> = [];
+            const receipts: MachineLiveStreamReceiptV1[] = [];
+            const sealedFrames: Promise<void>[] = [];
+            const envelope = (frame: MachineLiveStreamFrameV1): MachineLiveStreamRelayEnvelopeV1 => ({
+                v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer', message: { kind: 'frame', frame },
+            });
+            const pump = startMachineLiveStreamFramePump({ streamId, caps: { maxFrameBytes }, startedAtMs: Date.now(), nowMs: Date.now,
+                emitReceipt: receipt => { receipts.push(receipt); }, emitFrame: frame => {
+                    if (frame.payloadKind === 'metadata') {
+                        const batch = BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString('utf8')));
+                        results.push(batch);
+                        sealedFrames.push((async () => {
+                            const sealed = await sealMachineLiveStreamEnvelopeV1(envelope(frame), content);
+                            if (!sealed.ok || sealed.value.message.kind !== 'frame') throw new Error('seal failed');
+                            frameSizes.push({ bytes: sealed.value.message.frame.payloadSizeBytes,
+                                facts: [...batch.events.map(event => event.kind), ...Object.keys(batch).filter(key => key !== 'v' && key !== 'events')] });
+                            expect(await openMachineLiveStreamEnvelopeV1(sealed.value, content)).toEqual({ ok: true, value: envelope(frame) });
+                        })());
+                    }
+                } });
+            const listenersBeforeStart = listeners.size;
+            const started = await source.source.adapter.start({ streamId, callerAuthority: 'present_user', startRequest,
+                streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', caps: { maxFrameBytes },
+                startedAtMs: Date.now(), expiresAtMs: Date.now() + 60_000, nowMs: Date.now, applyControl: pump.applyControl,
+                emitReceipt: receipt => { receipts.push(receipt); }, offerFrame: pump.offerFrame,
+                getFramePayloadByteLimit: frame => resolveMachineLiveStreamFramePayloadByteLimit({ envelope: envelope(frame), maxFrameBytes, codec }) });
+            if (!admitted) {
+                await Promise.all(sealedFrames);
+                expect({ started, frameSizes }).toEqual({ started: { ok: false, reasonCode: 'max_frame_bytes_exceeded' }, frameSizes: [] });
+                expect(receipts).toMatchObject([{ reasonCode: 'max_frame_bytes_exceeded', terminal: true }]);
+                expect(pageCommands.filter(method => method === 'Page.startScreencast' || method === 'Page.stopScreencast'))
+                    .toEqual(['Page.startScreencast', 'Page.stopScreencast']);
+                expect(listeners.size).toBe(listenersBeforeStart);
+                return;
+            }
+            if (!started.ok) throw new Error('capture did not start');
+            stop = started.session.stop;
+            const chunks: Buffer[] = [];
+            let offset = 0;
+            for (let sequence = 0; ; sequence++) {
+                const eventId = `download:${sequence}`;
+                expect(started.session.applySidebandControl?.({ v: 1, kind: 'browser_input', sourceId, streamId, eventId,
+                    controlEpoch: automation.getStatus(view).controlEpoch,
+                    event: { kind: 'download', target: 'page', sequence, downloadId: 'dl', offset, byteLength: maxFrameBytes } }).ok).toBe(true);
+                await vi.waitFor(() => expect(results.some(batch => batch.inputResult?.automationRequestId === eventId)).toBe(true));
+                const result = results.find(batch => batch.inputResult?.automationRequestId === eventId)?.inputResult?.interactionResult;
+                expect(result?.kind).toBe('download');
+                if (result?.kind !== 'download') throw new Error('download result missing');
+                expect(result.offset).toBe(offset);
+                const chunk = Buffer.from(result.dataBase64, 'base64');
+                chunks.push(chunk);
+                offset += chunk.length;
+                if (result.eof) break;
+                expect(chunk.length).toBeGreaterThan(0);
+            }
+            expect(chunks.length).toBeGreaterThan(1);
+            expect(Buffer.concat(chunks)).toEqual(bytes);
+            await Promise.all(sealedFrames);
+            expect(frameSizes.filter(frame => frame.bytes > maxFrameBytes)).toEqual([]);
+            expect(receipts).toEqual([]);
+            const deliveredFrames = frameSizes.length;
+            for (const listener of [...listeners]) listener({ method: 'Page.javascriptDialogOpening', sessionId: 'cdp-page',
+                params: { type: 'alert', message: 'x'.repeat(maxFrameBytes) } });
+            await vi.waitFor(() => {
+                expect(receipts).toMatchObject([{ reasonCode: 'max_frame_bytes_exceeded', terminal: true }]);
+                expect(pageCommands.filter(method => method === 'Page.startScreencast' || method === 'Page.stopScreencast'))
+                    .toEqual(['Page.startScreencast', 'Page.stopScreencast']);
+                expect(listeners.size).toBe(listenersBeforeStart);
+            });
+            expect(frameSizes).toHaveLength(deliveredFrames);
+            expect(started.session.applyControl?.({ v: 1, streamId, kind: 'resume' }))
+                .toEqual({ ok: false, reasonCode: 'capture_stopped' });
+        } finally { await stop?.(); registration.dispose(); await interactions.dispose(); await producer.dispose(); }
+    });
+    it.each(['controller', 'navigation', 'interaction'] as const)('publishes only the changed %s fact between startup and recovery snapshots', async change => {
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        // Chromium is the only substituted boundary; metadata reaches the real stream codec.
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async () => ({}),
+            dispatchBrowserCommand: async () => ({ success: true }),
+            subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
+                listeners.add(listener); return () => { listeners.delete(listener); };
+            },
+        };
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const interactions = createBrowserSidecarInteractions({ transport, resolvePageHandle: adapter.resolvePageHandle,
+            subscribeViewLifecycle: adapter.subscribeViewLifecycle });
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, interactions, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
+        }) });
+        const producer = createBrowserCdpScreencastProducer({ contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
+        const metadata: BrowserEventBatchV1[] = [];
+        const sourceId = browserViewKey(view);
+        let stop: (() => void | Promise<void>) | undefined;
+        try {
+            await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            const source = registry.resolve({ sourceId, streamFamily: 'browser.streamed' });
+            if (!source.ok) throw new Error('fixture capture source missing');
+            const startRequest = MachineLiveStreamStartRequestV1Schema.parse({ v: 1, streamId: 'human', sourceId,
+                streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'loopback_direct' });
+            const result = await source.source.adapter.start({ streamId: 'human', callerAuthority: 'present_user', startRequest,
+                streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', caps: {},
+                startedAtMs: Date.now(), expiresAtMs: Date.now() + 60_000, nowMs: Date.now,
+                offerFrame: frame => {
+                    if (frame.payloadKind === 'metadata') metadata.push(BrowserEventBatchV1Schema.parse(
+                        JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString('utf8'))));
+                    return { ok: true };
+                }, applyControl: () => ({ ok: true }), emitReceipt: () => {} });
+            if (!result.ok) throw new Error('fixture capture failed');
+            stop = () => result.session.stop();
+            const expectSnapshot = () => {
+                expect(metadata).toHaveLength(1);
+                expect(metadata[0].events.map(event => event.kind)).toEqual(['navigationStateChanged', 'controllerChanged']);
+                expect(metadata[0].interactionState).toEqual(interactions.getState(view));
+                expect(metadata[0].viewerInput).toEqual({ controlling: false, controlEpoch: automation.getStatus(view).controlEpoch });
+            };
+            expectSnapshot();
+            metadata.length = 0;
+            if (change === 'controller') {
+                await automation.recordHumanInput({ ...view, authority: 'present_user' });
+                expect(metadata).toHaveLength(1);
+                expect(metadata[0].events).toEqual([expect.objectContaining({ kind: 'controllerChanged',
+                    state: expect.objectContaining({ controller: 'human' }) })]);
+                expect(Object.keys(metadata[0]).sort()).toEqual(['events', 'v', 'viewerInput']);
+            } else if (change === 'navigation') {
+                for (const listener of [...listeners]) listener({ method: 'Page.frameNavigated', sessionId: 'cdp-page',
+                    params: { frame: { id: 'main', loaderId: 'next-document', url: 'https://example.test/next' } } });
+                expect(metadata).toHaveLength(1);
+                expect(metadata[0].events).toEqual([expect.objectContaining({ kind: 'navigationStateChanged',
+                    currentUrl: 'https://example.test/next', navigationGeneration: 1 })]);
+                expect(Object.keys(metadata[0]).sort()).toEqual(['events', 'v']);
+            } else {
+                for (const listener of [...listeners]) listener({ method: 'Page.javascriptDialogOpening', sessionId: 'cdp-page',
+                    params: { type: 'confirm', message: 'Continue?' } });
+                expect(metadata).toHaveLength(1);
+                expect(metadata[0]).toEqual({ v: 1, events: [], interactionState: expect.objectContaining({
+                    dialog: expect.objectContaining({ type: 'confirm', message: 'Continue?' }),
+                }) });
+            }
+            for (const control of [{ kind: 'keyframe_required', reasonCode: 'viewer_request' }, { kind: 'resume' }] as const) {
+                metadata.length = 0;
+                expect(result.session.applyControl?.({ v: 1, streamId: 'human', ...control })).toEqual({ ok: true });
+                expectSnapshot();
+            }
+        } finally {
+            await stop?.(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); await interactions.dispose();
+        }
+    });
+
     it('lets the controlling viewer resize once per geometry change and returns value-free keyboard hints', async () => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const commands: Array<{ method: string; params?: Record<string, unknown> }> = [];

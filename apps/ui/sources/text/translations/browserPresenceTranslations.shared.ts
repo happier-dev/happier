@@ -81,6 +81,25 @@ export type BrowserPresenceTranslations = Readonly<{
     confidentialHeld: (params: AgentParams) => string;
     closePage: string;
     interaction: Readonly<{
+        thisPage: string;
+        says: (params: Readonly<{ host: string }>) => string;
+        leaveTitle: string;
+        leaveBody: string;
+        leave: string;
+        stay: string;
+        chooserTitle: (params: Readonly<{ host: string }>) => string;
+        chooserTitleMultiple: (params: Readonly<{ host: string }>) => string;
+        chooserBody: string;
+        chooseFile: string;
+        chooseFiles: string;
+        otherViewer: string;
+        chooserUnavailable: string;
+        downloadUnavailable: string;
+        downloadProgress: (params: Readonly<{ received: string; total: string }>) => string;
+        downloadCanceled: string;
+        save: string;
+        dismissDownloads: string;
+        downloadsA11y: string;
         showKeyboard: string;
     }>;
 }>;
@@ -159,6 +178,25 @@ export const browserPresenceTranslationsEnglish = { en: {
         confidentialHeld: ({ agent }) => `Private entry here · hidden from ${agent} until the page closes`,
         closePage: 'Close page',
         interaction: {
+            thisPage: 'This page',
+            says: ({ host }) => `${host} says`,
+            leaveTitle: 'Leave this page?',
+            leaveBody: 'Changes you made may not be saved.',
+            leave: 'Leave',
+            stay: 'Stay',
+            chooserTitle: ({ host }) => `${host} asks for a file`,
+            chooserTitleMultiple: ({ host }) => `${host} asks for files`,
+            chooserBody: 'Choose from this device. Only what you pick is uploaded to the page.',
+            chooseFile: 'Choose file',
+            chooseFiles: 'Choose files',
+            otherViewer: 'The person in control answers this.',
+            chooserUnavailable: 'This page asked for a file, but uploads aren’t available here',
+            downloadUnavailable: 'This page started a download, but downloads aren’t available here',
+            downloadProgress: ({ received, total }) => `${received} of ${total}`,
+            downloadCanceled: 'Canceled',
+            save: 'Save',
+            dismissDownloads: 'Hide downloads',
+            downloadsA11y: 'Downloads',
             showKeyboard: 'Show keyboard',
         },
     } } satisfies Pick<Record<string, BrowserPresenceTranslations>, "en">;

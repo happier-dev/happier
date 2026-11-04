@@ -1,7 +1,7 @@
-import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationActionRequestV1Schema, BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
 import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import type { BrowserEditableTargetV1, BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import type { BrowserAutomationActionResultV1, BrowserEditableTargetV1, BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
@@ -33,6 +33,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                 let stopped = false;
                 let failInput: (reasonCode: string) => void = () => undefined;
                 let inputPending = Promise.resolve();
+                let emitInputResult: (outcome: BrowserAutomationActionResultV1) => void = () => {};
                 let emitEditableTarget: (target: BrowserEditableTargetV1) => void = () => {};
                 // Reuse the existing codec normalization/credit admission/terminal receipt owner.
                 const capture = createSimulatorFrameProducerCaptureAdapter({ sourceId, sourceCodecs: ['image.mjpeg'], producer: {
@@ -71,8 +72,9 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             if (controller) events.push({ kind: 'controllerChanged', ...view, state: controller,
                                 eventId: `controller-snapshot:${startInput.streamId}:${occurredAt}`, occurredAt,
                                 navigationGeneration: navigation?.navigationGeneration ?? 0 });
+                            const interactionState = humanViewer ? input.contextCapture.interactions?.getState(view) : null;
                             const viewport = viewportOwner?.getViewport(view);
-                            emitMetadata({ events,
+                            emitMetadata({ events, ...(interactionState ? { interactionState } : {}),
                                 ...(viewport ? { viewport } : {}), ...(controller ? { viewerInput: viewerInput(controller.controlEpoch) } : {}) });
                         };
                         const emitEvent = (event: BrowserEventV1) => {
@@ -86,16 +88,42 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             emitMetadata({ events: [navigation ? { ...event, ...navigation } : event],
                                 ...(event.kind === 'controllerChanged' ? { viewerInput: viewerInput(event.state.controlEpoch) } : {}) });
                         };
+                        emitInputResult = outcome => {
+                            if (!humanViewer) return;
+                            const result = outcome.interactionResult;
+                            const timestampMs = Date.now();
+                            const payloadByteLimit = result?.kind === 'download'
+                                ? getPayloadByteLimit({ codecId: 'image.mjpeg', payloadKind: 'metadata', timestampMs }) : undefined;
+                            if (result?.kind === 'download' && payloadByteLimit !== undefined) {
+                                const empty = { ...outcome, interactionResult: { ...result, dataBase64: '', eof: false } };
+                                const overhead = Buffer.byteLength(JSON.stringify(BrowserEventBatchV1Schema.parse({ v: 1, events: [], inputResult: empty })));
+                                // The download is base64 inside JSON metadata; use the real envelope
+                                // overhead and the negotiated frame ceiling, never a local chunk size.
+                                const capacity = Math.floor((payloadByteLimit - overhead) / 4) * 3;
+                                const bytes = Buffer.from(result.dataBase64, 'base64');
+                                if (capacity < bytes.length) {
+                                    if (capacity <= 0) { failInput('max_frame_bytes_exceeded'); return; }
+                                    outcome = { ...outcome, interactionResult: { ...result,
+                                        dataBase64: bytes.subarray(0, capacity).toString('base64'), eof: false } };
+                                }
+                            }
+                            emitMetadata({ events: [], inputResult: outcome }, timestampMs, payloadByteLimit);
+                        };
                         emitEditableTarget = target => { if (humanViewer) emitMetadata({ events: [], editableTarget: target }); };
                         const unsubscribeEngine = input.contextCapture.subscribeBrowserEvents?.(event => emitEvent(event));
                         const unsubscribeController = input.automation()?.subscribeBrowserEvents(event => emitEvent(event));
                         const unsubscribeViewport = viewportOwner?.subscribe(changed => {
                             if (browserViewKey(changed) === sourceId) emitMetadata({ events: [], viewport: viewportOwner.getViewport(view) });
                         });
+                        const unsubscribeInteractions = humanViewer ? input.contextCapture.interactions?.subscribe(changed => {
+                            if (browserViewKey(changed) !== sourceId) return;
+                            const interactionState = input.contextCapture.interactions?.getState(view);
+                            if (interactionState) emitMetadata({ events: [], interactionState });
+                        }) : undefined;
                         emitSnapshot();
                         return {
                             stop: async () => {
-                                stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); unsubscribeViewport?.();
+                                stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); unsubscribeInteractions?.(); unsubscribeViewport?.();
                                 input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
                                 await subscription.stop();
                             },
@@ -128,7 +156,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         const takeover = automation.getStatus(view).controller === 'human'
                             ? Promise.resolve({ ok: false, errorCode: 'no_active_action' } as const)
                             : automation.recordHumanInput({ ...view, authority: 'present_user' });
-                        inputPending = inputPending.then(async () => {
+                        const executeInput = async () => {
                             const interrupted = await takeover;
                             if (stopped) return;
                             if (interrupted.ok && interrupted.completion === 'uncertain') {
@@ -145,12 +173,18 @@ export function registerBrowserLiveCapture(input: Readonly<{
                                 return;
                             }
                             if (!action) return;
-                            const outcome = await automation.execute({ v: 1, ...view, automationRequestId: control.eventId,
+                            const outcome = await automation.execute(BrowserAutomationActionRequestV1Schema.parse({ v: 1, ...view, automationRequestId: control.eventId,
                                 requestedBy: 'user', requesterRef: { kind: 'streamViewer', id: startInput.streamId },
                                 navigationGeneration: input.contextCapture.getNavigationState?.(view)?.navigationGeneration ?? 0,
-                                ...action, timeoutMs: BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS });
+                                ...action, timeoutMs: BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS }));
+                            emitInputResult(outcome);
                             if (outcome.status !== 'succeeded') failInput(outcome.errorCode ?? 'human_input_failed');
-                        }).catch(() => failInput('human_input_failed'));
+                        };
+                        // Chromium holds the triggering input until its dialog is answered. The
+                        // admitted exact-dialog reply must reach that owner without joining the
+                        // input queue it resumes. All ordinary viewer input stays serialized.
+                        if (action?.actionKind === 'answerDialog') void executeInput().catch(() => failInput('human_input_failed'));
+                        else inputPending = inputPending.then(executeInput).catch(() => failInput('human_input_failed'));
                         return { ok: true };
                     },
                 } };
@@ -174,6 +208,23 @@ export function registerBrowserLiveCapture(input: Readonly<{
 }
 
 function inputAction(control: MachineLiveStreamControlSidebandV1, frame: BrowserCdpScreencastFrame | null) {
+    if (control.kind === 'browser_input') {
+        const event = control.event;
+        switch (event.kind) {
+            case 'clipboard': return event.action === 'paste'
+                ? { actionKind: 'clipboardWrite' as const, payload: { text: event.text } }
+                : { actionKind: event.action === 'cut' ? 'clipboardCut' as const : 'clipboardRead' as const, payload: {} };
+            case 'fileChooser': return { actionKind: 'upload' as const, payload: { chooserId: event.chooserId, files: event.files } };
+            case 'dialog': return { actionKind: 'answerDialog' as const, payload: { dialogId: event.dialogId, accept: event.accept, ...(event.promptText !== undefined ? { promptText: event.promptText } : {}) } };
+            case 'download': return { actionKind: 'download' as const, payload: { downloadId: event.downloadId, offset: event.offset, byteLength: event.byteLength } };
+            case 'key': return { actionKind: 'press' as const, payload: { key: event.key, modifiers: event.modifiers } };
+            case 'text': return { actionKind: 'type' as const, payload: { text: event.text } };
+            case 'wheel': return frame?.width && frame.height ? { actionKind: 'scroll' as const, payload: {
+                x: event.x * frame.width, y: event.y * frame.height, deltaX: event.deltaX, deltaY: event.deltaY,
+            } } : null;
+            default: return null;
+        }
+    }
     if (control.kind === 'keyboard_text') return { actionKind: 'type' as const, payload: { text: control.text } };
     if (control.kind === 'keyboard_key') return { actionKind: 'press' as const, payload: { key: control.key } };
     if (!frame?.width || !frame.height) return null;

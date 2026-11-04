@@ -258,6 +258,17 @@ function resolveFrameNavigationCommand(
     } as const;
 }
 
+/** The page's host as a browser names it in its own dialogs ("localhost:5173 says"); null for no web origin. */
+function readBrowserPageHost(url: string | null): string | null {
+    if (!url) return null;
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.host : null;
+    } catch {
+        return null;
+    }
+}
+
 /** The agent's streamed browser, named for its agent (the identity leaf reads the session). */
 function StreamedBrowserView(props: Readonly<{
     runtime: BrowserStreamedSurfaceRuntime | null;
@@ -265,12 +276,15 @@ function StreamedBrowserView(props: Readonly<{
     onPageRectChange?: (rect: BrowserStreamedPageRect | null) => void;
     onOpenPageHere?: () => void;
     onClosePage?: () => void;
+    pageHost: string | null;
+    humanInControl: boolean;
     testID: string;
 }>): React.ReactElement {
     const identity = useBrowserSessionAgentIdentity(props.agent);
     const runtime = useBrowserStreamedPicture(props.runtime);
     return <BrowserStreamedTarget runtime={runtime} agentName={identity.name} onPageRectChange={props.onPageRectChange}
-        onOpenPageHere={props.onOpenPageHere} onClosePage={props.onClosePage} testID={props.testID} />;
+        onOpenPageHere={props.onOpenPageHere} onClosePage={props.onClosePage} pageHost={props.pageHost}
+        humanInControl={props.humanInControl} testID={props.testID} />;
 }
 
 function useViewLifecycleEmitter(input: Readonly<{
@@ -507,6 +521,8 @@ export function BrowserViewHost(props: Readonly<{
                     onPageRectChange={props.onStreamedPageRectChange}
                     onOpenPageHere={props.onOpenStreamedPageHere}
                     onClosePage={props.onClosePage}
+                    pageHost={readBrowserPageHost(view?.currentUrl ?? null)}
+                    humanInControl={view?.automationController?.controller === 'human'}
                     testID={`${testID}-streamed`}
                 />
             </View>

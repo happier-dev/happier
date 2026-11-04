@@ -72,3 +72,23 @@ export async function setClipboardImageSafe(base64Png: string): Promise<boolean>
         return false;
     }
 }
+
+/** Start WebKit's clipboard promise in the UI gesture; only an admitted Action supplies its Blob. */
+export function beginClipboardWriteFromUi(mimeType: 'image/png' | 'text/plain'): Readonly<{
+    write: (content: Blob) => Promise<boolean>;
+    refuse: () => Promise<void>;
+}> {
+    let supply: (content: Blob) => void = () => {};
+    let refuse: () => void = () => {};
+    const content = new Promise<Blob>((resolve, reject) => { supply = resolve; refuse = () => reject(new Error('clipboard_refused')); });
+    // An unavailable clipboard has no ClipboardItem consumer for this promise.
+    void content.catch(() => {});
+    let copied: Promise<boolean>;
+    try {
+        copied = navigator.clipboard.write([new ClipboardItem({ [mimeType]: content })]).then(() => true, () => false);
+    } catch { copied = Promise.resolve(false); }
+    return {
+        write: blob => { supply(blob); return copied; },
+        refuse: async () => { refuse(); await copied; },
+    };
+}

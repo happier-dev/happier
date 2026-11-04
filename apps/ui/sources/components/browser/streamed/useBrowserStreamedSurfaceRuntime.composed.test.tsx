@@ -1,3 +1,4 @@
+import { BrowserAutomationActionResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 // Cross-app composition keeps the real daemon/server path in this test without
 // adding their source and package-local aliases to the UI compiler program.
 import * as React from 'react';
@@ -43,6 +44,8 @@ import { createDaemonMachineLiveStreamCaptureAdapter } from '../../../../../cli/
 import { createMachineLiveStreamRelayTerminator } from '../../../../../cli/src/daemon/peer/mediation/stream/relay';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+const clipboardBoundary = vi.hoisted(() => ({ text: '  pasted text\n' }));
+vi.mock('expo-clipboard', () => ({ getStringAsync: async () => clipboardBoundary.text }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock, createMeasuredImageMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Image: createMeasuredImageMock({ width: 780, height: 493 }) });
@@ -65,6 +68,7 @@ const boundary = vi.hoisted(() => ({
     discoveryGate: null as Promise<void> | null,
     disconnect: vi.fn(async () => undefined),
     relaySend: null as ((raw: unknown) => void) | null,
+    maxFrameBytes: undefined as number | undefined,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -174,6 +178,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 payload: { v: 1, grantId: `grant:${scope.streamId}`, accountId: home.accountId,
                     sourceMachineId: request.machineId, targetMachineId: request.targetMachineId,
                     flowKind: 'live_stream', routeKind: 'server_relay', ...streamScope,
+                    ...(boundary.maxFrameBytes ? { maxFrameBytes: boundary.maxFrameBytes } : {}),
                     viewerSocketId: request.viewerSocketId, codecId: request.codecId, viewerCodecs: request.viewerCodecs,
                     iat: now, exp: now + DIRECT_ROUTE_GRANT_TTL_MS.serverRelayedLiveStream,
                     aud: 'happier-live-stream-relay-authorization' },
@@ -189,6 +194,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.discoveryGate = null;
         boundary.disconnect.mockClear();
         boundary.relaySend = null;
+        boundary.maxFrameBytes = undefined;
     });
 
     it('renders the advertised daemon source when opened through the canonical workspace target', async () => {
@@ -497,6 +503,146 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         expect(state.viewsById[view.viewId]).toBeUndefined();
         await hook.unmount();
         expect(boundary.listeners.size).toBe(0);
+    });
+
+    it('saves all binary download ranges through the web downloads owner using the negotiated frame budget', async () => {
+        boundary.maxFrameBytes = 8000;
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        const blobs: Blob[] = [];
+        const click = vi.fn();
+        const createUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+            if (!(blob instanceof Blob)) throw new Error('expected Blob');
+            blobs.push(blob); return 'blob:download';
+        });
+        const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        vi.stubGlobal('document', { createElement: () => ({ click, style: {}, remove() {} }), body: { appendChild() {} } });
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId }));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const streamId = hook.getCurrent()?.input?.streamId;
+            if (!streamId) throw new Error('stream missing');
+            let sequence = 1;
+            const deliver = (batch: Record<string, unknown>) => {
+                const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [], ...batch }));
+                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: sequence++, timestampMs: 1, codecId: 'image.mjpeg',
+                        payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
+            };
+            await act(async () => deliver({ viewerInput: { controlling: true, controlEpoch: 3 }, interactionState: {
+                dialog: null, fileChooser: null, downloads: [{ downloadId: 'binary', name: 'binary.dat', state: 'completed', receivedBytes: 6, totalBytes: 6 }] } }));
+            const bytes = new Uint8Array([0, 255, 128, 13, 10, 42]);
+            const requested: number[] = [];
+            boundary.relaySend = raw => {
+                const envelope = MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw);
+                if (envelope.message.kind !== 'sideband_control' || envelope.message.control.kind !== 'browser_input') return;
+                const { event, eventId } = envelope.message.control;
+                if (event.kind !== 'download') return;
+                requested.push(event.byteLength);
+                // The source can return a shorter range to account for its metadata overhead.
+                const chunk = bytes.slice(event.offset, event.offset + 2);
+                deliver({ inputResult: BrowserAutomationActionResultV1Schema.parse({ v: 1, automationRequestId: eventId, status: 'succeeded',
+                    durationMs: 1, adapterKind: 'chromiumSidecar', fidelity: 'cdp', trustedInput: true,
+                    navigationGenerationBefore: 0, navigationGenerationAfter: 0, controlEpochBefore: 3, controlEpochAfter: 3,
+                    interactionResult: { kind: 'download', downloadId: 'binary', name: 'binary.dat', offset: event.offset,
+                        dataBase64: encodeBase64(chunk), eof: event.offset + chunk.length === bytes.length } }) });
+            };
+            expect(hook.getCurrent()?.input?.saveDownload).toBeTypeOf('function');
+            await act(async () => { await hook.getCurrent()?.input?.saveDownload?.('binary'); });
+            expect(requested).toEqual([8000, 8000, 8000]);
+            expect(click).toHaveBeenCalledOnce();
+            expect(blobs).toHaveLength(1);
+            expect(new Uint8Array(await blobs[0].arrayBuffer())).toEqual(bytes);
+        } finally { await hook.unmount(); createUrl.mockRestore(); revoke.mockRestore(); vi.unstubAllGlobals(); }
+    });
+
+    it('relays controlling-viewer copy, cut and paste through clipboard input and the system clipboard', async () => {
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        const written: string[] = [];
+        class HostClipboardItem { constructor(readonly content: Record<string, Promise<Blob>>) {} }
+        vi.stubGlobal('ClipboardItem', HostClipboardItem);
+        vi.stubGlobal('navigator', { clipboard: { write: async (items: HostClipboardItem[]) => {
+            written.push(await (await items[0].content['text/plain']).text());
+        } } });
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId }));
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const streamId = hook.getCurrent()?.input?.streamId;
+            if (!streamId) throw new Error('stream missing');
+            let sequence = 1;
+            const deliver = (batch: Record<string, unknown>) => {
+                const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [], ...batch }));
+                for (const listener of boundary.listeners) listener({ v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: sequence++, timestampMs: 1, codecId: 'image.mjpeg',
+                        payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes), payloadSizeBytes: bytes.byteLength } } });
+            };
+            await act(async () => deliver({ viewerInput: { controlling: false, controlEpoch: 3 } }));
+            expect(hook.getCurrent()?.input?.clipboardShortcut).toBeUndefined();
+            await act(async () => deliver({ viewerInput: { controlling: true, controlEpoch: 3 } }));
+            const events: unknown[] = [];
+            boundary.relaySend = raw => {
+                const envelope = MachineLiveStreamDecodedEnvelopeV1Schema.parse(raw);
+                if (envelope.message.kind !== 'sideband_control' || envelope.message.control.kind !== 'browser_input') return;
+                const { event, eventId } = envelope.message.control;
+                events.push(event);
+                deliver({ inputResult: BrowserAutomationActionResultV1Schema.parse({ v: 1, automationRequestId: eventId,
+                    status: 'succeeded', durationMs: 1, adapterKind: 'chromiumSidecar', fidelity: 'cdp', trustedInput: true,
+                    navigationGenerationBefore: 0, navigationGenerationAfter: 0, controlEpochBefore: 3, controlEpochAfter: 3,
+                    ...(event.kind === 'clipboard' && event.action !== 'paste' ? { interactionResult: { kind: 'clipboard', text: `  ${event.action}\n` } } : {}) }) });
+            };
+            for (const action of ['copy', 'cut', 'paste'] as const) await act(async () => {
+                hook.getCurrent()?.input?.clipboardShortcut?.(action);
+                await flushHookEffects();
+            });
+            expect(events).toEqual([
+                expect.objectContaining({ kind: 'clipboard', action: 'copy' }),
+                expect.objectContaining({ kind: 'clipboard', action: 'cut' }),
+                expect.objectContaining({ kind: 'clipboard', action: 'paste', text: clipboardBoundary.text }),
+            ]);
+            expect(written).toEqual(['  copy\n', '  cut\n']);
+        } finally { await hook.unmount(); vi.unstubAllGlobals(); }
+    });
+
+    it('exposes the human interaction state and answers it on browser_input at the admitted control epoch', async () => {
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId }));
+        await flushHookEffects({ cycles: 6, turns: 6 });
+        await waitForStreamAdmission();
+        const streamId = hook.getCurrent()?.input?.streamId;
+        if (!streamId) throw new Error('stream not admitted');
+        // Before the daemon projects an epoch there is nothing to answer with.
+        expect(hook.getCurrent()?.input?.sendInput).toBeUndefined();
+        const deliver = async (batch: Record<string, unknown>) => act(async () => {
+            const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, events: [], ...batch }));
+            const envelope: MachineLiveStreamRelayEnvelopeV1 = { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                message: { kind: 'frame', frame: { v: 1, streamId, sequence: 1, timestampMs: 1, codecId: 'image.mjpeg',
+                    payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: encodeBase64(bytes),
+                    payloadSizeBytes: bytes.byteLength } } };
+            for (const listener of boundary.listeners) listener(envelope);
+        });
+        const interactionState = { dialog: { dialogId: 'd1', type: 'confirm', message: 'Discard the draft?' },
+            fileChooser: null, downloads: [{ downloadId: 'dl1', name: 'report.pdf', state: 'inProgress', receivedBytes: 10, totalBytes: 40 }] };
+        await deliver({ viewerInput: { controlling: false, controlEpoch: 3 }, interactionState });
+        expect(hook.getCurrent()?.input?.interaction).toEqual(interactionState);
+        expect(hook.getCurrent()?.input?.saveDownload).toBeTypeOf('function');
+        // A later batch without interaction state keeps the last one (it is latest-wins, not per batch).
+        const kept = hook.getCurrent()?.input?.interaction;
+        await deliver({ viewerInput: { controlling: false, controlEpoch: 3 } });
+        expect(hook.getCurrent()?.input?.interaction).toBe(kept);
+
+        await act(async () => { hook.getCurrent()?.input?.sendInput?.({ kind: 'dialog', dialogId: 'd1', accept: true }); });
+        expect(boundary.sent).toContainEqual(expect.objectContaining({ message: { kind: 'sideband_control', control: expect.objectContaining({
+            kind: 'browser_input', sourceId: 'browser-view-key-1', streamId, controlEpoch: 3,
+            event: expect.objectContaining({ kind: 'dialog', target: 'page', dialogId: 'd1', accept: true, sequence: expect.any(Number) }),
+        }) } }));
+        await hook.unmount();
     });
 
     it('does nothing for views the app renders itself', async () => {

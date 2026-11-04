@@ -70,6 +70,8 @@ export type UseSimulatorRelayIngestionInput = Readonly<{
 
 export type UseSimulatorRelayIngestionResult = Readonly<{
     playerStatesBySimulatorId: Readonly<Record<string, SimulatorPreviewStreamState | undefined>>;
+    /** The admitted source/server frame budget; consumers never invent a competing ceiling. */
+    negotiatedCaps: MachineLiveStreamCapsV1 | null;
     retry: () => void;
 }>;
 
@@ -123,6 +125,7 @@ export function useSimulatorRelayIngestion(
     const presented = useLayoutPresentationActive();
     const enabled = (input.enabled ?? true) && input.transport !== null && presented;
     const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+    const [authorization, setAuthorization] = React.useState<Readonly<{ identityKey: string; caps: MachineLiveStreamCapsV1 }> | null>(null);
     const [state, dispatch] = React.useReducer(
         reduceSimulatorRelayStreamState,
         input.streamId,
@@ -312,6 +315,8 @@ export function useSimulatorRelayIngestion(
         const open = () => openMachineLiveStreamRelayClient({
             ...clientInput,
             onAuthorized: (request) => {
+                if (disposed || ended) return;
+                setAuthorization({ identityKey: streamIdentityKey, caps: request });
                 if (request.authorization) scheduleRenewal(request.authorization.payload.exp);
             },
         });
@@ -358,7 +363,8 @@ export function useSimulatorRelayIngestion(
         return { [simulatorId]: { ...toSimulatorPreviewStreamState(state), onFrameDecoded } };
     }, [retainPicture, streamIdentityKey, simulatorId, state, onFrameDecoded]);
 
-    return React.useMemo(() => ({ playerStatesBySimulatorId, retry }), [playerStatesBySimulatorId, retry]);
+    const negotiatedCaps = enabled && authorization?.identityKey === streamIdentityKey ? authorization.caps : null;
+    return React.useMemo(() => ({ playerStatesBySimulatorId, retry, negotiatedCaps }), [playerStatesBySimulatorId, retry, negotiatedCaps]);
 }
 
 export type { SimulatorRelayStreamState };
