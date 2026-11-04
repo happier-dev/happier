@@ -159,7 +159,6 @@ export type VoiceConversationControllerDeps = Readonly<{
     }>): Promise<void>;
   }>;
   waitBeforeReconnect?(attempt: number, signal: AbortSignal): Promise<void>;
-  maxReconnectAttempts?: number;
   connectionReadyTimeoutMs?: number;
 }>;
 
@@ -243,7 +242,6 @@ type Attempt = {
   providerSessionId: string | null;
   providerSessionEndPromise: Promise<void> | null;
   providerPreparationReleasePromise: Promise<void> | null;
-  authRefreshCount: number;
   connectionSequence: number;
 };
 
@@ -262,9 +260,6 @@ export function createVoiceConversationController(
   let sequence = 0;
   let current: Attempt | null = null;
   const reconnectDefaults = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.reconnect;
-  const maxReconnectAttempts = Math.max(0, Math.floor(
-    deps.maxReconnectAttempts ?? reconnectDefaults.maxRetries,
-  ));
   const connectionReadyTimeoutMs = Math.max(1, Math.floor(
     deps.connectionReadyTimeoutMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.connectionReadyTimeoutMs,
   ));
@@ -523,11 +518,6 @@ export function createVoiceConversationController(
     const previousConnection = attempt.connection;
     try {
       if (reason === 'auth_refresh') {
-        if (attempt.authRefreshCount >= 1) {
-          await settleReconnectFailure(attempt, 'voice_auth_refresh_exhausted');
-          return;
-        }
-        attempt.authRefreshCount += 1;
         let refreshed = false;
         try {
           refreshed = await deps.adapter.refreshAuth?.(attempt.abortController.signal) ?? false;
@@ -551,7 +541,7 @@ export function createVoiceConversationController(
         await endProviderSession(attempt, 'reconnect');
       }
 
-      for (let reconnectAttempt = 1; reconnectAttempt <= maxReconnectAttempts; reconnectAttempt += 1) {
+      for (let reconnectAttempt = 1; owns(attempt); reconnectAttempt += 1) {
         const backoffAbortController = new AbortController();
         const abortBackoff = () => backoffAbortController.abort();
         if (attempt.abortController.signal.aborted) {
@@ -700,7 +690,6 @@ export function createVoiceConversationController(
         fireAndForget(pumpTransportEvents(attempt, nextConnection), { tag: 'VoiceConversation.transportEvents' });
         return;
       }
-      await settleReconnectFailure(attempt, 'reconnect_exhausted');
     } finally {
       if (current === attempt) {
         attempt.reconnecting = false;
@@ -938,7 +927,6 @@ export function createVoiceConversationController(
       providerSessionId: null,
       providerSessionEndPromise: null,
       providerPreparationReleasePromise: null,
-      authRefreshCount: 0,
       connectionSequence: 0,
     };
     await claimAttemptOwnership(attempt);

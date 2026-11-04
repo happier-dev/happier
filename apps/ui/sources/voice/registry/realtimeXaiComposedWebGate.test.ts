@@ -2,6 +2,12 @@ import { waitForTestEvent } from '@/dev/testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createXaiVoiceRuntimeEnvironment, XaiVoiceWebSocket as FakeWebSocket, XAI_VOICE_HISTORY_SESSION_ID as XAI_HISTORY_SESSION_ID, type XaiVoiceRuntimeEnvironment } from '@/dev/testkit/harness/xaiVoiceRuntime';
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('react-native', async () => (
+  await import('@/dev/testkit/mocks/reactNative')
+).createReactNativeWebMock({ Platform: { OS: 'web' } }));
+vi.mock('expo-audio', async () => (
+  await import('@/dev/testkit/mocks/expoAudio')
+).expoAudioModuleMock());
 import { createSessionFixture } from "@/dev/testkit/fixtures/sessionFixtures";
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
@@ -15,6 +21,7 @@ import { voiceSessionBindingStore } from "@/voice/binding/voiceConversationBindi
 import { readVoiceProviderConversationMetadata, writeVoiceProviderConversationMetadata } from "@/voice/persistence/voiceProviderConversationMetadata";
 import { performVoiceAdapterRuntimeAction } from "@/voice/session/voiceAdapterRegistry";
 import { readCanonicalVoiceTranscriptSnapshot } from "@/voice/transcript/voiceConversationTranscript";
+import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 
 let environment: XaiVoiceRuntimeEnvironment;
 
@@ -56,11 +63,12 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
   });
 
   it.each(['first_message_after_open', 'after_reconnect_settles'] as const)(
-    'fails closed on a second xAI auth expiration in the same actual controller attempt (%s)', async timing => {
+    'paces repeated successful xAI auth refresh through visible cancellable backoff (%s)', async timing => {
       await environment.installSettings(true);
       const composed = await environment.createRuntime();
       const emitSecondExpiration = (socket: FakeWebSocket) => socket.emit('message', { data: JSON.stringify({
-        type: 'error', event_id: 'auth-expiration-second', error: { code: 'client_secret_expired' },
+        type: 'error', event_id: `auth-expiration-${FakeWebSocket.instances.indexOf(socket)}`,
+        error: { code: 'client_secret_expired' },
       }) });
       const emit = FakeWebSocket.prototype.emit;
       if (timing === 'first_message_after_open') {
@@ -72,27 +80,65 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
       try {
         await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
         const first = FakeWebSocket.instances[0]!;
-        first.emitConversationId('conv-auth-budget');
+        const attemptId = composed.getController().getOwnedAttemptId();
+        first.emitConversationId('conv-auth-refresh-repeated');
         await waitForTestEvent(storage.subscribe, () => expect(readVoiceProviderConversationMetadata(
           environment.readProviderConversationOwnerMetadata(XAI_HISTORY_SESSION_ID), environment.xaiEntry().providerId,
-        )?.conversationId).toBe('conv-auth-budget'));
+        )?.conversationId).toBe('conv-auth-refresh-repeated'));
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const backoffMs = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.reconnect.baseBackoffMs;
         first.emit('message', { data: JSON.stringify({
           type: 'error', event_id: 'auth-expiration-first', error: { code: 'client_secret_expired' },
         }) });
-        await waitForTestEvent(FakeWebSocket.subscribe, () => expect(FakeWebSocket.instances).toHaveLength(2));
+        await vi.advanceTimersByTimeAsync(backoffMs);
+        expect(FakeWebSocket.instances).toHaveLength(2);
         const second = FakeWebSocket.instances[1]!;
+        // The WebSocket boundary dispatches open/message in later tasks,
+        // after the reconnect slot constructs the replacement socket.
+        await vi.advanceTimersByTimeAsync(1);
         if (timing === 'after_reconnect_settles') {
           await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot().status).toBe('connected'));
           emitSecondExpiration(second);
         }
-        await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
-          status: 'error', errorCode: 'voice_auth_refresh_exhausted',
-        }));
-        expect(composed.providerFetch.mock.calls.filter(([url]) => String(url).endsWith('/client_secrets'))).toHaveLength(2);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
+          presentationState: 'reconnecting', reconnectRetryAvailable: true, canStop: true,
+        });
+        // A newly issued credential rejected again waits on the same visible
+        // scheduler; successful refresh must not create a hot reconnect loop.
+        await vi.advanceTimersByTimeAsync(backoffMs - 2);
         expect(FakeWebSocket.instances).toHaveLength(2);
-        await waitForTestEvent(FakeWebSocket.subscribe, () => expect(second.readyState).toBe(3));
+        await vi.advanceTimersByTimeAsync(1);
+        expect(FakeWebSocket.instances).toHaveLength(3);
+        const third = FakeWebSocket.instances[2]!;
+        expect(new URL(third.url).searchParams.get('conversation_id')).toBe('conv-auth-refresh-repeated');
+        await vi.advanceTimersByTimeAsync(1);
+        await waitForTestEvent(composed.runtime.adapter.subscribe!, () => expect(composed.runtime.adapter.getSnapshot().status).toBe('connected'));
+        expect(composed.getController().getOwnedAttemptId()).toBe(attemptId);
+        emitSecondExpiration(third);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(composed.runtime.adapter.getSnapshot().reconnectRetryAvailable).toBe(true);
+        // A deliberate Start replaces the retrying attempt without awaiting
+        // its backoff. Fresh admission uses the real Account/transport owners.
+        vi.useRealTimers();
+        await composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+        expect(composed.getController().getOwnedAttemptId()).not.toBe(attemptId);
+        expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
+        const fresh = FakeWebSocket.instances.at(-1)!;
+        expect(fresh).not.toBe(third);
+        const openedAfterStart = FakeWebSocket.instances.length;
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        emitSecondExpiration(fresh);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(composed.runtime.adapter.getSnapshot()).toMatchObject({
+          presentationState: 'reconnecting', reconnectRetryAvailable: true, canStop: true,
+        });
+        await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId });
+        await vi.advanceTimersByTimeAsync(backoffMs);
+        expect(FakeWebSocket.instances).toHaveLength(openedAfterStart);
         expect(composed.getController().getOwnedAttemptId()).toBeNull();
       } finally {
+        vi.useRealTimers();
         await composed.runtime.dispose();
         composed.hostLease.revoke();
       }

@@ -16,8 +16,7 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
          * Each transient drop routes through the machine's recoverable-error path
          * (graceful `disconnected` + retry, not a hard `error`) while a backoff
          * timer schedules the next attempt; session/turn state is preserved
-         * across attempts. After `maxRetries` exhausted attempts the failure is
-         * surfaced as non-recoverable (`error`). A non-recoverable drop
+         * across attempts until recovery or cancellation. A non-recoverable drop
          * (auth/quota/permission) skips reconnect entirely.
          */
         reconnect: {
@@ -27,8 +26,6 @@ export const VOICE_RUNTIME_CONFIG_DEFAULTS = {
             maxBackoffMs: 8_000,
             /** Exponential growth factor applied to the backoff each attempt. */
             backoffFactor: 2,
-            /** Reconnect attempts before the drop is surfaced as non-recoverable. */
-            maxRetries: 5,
         },
     },
     /**

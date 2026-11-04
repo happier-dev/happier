@@ -19,6 +19,8 @@ import { createRealtimeToolBarrier } from '@/voice/tools/realtimeToolBarrier';
 import { createVoiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
+import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { storage } from '@/sync/domains/state/storage';
@@ -265,6 +267,37 @@ function createMachineFixture() {
 }
 
 describe('VoiceConversationController', () => {
+  it('settles an actual OpenAI auth-refresh refusal without reconnecting or reminting', async () => {
+    const environment = await createOpenAiVoiceRuntimeEnvironment();
+    const browser = installVoiceWebRtcBrowserBoundary();
+    const composed = await environment.createRuntime(browser);
+    try {
+      const starting = composed.runtime.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      await Promise.race([browser.peerCreated().then(peer => peer.dataChannelCreated), starting]);
+      browser.peer.channel.open();
+      await starting;
+      const mintCount = environment.providerFetch.mock.calls.filter(([url]) => String(url).endsWith('/client_secrets')).length;
+      browser.peer.channel.message(JSON.stringify({
+        type: 'error', event_id: 'refused-auth-refresh',
+        error: { type: 'invalid_request_error', code: 'invalid_client_secret', message: 'private-provider-detail' },
+      }));
+      await waitForTestEvent(composed.runtime.adapter.subscribe!, () => composed.runtime.adapter.getSnapshot().errorCode,
+        code => code === 'voice_auth_refresh_failed');
+      expect(composed.runtime.adapter.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'voice_auth_refresh_failed' });
+      expect(composed.controller?.getOwnedAttemptId()).toBeNull();
+      expect(browser.peers).toHaveLength(1);
+      expect(environment.providerFetch.mock.calls.filter(([url]) => String(url).endsWith('/client_secrets'))).toHaveLength(mintCount);
+      expect(browser.peer.close).toHaveBeenCalledTimes(1);
+      expect(browser.micSession.teardown).toHaveBeenCalledTimes(1);
+      expect(log.getLogs().join('\n')).not.toContain('private-provider-detail');
+    } finally {
+      await composed.runtime.dispose();
+      composed.hostLease.revoke();
+      await environment.dispose();
+      browser.restore();
+    }
+  });
+
   it('ends an expired OpenAI session with its typed cause and no automatic remint or reconnect', async () => {
     const environment = await createOpenAiVoiceRuntimeEnvironment();
     const browser = installVoiceWebRtcBrowserBoundary();
@@ -1609,7 +1642,7 @@ describe('VoiceConversationController', () => {
     }
   });
 
-  it('retries transient preparation failures within the reconnect budget', async () => {
+  it('retries transient preparation failures through cancellable reconnect backoff', async () => {
     const { readVoiceProviderConversationMetadata } = await import('@/voice/persistence/voiceProviderConversationMetadata');
     const environment = await createXaiVoiceRuntimeEnvironment();
     await environment.installSettings(true);
@@ -1672,7 +1705,7 @@ describe('VoiceConversationController', () => {
     }
   });
 
-  it('preserves a typed preparation decline during reconnect instead of flattening it to exhaustion', async () => {
+  it('settles a typed preparation decline during reconnect without retrying it', async () => {
     const environment = await createOpenAiVoiceRuntimeEnvironment();
     const respond = environment.providerFetch.getMockImplementation();
     if (!respond) throw new Error('OpenAI HTTP boundary is absent');
@@ -1863,47 +1896,57 @@ describe('VoiceConversationController', () => {
     }
   });
 
-  it('settles reconnect exhaustion once and aborts a pending backoff on stop', async () => {
+  it('retains cancellable reconnect backoff across repeated failures and lets a fresh Start supersede it', async () => {
     const { createPublicPcmVoiceConversationForTest } = await import('@/voice/registry/externalVoiceProviderActivation.testkit');
     const conversation = await createPublicPcmVoiceConversationForTest(cleanup => ownedRuntimeCleanups.push(cleanup));
     const firstContext = conversation.context;
     const firstAttempt = conversation.getController().getOwnedAttemptId();
     const budget = VOICE_RUNTIME_CONFIG_DEFAULTS.realtime.reconnect;
-    const gates = Array.from({ length: budget.maxRetries }, () => conversation.sdk.holdNextOpen());
-    let exhaustionPublications = 0;
-    machineSubscriptions.push(useVoiceConversationRuntimeStore.subscribe(({ snapshot }, previous) => {
-      if (snapshot.controlSessionId === conversation.controlSessionId && snapshot.state === 'error'
-        && snapshot.error?.reason === 'reconnect_exhausted' && previous.snapshot.state !== 'error') {
-        exhaustionPublications += 1;
-      }
-    }));
+    // Six physical failures cross the removed five-attempt cutoff. The contract
+    // is continued, paced recovery until End or a fresh Start, not a new budget.
+    const gates = Array.from({ length: 6 }, () => conversation.sdk.holdNextOpen());
+    const expectEndAvailable = () => {
+      const snapshot = conversation.adapter.getSnapshot();
+      expect(resolveVoiceAttemptControl({
+        ...snapshot,
+        surfaceState: resolveVoiceSurfaceState(snapshot),
+        tone: 'neutral',
+        muted: snapshot.micMuted === true,
+        capturing: false,
+        startAdmitted: true,
+        hasRecovery: true,
+      })).toMatchObject({ canStop: true, primaryAction: 'end', surfaceState: 'reconnecting' });
+    };
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const reconnecting = conversation.requestReconnect();
-      for (let slot = 1; slot <= budget.maxRetries; slot += 1) {
+      for (const [index, gate] of gates.entries()) {
+        const slot = index + 1;
         await waitForTestEvent(conversation.adapter.subscribe!, () => conversation.adapter.getSnapshot().reconnectRetryAvailable, value => value === true);
         expect(conversation.adapter.getSnapshot().reconnectRetryAvailable).toBe(true);
         await vi.advanceTimersByTimeAsync(Math.min(budget.maxBackoffMs,
           budget.baseBackoffMs * budget.backoffFactor ** (slot - 1)));
-        await Promise.race([gates[slot - 1]!.entered, reconnecting]);
+        expectEndAvailable();
+        await Promise.race([gate.entered, reconnecting]);
         expect(conversation.sdk.openCount).toBe(slot + 1);
         expect(conversation.getController().getOwnedAttemptId()).toBe(firstAttempt);
-        gates[slot - 1]!.reject(new Error('offline'));
+        gate.reject(new Error('offline'));
+        await Promise.race([
+          waitForTestEvent(conversation.adapter.subscribe!, () => conversation.adapter.getSnapshot().reconnectRetryAvailable, value => value === true),
+          reconnecting,
+        ]);
+        expect(conversation.adapter.getSnapshot().reconnectRetryAvailable).toBe(true);
+        expectEndAvailable();
       }
-      await expect(reconnecting).resolves.toBe(false);
-      expect(conversation.adapter.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'reconnect_exhausted' });
-      expect(conversation.getController().getOwnedControlSessionId()).toBeNull();
-      expect(exhaustionPublications).toBe(1);
-      expect(firstContext.close).toHaveBeenCalledTimes(1);
-      expect(conversation.browser.micTrack.stop).toHaveBeenCalledTimes(1);
-      await conversation.adapter.stop({ sessionId: conversation.controlSessionId });
-      expect(exhaustionPublications).toBe(1);
-      expect(firstContext.close).toHaveBeenCalledTimes(1);
 
       // Fresh admission includes real async preparation; only reconnect
       // backoff belongs to this test's fake clock.
       vi.useRealTimers();
       await conversation.adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      await expect(reconnecting).resolves.toBe(false);
+      expect(conversation.getController().getOwnedAttemptId()).not.toBe(firstAttempt);
+      expect(conversation.adapter.getSnapshot().status).toBe('connected');
+      expect(firstContext.close).toHaveBeenCalledTimes(1);
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const secondContext = conversation.context;
       const secondConnection = conversation.getConnection();
@@ -1912,6 +1955,7 @@ describe('VoiceConversationController', () => {
       const pendingReconnect = conversation.requestReconnect();
       await waitForTestEvent(conversation.adapter.subscribe!, () => conversation.adapter.getSnapshot().reconnectRetryAvailable, value => value === true);
       expect(conversation.adapter.getSnapshot().reconnectRetryAvailable).toBe(true);
+      expectEndAvailable();
       expect(secondConnection?.state()).toBe('closed');
       await conversation.adapter.stop({ sessionId: conversation.controlSessionId });
       await expect(pendingReconnect).resolves.toBe(false);
@@ -1923,7 +1967,6 @@ describe('VoiceConversationController', () => {
       expect(secondContext.close).toHaveBeenCalledTimes(1);
       await conversation.adapter.stop({ sessionId: conversation.controlSessionId });
       expect(secondContext.close).toHaveBeenCalledTimes(1);
-      expect(exhaustionPublications).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -2177,7 +2220,6 @@ describe('VoiceConversationController', () => {
       onCanonicalEvent: async () => {},
       createToolBarrier: () => barrier,
       waitBeforeReconnect: async () => {},
-      maxReconnectAttempts: 1,
     });
 
     await controller.start({ controlSessionId: 'tool-reconnect' });
@@ -2233,7 +2275,6 @@ describe('VoiceConversationController', () => {
       onCanonicalEvent: async () => {},
       createToolBarrier: () => toolBarrier,
       waitBeforeReconnect: async () => {},
-      maxReconnectAttempts: 1,
     });
 
     await controller.start({ controlSessionId: 'tool-delivery-retry' });
@@ -2292,7 +2333,6 @@ describe('VoiceConversationController', () => {
       onCanonicalEvent: async () => {},
       createToolBarrier: () => toolBarrier,
       waitBeforeReconnect: async () => {},
-      maxReconnectAttempts: 1,
     });
 
     await controller.start({ controlSessionId: 'tool-transport-detach' });
@@ -2363,7 +2403,6 @@ describe('VoiceConversationController', () => {
       onCanonicalEvent: async () => {},
       createToolBarrier: () => toolBarrier,
       waitBeforeReconnect: async () => {},
-      maxReconnectAttempts: 1,
     });
 
     await controller.start({ controlSessionId: 'tool-no-resume' });
