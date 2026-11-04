@@ -8,7 +8,7 @@ import { AppRail } from './appRail/AppRail';
 import { AppShellColumn } from './appRail/AppShellColumn';
 import { AppShellTitleStrip } from './appRail/AppShellTitleStrip';
 import { AppShellTitleMoreSlot } from './appShellTail';
-import { AppShellPeekLayer, AppShellPeekProvider } from './appRail/AppShellPeek';
+import { AppShellPeekCovered, AppShellPeekLayer, AppShellPeekProvider } from './appRail/AppShellPeek';
 import { APP_RAIL_WIDTH_PX } from './appRail/appRailMetrics';
 import {
     resolveAppRailEntryColumn,
@@ -190,7 +190,7 @@ export const SidebarNavigator = React.memo(() => {
                     ? { role: 'navigation' as const, tabIndex: -1, onFocusCapture: columnFocus.onFocusCapture, onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb }
                     : {})}
             >
-                <AppShellColumn column={column} />
+                <AppShellPeekCovered><AppShellColumn column={column} /></AppShellPeekCovered>
             </View>
         </ResizableDockedPane>
     );

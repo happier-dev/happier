@@ -43,6 +43,19 @@ export function resolveOverlayMotionPreset(params: Readonly<{
 }>): OverlayMotionPreset {
     const direction = params.direction ?? 'center';
 
+    if (params.kind === 'panel' && direction === 'center') {
+        // Standing in another panel's place: nothing travels, the two cross-fade over the same time both ways.
+        return {
+            enterMs: motionTokens.overlay.panel.crossfadeMs,
+            exitMs: motionTokens.overlay.panel.crossfadeMs,
+            fromOpacity: 0,
+            fromScale: 1,
+            fromTranslateX: 0,
+            fromTranslateY: 0,
+            reducedMotionFadeMs: motionTokens.overlay.panel.reducedMotionFadeMs,
+        };
+    }
+
     if (params.kind === 'panel') {
         const travel = params.travelPx ?? 0;
         return {
@@ -381,13 +394,20 @@ type OverlayPanelMotionParams = Readonly<{
     preset: OverlayMotionPreset;
     /** The panel's element (a web `HTMLElement`); the web motion animates it directly. */
     elementRef: React.RefObject<unknown>;
+    /** `false`: a panel already standing when it mounts (the open column's content) rests there; only changes move it. */
+    appear?: boolean;
 }>;
 
 type OverlayPanelMotion = Readonly<{ exitMs: number; style: StyleProp<ViewStyle> }>;
 
+/** A panel standing in another's place (`direction: 'center'`) cross-fades instead of travelling. */
+function panelCrossfades(preset: OverlayMotionPreset): boolean {
+    return preset.fromOpacity < 1 && preset.fromTranslateX === 0 && preset.fromTranslateY === 0;
+}
+
 /** Where a panel rests: in place when shown, one travel out (or transparent, when it only fades) when not. */
 function panelRestingFrame(preset: OverlayMotionPreset, shown: boolean, fadeOnly: boolean): Record<string, string | number> {
-    if (fadeOnly) return { opacity: shown ? 1 : 0 };
+    if (fadeOnly || panelCrossfades(preset)) return { opacity: shown ? 1 : 0 };
     return { transform: shown ? 'none' : `translate(${preset.fromTranslateX}px, ${preset.fromTranslateY}px)` };
 }
 
@@ -401,15 +421,22 @@ function panelRestingFrame(preset: OverlayMotionPreset, shown: boolean, fadeOnly
 function useWebOverlayPanelMotion(params: OverlayPanelMotionParams): OverlayPanelMotion {
     const reducedMotion = useReducedMotionPreference();
     const fadeOnly = reducedMotion && params.preset.reducedMotionFadeMs > 0;
+    // A cross-fading panel moves by opacity alone, with or without reduced motion.
+    const fades = fadeOnly || panelCrossfades(params.preset);
     const presetRef = React.useRef(params.preset);
     presetRef.current = params.preset;
     const animationRef = React.useRef<Animation | null>(null);
+    const restsOnMountRef = React.useRef(params.appear === false);
     React.useLayoutEffect(() => {
         const element = params.elementRef.current as HTMLElement | null;
+        if (restsOnMountRef.current) {
+            restsOnMountRef.current = false;
+            return;
+        }
         if (!element || typeof element.animate !== 'function') return;
         const preset = presetRef.current;
         const previous = animationRef.current;
-        const property = fadeOnly ? 'opacity' : 'transform';
+        const property = fades ? 'opacity' : 'transform';
         const turning = previous?.playState === 'running' && (previous.effect as KeyframeEffect | null)?.target === element;
         const from = turning
             ? { [property]: getComputedStyle(element)[property] }
@@ -422,18 +449,22 @@ function useWebOverlayPanelMotion(params: OverlayPanelMotionParams): OverlayPane
             [from, panelRestingFrame(preset, params.visible, fadeOnly)],
             { duration, easing: motionTokens.easingCss.standard },
         );
-    }, [fadeOnly, params.elementRef, params.visible, reducedMotion]);
+    }, [fadeOnly, fades, params.elementRef, params.visible, reducedMotion]);
     React.useEffect(() => () => animationRef.current?.cancel(), []);
     const { fromTranslateX, fromTranslateY } = params.preset;
     const style = React.useMemo<ViewStyle>(() => {
-        if (fadeOnly) return { opacity: params.visible ? 1 : 0 };
+        if (fades) return { opacity: params.visible ? 1 : 0 };
         return params.visible ? {} : { transform: [{ translateX: fromTranslateX }, { translateY: fromTranslateY }] };
-    }, [fadeOnly, fromTranslateX, fromTranslateY, params.visible]);
+    }, [fades, fromTranslateX, fromTranslateY, params.visible]);
     return { exitMs: reducedMotion ? params.preset.reducedMotionFadeMs : params.preset.exitMs, style };
 }
 
 function useNativeOverlayPanelMotion(params: OverlayPanelMotionParams): OverlayPanelMotion {
-    return useOverlayMotionAnimation({ visible: params.visible, preset: params.preset });
+    // A panel that rests on mount takes its first state at once; later changes animate.
+    const [restsOnMount] = React.useState(params.appear === false);
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+    return useOverlayMotionAnimation({ visible: params.visible, preset: params.preset, disabled: restsOnMount && !mounted });
 }
 
 /**

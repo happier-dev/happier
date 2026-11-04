@@ -57,6 +57,12 @@ export const motionTokens = {
              * Long enough that passing over the button does not flash it open.
              */
             hoverOpenDelayMs: 300,
+            /**
+             * The app rail is a dock: resting this long on one of its icons previews it. A pointer
+             * crossing the rail spends well under this on each icon (a ~40 px pitch), so a pass does
+             * not flash; once a rail preview shows, the next icon answers at once (`HoverPreviewScope`).
+             */
+            dockHoverOpenDelayMs: 140,
         },
         /**
          * Popovers and menus grow from their trigger and leave faster than they arrive; dialogs fade
@@ -78,6 +84,8 @@ export const motionTokens = {
             enterMs: HAPPIER_MOTION_V1.baseMs,
             exitMs: HAPPIER_MOTION_V1.fastMs,
             reducedMotionFadeMs: HAPPIER_MOTION_V1.fastMs,
+            /** A panel standing in another's place (a peek over the open column) cross-fades with it, both ways. */
+            crossfadeMs: HAPPIER_MOTION_V1.fastMs,
         },
     },
     /**

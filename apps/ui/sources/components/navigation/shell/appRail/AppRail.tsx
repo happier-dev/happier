@@ -46,6 +46,7 @@ import { AppRailIcon } from './AppRailIcon';
 import { AppRailSlot } from './AppRailSlot';
 import { useConnectedAccountsNeedingSignInCount } from './useConnectedAccountsNeedingSignInCount';
 import { AppRailPeek } from './AppRailPeek';
+import { AppRailHoverScope } from './AppShellPeek';
 import {
     buildAppRailEntries,
     buildAppRailPlacementItems,
@@ -168,7 +169,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const renderFooter = props.renderFooter ?? ((item: AppRailPlacementItem, trigger?: SidebarFooterPopoverTrigger) =>
         <AppRailFooterItem item={item} renderTrigger={trigger} activeId={activeId} />);
 
-    return (
+    // The rail is a dock: its popovers and its column peeks answer one hover intent.
+    return (<AppRailHoverScope>
         <View testID="app-rail" style={[styles.rail, { backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]} onLayout={onRailLayout}
             ref={props.focusBoundary?.ref} onFocus={props.focusBoundary?.onFocus}
             focusable={props.focusBoundary ? true : undefined} accessibilityLabel={props.focusBoundary ? t('settingsKeyboard.paneRegions.rail') : undefined}
@@ -204,7 +206,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
                     : <React.Fragment key={item.id}>{renderFooter(item)}</React.Fragment>)}
             </View>
         </View>
-    );
+    </AppRailHoverScope>);
 });
 
 const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
