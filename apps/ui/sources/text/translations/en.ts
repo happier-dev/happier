@@ -8746,6 +8746,8 @@ const enNewSession = {
     createNewPackage: 'Create a new package',
     returnToEditing: 'Return to editing',
     unavailable: {
+      rateLimited: 'GitHub’s package lookup limit has been reached. Try again later.',
+      rateLimitedUntil: ({ time }: { time: string }) => `GitHub’s package lookup limit has been reached. Try again after ${time}.`,
       loading: 'Checking available packages…',
       notAvailable: 'Temporary computers aren’t available on this home.',
       notPublished:

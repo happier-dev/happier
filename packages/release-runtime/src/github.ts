@@ -1,7 +1,31 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { requestJson, requestText } from './http.js';
+import { fetchWithCredentialRedirectRefusal } from './httpRedirects.js';
 
 type FetchImpl = typeof fetch;
+
+/** Public failure facts only; request headers and upstream prose never cross this seam. */
+export type GitHubReleaseFailure =
+  | Readonly<{ reason: 'rate_limited'; resetAtMs: number | null }>
+  | Readonly<{ reason: 'not_found' | 'network' | 'upstream'; status: number }>;
+
+/** Same environment precedence as first-party binary self-update. */
+export function resolveGitHubReleaseToken(env: Readonly<Record<string, string | undefined>>): string {
+  return String(env.HAPPIER_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? '').trim();
+}
+
+class GitHubReleaseHttpError extends Error {
+  readonly failure: GitHubReleaseFailure;
+  constructor(message: string, readonly status: number, cause?: unknown, network = false) {
+    super(message, { cause });
+    this.failure = { reason: network ? 'network' : status === 404 ? 'not_found' : 'upstream', status };
+  }
+}
+
+export function readGitHubReleaseFailure(error: unknown): GitHubReleaseFailure | null {
+  if (error instanceof GitHubReleaseRateLimitError) return { reason: 'rate_limited', resetAtMs: error.resetAtMs };
+  return error instanceof GitHubReleaseHttpError ? error.failure : null;
+}
 
 export class GitHubReleaseRateLimitError extends Error {
   readonly code = 'github_rate_limited';
@@ -18,7 +42,33 @@ export class GitHubReleaseRateLimitError extends Error {
   }
 }
 
+// GitHub owns this boundary: reuse its reset deadline on later demand, without a timer.
+// Transport and authentication origin isolate independently supplied HTTP boundaries.
+const exhaustedReleaseQuotas = new WeakMap<object, Map<string, GitHubReleaseRateLimitError>>();
+const nativeReleaseTransport = {};
+
+function readReleaseQuota(params: Readonly<{ fetchImpl?: FetchImpl; githubToken?: string }>) {
+  const transport = params.fetchImpl ?? globalThis.fetch ?? nativeReleaseTransport;
+  let exhausted = exhaustedReleaseQuotas.get(transport);
+  if (!exhausted) {
+    exhausted = new Map();
+    exhaustedReleaseQuotas.set(transport, exhausted);
+  }
+  const origin = params.githubToken?.trim() || 'anonymous';
+  const previous = exhausted.get(origin);
+  if (previous && previous.resetAtMs !== null && Date.now() < previous.resetAtMs) throw previous;
+  exhausted.delete(origin);
+  const owner = exhausted;
+  return (error: Error) => {
+    if (error instanceof GitHubReleaseRateLimitError && error.resetAtMs !== null) owner.set(origin, error);
+  };
+}
+
 function responseError(context: string, response: Response): Error {
+  if (response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) {
+    void response.body?.cancel().catch(() => undefined);
+    return createHttpError('[github] credential-bearing request redirect refused', response.status);
+  }
   if ((response.status === 403 || response.status === 429) && response.headers?.get('x-ratelimit-remaining') === '0') {
     return new GitHubReleaseRateLimitError(response.status, response.headers.get('x-ratelimit-reset'));
   }
@@ -39,9 +89,11 @@ function buildGitHubLatestReleaseUrl(githubRepo: string) {
   return `https://api.github.com/repos/${repo}/releases/latest`;
 }
 
-function createHttpError(message: string, status: number, cause?: unknown) {
-  const err = new Error(message, { cause });
-  (err as Error & { status: number }).status = status;
+function createHttpError(message: string, status: number, cause?: unknown, network = false) {
+  const err = new GitHubReleaseHttpError(message, status, cause, network);
+  if (status >= 300 && status < 400 || status === 0) {
+    Object.assign(err, { code: `HTTP_${status}`, retryable: false });
+  }
   return err;
 }
 
@@ -69,13 +121,17 @@ function normalizeGitHubRequestError(params: Readonly<{
   error: unknown;
 }>): Error {
   if (params.error instanceof GitHubReleaseRateLimitError) return params.error;
-  const status = readGitHubReleaseHttpStatus(params.error) ?? 500;
+  if (params.error instanceof Error && 'code' in params.error
+    && (params.error.code === 'credential_request_redirect_refused'
+      || 'retryable' in params.error && params.error.retryable === false)) return params.error;
+  const upstreamStatus = readGitHubReleaseHttpStatus(params.error);
+  const status = upstreamStatus ?? 500;
   if ((status === 403 || status === 429) && typeof params.error === 'object' && params.error !== null
     && 'rateLimitRemaining' in params.error && params.error.rateLimitRemaining === '0') {
     return new GitHubReleaseRateLimitError(status, 'rateLimitReset' in params.error ? params.error.rateLimitReset : undefined, { cause: params.error });
   }
   const message = params.error instanceof Error ? params.error.message : String(params.error);
-  return createHttpError(`${params.context}: ${message}`, status, params.error);
+  return createHttpError(`${params.context}: ${message}`, status, params.error, upstreamStatus === null);
 }
 
 async function fetchGitHubReleaseAssetsByTag(params: Readonly<{
@@ -149,6 +205,7 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
 }>): Promise<unknown> {
   params.signal?.throwIfAborted();
   if (params.assetsOnly) return fetchGitHubReleaseAssetsByTag(params);
+  const rememberQuota = readReleaseQuota(params);
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
   const url = buildGitHubReleaseTagUrl(params.githubRepo, params.tag, params.apiBaseUrl);
@@ -160,10 +217,13 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
 
   const attempts = Math.max(1, Math.floor(params.transientNotFoundAttempts ?? 3));
   const retryDelayMs = Math.max(0, Math.floor(params.retryDelayMs ?? 250));
+  const fetchImpl = params.fetchImpl;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      if (params.fetchImpl) {
-        const response = await params.fetchImpl(url, { headers, signal: params.signal });
+      if (fetchImpl) {
+        const response = token
+          ? await fetchWithCredentialRedirectRefusal(url, { headers, signal: params.signal }, fetchImpl)
+          : await fetchImpl(url, { headers, signal: params.signal });
         if (!response.ok) {
           throw responseError(`[github] failed to resolve release tag ${params.tag}`, response);
         }
@@ -176,6 +236,7 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
         context: `[github] failed to resolve release tag ${params.tag}`,
         error,
       });
+      rememberQuota(normalized);
       if (readGitHubReleaseHttpStatus(normalized) !== 404 || attempt >= attempts) throw normalized;
       if (retryDelayMs > 0) await delay(retryDelayMs, undefined, { signal: params.signal });
     }
@@ -191,6 +252,7 @@ export async function fetchGitHubLatestRelease(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<unknown> {
   params.signal?.throwIfAborted();
+  const rememberQuota = readReleaseQuota(params);
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
   const url = buildGitHubLatestReleaseUrl(params.githubRepo);
@@ -200,29 +262,26 @@ export async function fetchGitHubLatestRelease(params: Readonly<{
   };
   if (token) headers.authorization = `Bearer ${token}`;
 
-  if (params.fetchImpl) {
-    try {
-      const response = await params.fetchImpl(url, { headers, signal: params.signal });
+  const fetchImpl = params.fetchImpl;
+  try {
+    if (fetchImpl) {
+      const response = token
+        ? await fetchWithCredentialRedirectRefusal(url, { headers, signal: params.signal }, fetchImpl)
+        : await fetchImpl(url, { headers, signal: params.signal });
       if (!response.ok) {
         throw responseError('[github] failed to resolve latest release', response);
       }
       return response.json();
-    } catch (error) {
-      params.signal?.throwIfAborted();
-      throw normalizeGitHubRequestError({
-        context: '[github] failed to resolve latest release',
-        error,
-      });
     }
-  }
-  try {
     return await requestJson({ url, headers, signal: params.signal });
   } catch (error) {
     params.signal?.throwIfAborted();
-    throw normalizeGitHubRequestError({
+    const normalized = normalizeGitHubRequestError({
       context: '[github] failed to resolve latest release',
       error,
     });
+    rememberQuota(normalized);
+    throw normalized;
   }
 }
 

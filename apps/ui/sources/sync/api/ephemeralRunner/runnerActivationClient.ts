@@ -43,6 +43,7 @@ import {
 import {
     RunnerServerErrorV1Schema,
     type RunnerServerErrorCodeV1,
+    type RunnerArtifactPublicationFailureV1,
 } from '@happier-dev/protocol/ephemeralRunner/errors';
 
 import type { ServerFetch } from '@/sync/http/client';
@@ -75,12 +76,14 @@ export class RunnerActivationClientError extends Error {
      * platform is no longer published" from "the Home is briefly unreachable".
      */
     readonly serverCode: RunnerServerErrorCodeV1 | null;
+    readonly publicationFailure: RunnerArtifactPublicationFailureV1 | null;
 
     constructor(
         code: RunnerActivationClientErrorCode,
         status: number,
         retryable: boolean,
         serverCode: RunnerServerErrorCodeV1 | null = null,
+        publicationFailure: RunnerArtifactPublicationFailureV1 | null = null,
     ) {
         super(serverCode ?? `runner_activation_${code}`);
         this.name = 'RunnerActivationClientError';
@@ -88,12 +91,8 @@ export class RunnerActivationClientError extends Error {
         this.status = status;
         this.retryable = retryable;
         this.serverCode = serverCode;
+        this.publicationFailure = publicationFailure;
     }
-}
-
-function readServerErrorCode(payload: unknown): RunnerServerErrorCodeV1 | null {
-    const parsed = RunnerServerErrorV1Schema.safeParse(payload);
-    return parsed.success ? parsed.data.error : null;
 }
 
 function classifyFailureStatus(status: number): Readonly<{ code: RunnerActivationClientErrorCode; retryable: boolean }> {
@@ -112,7 +111,10 @@ async function parseResponse<T>(response: Response, schema: ResponseSchema<T>): 
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
         const { code, retryable } = classifyFailureStatus(response.status);
-        throw new RunnerActivationClientError(code, response.status, retryable, readServerErrorCode(payload));
+        const failure = RunnerServerErrorV1Schema.safeParse(payload);
+        throw new RunnerActivationClientError(code, response.status, retryable,
+            failure.success ? failure.data.error : null,
+            failure.success ? failure.data.publicationFailure ?? null : null);
     }
     const parsed = schema.safeParse(payload);
     if (!parsed.success) throw new RunnerActivationClientError('malformed_response', 502, true);

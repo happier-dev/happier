@@ -45,7 +45,8 @@ import {
 import { materializeEphemeralRunner } from './materializeEphemeralRunner';
 import { readEphemeralRunnerEndpointProjection } from './endpointProjection';
 import { declineEphemeralRunnerActivationByEndpoint } from './endpointDecline';
-import { readPublishedRunnerArtifacts, runnerArtifactPublicationSnapshots } from './runnerArtifactAvailability';
+import { readPublishedRunnerArtifacts, readRunnerArtifactPublicationFailure, runnerArtifactPublicationSnapshots } from './runnerArtifactAvailability';
+import { resolveGitHubReleaseToken } from '@happier-dev/release-runtime/github';
 import { readRunnerCreatorRecipient } from './activationCurrentness';
 import { resolveRunnerCredentialSelection } from './credentialSelection';
 import { getMachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
@@ -65,6 +66,7 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
     // activation admission cannot silently read different release rings.
     const runnerReleaseRing = normalizePublicReleaseRingId(env.HAPPIER_PUBLIC_RELEASE_CHANNEL) || 'stable';
     const runnerArtifactSource = {
+        githubToken: resolveGitHubReleaseToken(env),
         channel: runnerReleaseRing,
         publicationSnapshots: runnerArtifactPublicationSnapshots,
     } as const;
@@ -85,10 +87,12 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
                     version: request.query.version,
                 }),
             });
-        } catch {
-            log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable' },
+        } catch (error) {
+            const publicationFailure = readRunnerArtifactPublicationFailure(error);
+            log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable', publicationFailure },
                 'Runner artifact publication is unavailable');
-            return reply.code(503).send({ error: 'runner_artifact_publication_unavailable' });
+            return reply.code(503).send({ error: 'runner_artifact_publication_unavailable',
+                publicationFailure });
         }
     });
     app.get(EPHEMERAL_RUNNER_CREATOR_RECIPIENT_PATH_V1, {
@@ -126,9 +130,10 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
         if (result.status === 'created') return reply.send(result);
         if (result.status === 'artifact_unavailable') {
             if (result.reason === 'publication_unavailable') {
-                log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable' },
+                log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable', publicationFailure: result.publicationFailure },
                     'Runner artifact publication is unavailable');
-                return reply.code(503).send({ error: 'runner_artifact_publication_unavailable' });
+                return reply.code(503).send({ error: 'runner_artifact_publication_unavailable',
+                    publicationFailure: result.publicationFailure });
             }
             if (result.reason === 'artifact_identity_mismatch') {
                 return reply.code(409).send({ error: 'runner_artifact_identity_mismatch' });

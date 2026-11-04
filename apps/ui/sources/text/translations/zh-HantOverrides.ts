@@ -6111,6 +6111,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             createNewPackage: '建立新套件',
             returnToEditing: '返回編輯',
             unavailable: {
+      rateLimited: '已達到 GitHub 套件查詢上限。請稍後重試。',
+      rateLimitedUntil: ({ time }: { time: string }) => `已達到 GitHub 套件查詢上限。請在 ${time} 之後重試。`,
                 loading: '正在檢查可用的安裝包…',
                 notAvailable: '此家庭暫不支援臨時電腦。',
                 notPublished: '此家庭尚未發布經過驗證的 Happier Runner 安裝包。',

@@ -1,9 +1,7 @@
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
-import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import {
   fetchGitHubLatestRelease as requestLatestRelease,
   fetchGitHubReleaseByTag as requestReleaseByTag,
-  GitHubReleaseRateLimitError,
 } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
@@ -11,7 +9,6 @@ import { configuration } from '@/configuration';
 type LookupOptions = Readonly<{ cacheTtlMs?: number; bypassCache?: boolean }>;
 type LookupState = Readonly<{
   releases: AsyncTtlCache<unknown>;
-  exhausted: Map<string, GitHubReleaseRateLimitError>;
 }>;
 
 // One owner per daemon. Transport-scoped state also keeps independently supplied HTTP
@@ -27,7 +24,7 @@ async function lookup(
   const transport = params.fetchImpl ?? globalThis.fetch ?? nativeTransport;
   let state = states.get(transport);
   if (!state) {
-    state = { releases: new AsyncTtlCache({ successTtlMs: 0, errorTtlMs: 0 }), exhausted: new Map() };
+    state = { releases: new AsyncTtlCache({ successTtlMs: 0, errorTtlMs: 0 }) };
     states.set(transport, state);
   }
   const ttlMs = params.cacheTtlMs ?? configuration.installablesRuntimeAutoUpdateCheckIntervalMs;
@@ -37,26 +34,14 @@ async function lookup(
   const cached = state.releases.get(key);
   if (!params.bypassCache && cached?.kind === 'success' && state.releases.isFresh(cached)
     && Date.now() < cached.updatedAt + ttlMs) return cached.value;
-  const exhausted = state.exhausted.get(origin);
-  if (exhausted && exhausted.resetAtMs !== null && Date.now() < exhausted.resetAtMs) throw exhausted;
-  state.exhausted.delete(origin);
 
   const owner = state;
   return owner.releases.runDedupe(key, async ({ signal, isCurrent }) => {
-    try {
-      const fetchImpl = params.fetchImpl ?? globalThis.fetch;
-      const request = { ...params, fetchImpl: params.githubToken?.trim() && fetchImpl
-        ? ((input, init) => fetchWithCredentialRedirectRefusal(input, init, fetchImpl)) satisfies typeof fetch
-        : fetchImpl, signal };
-      const release = await (latest ? requestLatestRelease(request) : requestReleaseByTag(request));
-      if (isCurrent()) owner.releases.setSuccess(key, release, { ttlMs });
-      return release;
-    } catch (error) {
-      if (isCurrent() && error instanceof GitHubReleaseRateLimitError && error.resetAtMs !== null) {
-        owner.exhausted.set(origin, error);
-      }
-      throw error;
-    }
+    const fetchImpl = params.fetchImpl ?? globalThis.fetch;
+    const request = { ...params, fetchImpl, signal };
+    const release = await (latest ? requestLatestRelease(request) : requestReleaseByTag(request));
+    if (isCurrent()) owner.releases.setSuccess(key, release, { ttlMs });
+    return release;
   }, { signal: params.signal });
 }
 

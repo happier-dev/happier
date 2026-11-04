@@ -412,6 +412,15 @@ and Session-access owners, and each of them refuses on its own terms. The bit is
 capability boundary, not a rollout stage, and it is not permission to remove Runner capabilities
 or split them into mechanism-level flags.
 
+In 0.3 development, Runner package discovery uses the shared release-runtime GitHub
+reader and the binary self-update credential precedence (`HAPPIER_GITHUB_TOKEN`,
+then `GITHUB_TOKEN`). The Home selects `HAPPIER_PUBLIC_RELEASE_CHANNEL` (stable by
+default) and `HAPPIER_GITHUB_REPO` (`happier-dev/happier` by default). A missing
+release is an empty package list; failed discovery retains a typed publication
+cause, including GitHub's rate-limit reset time, rather than implying that no
+package was published. These reads acquire public release metadata only; they do
+not depend on an online Machine or Account encryption material.
+
 ### Machine Pools feature id
 
 The 0.3 development implementation uses the single server-represented

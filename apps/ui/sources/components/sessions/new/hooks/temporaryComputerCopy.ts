@@ -15,6 +15,14 @@ export function describeTemporaryComputerUnavailability(
 ): string | null {
     if (availability.status === 'available') return null;
     if (availability.status === 'loading') return t('newSession.temporaryComputer.unavailable.loading');
+    if (availability.publicationFailure?.reason === 'rate_limited') {
+        const resetAtMs = availability.publicationFailure.resetAtMs;
+        return resetAtMs == null
+            ? t('newSession.temporaryComputer.unavailable.rateLimited')
+            : t('newSession.temporaryComputer.unavailable.rateLimitedUntil', {
+                time: new Date(resetAtMs).toLocaleString(),
+            });
+    }
     switch (availability.reason) {
         case 'automation_unsupported':
             return t('newSession.temporaryComputer.unavailable.automation');

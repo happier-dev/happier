@@ -10,7 +10,8 @@ import { isRunnerArtifactTargetEligibleForPublication } from '@happier-dev/proto
 import { getReleaseProductPublication } from '@happier-dev/release-runtime/releaseProducts';
 import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
-import { fetchGitHubReleaseByTag, readGitHubReleaseHttpStatus } from '@happier-dev/release-runtime/github';
+import { fetchGitHubReleaseByTag, readGitHubReleaseHttpStatus, readGitHubReleaseFailure, resolveGitHubReleaseToken } from '@happier-dev/release-runtime/github';
+import type { RunnerArtifactPublicationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/errors';
 import { parseReleaseManifestV1 } from '@happier-dev/release-runtime/releaseManifest';
 import { DEFAULT_MINISIGN_PUBLIC_KEY, resolveVerifiedReleaseArtifactDigest } from '@happier-dev/release-runtime/releaseArtifactVerification';
 import { z } from 'zod/mini';
@@ -29,9 +30,21 @@ export type RunnerArtifactUnavailableReasonV1 =
     | 'artifact_identity_mismatch';
 export type RunnerArtifactAvailabilityResultV1 =
     | Readonly<{ ok: true; artifact: VerifiedRunnerArtifactV1 }>
-    | Readonly<{ ok: false; reason: RunnerArtifactUnavailableReasonV1 }>;
+    | Readonly<{ ok: false; reason: RunnerArtifactUnavailableReasonV1; publicationFailure?: RunnerArtifactPublicationFailureV1 }>;
+
+export class RunnerArtifactPublicationError extends Error {
+    constructor(readonly publicationFailure: RunnerArtifactPublicationFailureV1) {
+        super('runner_artifact_publication_unavailable');
+    }
+}
+
+export function readRunnerArtifactPublicationFailure(error: unknown): RunnerArtifactPublicationFailureV1 {
+    return error instanceof RunnerArtifactPublicationError ? error.publicationFailure
+        : readGitHubReleaseFailure(error) ?? { reason: 'invalid_publication' };
+}
 
 export type RunnerArtifactSourceOptions = Readonly<{
+    githubToken?: string;
     version?: string;
     channel?: PublicReleaseRingId;
     signal?: AbortSignal;
@@ -98,15 +111,23 @@ async function readRunnerArtifactPublication(options: RunnerArtifactSourceOption
     const headers = { 'user-agent': 'happier-release-runtime', accept: 'application/json' };
     async function read(url: string): Promise<string> {
         options.signal?.throwIfAborted();
-        const response = await fetchImpl(url, { headers, signal: options.signal });
-        if (!response.ok) throw new Error('Runner release unavailable');
-        return response.text();
+        try {
+            const response = await fetchImpl(url, { headers, signal: options.signal });
+            if (!response.ok) throw new RunnerArtifactPublicationError({
+                reason: response.status === 404 ? 'not_found' : 'upstream', status: response.status,
+            });
+            return await response.text();
+        } catch (error) {
+            if (options.signal?.aborted || error instanceof RunnerArtifactPublicationError) throw error;
+            throw new RunnerArtifactPublicationError({ reason: 'network' });
+        }
     }
     async function load(tag: string) {
         let releaseInput: unknown;
         try {
             releaseInput = await fetchGitHubReleaseByTag({
                 githubRepo: repo,
+                githubToken: options.githubToken ?? resolveGitHubReleaseToken(process.env),
                 tag,
                 userAgent: 'happier-release-runtime',
                 fetchImpl,
@@ -203,7 +224,7 @@ async function readRunnerArtifactPublication(options: RunnerArtifactSourceOption
         return { artifacts: result, invalidTargets };
     } catch (error) {
         if (options.signal?.aborted) throw error;
-        throw new Error('runner_artifact_publication_unavailable');
+        throw new RunnerArtifactPublicationError(readRunnerArtifactPublicationFailure(error));
     }
 }
 
@@ -228,8 +249,8 @@ export async function resolveRunnerArtifactAvailability(
     let publicationRead: RunnerArtifactPublicationRead;
     try {
         publicationRead = await readRunnerArtifactPublication({ ...options, version: identity.version });
-    } catch {
-        return { ok: false, reason: 'publication_unavailable' };
+    } catch (error) {
+        return { ok: false, reason: 'publication_unavailable', publicationFailure: readRunnerArtifactPublicationFailure(error) };
     }
     const available = publicationRead.artifacts;
     // A record the release declared for this target and whose bytes did not

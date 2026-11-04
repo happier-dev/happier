@@ -7697,6 +7697,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
         createNewPackage: 'Crea un nuovo pacchetto',
         returnToEditing: 'Torna alla modifica',
         unavailable: {
+      rateLimited: 'È stato raggiunto il limite di ricerca dei pacchetti GitHub. Riprova più tardi.',
+      rateLimitedUntil: ({ time }: { time: string }) => `È stato raggiunto il limite di ricerca dei pacchetti GitHub. Riprova dopo ${time}.`,
             loading: 'Verifica dei pacchetti disponibili…',
             notAvailable: 'I computer temporanei non sono disponibili su questa casa.',
             notPublished: 'Per questa casa non è ancora stato pubblicato alcun pacchetto Happier Runner verificato.',

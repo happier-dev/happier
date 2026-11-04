@@ -1,3 +1,4 @@
+import { resolveGitHubReleaseToken as resolveBinaryUpdateToken } from '@happier-dev/release-runtime/github';
 import { usage } from './self/help';
 import chalk from 'chalk';
 import { existsSync, readFileSync } from 'node:fs';
@@ -140,9 +141,6 @@ function resolveBinaryUpdateRepo(env: NodeJS.ProcessEnv): string {
   return raw || 'happier-dev/happier';
 }
 
-function resolveBinaryUpdateToken(env: NodeJS.ProcessEnv): string {
-  return String(env.HAPPIER_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? '').trim();
-}
 
 function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
   const pkg = String(params.packageName ?? '').trim();

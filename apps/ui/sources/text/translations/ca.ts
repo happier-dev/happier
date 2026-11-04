@@ -6842,6 +6842,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             createNewPackage: 'Crea un paquet nou',
             returnToEditing: 'Torna a l’edició',
             unavailable: {
+      rateLimited: 'S’ha assolit el límit de consultes de paquets de GitHub. Torna-ho a provar més tard.',
+      rateLimitedUntil: ({ time }: { time: string }) => `S’ha assolit el límit de consultes de paquets de GitHub. Torna-ho a provar després de ${time}.`,
                 loading: 'S’estan comprovant els paquets disponibles…',
                 notAvailable: 'Els ordinadors temporals no estan disponibles en aquesta llar.',
                 notPublished: 'Encara no s’ha publicat cap paquet verificat de Happier Runner per a aquesta llar.',

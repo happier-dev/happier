@@ -1,3 +1,4 @@
+import type { RunnerArtifactPublicationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/errors';
 import { randomUUID } from 'node:crypto';
 import {
     RunnerActivationBindingV1Schema,
@@ -28,7 +29,8 @@ import { resolveCurrentAuthenticationEvidenceInTx } from '@/app/auth/authenticat
 export type EphemeralRunnerActivationProjection = RunnerActivationProjectionV1;
 export type CreateEphemeralRunnerActivationResult =
     | Readonly<{ status: 'created'; activation: EphemeralRunnerActivationProjection }>
-    | Readonly<{ status: 'artifact_unavailable'; reason: RunnerArtifactUnavailableReasonV1 }>
+    | Readonly<{ status: 'artifact_unavailable'; reason: RunnerArtifactUnavailableReasonV1;
+        publicationFailure?: RunnerArtifactPublicationFailureV1 }>
     | Readonly<{ status: 'invalid_request' | 'creator_unavailable' | 'draft_unavailable' | 'recipient_mismatch' | 'conflict' | 'authentication_evidence_unavailable' }>;
 
 export type ActivationRow = NonNullable<Awaited<ReturnType<Tx['ephemeralRunnerActivation']['findUnique']>>>;
@@ -104,7 +106,8 @@ export async function createEphemeralRunnerActivation(
     const request = parsed.data;
     if (request.endpointFactsRecipient.creatorAccountId !== params.creatorAccountId) return { status: 'recipient_mismatch' };
     const artifact = await resolveRunnerArtifactAvailability(request.artifact, options.artifactSource);
-    if (!artifact.ok) return { status: 'artifact_unavailable', reason: artifact.reason };
+    if (!artifact.ok) return { status: 'artifact_unavailable', reason: artifact.reason,
+        ...(artifact.publicationFailure ? { publicationFailure: artifact.publicationFailure } : {}) };
     return await inTx(async (tx): Promise<CreateEphemeralRunnerActivationResult> => {
         // Missing Accounts cannot acquire the existing Account fence.
         if (!await tx.account.findUnique({ where: { id: params.creatorAccountId }, select: { id: true } })) return { status: 'creator_unavailable' };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { RunnerArtifactAvailabilityProjectionV1Schema } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import zipVector from '../../../../../packages/release-runtime/tests/fixtures/runnerZipMinisign.json';
@@ -171,6 +171,74 @@ function rollingPublicationFixture() {
 }
 
 describe('verified Runner artifact availability', () => {
+    afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+
+    it('shares an exhausted anonymous quota until GitHub resets it, while allowing configured access and recovery', async () => {
+        let now = 1_000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const network = networkFixture();
+        let metadataReads = 0;
+        const fetchImpl: typeof fetch = async (input, init) => {
+            if (String(input).includes('/releases/tags/')) {
+                metadataReads += 1;
+                if (now < 2_000) return new Response('', {
+                    status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '2' },
+                });
+            }
+            return network.fetchImpl(input, init);
+        };
+        for (let open = 0; open < 3; open++) {
+            await expect(readPublishedRunnerArtifacts({ ...network, fetchImpl, githubToken: '' }))
+                .rejects.toMatchObject({ publicationFailure: { reason: 'rate_limited', resetAtMs: 2_000 } });
+        }
+        expect(metadataReads).toBe(1);
+        const configured = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('hex');
+        await expect(readPublishedRunnerArtifacts({ ...network, fetchImpl, githubToken: configured }))
+            .rejects.toMatchObject({ publicationFailure: { reason: 'rate_limited' } });
+        expect(metadataReads).toBe(2);
+        now = 2_000;
+        await expect(readPublishedRunnerArtifacts({ ...network, fetchImpl, githubToken: '' })).resolves.toHaveLength(1);
+        expect(metadataReads).toBe(4); // rolling + immutable; no recurring read schedules recovery.
+    });
+
+    it('preserves GitHub rate limiting and reset time through the real release reader', async () => {
+        const fetchImpl: typeof fetch = async () => new Response('', {
+            status: 403,
+            headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1793788116' },
+        });
+        await expect(readPublishedRunnerArtifacts({ fetchImpl })).rejects.toMatchObject({
+            publicationFailure: { reason: 'rate_limited', resetAtMs: 1793788116000 },
+        });
+    });
+
+    it('distinguishes upstream HTTP failure from a network failure without exposing upstream prose', async () => {
+        const unavailable: typeof fetch = async () => new Response('', { status: 503 });
+        await expect(readPublishedRunnerArtifacts({ fetchImpl: unavailable })).rejects.toMatchObject({
+            publicationFailure: { reason: 'upstream', status: 503 },
+        });
+        const offline: typeof fetch = async () => { throw new TypeError('offline'); };
+        await expect(readPublishedRunnerArtifacts({ fetchImpl: offline })).rejects.toMatchObject({
+            publicationFailure: { reason: 'network' },
+        });
+    });
+
+    it.each(['HAPPIER_GITHUB_TOKEN', 'GITHUB_TOKEN'])('uses the configured self-update %s only for metadata', async (setting) => {
+        const configured = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('hex');
+        vi.stubEnv('HAPPIER_GITHUB_TOKEN', undefined);
+        vi.stubEnv(setting, configured);
+        const network = networkFixture();
+        const authenticated: boolean[] = [];
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const supplied = new Headers(init?.headers).get('authorization');
+            authenticated.push(String(input).includes('/releases/tags/')
+                ? supplied === ['Bearer', configured].join(' ')
+                : supplied === null);
+            return network.fetchImpl(input, init);
+        };
+        await readPublishedRunnerArtifacts({ ...network, fetchImpl });
+        expect(authenticated.length).toBeGreaterThan(2);
+        expect(authenticated.every(Boolean)).toBe(true);
+    });
     it.each([
         ['publicdev', 'runner-dev'],
         ['preview', 'runner-preview'],
@@ -197,7 +265,7 @@ describe('verified Runner artifact availability', () => {
         await expect(resolveRunnerArtifactAvailability(identity, {
             channel: 'stable',
             ...networkFixture({ manifestChannel: 'publicdev' }),
-        })).resolves.toEqual({ ok: false, reason: 'publication_unavailable' });
+        })).resolves.toMatchObject({ ok: false, reason: 'publication_unavailable' });
     });
 
     it('loads the immutable release and trusts only its cryptographically verified exact artifact digest', async () => {
@@ -257,6 +325,6 @@ describe('verified Runner artifact availability', () => {
         await expect(readPublishedRunnerArtifacts({ version: '0.3.0', ...networkFixture({ releaseStatus: 503 }) }))
             .rejects.toThrow('runner_artifact_publication_unavailable');
         expect(await resolveRunnerArtifactAvailability(identity, networkFixture({ releaseStatus: 503 })))
-            .toEqual({ ok: false, reason: 'publication_unavailable' });
+            .toMatchObject({ ok: false, reason: 'publication_unavailable' });
     });
 });

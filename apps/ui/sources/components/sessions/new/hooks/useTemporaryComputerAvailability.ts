@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { FeatureDecision } from '@happier-dev/protocol';
 import type { VerifiedRunnerArtifactV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
+import type { RunnerArtifactPublicationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/errors';
 
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
@@ -8,6 +9,7 @@ import {
     createRunnerActivationClient,
     type RunnerActivationClient,
     type RunnerActivationClientErrorCode,
+    type RunnerActivationClientError,
 } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -33,7 +35,8 @@ export type TemporaryComputerUnavailableReason =
 
 export type TemporaryComputerAvailability =
     | Readonly<{ status: 'loading'; retry: () => void }>
-    | Readonly<{ status: 'unavailable'; reason: TemporaryComputerUnavailableReason; retry: () => void }>
+    | Readonly<{ status: 'unavailable'; reason: TemporaryComputerUnavailableReason;
+        publicationFailure?: RunnerArtifactPublicationFailureV1; retry: () => void }>
     | Readonly<{
         status: 'available';
         artifacts: readonly VerifiedRunnerArtifactV1[];
@@ -134,12 +137,12 @@ export function useTemporaryComputerAvailability(input: Readonly<{
                     ? { status: 'available', artifacts: projection.artifacts, client, retry }
                     : { status: 'unavailable', reason: 'artifact_unavailable', retry },
             });
-        }).catch((error: unknown) => {
+        }).catch((error: RunnerActivationClientError) => {
             if (abortController.signal.aborted) return;
-            const reason = error && typeof error === 'object' && 'code' in error
-                ? String(error.code) as RunnerActivationClientErrorCode
-                : 'request_failed';
-            setLoaded({ contextKey: projectionContextKey, result: { status: 'unavailable', reason, retry } });
+            const reason = error?.code ?? 'request_failed';
+            setLoaded({ contextKey: projectionContextKey, result: { status: 'unavailable', reason, retry,
+                ...(error?.publicationFailure ? { publicationFailure: error.publicationFailure } : {}),
+            } });
         });
         return () => {
             abortController.abort(new Error('runner_artifact_projection_read_superseded'));

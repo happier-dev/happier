@@ -7386,6 +7386,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             createNewPackage: 'Neues Paket erstellen',
             returnToEditing: 'Zurück zum Bearbeiten',
             unavailable: {
+      rateLimited: 'Das GitHub-Limit für Paketabfragen ist erreicht. Versuche es später erneut.',
+      rateLimitedUntil: ({ time }: { time: string }) => `Das GitHub-Limit für Paketabfragen ist erreicht. Versuche es nach ${time} erneut.`,
                 loading: 'Verfügbare Pakete werden geprüft …',
                 notAvailable: 'Temporäre Computer sind in diesem Zuhause nicht verfügbar.',
                 notPublished: 'Für dieses Zuhause ist noch kein verifiziertes Happier-Runner-Paket veröffentlicht.',

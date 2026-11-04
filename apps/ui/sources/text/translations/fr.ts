@@ -7304,6 +7304,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
         createNewPackage: 'Créer un nouveau paquet',
         returnToEditing: 'Revenir à l’édition',
         unavailable: {
+      rateLimited: 'La limite de recherche de paquets GitHub est atteinte. Réessayez plus tard.',
+      rateLimitedUntil: ({ time }: { time: string }) => `La limite de recherche de paquets GitHub est atteinte. Réessayez après ${time}.`,
             loading: 'Vérification des paquets disponibles…',
             notAvailable: 'Les ordinateurs temporaires ne sont pas disponibles sur ce foyer.',
             notPublished: 'Aucun paquet Happier Runner vérifié n’est encore publié pour ce foyer.',

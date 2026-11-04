@@ -40,5 +40,16 @@ export const RunnerServerErrorCodeV1Schema = z.enum([
 ]);
 export type RunnerServerErrorCodeV1 = z.infer<typeof RunnerServerErrorCodeV1Schema>;
 
-export const RunnerServerErrorV1Schema = z.strictObject({ error: RunnerServerErrorCodeV1Schema });
+/** Safe publication facts supplied by the shared release reader, never upstream prose. */
+export const RunnerArtifactPublicationFailureV1Schema = z.readonly(z.strictObject({
+  reason: z.enum(['rate_limited', 'not_found', 'network', 'upstream', 'invalid_publication']),
+  resetAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative(), z.maximum(8.64e15)))),
+  status: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
+}));
+export type RunnerArtifactPublicationFailureV1 = z.infer<typeof RunnerArtifactPublicationFailureV1Schema>;
+
+export const RunnerServerErrorV1Schema = z.strictObject({
+  error: RunnerServerErrorCodeV1Schema,
+  publicationFailure: z.optional(RunnerArtifactPublicationFailureV1Schema),
+});
 export type RunnerServerErrorV1 = z.infer<typeof RunnerServerErrorV1Schema>;

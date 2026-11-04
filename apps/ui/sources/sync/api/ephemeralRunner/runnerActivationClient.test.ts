@@ -275,6 +275,16 @@ describe('runner activation client', () => {
         await expect(client.readByDraft('draft-a', controller.signal)).rejects.toBe(abortReason);
     });
 
+    it('retains the typed publication failure and reset deadline from the Home', async () => {
+        const publicationFailure = { reason: 'rate_limited', resetAtMs: 1793788116000 };
+        const client = createRunnerActivationClient(async () => jsonResponse(503, {
+            error: 'runner_artifact_publication_unavailable', publicationFailure,
+        }));
+        await expect(client.listArtifacts()).rejects.toMatchObject({
+            serverCode: 'runner_artifact_publication_unavailable', publicationFailure,
+        });
+    });
+
     it('carries the Home error code so distinct failures stop collapsing into one status class', async () => {
         const unpublished = createRunnerActivationClient(async () => jsonResponse(
             404,

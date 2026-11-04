@@ -51,9 +51,10 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
     });
 
     it.each([
-        ["dev", "runner-dev"],
-        ["preview", "runner-preview"],
-    ] as const)("reads the Home %s release ring through the registered artifact route", async (channel, expectedTag) => {
+        ["dev", "runner-dev", 404],
+        ["preview", "runner-preview", 404],
+        ["stable", "runner-stable", 403],
+    ] as const)("reads the Home %s release ring through the registered artifact route", async (channel, expectedTag, upstreamStatus) => {
         const account = await db.account.create({
             data: { encryptionMode: "plain", publicKey: `runner-release-ring-${channel}-${randomUUID()}` },
         });
@@ -62,9 +63,12 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
             authority: "present_user",
         });
         const requests: string[] = [];
-        vi.stubGlobal("fetch", vi.fn(async (input) => {
+        const configured = randomUUID();
+        const authenticated: boolean[] = [];
+        vi.stubGlobal("fetch", vi.fn(async (input, init) => {
+            authenticated.push(new Headers(init?.headers).get("authorization") === ["Bearer", configured].join(" "));
             requests.push(String(input));
-            return new Response("", { status: 404 });
+            return new Response("", { status: upstreamStatus, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1793788116" } });
         }));
 
         const app = Fastify({ logger: false });
@@ -78,6 +82,7 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
             ...process.env,
             HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED: "1",
             HAPPIER_PUBLIC_RELEASE_CHANNEL: channel,
+            HAPPIER_GITHUB_TOKEN: configured,
         });
         await app.ready();
         try {
@@ -86,6 +91,12 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
                 url: EPHEMERAL_RUNNER_ARTIFACTS_PATH_V1,
                 headers: { authorization: `Bearer ${token}` },
             });
+            expect(authenticated.every(Boolean)).toBe(true);
+            if (upstreamStatus === 403) {
+                expect(response.statusCode).toBe(503);
+                expect(response.json()).toEqual({ error: "runner_artifact_publication_unavailable", publicationFailure: { reason: "rate_limited", resetAtMs: 1793788116000 } });
+                return;
+            }
             expect(response.statusCode).toBe(200);
             expect(response.json()).toEqual({ status: "available", artifacts: [] });
             expect(requests.length).toBeGreaterThan(0);
@@ -158,7 +169,10 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
                 headers,
             });
             expect(publication.statusCode).toBe(503);
-            expect(publication.json()).toEqual({ error: "runner_artifact_publication_unavailable" });
+            expect(publication.json()).toEqual({
+                error: "runner_artifact_publication_unavailable",
+                publicationFailure: { reason: "network", status: 500 },
+            });
             expect(errorLog).toHaveBeenCalledWith(expect.objectContaining({
                 module: "ephemeral-runner",
                 level: "error",

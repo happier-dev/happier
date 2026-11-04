@@ -7581,6 +7581,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         createNewPackage: 'Criar um novo pacote',
         returnToEditing: 'Voltar à edição',
         unavailable: {
+      rateLimited: 'O limite de consultas de pacotes do GitHub foi atingido. Tente novamente mais tarde.',
+      rateLimitedUntil: ({ time }: { time: string }) => `O limite de consultas de pacotes do GitHub foi atingido. Tente novamente após ${time}.`,
             loading: 'A verificar os pacotes disponíveis…',
             notAvailable: 'Os computadores temporários não estão disponíveis nesta casa.',
             notPublished: 'Ainda não há nenhum pacote verificado do Happier Runner publicado para esta casa.',

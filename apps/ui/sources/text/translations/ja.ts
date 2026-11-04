@@ -7780,6 +7780,8 @@ localTailscale: {
         createNewPackage: '新しいパッケージを作成',
         returnToEditing: '編集に戻る',
         unavailable: {
+      rateLimited: 'GitHub のパッケージ検索の上限に達しました。しばらくしてから再試行してください。',
+      rateLimitedUntil: ({ time }: { time: string }) => `GitHub のパッケージ検索の上限に達しました。${time}以降に再試行してください。`,
             loading: '利用できるパッケージを確認しています…',
             notAvailable: 'このホームでは一時的なコンピューターを利用できません。',
             notPublished: 'このホーム向けに検証済みの Happier Runner パッケージはまだ公開されていません。',

@@ -7312,6 +7312,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         createNewPackage: 'Utwórz nowy pakiet',
         returnToEditing: 'Wróć do edycji',
         unavailable: {
+      rateLimited: 'Osiągnięto limit wyszukiwania pakietów GitHub. Spróbuj ponownie później.',
+      rateLimitedUntil: ({ time }: { time: string }) => `Osiągnięto limit wyszukiwania pakietów GitHub. Spróbuj ponownie po ${time}.`,
             loading: 'Sprawdzanie dostępnych pakietów…',
             notAvailable: 'Komputery tymczasowe nie są dostępne w tym domu.',
             notPublished: 'Dla tego domu nie opublikowano jeszcze zweryfikowanego pakietu Happier Runner.',
