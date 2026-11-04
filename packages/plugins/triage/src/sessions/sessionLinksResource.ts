@@ -1,4 +1,5 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
@@ -18,7 +19,8 @@ export const TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME: PluginDynamicResourceRuntime
     async read(options) {
         const input = sessionInput(options);
         const envelope = await options.readAction(relationAction, input, { signal: options.signal });
-        if (!envelope.ok) throw new PluginError({ code: envelope.errorCode, message: envelope.error });
+        if (!envelope.ok) throw new PluginError({ code: envelope.errorCode, message: envelope.error,
+            details: envelope.details === undefined ? undefined : projectNativeJsonValueForTransport(envelope.details) });
         return JSON.stringify(normalizeTriageSourceSessionLinksCoverageV1(TriageReadSourceSessionLinksResultV1Schema.parse(envelope.result)));
     },
     async observe(invalidate, options) {

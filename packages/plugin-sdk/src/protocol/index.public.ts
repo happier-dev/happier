@@ -81,3 +81,4 @@ export {
 export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 
 export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';
+export { projectNativeJsonValueForTransport } from './strictJsonValue.js';
