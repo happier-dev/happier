@@ -181,6 +181,7 @@ import PaintBrush01Icon from '@hugeicons/core-free-icons/PaintBrush01Icon';
 import PanelRightCloseIcon from '@hugeicons/core-free-icons/PanelRightCloseIcon';
 import PanelRightOpenIcon from '@hugeicons/core-free-icons/PanelRightOpenIcon';
 import PauseCircleIcon from '@hugeicons/core-free-icons/PauseCircleIcon';
+import PauseIcon from '@hugeicons/core-free-icons/PauseIcon';
 import PeerToPeer01Icon from '@hugeicons/core-free-icons/PeerToPeer01Icon';
 import PencilEdit01Icon from '@hugeicons/core-free-icons/PencilEdit01Icon';
 import PencilEdit02Icon from '@hugeicons/core-free-icons/PencilEdit02Icon';
@@ -442,6 +443,7 @@ export const HUGE_ICON_REGISTRY = {
     'paper-plane-tilt': SentIcon,
     'paperclip': Attachment02Icon,
     'path': Route01Icon,
+    'pause': PauseIcon,
     'pause-circle': PauseCircleIcon,
     'paw-print': FootprintsIcon,
     'pencil': PencilIcon,

@@ -179,6 +179,25 @@ describe('SegmentedTabBar', () => {
         expect(requireTabLabel(screen, 'seg:gamma')).toBe('Gamma');
     });
 
+  it('draws a tab shortcut as one keycap per key beside its label, and names it', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(
+      <SegmentedTabBar
+        tabs={[{ id: 'alpha', label: 'Screenshot', shortcut: 'Cmd+Shift+2' }, { id: 'beta', label: 'Recording' }]}
+        activeTabId="alpha"
+        onSelectTab={() => {}}
+        testIDPrefix="seg"
+      />,
+    );
+
+    // The label stays the name alone: the keys are keycaps after it, not words run into it.
+    const texts = requireTab(screen, 'seg:alpha')
+      .findAllByType('Text' as never)
+      .map((node) => node.children.filter((child): child is string => typeof child === 'string').join(''));
+    expect(texts).toEqual(['Screenshot', '⇧', '⌘', '2']);
+    expect(requireTab(screen, 'seg:alpha').props.accessibilityLabel).toBe('Screenshot Cmd+Shift+2');
+  });
+
     it('calls onSelectTab with the tab id when a tab is pressed', async () => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');
         const onSelectTab = vi.fn();

@@ -1,7 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { resolveHappierInteractiveTargetFloor, useHappierTouchTargetSize } from '../../environment/interactiveTarget.js';
 import type { HappierFocusable, HappierPortableStyle } from '../portableTypes.js';
 import { happierFocusRingStyle } from './focusVisible.js';
 import { HappierPressable } from './Pressable.js';
@@ -27,14 +26,14 @@ export type HappierTextLinkButtonProps = Readonly<{
   note?: Readonly<{ text: string; style: HappierPortableStyle }>;
   /** The host's hit-area request; a finger's touch target applies without it. It never widens the label. */
   minimumTargetSize?: number;
+  /** The free space above and below the line the hit area may take (the container's padding, half the gap to a neighbour). Omitted, it reaches the whole target. */
+  verticalReach?: number;
   /** A surface's way to land keyboard focus on this link. */
   controlRef?: (instance: HappierFocusable | null) => void;
 }>;
 
 /** One inline operation owner for host links and Find notes, with host-bound text and theme. */
 export function HappierTextLinkButton(props: HappierTextLinkButtonProps): ReactNode {
-  const targetFloor = resolveHappierInteractiveTargetFloor(props.minimumTargetSize, useHappierTouchTargetSize());
-  const grow = targetFloor === undefined ? 0 : Math.max(0, (targetFloor - props.labelStyle.lineHeight) / 2);
   const action = (
     <HappierPressable
       testID={props.testID}
@@ -44,16 +43,14 @@ export function HappierTextLinkButton(props: HappierTextLinkButtonProps): ReactN
       expanded={props.expanded}
       disabled={props.disabled}
       onPress={props.onPress}
-      // The padded frame below already is the hit area; it never reaches sideways over the
-      // neighbouring words, however short the label.
-      hitReach={0}
+      // The hit area reaches above and below the line and never sideways over the neighbouring words,
+      // however short the label.
+      hitTarget={props.minimumTargetSize}
+      hitReach={{ left: 0, right: 0, ...(props.verticalReach === undefined ? null : { top: props.verticalReach, bottom: props.verticalReach }) }}
       style={(state) => ({
         alignSelf: 'flex-start',
-        // The frame grows vertically inside a wrapping sentence and gives that space back to it.
-        paddingTop: grow,
-        paddingBottom: grow,
-        marginTop: -grow,
-        marginBottom: -grow,
+        // The label is one line: its drawn height is known before layout, which is what the hit area reaches from.
+        height: props.labelStyle.lineHeight,
         opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
       })}
     >

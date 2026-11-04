@@ -37,6 +37,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
+import { KeyCombinationHint } from '@/components/ui/keyboard/KeyHint';
 
 import { resolveSegmentedTabFit } from './segmentedTabFit';
 import { t } from '@/text';
@@ -113,6 +114,11 @@ export type SegmentedTab<T extends string = string> = Readonly<{
      * the name. Announced with the label.
      */
     count?: string;
+    /**
+     * The key combination that chooses this option ("Cmd+Shift+2"), drawn as its keycaps after the label
+     * and announced with it.
+     */
+    shortcut?: string;
     /** A short recommendation or availability badge, included in the accessible name. */
     badge?: string;
     /** This option's own test id, when its owner already names it (otherwise `${testIDPrefix}:${id}`). */
@@ -741,7 +747,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                     // Until the chosen segment is measured it paints itself, so the selection is visible on
                     // the first frame; the thumb then mounts at that rect and takes the surface over.
                     const showOwnActiveSurface = active && (!slidingThumb || activeRect === null);
-                    const baseName = [tab.label, tab.count, tab.badge].filter(Boolean).join(' ');
+                    const baseName = [tab.label, tab.count, tab.shortcut, tab.badge].filter(Boolean).join(' ');
                     const tabName = active && inherited ? `${baseName}, ${t('capabilities.detail.inheritedValue')}` : baseName;
                     const unavailableReason = tab.disabled === true ? tab.unavailableReason : undefined;
                     const webKeyDownProps = Platform.OS === 'web'
@@ -831,6 +837,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                         {tab.label}
                                         {tab.count && fit.counts ? <Text style={styles.tabCount}>{` ${tab.count}`}</Text> : null}
                                     </Text>
+                                    {tab.shortcut ? <KeyCombinationHint label={tab.shortcut} /> : null}
                                     {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}
                                     </View>
                                 )}
@@ -928,7 +935,7 @@ const OVERFLOW_KEY = '\u0000more';
 
 /** A page tab's caption: its glyph (when the row has room), label and quiet count. */
 function PlainTabCaption(props: Readonly<{
-    tab: Pick<SegmentedTab, 'label' | 'icon' | 'count' | 'id'> & Partial<Pick<SegmentedTab, 'badge'>>;
+    tab: Pick<SegmentedTab, 'label' | 'icon' | 'count' | 'id'> & Partial<Pick<SegmentedTab, 'badge' | 'shortcut'>>;
     icon: boolean;
     active: boolean;
     /** The words are drawn (false: the glyph stands alone for a tab that is not chosen). */
@@ -953,6 +960,7 @@ function PlainTabCaption(props: Readonly<{
                     {props.tab.count && props.count !== false ? <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text> : null}
                 </Text>
             )}
+            {props.label !== false && props.tab.shortcut ? <KeyCombinationHint label={props.tab.shortcut} /> : null}
             {/* A segment's badge ("Recommended") is part of its width: measured without it, a row "fit" and then wrapped. */}
             {props.segmented && props.tab.badge ? <StatusPill variant="info" hideDot label={props.tab.badge} /> : null}
         </View>

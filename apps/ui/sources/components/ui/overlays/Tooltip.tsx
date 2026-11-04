@@ -11,6 +11,8 @@ export function Tooltip(props: Readonly<{
     children: React.ReactNode;
     testID?: string;
     style?: StyleProp<ViewStyle>;
+    /** Off when this wraps a control: that control is the tab stop, and its focus still shows the tooltip. */
+    focusable?: boolean;
 }>) {
     const anchorRef = React.useRef<View | null>(null);
     const [hovered, setHovered] = React.useState(false);
@@ -20,6 +22,7 @@ export function Tooltip(props: Readonly<{
             ref={anchorRef}
             testID={props.testID}
             accessibilityRole="text"
+            focusable={props.focusable}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
             onHoverIn={() => setHovered(true)}
             onHoverOut={() => setHovered(false)}

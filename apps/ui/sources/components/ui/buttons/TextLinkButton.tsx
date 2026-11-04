@@ -44,6 +44,8 @@ export const TextLinkButton = React.memo(function TextLinkButton(
     expanded?: boolean;
     disabled?: boolean;
     testID?: string;
+    /** The free space above and below the line its hit area may take (the line's own padding). Omitted, it reaches the whole target. */
+    verticalReach?: number;
     /** Lets a surface land keyboard focus on this link (a question's safe answer). */
     controlRef?: HappierTextLinkButtonProps['controlRef'];
   }>,

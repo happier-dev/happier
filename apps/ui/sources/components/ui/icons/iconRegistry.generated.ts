@@ -179,6 +179,7 @@ import { PaperPlaneTiltIcon } from 'phosphor-react-native/src/icons/PaperPlaneTi
 import { PaperclipIcon } from 'phosphor-react-native/src/icons/Paperclip';
 import { PathIcon } from 'phosphor-react-native/src/icons/Path';
 import { PauseCircleIcon } from 'phosphor-react-native/src/icons/PauseCircle';
+import { PauseIcon } from 'phosphor-react-native/src/icons/Pause';
 import { PawPrintIcon } from 'phosphor-react-native/src/icons/PawPrint';
 import { PencilCircleIcon } from 'phosphor-react-native/src/icons/PencilCircle';
 import { PencilIcon } from 'phosphor-react-native/src/icons/Pencil';
@@ -453,6 +454,7 @@ export const ICON_REGISTRY = {
     'paper-plane-tilt': PaperPlaneTiltIcon,
     'paperclip': PaperclipIcon,
     'path': PathIcon,
+    'pause': PauseIcon,
     'pause-circle': PauseCircleIcon,
     'paw-print': PawPrintIcon,
     'pencil': PencilIcon,

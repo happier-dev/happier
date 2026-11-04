@@ -26,10 +26,11 @@ export type IconButtonTone = 'default' | 'primary' | 'danger';
 export type IconButtonVariant = 'outlined' | 'plain';
 /**
  * A borderless resting fill, for a compact transport where the buttons themselves are the
- * object (a call's Mute · End): `neutral` is a quiet well, `danger` the tinted terminal action.
+ * object (a call's Mute · End): `neutral` is a quiet well, `danger` the tinted terminal action,
+ * `primary` the one filled control of a transport (a recording's Stop).
  * Hover deepens the fill; the shape never gains a border.
  */
-export type IconButtonFill = 'neutral' | 'danger';
+export type IconButtonFill = 'neutral' | 'danger' | 'primary';
 
 const stylesheet = StyleSheet.create((theme) => ({
     pressFrame: {
@@ -198,7 +199,9 @@ export function IconButton(props: Readonly<{
     const paintColor = useHappierMaterialColorResolver();
 
     const tone = props.tone ?? 'default';
-    const tint = tone === 'danger'
+    const tint = props.fill === 'primary'
+        ? theme.colors.button.primary.tint
+        : tone === 'danger'
         ? theme.colors.state.danger.foreground
         : tone === 'primary'
             ? theme.colors.text.primary
@@ -209,6 +212,8 @@ export function IconButton(props: Readonly<{
     const variant = props.fill ? 'well' : props.variant ?? 'outlined';
     const fillColor = props.fill === 'danger'
         ? theme.colors.state.danger.background
+        : props.fill === 'primary'
+            ? theme.colors.button.primary.background
         : props.fill === 'neutral'
             ? theme.colors.state.neutral.background
             : null;
@@ -227,8 +232,8 @@ export function IconButton(props: Readonly<{
             // The fill is its own edge: a `well` draws no outline.
             background: paintColor(fillColor, undefined, 'solidControl'),
             border: fillColor,
-            hover: paintColor(props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border, undefined, 'solidControl'),
-            pressed: paintColor(props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border, undefined, 'solidControl'),
+            hover: paintColor(props.fill !== 'neutral' ? fillColor : theme.colors.state.neutral.border, undefined, 'solidControl'),
+            pressed: paintColor(props.fill !== 'neutral' ? fillColor : theme.colors.state.neutral.border, undefined, 'solidControl'),
             selected: paintColor(theme.colors.state.neutral.border, undefined, 'solidControl'),
             focus: theme.colors.border.focus,
         },

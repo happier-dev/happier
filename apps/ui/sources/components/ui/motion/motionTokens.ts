@@ -44,6 +44,8 @@ export const motionTokens = {
         opacitySubtle: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle,
         opacitySurface: HAPPIER_PRESS_FEEDBACK_V1.opacitySurface,
     },
+    /** How long a done-with-Undo line stays before it leaves on its own (owner ruling: 5 s). A pointer resting on it holds it. */
+    undoHoldMs: 5_000,
     overlay: {
         popover: {
             enterMs: 140,
@@ -180,6 +182,7 @@ export const motionTokens = {
     easingCss: {
         standard: HAPPIER_MOTION_V1.standardEasingCss,
         exit: 'cubic-bezier(0.4, 0, 1, 1)',
+        stageCamera: 'cubic-bezier(0.22, 0.82, 0.2, 1)',
     },
 } as const;
 
