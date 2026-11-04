@@ -1,110 +1,80 @@
 import * as React from 'react';
-import { View } from 'react-native';
-
 import { Text } from '@/components/ui/text/Text';
-import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
+
+import { selectBrowserDiagnosticStorageRows, type BrowserDiagnosticStorageRow } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
-    browserDiagnosticsPanelStyles,
+    browserDiagnosticsPanelStyles as styles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsRow,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
-    fieldLabel,
-    getBrowserDiagnosticField,
-    renderBrowserDiagnosticEventDetail,
-    renderPanelField,
-    safeEventDetail,
     sanitizeTestIdPart,
 } from './BrowserDiagnosticsFamilyPanel';
 
-function renderStorageEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-storage-row-${eventId}`;
-    const keys = event.detail?.keys ?? [];
-    const storageEntries = event.detail?.storageEntries ?? [];
+type StorageSection = Readonly<{ storageType: string; keyCount: number; truncated: boolean; rows: number }>;
 
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
-            </View>
-            <Text testID={`${testID}-storage-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            <View style={browserDiagnosticsPanelStyles.panelRow}>
-                {renderPanelField({
-                    label: fieldLabel('storageType'),
-                    value: getBrowserDiagnosticField(event, 'storageType'),
-                    testID: `${testID}-storage-meta-${eventId}-type`,
-                })}
-                {renderPanelField({
-                    label: fieldLabel('keyCount'),
-                    value: getBrowserDiagnosticField(event, 'keyCount'),
-                    testID: `${testID}-storage-meta-${eventId}-count`,
-                })}
-                {renderPanelField({
-                    label: fieldLabel('keysTruncated'),
-                    value: getBrowserDiagnosticField(event, 'keysTruncated'),
-                    testID: `${testID}-storage-meta-${eventId}-truncated`,
-                })}
-            </View>
-            {keys.length > 0 ? (
-                <View testID={`${testID}-storage-keys-${eventId}`} style={browserDiagnosticsPanelStyles.detail}>
-                    <Text style={browserDiagnosticsPanelStyles.detailListLabel}>
-                        {t('browserDiagnostics.host.detail.keys', { count: String(keys.length) })}
-                    </Text>
-                    {keys.map((key, index) => (
-                        <View
-                            key={`${key}-${index}`}
-                            testID={`${testID}-storage-key-${eventId}-${index}`}
-                            style={browserDiagnosticsPanelStyles.keyRow}
-                        >
-                            <Text style={browserDiagnosticsPanelStyles.panelValue}>{key}</Text>
-                        </View>
-                    ))}
-                </View>
-            ) : null}
-            {storageEntries.length > 0 ? (
-                <View testID={`${testID}-storage-entries-${eventId}`} style={browserDiagnosticsPanelStyles.detail}>
-                    {storageEntries.map((entry, index) => (
-                        <View
-                            key={`${entry.key}-${index}`}
-                            testID={`${testID}-storage-entry-${eventId}-${index}`}
-                            style={browserDiagnosticsPanelStyles.keyRow}
-                        >
-                            <Text style={browserDiagnosticsPanelStyles.panelValue}>
-                                {`${entry.key}: ${entry.value}${entry.valueTruncated ? '...' : ''}`}
-                            </Text>
-                        </View>
-                    ))}
-                </View>
-            ) : null}
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
-            ) : null}
-        </View>
-    );
+/** Sections are presentation over the store's rows: one heading per storage area, in arrival order. */
+function storageSections(rows: readonly BrowserDiagnosticStorageRow[]): readonly StorageSection[] {
+    const sections = new Map<string, StorageSection>();
+    for (const row of rows) {
+        const current = sections.get(row.storageType);
+        sections.set(row.storageType, {
+            storageType: row.storageType,
+            keyCount: row.keyCount,
+            truncated: row.keysTruncated,
+            rows: (current?.rows ?? 0) + 1,
+        });
+    }
+    return [...sections.values()];
 }
 
 export function BrowserStoragePanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const events = props.events;
+    const rows = React.useMemo(() => selectBrowserDiagnosticStorageRows({ events }), [events]);
+    const sections = React.useMemo(() => storageSections(rows), [rows]);
+    const anyValue = rows.some((row) => row.value !== null);
+    const selectItems = React.useCallback(
+        (_segment: string, query: string) => selectBrowserDiagnosticStorageRows({ events }, { search: query }),
+        [events],
+    );
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="storage"
-            renderEvent={renderStorageEvent}
+            items={rows}
+            countLabel={(count) => t('browserDiagnostics.host.devtools.count.keys', { count })}
+            note={anyValue ? null : t('browserDiagnostics.host.devtools.storage.valuesHidden')}
+            searchPlaceholder={t('browserDiagnostics.host.devtools.search.storage')}
+            selectItems={selectItems}
+            renderItems={(visible) => sections.map((section) => {
+                const sectionRows = visible.filter((row) => row.storageType === section.storageType);
+                if (sectionRows.length === 0) return null;
+                const sectionID = `${props.testID}-storage-${sanitizeTestIdPart(section.storageType)}`;
+                return (
+                    <React.Fragment key={section.storageType}>
+                        <Text testID={`${sectionID}-title`} style={styles.sectionTitle}>
+                            {t('browserDiagnostics.host.devtools.storage.section', {
+                                storageType: section.storageType,
+                                keys: t('browserDiagnostics.host.devtools.count.keys', { count: section.keyCount }),
+                            })}
+                        </Text>
+                        {sectionRows.map((row, index) => (
+                            <DiagnosticsRow
+                                key={row.key}
+                                testID={`${sectionID}-key-${index}`}
+                                subject={row.value !== null ? `${row.name}: ${row.value}${row.valueTruncated ? '…' : ''}` : row.name}
+                                copyText={row.value ?? row.name}
+                            />
+                        ))}
+                        {section.truncated ? (
+                            <Text style={styles.note}>
+                                {t('browserDiagnostics.host.devtools.storage.truncated', { count: section.rows })}
+                            </Text>
+                        ) : null}
+                    </React.Fragment>
+                );
+            })}
         />
     );
 }

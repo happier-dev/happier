@@ -20,6 +20,9 @@ import type { BrowserShellAgentPresence } from '@/components/browser/copresence/
 import type { BrowserStreamedSurfaceRuntime } from '@/components/browser/adapters/BrowserStreamedTarget';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 
+import type { BrowserDiagnosticsInteractionControls } from '@/components/browser/diagnostics';
+
+import { buildSpecimenDiagnosticsState } from './diagnosticsSpecimenEvents';
 import { LUMEN_LOGIN_FRAME_DARK, LUMEN_LOGIN_FRAME_LIGHT } from './lumenLoginFrame';
 
 /**
@@ -210,6 +213,8 @@ function SpecimenShell(props: Readonly<{
     /** The typed first-use state of the agent's open, with what allowing the sandbox answers. */
     firstUse?: NonNullable<BrowserStreamedSurfaceRuntime['firstUse']>;
     sandboxAnswer?: BrowserSandboxInstallOutcome;
+    /** Diagnostics for this view (open the drawer from ⋯). */
+    diagnostics?: 'enabled' | 'disabled';
 }>) {
     const { theme } = useUnistyles();
     const frameUrl = theme.dark ? LUMEN_LOGIN_FRAME_DARK : LUMEN_LOGIN_FRAME_LIGHT;
@@ -217,6 +222,9 @@ function SpecimenShell(props: Readonly<{
     const controlService = React.useMemo(() => createBrowserAutomationControlService({ nowMs: () => 10_000 }), []);
     const [contextState, setContextState] = React.useState(createBrowserContextState);
     const agent = useSpecimenAgent();
+    const diagnostics = React.useMemo(() => props.diagnostics
+        ? specimenDiagnostics(props.diagnostics === 'enabled' ? SPECIMEN_INTERACTION_ENABLED : SPECIMEN_INTERACTION_DISABLED)
+        : undefined, [props.diagnostics]);
     return (
         <BrowserShell
             browserSessionId={SESSION}
@@ -245,6 +253,7 @@ function SpecimenShell(props: Readonly<{
                 onCancelRecording: NOOP,
             }}
             browserAutomation={{ controlService, enabled: true }}
+            browserDiagnostics={diagnostics}
             agent={agent}
             onAllowBrowserSandbox={props.sandboxAnswer ? () => Promise.resolve(props.sandboxAnswer ?? null) : undefined}
             streamedBrowserRuntime={props.firstUse
@@ -256,6 +265,42 @@ function SpecimenShell(props: Readonly<{
             testID={`browser-specimen-shell`}
         />
     );
+}
+
+/** Dev-only: Diagnostics with the page's tools allowed (an eval history) or still off (the Allow line). */
+const SPECIMEN_INTERACTION_ENABLED: BrowserDiagnosticsInteractionControls = {
+    state: 'enabled',
+    ownerOnly: true,
+    canEnable: true,
+    pickerState: 'idle',
+    onDisableInteraction: NOOP,
+    onStartElementPicker: NOOP,
+    evalConsole: {
+        entries: [
+            { evalRequestId: 'ev1', expression: "localStorage.getItem('lumen.theme')", objectGroupId: 'g1', status: 'completed',
+                result: { type: 'string', value: 'dark', preview: [] } },
+            { evalRequestId: 'ev2', expression: 'window.__LUMEN_FLAGS__', objectGroupId: 'g1', status: 'completed',
+                result: { type: 'object', objectId: 'obj_flags', className: 'Object', description: 'Object', preview: [] } },
+            { evalRequestId: 'ev3', expression: 'await fetch("/api/session").then(r => r.status)', objectGroupId: 'g1', status: 'failed', errorCode: 'eval_rejected' },
+        ],
+        objectProperties: {},
+        onSubmitExpression: () => true,
+        onExpandObject: () => true,
+        onCancelEval: () => {},
+    },
+};
+const SPECIMEN_INTERACTION_DISABLED: BrowserDiagnosticsInteractionControls = {
+    state: 'disabled', ownerOnly: true, canEnable: true, pickerState: 'idle', onEnableInteraction: NOOP,
+};
+
+function specimenDiagnostics(interaction: BrowserDiagnosticsInteractionControls) {
+    return {
+        state: buildSpecimenDiagnosticsState(),
+        interaction,
+        requestEval: () => true,
+        requestGetProperties: () => true,
+        requestReleaseObjectGroup: () => true,
+    };
 }
 
 type Frame = Readonly<{ id: string; title: string; render: () => React.ReactElement }>;
@@ -304,6 +349,8 @@ const FRAMES: readonly Frame[] = [
     // Q draws the page as the stream fixture so the address reads like the lab's (an iframe of a
     // data: URL would show `data:` in the field); the chrome is the same shell either way.
     { id: 'Q', title: 'Q · quiet chrome', render: () => <SpecimenShell kind="streamed" controller="idle" /> },
+    { id: 'QD', title: 'Q · Diagnostics, tools allowed', render: () => <SpecimenShell kind="streamed" controller="idle" diagnostics="enabled" /> },
+    { id: 'QDo', title: 'Q · Diagnostics, tools off', render: () => <SpecimenShell kind="streamed" controller="idle" diagnostics="disabled" /> },
     { id: 'A', title: 'A · the agent is browsing', render: () => <SpecimenShell kind="streamed" controller="agent" /> },
     { id: 'K', title: 'K · stopping', render: () => <SpecimenShell kind="streamed" controller="stopping" /> },
     { id: 'H', title: 'H · you have control', render: () => <SpecimenShell kind="streamed" controller="human" /> },

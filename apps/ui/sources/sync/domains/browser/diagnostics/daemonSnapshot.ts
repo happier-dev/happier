@@ -38,7 +38,7 @@ const defaultSnapshotClient: BrowserDiagnosticsSnapshotClient = (input) => (
     fetchBrowserDiagnosticsSnapshotViaMachineRpc(input)
 );
 
-type RequestDetailState = BrowserDiagnosticsRequestDetailV1 | Readonly<{ status: 'idle' | 'loading' }>
+type RequestDetailState = BrowserDiagnosticsRequestDetailV1 | Readonly<{ status: 'idle' }> | Readonly<{ status: 'loading' }>
     | Readonly<{ status: 'unavailable'; reason: Extract<BrowserDiagnosticsRequestDetailClientResult, { ok: false }>['reason'] }>;
 
 /** Mount in the selected row's detail leaf. No selection, hidden presentation or closed drawer

@@ -1,92 +1,61 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { Text } from '@/components/ui/text/Text';
-import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
+import { selectBrowserDiagnosticResourceRows, type BrowserDiagnosticResourceRow } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
-    browserDiagnosticsPanelStyles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsColumnHeader,
+    DiagnosticsRow,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
     fieldLabel,
-    formatBrowserDiagnosticFieldValue,
-    renderBrowserDiagnosticEventDetail,
-    safeEventDetail,
-    sanitizeTestIdPart,
+    formatDurationMs,
 } from './BrowserDiagnosticsFamilyPanel';
 
-function renderResourcesEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-resources-row-${eventId}`;
-    const entries = event.detail?.entries ?? [];
+type ResourceRow = BrowserDiagnosticResourceRow;
 
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
-            </View>
-            <Text testID={`${testID}-resources-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            {entries.length > 0 ? (
-                <View testID={`${testID}-resources-table-${eventId}`} style={browserDiagnosticsPanelStyles.detail}>
-                    {entries.map((entry, index) => (
-                        <View
-                            key={`${entry.name ?? 'resource'}-${index}`}
-                            testID={`${testID}-resources-entry-${eventId}-${index}`}
-                            style={browserDiagnosticsPanelStyles.panelRow}
-                        >
-                            {entry.name ? (
-                                <View testID={`${testID}-resources-entry-${eventId}-${index}-name`} style={browserDiagnosticsPanelStyles.panelCellWide}>
-                                    <Text style={browserDiagnosticsPanelStyles.panelLabel}>{fieldLabel('url')}</Text>
-                                    <Text style={browserDiagnosticsPanelStyles.panelValue}>{entry.name}</Text>
-                                </View>
-                            ) : null}
-                            {entry.initiatorType ? (
-                                <View testID={`${testID}-resources-entry-${eventId}-${index}-type`} style={browserDiagnosticsPanelStyles.panelCell}>
-                                    <Text style={browserDiagnosticsPanelStyles.panelLabel}>{t('browserDiagnostics.host.fields.type')}</Text>
-                                    <Text style={browserDiagnosticsPanelStyles.panelValue}>{entry.initiatorType}</Text>
-                                </View>
-                            ) : null}
-                            {typeof entry.durationMs === 'number' ? (
-                                <View testID={`${testID}-resources-entry-${eventId}-${index}-duration`} style={browserDiagnosticsPanelStyles.panelCell}>
-                                    <Text style={browserDiagnosticsPanelStyles.panelLabel}>{fieldLabel('durationMs')}</Text>
-                                    <Text style={browserDiagnosticsPanelStyles.panelValue}>
-                                        {formatBrowserDiagnosticFieldValue(entry.durationMs)}
-                                    </Text>
-                                </View>
-                            ) : null}
-                        </View>
-                    ))}
-                </View>
-            ) : null}
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
-            ) : null}
-        </View>
-    );
+function displayName(name: string | undefined): string {
+    if (!name) return '—';
+    const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)?$/i.exec(name);
+    return match ? (match[1] ?? '/') : name;
 }
 
+/** The page's resource timings as one table: path, type and time, from the latest snapshot. */
 export function BrowserResourcesPanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const events = props.events;
+    const rows = React.useMemo(() => selectBrowserDiagnosticResourceRows({ events }), [events]);
+    const selectItems = React.useCallback(
+        (_segment: string, query: string) => selectBrowserDiagnosticResourceRows({ events }, { search: query }),
+        [events],
+    );
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="resources"
-            renderEvent={renderResourcesEvent}
+            items={rows}
+            countLabel={(count) => t('browserDiagnostics.host.devtools.count.resources', { count })}
+            searchPlaceholder={t('browserDiagnostics.host.devtools.search.resources')}
+            selectItems={selectItems}
+            renderItems={(visible) => (
+                <>
+                    <DiagnosticsColumnHeader
+                        testID={`${props.testID}-resources-columns`}
+                        subject={t('browserDiagnostics.host.devtools.resources.name')}
+                        meta={[fieldLabel('resourceType') ?? '', fieldLabel('durationMs') ?? '']}
+                    />
+                    {visible.map((row: ResourceRow, index) => (
+                        <DiagnosticsRow
+                            key={row.key}
+                            testID={`${props.testID}-resources-entry-${index}`}
+                            subject={displayName(row.entry.name)}
+                            meta={[
+                                row.entry.initiatorType ? { text: row.entry.initiatorType } : null,
+                                typeof row.entry.durationMs === 'number' ? { text: formatDurationMs(row.entry.durationMs) } : null,
+                            ]}
+                        />
+                    ))}
+                </>
+            )}
         />
     );
 }

@@ -1,105 +1,65 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { Text } from '@/components/ui/text/Text';
 import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
-    browserDiagnosticsPanelStyles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsFieldList,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
+    type DiagnosticsField,
     fieldLabel,
+    formatNumber,
     getBrowserDiagnosticField,
-    renderBrowserDiagnosticEventDetail,
-    renderPanelField,
-    renderPanelMetric,
-    safeEventDetail,
-    sanitizeTestIdPart,
+    getBrowserDiagnosticNumber,
+    getBrowserDiagnosticString,
 } from './BrowserDiagnosticsFamilyPanel';
 
-const ELEMENT_TREE_FIELDS = ['nodeCount', 'elementCount', 'maxDepth', 'readyState'] as const;
+function availabilityWord(value: unknown): string | null {
+    if (typeof value === 'string' && value.length > 0) return value;
+    if (value === true) return t('browserDiagnostics.host.devtools.elements.shared');
+    if (value === false) return t('browserDiagnostics.host.devtools.elements.notShared');
+    return null;
+}
 
-function renderElementsEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-elements-row-${eventId}`;
-    const isSelection = event.kind === 'elements.pickerState';
-
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
-            </View>
-            <Text testID={`${testID}-elements-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            {isSelection ? (
-                <View testID={`${testID}-elements-selection-${eventId}`} style={browserDiagnosticsPanelStyles.panelRow}>
-                    {renderPanelField({
-                        label: fieldLabel('state'),
-                        value: getBrowserDiagnosticField(event, 'state'),
-                        testID: `${testID}-elements-selection-${eventId}-state`,
-                    })}
-                    {renderPanelField({
-                        label: fieldLabel('selectorPath'),
-                        value: getBrowserDiagnosticField(event, 'selectorPath'),
-                        testID: `${testID}-elements-selection-${eventId}-selector`,
-                        wide: true,
-                    })}
-                    {renderPanelField({
-                        label: fieldLabel('backendNodeRef'),
-                        value: getBrowserDiagnosticField(event, 'backendNodeRef'),
-                        testID: `${testID}-elements-selection-${eventId}-backendNode`,
-                    })}
-                    {renderPanelField({
-                        label: fieldLabel('rectAvailable'),
-                        value: getBrowserDiagnosticField(event, 'rectAvailable'),
-                        testID: `${testID}-elements-selection-${eventId}-rect`,
-                    })}
-                    {renderPanelField({
-                        label: fieldLabel('accessibleNameAvailable'),
-                        value: getBrowserDiagnosticField(event, 'accessibleNameAvailable'),
-                        testID: `${testID}-elements-selection-${eventId}-a11y`,
-                    })}
-                </View>
-            ) : (
-                <View testID={`${testID}-elements-tree-${eventId}`} style={browserDiagnosticsPanelStyles.metricGrid}>
-                    {ELEMENT_TREE_FIELDS.map((key) => {
-                        const metric = renderPanelMetric({
-                            label: fieldLabel(key),
-                            value: getBrowserDiagnosticField(event, key),
-                            testID: `${testID}-elements-tree-${eventId}-${key}`,
-                        });
-                        return metric ? React.cloneElement(metric, { key }) : null;
-                    })}
-                </View>
-            )}
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
-            ) : null}
-        </View>
-    );
+/**
+ * The picked element, then the page's tree size. There is no DOM tree browser: Diagnostics inspects
+ * the element the person picks (the tab's one action, in the interaction line), and says so once.
+ */
+function elementFields(events: readonly BrowserDiagnosticEventProjection[]): DiagnosticsField[] {
+    const pick = [...events].reverse().find((event) => event.kind === 'elements.pickerState' && getBrowserDiagnosticString(event, 'selectorPath'));
+    const snapshot = [...events].reverse().find((event) => event.kind === 'elements.snapshot');
+    const fields: DiagnosticsField[] = [];
+    if (pick) {
+        const selector = getBrowserDiagnosticString(pick, 'selectorPath');
+        if (selector) fields.push({ key: 'selectorPath', label: fieldLabel('selectorPath') ?? '', value: selector, mono: true, copy: true });
+        const name = getBrowserDiagnosticString(pick, 'accessibleName')
+            ?? availabilityWord(getBrowserDiagnosticField(pick, 'accessibleNameAvailable'));
+        if (name) fields.push({ key: 'accessibleName', label: fieldLabel('accessibleName') ?? '', value: name });
+    }
+    if (snapshot) {
+        const nodes = getBrowserDiagnosticNumber(snapshot, 'nodeCount');
+        const elements = getBrowserDiagnosticNumber(snapshot, 'elementCount');
+        const depth = getBrowserDiagnosticNumber(snapshot, 'maxDepth');
+        if (nodes !== null) fields.push({ key: 'nodeCount', label: fieldLabel('nodeCount') ?? '', value: formatNumber(nodes) });
+        if (elements !== null) fields.push({ key: 'elementCount', label: fieldLabel('elementCount') ?? '', value: formatNumber(elements) });
+        if (depth !== null) fields.push({ key: 'maxDepth', label: fieldLabel('maxDepth') ?? '', value: formatNumber(depth) });
+    }
+    return fields;
 }
 
 export function BrowserElementsPanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const fields = React.useMemo(() => elementFields(props.events), [props.events]);
+    const picked = fields.some((field) => field.key === 'selectorPath');
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="elements"
-            renderEvent={renderElementsEvent}
+            items={fields.length > 0 ? [fields] : []}
+            note={picked ? t('browserDiagnostics.host.devtools.elements.noTree') : t('browserDiagnostics.host.devtools.elements.pickHint')}
+            renderItems={() => (
+                <DiagnosticsFieldList variant="sheet" fields={fields} testID={`${props.testID}-elements-selection`} />
+            )}
         />
     );
 }

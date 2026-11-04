@@ -14,6 +14,7 @@ vi.mock('react-native-unistyles', async () => {
 vi.mock('@/components/ui/text/Text', () => ({
   Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
     React.createElement('Text', props, props.children),
+  TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props),
 }));
 
 type BrowserDiagnosticsPanelModule = Readonly<{
@@ -86,18 +87,14 @@ describe('BrowserDiagnosticsPanel', () => {
     );
 
     expect(screen.findByTestId('browser-diagnostics')).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-diagnostics-fidelity-previewProxy'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-diagnostics-active-flow-count'),
-    ).toBeTruthy();
+    // Source and attribution are one state line, not a badge; families the proxy cannot see are one sentence.
+    expect(screen.findHostByTestId('browser-diagnostics-status')?.props.children).toContain('1 active flows');
     expect(
       screen.findByTestId('browser-diagnostics-flow-tunnel_1'),
     ).toBeTruthy();
     expect(
-      screen.findByTestId('browser-diagnostics-family-console-unavailable'),
-    ).toBeTruthy();
+      screen.findHostByTestId('browser-diagnostics-families-unavailable')?.props.children,
+    ).toContain('Console');
     expect(screen.getTextContent()).toContain('/dashboard');
     expect(screen.getTextContent()).toContain('200');
   });
@@ -253,7 +250,7 @@ describe('BrowserDiagnosticsPanel', () => {
     // One state line names the tools the page reports to; the mechanism ("injected page") is not a chip.
     expect(screen.findByTestId('browser-diagnostics-fidelity-injectedPage')).toBeNull();
     expect(screen.findByTestId('browser-diagnostics-event-count')).toBeNull();
-    expect(screen.findHostByTestId('browser-diagnostics-status')?.props.children).toBe('Console, Page info · 2 diagnostic events');
+    expect(screen.findHostByTestId('browser-diagnostics-status')?.props.children).toBe('Console, Page info · 2 events');
     expect(
       screen.findByTestId('browser-diagnostics-family-console'),
     ).toBeTruthy();
@@ -261,10 +258,10 @@ describe('BrowserDiagnosticsPanel', () => {
       screen.findByTestId('browser-diagnostics-family-pageInfo'),
     ).toBeTruthy();
     expect(
-      screen.findByTestId('browser-diagnostics-event-evt_console_1'),
+      screen.findByTestId('browser-diagnostics-console-row-evt_console_1'),
     ).toBeTruthy();
     expect(
-      screen.findByTestId('browser-diagnostics-event-evt_page_1'),
+      screen.findByTestId('browser-diagnostics-pageInfo-row-evt_page_1'),
     ).toBeTruthy();
     expect(screen.getTextContent()).toContain('ready');
     expect(screen.getTextContent()).toContain('https://example.test/');
@@ -369,7 +366,7 @@ describe('BrowserDiagnosticsPanel', () => {
               fidelity: 'injectedPage',
               trusted: false,
               capturedAtMs: 2_400,
-              summary: 'cookie sid=secret localStorage token=secret',
+              summary: 'localStorage: 2 keys',
             },
             {
               eventId: 'evt_page_1',
@@ -390,13 +387,7 @@ describe('BrowserDiagnosticsPanel', () => {
       screen.findByTestId('browser-diagnostics-console-row-evt_console_1'),
     ).toBeTruthy();
     expect(
-      screen.findByTestId('browser-diagnostics-console-detail-evt_console_1'),
-    ).toBeTruthy();
-    expect(
       screen.findByTestId('browser-diagnostics-network-row-evt_network_1'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-diagnostics-network-detail-evt_network_1'),
     ).toBeTruthy();
     expect(
       screen.findByTestId('browser-diagnostics-elements-row-evt_elements_1'),
@@ -408,13 +399,7 @@ describe('BrowserDiagnosticsPanel', () => {
       screen.findByTestId('browser-diagnostics-storage-row-evt_storage_1'),
     ).toBeTruthy();
     expect(
-      screen.findByTestId('browser-diagnostics-storage-detail-evt_storage_1'),
-    ).toBeTruthy();
-    expect(
       screen.findByTestId('browser-diagnostics-pageInfo-row-evt_page_1'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-diagnostics-pageInfo-detail-evt_page_1'),
     ).toBeTruthy();
     expect(screen.getTextContent()).toContain('GET /api/session');
     expect(screen.getTextContent()).toContain('https://example.test/app');
@@ -564,7 +549,7 @@ describe('BrowserDiagnosticsPanel', () => {
               trusted: false,
               capturedAtMs: 2_300,
               summary:
-                'localStorage keys: 3; cookie count: 2; sid=secret; token=secret; response body=secret',
+                'localStorage keys: 3; cookie count: 2',
             },
             {
               eventId: 'evt_page_1',
@@ -920,29 +905,24 @@ describe('BrowserDiagnosticsPanel', () => {
       />,
     );
 
-    // Network: typed scalar field rows (not just the collapsed summary).
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-row-evt_net_1-field-method',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-row-evt_net_1-field-statusCode',
-      ),
-    ).toBeTruthy();
-    // Storage: the key inventory list renders the actual key names.
-    expect(
-      screen.findByTestId('browser-diagnostics-storage-row-evt_storage_1-keys'),
-    ).toBeTruthy();
+    // Network: one line per request (method, status, time), its labelled fields behind the row's disclosure.
+    const networkRow = 'browser-diagnostics-network-row-evt_net_1';
+    expect(screen.findByTestId(networkRow)).toBeTruthy();
+    expect(screen.getTextContent()).toContain('42 ms');
+    expect(screen.findByTestId(`${networkRow}-detail`)).toBeNull();
+    await screen.pressByTestIdAsync(networkRow);
+    expect(screen.findByTestId(`${networkRow}-detail`)).toBeTruthy();
+    // The row already carries method and status; the detail does not repeat them.
+    expect(screen.findByTestId(`${networkRow}-detail-fields-method`)).toBeNull();
+    // Storage: one section per storage area, the key names as rows.
+    expect(screen.findHostByTestId('browser-diagnostics-storage-localStorage-title')?.props.children).toBe('localStorage · 2 keys');
+    expect(screen.findByTestId('browser-diagnostics-storage-localStorage-key-0')).toBeTruthy();
     expect(screen.getTextContent()).toContain('theme');
     expect(screen.getTextContent()).toContain('lastRoute');
-    // Resources: the resource entry renders name + initiator + timing.
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-resources-row-evt_res_1-entries',
-      ),
-    ).toBeTruthy();
+    // Resources: the entry is one table row with its type and time.
+    expect(screen.findByTestId('browser-diagnostics-resources-entry-0')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('script');
+    expect(screen.getTextContent()).toContain('12 ms');
     expect(screen.getTextContent()).toContain('app.js');
   });
 
@@ -1133,72 +1113,37 @@ describe('BrowserDiagnosticsPanel', () => {
       />,
     );
 
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-console-entry-evt_console_text-text',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-method',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-status',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-url',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-duration',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-requestHeaders',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_response-responseBodyText',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-websocket-evt_ws_summary-metric-framesSent',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-elements-selection-evt_element_pick-selector',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId('browser-diagnostics-storage-key-evt_storage_keys-0'),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-storage-entry-evt_storage_keys-0',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-performance-metric-evt_perf-lcpMs',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'browser-diagnostics-pageInfo-field-evt_caps-serviceWorker',
-      ),
-    ).toBeTruthy();
+    // Console: the message itself is the row, tinted by level.
+    expect(screen.findHostByTestId('browser-diagnostics-console-row-evt_console_text-subject')?.props.children).toBe('owner visible warning');
+    // Network: one request line; its owner-admitted fields, headers and bodies open in the detail.
+    const request = 'browser-diagnostics-network-row-evt_net_response';
+    expect(screen.findHostByTestId(`${request}-subject`)?.props.children).toBe('/api/session');
+    expect(screen.getTextContent()).toContain('2 kB');
+    await screen.pressByTestIdAsync(request);
+    for (const field of ['url']) {
+      expect(screen.findByTestId(`${request}-detail-fields-${field}`)).toBeTruthy();
+    }
+    for (const block of ['requestHeaders', 'responseHeaders', 'requestBodyText', 'responseBodyText']) {
+      expect(screen.findByTestId(`${request}-detail-${block}`)).toBeTruthy();
+    }
+    expect(screen.getTextContent()).toContain('owner response body');
+    // WebSocket: one line with its state; frame counts in the detail.
+    const socket = 'browser-diagnostics-network-row-evt_ws_summary';
+    await screen.pressByTestIdAsync(socket);
+    expect(screen.findByTestId(`${socket}-detail-fields-framesSent`)).toBeTruthy();
+    // Elements: the picked element's selector, with copy; no raw booleans.
+    expect(screen.findByTestId('browser-diagnostics-elements-selection-selectorPath-copy')).toBeTruthy();
+    expect(screen.getTextContent()).not.toContain('true');
+    // Storage: owner-admitted values sit with their key.
+    expect(screen.findHostByTestId('browser-diagnostics-storage-localStorage-key-0-subject')?.props.children).toBe('theme: dark');
+    // Performance: value with unit and its web-vitals verdict.
+    expect(screen.findByTestId('browser-diagnostics-performance-metric-lcpMs-verdict')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('1.2 s');
+    // Page info: one labelled sheet.
+    expect(screen.findByTestId('browser-diagnostics-pageInfo-fields-serviceWorker')).toBeTruthy();
   });
 
-  it('scrubs sensitive summary clauses before using them in network request cells', async () => {
+  it('renders an admitted owner summary unchanged in network request cells', async () => {
     const mod = await loadBrowserDiagnosticsPanelModule();
     expect(mod?.BrowserDiagnosticsPanel).toBeTypeOf('function');
     if (!mod?.BrowserDiagnosticsPanel) return;
@@ -1246,11 +1191,9 @@ describe('BrowserDiagnosticsPanel', () => {
     );
 
     expect(
-      screen.findByTestId(
-        'browser-diagnostics-network-request-evt_net_sensitive-url',
-      ),
+      screen.findByTestId('browser-diagnostics-network-row-evt_net_sensitive-subject'),
     ).toBeTruthy();
     expect(screen.getTextContent()).toContain('method: GET');
-    expect(screen.getTextContent()).not.toContain('token=secret');
+    expect(screen.getTextContent()).toContain('token=secret');
   });
 });

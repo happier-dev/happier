@@ -1,19 +1,32 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
+
+import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type {
-    BrowserDiagnosticEventDetail,
     BrowserDiagnosticEventProjection,
     BrowserDiagnosticFamilyProjection,
-    BrowserDiagnosticResourceEntry,
     BrowserDiagnosticsStatus,
+    BrowserViewDiagnosticsProjection,
 } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
+/**
+ * The one row-and-detail pattern of the Diagnostics drawer (DESIGN-DIAG-1102).
+ *
+ * Every tab is a developer-tool list: one dense line per entry (state glyph, mono subject, right-aligned
+ * tabular meta), its detail behind a disclosure as labelled fields, and ONE state line per tab that says
+ * how much there is and where it came from. Nothing is said twice: no per-row title, no per-row source
+ * badge, no raw-key dump under the row.
+ */
 
 export type BrowserDiagnosticsProductFamilyKey =
     | 'console'
@@ -28,32 +41,31 @@ export type BrowserDiagnosticsProductFamilyKey =
 export type BrowserDiagnosticsFamilyPanelProps = Readonly<{
     family: BrowserDiagnosticFamilyProjection;
     events: readonly BrowserDiagnosticEventProjection[];
+    /** The view the family belongs to, for the store's event filter owner. */
+    projection?: BrowserViewDiagnosticsProjection;
     testID: string;
 }>;
 
-export type BrowserDiagnosticsFamilyEventRenderer = (
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-    familyKey: BrowserDiagnosticsProductFamilyKey,
-) => React.ReactElement;
+export type DiagnosticsTone = 'neutral' | 'warning' | 'danger';
+
+const LEAD_COLUMN_WIDTH_PX = 44;
+const META_COLUMN_WIDTH_PX = 56;
+const DETAIL_LABEL_WIDTH_PX = 112;
 
 export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
     root: {
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s10,
-        gap: theme.space.s10,
+        paddingVertical: theme.space.s8,
+        gap: theme.space.s8,
+    },
+    inset: {
+        paddingHorizontal: theme.space.s12,
     },
     header: {
-        gap: theme.space.s6,
-    },
-    titleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space.s10,
+        gap: theme.space.s4,
+        paddingHorizontal: theme.space.s12,
     },
     title: {
         ...Typography.variant('meta'),
@@ -64,155 +76,211 @@ export const browserDiagnosticsPanelStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
-    status: {
+    stateLine: {
         ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
+        ...Typography.tabular(),
         color: theme.colors.text.secondary,
     },
     warning: {
         ...Typography.variant('meta'),
         ...Typography.default('semiBold'),
-        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
-        // they are fill colours, not text colours. The words carry their own meaning here, so
-        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
-        // redundant cue rather than the only one.
+        // Semantic foregrounds are fill colours (Q2: 2.20–3.55:1 as text in light). The words carry
+        // the meaning in ink; the hue stays on the glyph beside them.
         color: theme.colors.text.primary,
-    },
-    content: {
-        gap: theme.space.s8,
     },
     familySection: {
         gap: theme.space.s6,
     },
-    flowRow: {
-        gap: theme.space.s4,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
+    toolbar: {
+        paddingHorizontal: theme.space.s12,
     },
-    flowTitle: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
+    list: {
+        // Rows run edge to edge so their hairlines and tints read as one table.
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minHeight: 26,
+        paddingHorizontal: theme.space.s12,
+        paddingVertical: theme.space.s2,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.subtle,
+    },
+    rowHover: {
+        backgroundColor: theme.colors.surface.hover,
+    },
+    rowWarning: {
+        backgroundColor: theme.colors.state.warning.background,
+    },
+    rowDanger: {
+        backgroundColor: theme.colors.state.danger.background,
+    },
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        paddingHorizontal: theme.space.s12,
+        paddingBottom: theme.space.s2,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.default,
+    },
+    caretSlot: {
+        width: ICON_SIZE.xxs,
+        alignItems: 'center',
+    },
+    glyphSlot: {
+        width: ICON_SIZE.xs,
+        alignItems: 'center',
+    },
+    lead: {
+        ...Typography.variant('micro', 'semiBold'),
+        ...Typography.mono(),
+        width: LEAD_COLUMN_WIDTH_PX,
         color: theme.colors.text.primary,
     },
-    flowMeta: {
-        ...Typography.variant('meta'),
+    subject: {
+        ...Typography.variant('micro', 'regular'),
+        ...Typography.mono(),
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.primary,
+    },
+    stackedSubject: {
+        flex: 1,
+        minWidth: 0,
+    },
+    stackedMeta: {
+        ...Typography.variant('micro', 'regular'),
+        ...Typography.tabular(),
         color: theme.colors.text.secondary,
     },
-    familyList: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: theme.space.s6,
-    },
-    familyPill: {
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: 3,
-    },
-    familyText: {
-        ...Typography.variant('meta'),
+    subjectMuted: {
         color: theme.colors.text.secondary,
+    },
+    meta: {
+        ...Typography.variant('micro', 'regular'),
+        ...Typography.tabular(),
+        width: META_COLUMN_WIDTH_PX,
+        textAlign: 'right',
+        color: theme.colors.text.secondary,
+    },
+    columnLabel: {
+        ...Typography.variant('micro', 'semiBold'),
+        color: theme.colors.text.secondary,
+    },
+    columnLabelFlex: {
+        flex: 1,
+        minWidth: 0,
+    },
+    columnLabelMeta: {
+        width: META_COLUMN_WIDTH_PX,
+        textAlign: 'right',
     },
     detail: {
-        gap: theme.space.s2,
-        marginTop: theme.space.s2,
+        gap: theme.space.s4,
+        marginLeft: theme.space.s12 + ICON_SIZE.xxs + theme.space.s8,
+        marginRight: theme.space.s12,
+        marginVertical: theme.space.s6,
+        padding: theme.space.s8,
+        borderRadius: theme.borderRadius.md,
+        backgroundColor: theme.colors.surface.inset,
     },
-    detailRow: {
+    plainList: {
+        gap: theme.space.s4,
+    },
+    sheet: {
+        gap: theme.space.s4,
+        paddingHorizontal: theme.space.s12,
+    },
+    fieldRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s8,
     },
-    detailKey: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.secondary,
-        minWidth: 96,
-    },
-    detailValue: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.primary,
-        flexShrink: 1,
-    },
-    detailListLabel: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
+    fieldLabel: {
+        ...Typography.variant('micro', 'regular'),
+        width: DETAIL_LABEL_WIDTH_PX,
         color: theme.colors.text.secondary,
     },
-    detailListItem: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
+    fieldValue: {
+        ...Typography.variant('micro', 'regular'),
+        ...Typography.tabular(),
+        flex: 1,
+        minWidth: 0,
         color: theme.colors.text.primary,
     },
-    panelGroup: {
-        gap: theme.space.s6,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
+    fieldValueMono: {
+        ...Typography.mono(),
     },
-    panelGroupTitle: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
+    codeBlock: {
+        gap: theme.space.s2,
+        paddingTop: theme.space.s4,
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border.subtle,
     },
-    panelRow: {
+    codeHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        flexWrap: 'wrap',
     },
-    panelCell: {
-        minWidth: 72,
-        gap: theme.space.s2,
+    codeLabel: {
+        flex: 1,
+        width: undefined,
     },
-    panelCellWide: {
-        flexGrow: 1,
-        flexBasis: 160,
-        minWidth: 120,
-        gap: theme.space.s2,
+    codeText: {
+        ...Typography.variant('micro', 'regular'),
+        ...Typography.mono(),
+        color: theme.colors.text.primary,
     },
-    panelLabel: {
+    fieldCopy: {
+        marginTop: -6,
+        marginBottom: -6,
+    },
+    sectionTitle: {
         ...Typography.variant('micro', 'semiBold'),
+        ...Typography.tabular(),
         color: theme.colors.text.secondary,
+        paddingHorizontal: theme.space.s12,
+        paddingTop: theme.space.s6,
+        paddingBottom: theme.space.s2,
     },
-    panelValue: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.primary,
-    },
-    consoleMessage: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.primary,
+    note: {
+        ...Typography.variant('micro', 'regular'),
+        color: theme.colors.text.secondary,
+        paddingHorizontal: theme.space.s12,
     },
     metricGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         gap: theme.space.s6,
+        paddingHorizontal: theme.space.s12,
     },
     metricCell: {
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s6,
-        minWidth: 88,
+        minWidth: 112,
+        flexGrow: 1,
+        flexBasis: 112,
         gap: theme.space.s2,
+        borderRadius: theme.borderRadius.md,
+        backgroundColor: theme.colors.surface.inset,
+        paddingHorizontal: theme.space.s10,
+        paddingVertical: theme.space.s8,
     },
-    keyRow: {
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s4,
+    metricLabel: {
+        ...Typography.variant('micro', 'regular'),
+        color: theme.colors.text.secondary,
+    },
+    metricValue: {
+        ...Typography.variant('label', 'semiBold'),
+        ...Typography.tabular(),
+        color: theme.colors.text.primary,
+    },
+    metricVerdict: {
+        ...Typography.variant('micro', 'regular'),
     },
 }));
+
+const styles = browserDiagnosticsPanelStyles;
 
 export function sanitizeTestIdPart(input: string): string {
     return input.replace(/[^A-Za-z0-9_-]+/g, '_');
@@ -220,6 +288,25 @@ export function sanitizeTestIdPart(input: string): string {
 
 export function formatNumber(value: number): string {
     return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+export function formatDurationMs(value: number): string {
+    if (value >= 1000) {
+        return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value / 1000)} s`;
+    }
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value)} ms`;
+}
+
+export function formatBytes(value: number): string {
+    if (value < 1024) return `${formatNumber(value)} B`;
+    if (value < 1024 * 1024) return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / 1024)} kB`;
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value / (1024 * 1024))} MB`;
+}
+
+export function formatClockTime(epochMs: number): string {
+    const date = new Date(epochMs);
+    const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export function statusLabel(status: BrowserDiagnosticsStatus): string {
@@ -233,25 +320,23 @@ export function statusLabel(status: BrowserDiagnosticsStatus): string {
     }
 }
 
-export function familyLabel(family: BrowserDiagnosticFamilyProjection): string {
-    const label = diagnosticFamilyLabel(family.family);
-    if (family.status === 'unavailable') {
-        return t('browserDiagnostics.previewProxy.familyUnavailable', { family: label });
+/** Where a tab's data came from, said once per tab in words, never as a badge on every row. */
+export function sourceLabel(fidelity: BrowserDiagnosticFidelityV1, trusted: boolean): string | null {
+    if (!trusted) return t('browserDiagnostics.host.devtools.source.page');
+    switch (fidelity) {
+        case 'cdp':
+            return t('browserDiagnostics.host.devtools.source.browser');
+        case 'previewProxy':
+            return t('browserDiagnostics.host.devtools.source.previewProxy');
+        case 'nativeCallback':
+            return t('browserDiagnostics.host.devtools.source.webView');
+        case 'streamFrame':
+            return t('browserDiagnostics.host.devtools.source.stream');
+        case 'injectedPage':
+            return t('browserDiagnostics.host.devtools.source.page');
+        case 'unavailable':
+            return null;
     }
-    return t('browserDiagnostics.previewProxy.familyAvailable', { family: label });
-}
-
-export function eventTitle(event: BrowserDiagnosticEventProjection): string {
-    if (event.family === 'pageError') {
-        return t('browserDiagnostics.host.eventTitles.pageError');
-    }
-    if (event.family === 'console') {
-        return t('browserDiagnostics.host.eventTitles.console');
-    }
-    return t('browserDiagnostics.host.eventTitle', {
-        family: diagnosticFamilyLabel(event.family),
-        kind: eventKindLabel(event.kind),
-    });
 }
 
 export function diagnosticFamilyLabel(family: BrowserDiagnosticEventProjection['family']): string {
@@ -277,52 +362,12 @@ export function diagnosticFamilyLabel(family: BrowserDiagnosticEventProjection['
     }
 }
 
-function eventKindLabel(kind: string): string {
-    switch (kind) {
-        case 'page.error':
-            return t('browserDiagnostics.host.eventKinds.pageError');
-        case 'console.entry':
-            return t('browserDiagnostics.host.eventKinds.consoleEntry');
-        case 'network.request':
-        case 'network.response':
-            return t('browserDiagnostics.host.eventKinds.network');
-        default:
-            return t('browserDiagnostics.host.eventKinds.event');
+export function familyLabel(family: BrowserDiagnosticFamilyProjection): string {
+    const label = diagnosticFamilyLabel(family.family);
+    if (family.status === 'unavailable') {
+        return t('browserDiagnostics.previewProxy.familyUnavailable', { family: label });
     }
-}
-
-function eventSummary(event: BrowserDiagnosticEventProjection): string {
-    return event.summary ?? t('browserDiagnostics.host.eventSummaryUnavailable');
-}
-
-function hasSensitiveAssignment(value: string): boolean {
-    if (/\b(?:sid|token|secret|password|authorization|auth|payload|body|requestBody|responseBody)\b\s*[=:]/i.test(value)) {
-        return true;
-    }
-    if (/\b(?:cookie|set-cookie|localStorage|sessionStorage|indexedDB|storage)\b\s*[=:]/i.test(value)) {
-        return true;
-    }
-    return /[=:]\s*[^;]*(?:secret|password|bearer\s+|sid=|token=)/i.test(value);
-}
-
-function stripSensitiveSummaryClauses(value: string): string | null {
-    const clauses = value
-        .split(';')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-
-    if (clauses.length <= 1) {
-        return hasSensitiveAssignment(value) ? null : value;
-    }
-
-    const safeClauses = clauses.filter((entry) => !hasSensitiveAssignment(entry));
-    return safeClauses.length > 0 ? safeClauses.join('; ') : null;
-}
-
-export function safeEventDetail(event: BrowserDiagnosticEventProjection): string {
-    const summary = eventSummary(event);
-    const safeSummary = stripSensitiveSummaryClauses(summary);
-    return safeSummary ?? t('browserDiagnostics.host.eventSummaryUnavailable');
+    return t('browserDiagnostics.previewProxy.familyAvailable', { family: label });
 }
 
 function familyStatusTestIdPart(status: BrowserDiagnosticsStatus): string {
@@ -341,12 +386,13 @@ export function formatBrowserDiagnosticFieldValue(value: string | number | boole
         return new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(value);
     }
     if (typeof value === 'boolean') {
-        return value ? 'true' : 'false';
+        return value ? t('common.yes') : t('common.no');
     }
     return value;
 }
 
-export function fieldLabel(fieldKey: string): string {
+/** A person-readable label for a typed field key; `null` for keys that are internal bookkeeping. */
+export function fieldLabel(fieldKey: string): string | null {
     switch (fieldKey) {
         case 'method':
             return t('browserDiagnostics.host.fields.method');
@@ -361,8 +407,10 @@ export function fieldLabel(fieldKey: string): string {
         case 'requestBytes':
             return t('browserDiagnostics.host.fields.requestSize');
         case 'responseBytes':
+        case 'encodedDataLength':
             return t('browserDiagnostics.host.fields.responseSize');
         case 'socketId':
+        case 'sourceId':
             return t('browserDiagnostics.host.fields.socket');
         case 'state':
             return t('browserDiagnostics.host.fields.state');
@@ -386,6 +434,7 @@ export function fieldLabel(fieldKey: string): string {
         case 'rectAvailable':
             return t('browserDiagnostics.host.fields.rect');
         case 'accessibleNameAvailable':
+        case 'accessibleName':
             return t('browserDiagnostics.host.fields.accessibleName');
         case 'storageType':
             return t('browserDiagnostics.host.fields.storageType');
@@ -398,6 +447,7 @@ export function fieldLabel(fieldKey: string): string {
         case 'argCount':
             return t('browserDiagnostics.host.fields.arguments');
         case 'text':
+        case 'message':
             return t('browserDiagnostics.host.fields.message');
         case 'serviceWorker':
             return t('browserDiagnostics.host.fields.serviceWorker');
@@ -431,8 +481,37 @@ export function fieldLabel(fieldKey: string): string {
             return t('browserDiagnostics.host.fields.domContentLoaded');
         case 'navLoadEventEndMs':
             return t('browserDiagnostics.host.fields.loadEventEnd');
+        case 'resourceType':
+        case 'initiatorType':
+            return t('browserDiagnostics.host.fields.type');
+        case 'mimeType':
+            return t('browserDiagnostics.host.devtools.fields.contentType');
+        case 'errorText':
+            return t('browserDiagnostics.host.devtools.fields.error');
+        case 'title':
+            return t('browserDiagnostics.host.devtools.fields.title');
+        case 'requestHeaders':
+            return t('browserDiagnostics.host.devtools.fields.requestHeaders');
+        case 'responseHeaders':
+            return t('browserDiagnostics.host.devtools.fields.responseHeaders');
+        case 'requestBodyText':
+            return t('browserDiagnostics.host.devtools.fields.requestBody');
+        case 'responseBodyText':
+            return t('browserDiagnostics.host.devtools.fields.responseBody');
+        case 'code':
+            return t('browserDiagnostics.host.devtools.fields.closeCode');
+        case 'wasClean':
+            return t('browserDiagnostics.host.devtools.fields.closedCleanly');
+        case 'accepted':
+            return t('browserDiagnostics.host.devtools.fields.accepted');
+        case 'bytesQueued':
+            return t('browserDiagnostics.host.fields.requestSize');
+        case 'requestId':
+            return t('browserDiagnostics.host.devtools.fields.requestId');
         default:
-            return fieldKey;
+            // Availability flags (`textAvailable`, `titleAvailable`, …) and correlation ids are
+            // bookkeeping: the row already shows what they imply.
+            return null;
     }
 }
 
@@ -451,184 +530,410 @@ export function getBrowserDiagnosticFieldText(
     return typeof value === 'undefined' ? null : formatBrowserDiagnosticFieldValue(value);
 }
 
-export function renderPanelField(props: Readonly<{
-    label: string;
-    value: string | number | boolean | null | undefined;
-    testID: string;
-    wide?: boolean;
-}>): React.ReactElement | null {
-    if (typeof props.value === 'undefined' || props.value === null || props.value === '') return null;
-    return (
-        <View testID={props.testID} style={props.wide ? browserDiagnosticsPanelStyles.panelCellWide : browserDiagnosticsPanelStyles.panelCell}>
-            <Text style={browserDiagnosticsPanelStyles.panelLabel}>{props.label}</Text>
-            <Text style={browserDiagnosticsPanelStyles.panelValue}>
-                {typeof props.value === 'string' ? props.value : formatBrowserDiagnosticFieldValue(props.value)}
-            </Text>
-        </View>
-    );
+export function getBrowserDiagnosticNumber(event: BrowserDiagnosticEventProjection, key: string): number | null {
+    const value = getBrowserDiagnosticField(event, key);
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-export function renderPanelMetric(props: Readonly<{
-    label: string;
-    value: string | number | boolean | null | undefined;
-    testID: string;
-}>): React.ReactElement | null {
-    if (typeof props.value === 'undefined' || props.value === null || props.value === '') return null;
-    return (
-        <View testID={props.testID} style={browserDiagnosticsPanelStyles.metricCell}>
-            <Text style={browserDiagnosticsPanelStyles.panelLabel}>{props.label}</Text>
-            <Text style={browserDiagnosticsPanelStyles.panelValue}>
-                {typeof props.value === 'string' ? props.value : formatBrowserDiagnosticFieldValue(props.value)}
-            </Text>
-        </View>
-    );
+export function getBrowserDiagnosticString(event: BrowserDiagnosticEventProjection, key: string): string | null {
+    const value = getBrowserDiagnosticField(event, key);
+    return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function formatResourceEntry(entry: BrowserDiagnosticResourceEntry): string {
-    const head = entry.name ?? entry.initiatorType ?? '-';
-    const meta: string[] = [];
-    if (entry.initiatorType && entry.name) meta.push(entry.initiatorType);
-    if (typeof entry.durationMs === 'number') {
-        meta.push(`${formatBrowserDiagnosticFieldValue(entry.durationMs)} ms`);
+// ---------------------------------------------------------------------------------------------------
+// Detail: labelled fields
+// ---------------------------------------------------------------------------------------------------
+
+export type DiagnosticsField = Readonly<{
+    key: string;
+    label: string;
+    value: string;
+    mono?: boolean;
+    copy?: boolean;
+}>;
+
+/** Labelled fields from an event's typed detail; keys without a person-readable label are skipped. */
+export function labelledEventFields(
+    event: BrowserDiagnosticEventProjection,
+    options: Readonly<{ mono?: readonly string[]; copy?: readonly string[]; omit?: readonly string[] }> = {},
+): DiagnosticsField[] {
+    const fields: DiagnosticsField[] = [];
+    for (const field of event.detail?.fields ?? []) {
+        if (options.omit?.includes(field.key)) continue;
+        const label = fieldLabel(field.key);
+        if (!label) continue;
+        fields.push({
+            key: field.key,
+            label,
+            value: formatBrowserDiagnosticFieldValue(field.value),
+            mono: options.mono?.includes(field.key),
+            copy: options.copy?.includes(field.key),
+        });
     }
-    return meta.length > 0 ? `${head} (${meta.join(', ')})` : head;
+    return fields;
+}
+
+export function DiagnosticsFieldList(props: Readonly<{
+    fields: readonly DiagnosticsField[];
+    testID: string;
+    variant?: 'detail' | 'sheet' | 'plain';
+}>): React.ReactElement | null {
+    if (props.fields.length === 0) return null;
+    return (
+        <View testID={props.testID} style={props.variant === 'sheet' ? styles.sheet : props.variant === 'plain' ? styles.plainList : styles.detail}>
+            {props.fields.map((field) => (
+                <View key={field.key} testID={`${props.testID}-${sanitizeTestIdPart(field.key)}`} style={styles.fieldRow}>
+                    <Text style={styles.fieldLabel}>{field.label}</Text>
+                    <Text selectable style={[styles.fieldValue, field.mono ? styles.fieldValueMono : null]}>
+                        {field.value}
+                    </Text>
+                    {field.copy ? (
+                        <CopyIconButton
+                            text={field.value}
+                            style={styles.fieldCopy}
+                            testID={`${props.testID}-${sanitizeTestIdPart(field.key)}-copy`}
+                        />
+                    ) : null}
+                </View>
+            ))}
+        </View>
+    );
 }
 
 /**
- * Render the typed, family-specific body of a diagnostics event (DEV-1). This consumes the typed
- * `detail` projection — scalar `fields` as label/value rows, a `storage.keyInventory` key list, and
- * `resources.snapshot` entries — so the LOCAL owner sees real per-family data instead of one
- * collapsed summary string. All values are already sanitized upstream (the egress classifier SSOT).
+ * A block of machine text inside a detail (headers, a request or response body): its label, the text
+ * in mono at a bounded height, copy, and one line when the owner capped it.
  */
-export function renderBrowserDiagnosticEventDetail(
-    detail: BrowserDiagnosticEventDetail,
-    rowTestID: string,
-): React.ReactElement | null {
-    const hasContent = detail.fields.length > 0 || (detail.keys?.length ?? 0) > 0 || (detail.entries?.length ?? 0) > 0;
-    if (!hasContent) return null;
+export function DiagnosticsCodeBlock(props: Readonly<{
+    label: string;
+    text: string;
+    truncated?: boolean;
+    testID: string;
+}>): React.ReactElement {
     return (
-        <View testID={`${rowTestID}-detail-fields`} style={browserDiagnosticsPanelStyles.detail}>
-            {detail.fields.map((field) => (
-                <View key={field.key} testID={`${rowTestID}-field-${sanitizeTestIdPart(field.key)}`} style={browserDiagnosticsPanelStyles.detailRow}>
-                    <Text style={browserDiagnosticsPanelStyles.detailKey}>{field.key}</Text>
-                    <Text style={browserDiagnosticsPanelStyles.detailValue}>{formatBrowserDiagnosticFieldValue(field.value)}</Text>
-                </View>
-            ))}
-            {detail.keys && detail.keys.length > 0 ? (
-                <View testID={`${rowTestID}-keys`} style={browserDiagnosticsPanelStyles.detail}>
-                    <Text style={browserDiagnosticsPanelStyles.detailListLabel}>
-                        {t('browserDiagnostics.host.detail.keys', { count: formatNumber(detail.keys.length) })}
-                    </Text>
-                    {detail.keys.map((key, index) => (
-                        <Text
-                            key={`${key}-${index}`}
-                            testID={`${rowTestID}-key-${index}`}
-                            style={browserDiagnosticsPanelStyles.detailListItem}
-                        >
-                            {key}
-                        </Text>
-                    ))}
-                </View>
-            ) : null}
-            {detail.entries && detail.entries.length > 0 ? (
-                <View testID={`${rowTestID}-entries`} style={browserDiagnosticsPanelStyles.detail}>
-                    <Text style={browserDiagnosticsPanelStyles.detailListLabel}>
-                        {t('browserDiagnostics.host.detail.entries', { count: formatNumber(detail.entries.length) })}
-                    </Text>
-                    {detail.entries.map((entry, index) => (
-                        <Text
-                            key={`${entry.name ?? 'entry'}-${index}`}
-                            testID={`${rowTestID}-entry-${index}`}
-                            style={browserDiagnosticsPanelStyles.detailListItem}
-                        >
-                            {formatResourceEntry(entry)}
-                        </Text>
-                    ))}
-                </View>
-            ) : null}
-        </View>
-    );
-}
-
-export function renderBrowserDiagnosticEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-    options: Readonly<{
-        detailTestID?: string;
-        rowTestID?: string;
-    }> = {},
-): React.ReactElement {
-    const genericRowTestID = `${testID}-event-${sanitizeTestIdPart(event.eventId)}`;
-    const rowTestID = options.rowTestID ?? genericRowTestID;
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.flowRow}>
-            <View
-                testID={rowTestID === genericRowTestID ? undefined : genericRowTestID}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.flowTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
+        <View testID={props.testID} style={styles.codeBlock}>
+            <View style={styles.codeHeader}>
+                <Text style={[styles.fieldLabel, styles.codeLabel]}>{props.label}</Text>
+                <CopyIconButton text={props.text} style={styles.fieldCopy} testID={`${props.testID}-copy`} />
             </View>
-            <Text testID={options.detailTestID} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
+            <Text selectable numberOfLines={24} style={styles.codeText}>{props.text}</Text>
+            {props.truncated ? (
+                <Text style={styles.fieldLabel}>{t('browserDiagnostics.host.devtools.network.bodyTruncated')}</Text>
             ) : null}
         </View>
     );
 }
 
-export function renderBrowserDiagnosticFamilyEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-    familyKey: BrowserDiagnosticsProductFamilyKey,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    return renderBrowserDiagnosticEvent(event, testID, {
-        rowTestID: `${testID}-${familyKey}-row-${eventId}`,
-        detailTestID: `${testID}-${familyKey}-detail-${eventId}`,
-    });
+// ---------------------------------------------------------------------------------------------------
+// Row
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Whether the tab is phone-narrow. A row with several meta columns then moves them beneath its subject
+ * (DESIGN.md: only a short value sits beside a label on a phone), so the subject keeps its width.
+ */
+const DiagnosticsNarrowContext = React.createContext(false);
+// ---------------------------------------------------------------------------------------------------
+
+export type DiagnosticsMetaCell = Readonly<{
+    text: string;
+    tone?: DiagnosticsTone;
+}>;
+
+function toneGlyph(tone: DiagnosticsTone): IconName | null {
+    switch (tone) {
+        case 'danger':
+            return 'x-circle';
+        case 'warning':
+            return 'warning';
+        case 'neutral':
+            return null;
+    }
 }
 
-export function BrowserDiagnosticsFamilyPanelFrame(props: BrowserDiagnosticsFamilyPanelProps & Readonly<{
+/**
+ * One entry, one line. A row with a detail is its disclosure's header: the caret leads, and the
+ * detail opens in place beneath it. Colour is state only — the glyph and a faint row tint for a
+ * warning or a failure; the words stay ink.
+ */
+export function DiagnosticsRow(props: Readonly<{
+    testID: string;
+    tone?: DiagnosticsTone;
+    lead?: string | null;
+    subject: string;
+    subjectMuted?: boolean;
+    meta?: readonly (DiagnosticsMetaCell | null)[];
+    copyText?: string;
+    renderDetail?: () => React.ReactNode;
+    accessibilityLabel?: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const [open, setOpen] = React.useState(false);
+    const [hovered, setHovered] = React.useState(false);
+    const tone = props.tone ?? 'neutral';
+    const glyph = toneGlyph(tone);
+    const expandable = typeof props.renderDetail === 'function';
+    const toggle = React.useCallback(() => setOpen((value) => !value), []);
+
+    const glyphColor = tone === 'danger'
+        ? theme.colors.state.danger.foreground
+        : theme.colors.state.attention.foreground;
+    const metaColor = (cell: DiagnosticsMetaCell) => cell.tone === 'danger'
+        ? { color: theme.colors.state.danger.textForeground ?? theme.colors.state.danger.foreground }
+        : cell.tone === 'warning'
+            ? { color: theme.colors.state.attention.textForeground ?? theme.colors.state.attention.foreground }
+            : null;
+
+    const narrow = React.useContext(DiagnosticsNarrowContext);
+    const metaCells = props.meta ?? [];
+    const stackMeta = narrow && metaCells.length > 1;
+    const subjectText = (
+        <Text
+            testID={`${props.testID}-subject`}
+            numberOfLines={open ? undefined : 1}
+            selectable={!expandable}
+            style={[styles.subject, props.subjectMuted ? styles.subjectMuted : null]}
+        >
+            {props.subject}
+        </Text>
+    );
+    const content = (
+        <>
+            <View style={styles.caretSlot}>
+                {expandable ? <DisclosureCaret expanded={open} density="compact" /> : null}
+            </View>
+            <View style={styles.glyphSlot}>
+                {glyph ? <Icon name={glyph} size={ICON_SIZE.xs} color={glyphColor} /> : null}
+            </View>
+            {props.lead ? <Text numberOfLines={1} style={styles.lead}>{props.lead}</Text> : null}
+            {stackMeta ? (
+                <View style={styles.stackedSubject}>
+                    {subjectText}
+                    <Text numberOfLines={1} style={styles.stackedMeta}>
+                        {metaCells.filter((cell): cell is DiagnosticsMetaCell => cell !== null).map((cell, index) => (
+                            <Text key={index} style={metaColor(cell)}>{index > 0 ? ` · ${cell.text}` : cell.text}</Text>
+                        ))}
+                    </Text>
+                </View>
+            ) : subjectText}
+            {stackMeta ? null : metaCells.map((cell, index) => (
+                cell ? (
+                    <Text key={index} numberOfLines={1} style={[styles.meta, metaColor(cell)]}>{cell.text}</Text>
+                ) : <View key={index} style={{ width: META_COLUMN_WIDTH_PX }} />
+            ))}
+            {props.copyText ? (
+                <CopyIconButton text={props.copyText} style={styles.fieldCopy} testID={`${props.testID}-copy`} />
+            ) : null}
+        </>
+    );
+
+    const rowStyle = [
+        styles.row,
+        tone === 'danger' ? styles.rowDanger : tone === 'warning' ? styles.rowWarning : null,
+        hovered && expandable ? styles.rowHover : null,
+    ];
+
+    return (
+        <View>
+            {expandable ? (
+                <Pressable
+                    testID={props.testID}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: open }}
+                    accessibilityLabel={props.accessibilityLabel ?? props.subject}
+                    onPress={toggle}
+                    onHoverIn={() => setHovered(true)}
+                    onHoverOut={() => setHovered(false)}
+                    style={rowStyle}
+                >
+                    {content}
+                </Pressable>
+            ) : (
+                <View testID={props.testID} style={rowStyle}>{content}</View>
+            )}
+            {expandable && open ? props.renderDetail?.() : null}
+        </View>
+    );
+}
+
+/** Column labels over a table-shaped list (Network, Resources), aligned with the row's slots. */
+export function DiagnosticsColumnHeader(props: Readonly<{
+    lead?: string;
+    subject: string;
+    meta: readonly string[];
+    testID?: string;
+}>): React.ReactElement {
+    const narrow = React.useContext(DiagnosticsNarrowContext);
+    return (
+        <View testID={props.testID} style={styles.headerRow}>
+            <View style={styles.caretSlot} />
+            <View style={styles.glyphSlot} />
+            {props.lead ? <Text style={[styles.columnLabel, { width: LEAD_COLUMN_WIDTH_PX }]}>{props.lead}</Text> : null}
+            <Text style={[styles.columnLabel, styles.columnLabelFlex]}>{props.subject}</Text>
+            {narrow ? null : props.meta.map((label) => (
+                <Text key={label} style={[styles.columnLabel, styles.columnLabelMeta]}>{label}</Text>
+            ))}
+        </View>
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Tab frame: one state line, optional filter + search, the list
+// ---------------------------------------------------------------------------------------------------
+
+/** A tab's filter segments; what each one selects is decided by the store's selectors, not here. */
+export type DiagnosticsFilterSegments = readonly Readonly<{ id: string; label: string }>[];
+
+const NARROW_PANEL_PX = 420;
+
+export function BrowserDiagnosticsFamilyPanelFrame<T>(props: BrowserDiagnosticsFamilyPanelProps & Readonly<{
     familyKey: BrowserDiagnosticsProductFamilyKey;
-    renderEvent?: BrowserDiagnosticsFamilyEventRenderer;
+    items: readonly T[];
+    /** How much there is, in the tab's own noun ("12 messages"); omitted for single-snapshot tabs. */
+    countLabel?: (count: number) => string;
+    /** One honest note about what this page does not share (said once, not on every row). */
+    note?: string | null;
+    segments?: DiagnosticsFilterSegments;
+    searchPlaceholder?: string;
+    /**
+     * The visible items for a segment and search query. Every tab delegates this to the store's
+     * selector owner (`selectBrowserDiagnosticEvents`, `…Requests`, `…StorageRows`, `…ResourceRows`).
+     */
+    selectItems?: (segment: string, query: string) => readonly T[];
+    renderItems: (items: readonly T[]) => React.ReactNode;
 }>): React.ReactElement {
     const stateTestID = `${props.testID}-${props.familyKey}-${familyStatusTestIdPart(props.family.status)}`;
     const unavailable = props.family.status === 'unavailable';
+    const [segment, setSegment] = React.useState(props.segments?.[0]?.id ?? 'all');
+    const [query, setQuery] = React.useState('');
+    const [narrow, setNarrow] = React.useState(false);
+    const onPanelLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = event.nativeEvent.layout.width < NARROW_PANEL_PX;
+        setNarrow((current) => (current === next ? current : next));
+    }, []);
+
+    const visible = React.useMemo(() => {
+        return props.selectItems ? props.selectItems(segment, query) : props.items;
+    }, [props.items, props.selectItems, query, segment]);
+
+    // Events the family's typed projection does not cover still say what the owner summarised, as
+    // plain rows, so an older or partial producer never renders as an empty tab.
+    const summaryEvents = React.useMemo(
+        () => (props.items.length === 0 ? props.events.filter((event) => typeof event.summary === 'string' && event.summary.length > 0) : []),
+        [props.events, props.items.length],
+    );
+    const shownCount = props.items.length > 0 ? props.items.length : summaryEvents.length;
+    const source = unavailable ? null : sourceLabel(props.family.fidelity, props.family.trusted);
+    const stateText = unavailable
+        ? t('browserDiagnostics.host.familyNotReported')
+        : props.family.status === 'stale'
+            ? t('browserDiagnostics.host.devtools.stale')
+            : shownCount === 0
+                ? t('browserDiagnostics.host.devtools.empty')
+                : [props.countLabel?.(shownCount), source].filter(Boolean).join(' · ');
+
+    const showToolbar = !unavailable && props.items.length > 0 && props.selectItems && (props.segments || props.searchPlaceholder);
+    const filterBar = props.segments ? (
+        <SegmentedTabBar
+            testIDPrefix={`${props.testID}-${props.familyKey}-filter`}
+            tabs={props.segments}
+            activeTabId={segment}
+            onSelectTab={setSegment}
+            compact
+            segmentSizing="content"
+            role="radiogroup"
+            accessibilityLabel={t('browserDiagnostics.host.devtools.filterLabel')}
+        />
+    ) : null;
 
     return (
-        <View testID={`${props.testID}-${props.familyKey}-panel`} style={browserDiagnosticsPanelStyles.familySection}>
-            {/* The section's one state line: what the page reports here. The selected tab already names
-              * the family, so the section repeats no title under it. */}
-            <View testID={`${props.testID}-family-${props.family.family}`}>
-            <Text
-                testID={stateTestID}
-                style={props.family.status === 'stale'
-                    ? browserDiagnosticsPanelStyles.warning
-                    : browserDiagnosticsPanelStyles.flowMeta}
-            >
-                {unavailable
-                    ? t('browserDiagnostics.host.familyNotReported')
-                    : props.family.status === 'stale'
-                        ? statusLabel(props.family.status)
-                        : props.events.length > 0
-                            ? t('browserDiagnostics.host.eventCount', { count: formatNumber(props.events.length) })
-                            : t('browserDiagnostics.host.eventsEmpty')}
-            </Text>
+        <DiagnosticsNarrowContext.Provider value={narrow}>
+        <View testID={`${props.testID}-${props.familyKey}-panel`} style={styles.familySection} onLayout={onPanelLayout}>
+            <View testID={`${props.testID}-family-${props.family.family}`} style={styles.inset}>
+                <Text
+                    testID={stateTestID}
+                    style={props.family.status === 'stale' ? styles.warning : styles.stateLine}
+                >
+                    {stateText}
+                </Text>
             </View>
-            {unavailable ? null : props.events.length > 0 ? (
-                props.events.map((event) => (
-                    props.renderEvent
-                        ? props.renderEvent(event, props.testID, props.familyKey)
-                        : renderBrowserDiagnosticFamilyEvent(event, props.testID, props.familyKey)
-                ))
+            {!unavailable && props.note && props.items.length > 0 ? (
+                <Text testID={`${props.testID}-${props.familyKey}-note`} style={styles.note}>{props.note}</Text>
+            ) : null}
+            {showToolbar ? (
+                <View style={styles.toolbar}>
+                    {props.searchPlaceholder ? (
+                        <CompactSearchField
+                            testID={`${props.testID}-${props.familyKey}-search`}
+                            value={query}
+                            onChangeText={setQuery}
+                            placeholder={props.searchPlaceholder}
+                            accessory={filterBar ?? undefined}
+                            accessoryPlacement={narrow ? 'below' : 'beside'}
+                        />
+                    ) : filterBar}
+                </View>
+            ) : null}
+            {!unavailable && summaryEvents.length > 0 ? (
+                <View style={styles.list}>
+                    {summaryEvents.map((event) => renderBrowserDiagnosticEvent(event, props.testID, `${props.testID}-${props.familyKey}-row-${sanitizeTestIdPart(event.eventId)}`))}
+                </View>
+            ) : null}
+            {unavailable || props.items.length === 0 ? null : visible.length > 0 ? (
+                <View style={styles.list}>{props.renderItems(visible)}</View>
+            ) : (
+                <Text testID={`${props.testID}-${props.familyKey}-no-matches`} style={styles.note}>
+                    {t('browserDiagnostics.host.devtools.noMatches')}
+                </Text>
+            )}
+        </View>
+        </DiagnosticsNarrowContext.Provider>
+    );
+}
+
+/** A labelled metric cell: value with its unit, and a verdict word when the metric has one. */
+export function DiagnosticsMetric(props: Readonly<{
+    label: string;
+    value: string;
+    verdict?: Readonly<{ label: string; tone: 'success' | 'warning' | 'danger' }> | null;
+    testID: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const verdictColor = props.verdict?.tone === 'danger'
+        ? theme.colors.state.danger.textForeground ?? theme.colors.state.danger.foreground
+        : props.verdict?.tone === 'warning'
+            ? theme.colors.state.attention.textForeground ?? theme.colors.state.attention.foreground
+            : theme.colors.state.success.textForeground ?? theme.colors.state.success.foreground;
+    return (
+        <View testID={props.testID} style={styles.metricCell}>
+            <Text style={styles.metricLabel}>{props.label}</Text>
+            <Text style={styles.metricValue}>{props.value}</Text>
+            {props.verdict ? (
+                <Text testID={`${props.testID}-verdict`} style={[styles.metricVerdict, { color: verdictColor }]}>
+                    {props.verdict.label}
+                </Text>
             ) : null}
         </View>
+    );
+}
+
+/** The generic row for a family without its own panel: its summary and its labelled fields. */
+export function renderBrowserDiagnosticEvent(
+    event: BrowserDiagnosticEventProjection,
+    testID: string,
+    rowTestIDOverride?: string,
+): React.ReactElement {
+    const rowTestID = rowTestIDOverride ?? `${testID}-event-${sanitizeTestIdPart(event.eventId)}`;
+    const fields = labelledEventFields(event);
+    return (
+        <DiagnosticsRow
+            key={event.eventId}
+            testID={rowTestID}
+            subject={event.summary ?? event.kind}
+            meta={[{ text: formatClockTime(event.capturedAtMs) }]}
+            renderDetail={fields.length > 0
+                ? () => <DiagnosticsFieldList fields={fields} testID={`${rowTestID}-detail`} />
+                : undefined}
+        />
     );
 }

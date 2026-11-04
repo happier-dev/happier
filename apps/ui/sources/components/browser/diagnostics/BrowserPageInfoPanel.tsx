@@ -1,70 +1,57 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { Text } from '@/components/ui/text/Text';
 import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
-    browserDiagnosticsPanelStyles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsFieldList,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
+    type DiagnosticsField,
     fieldLabel,
-    renderBrowserDiagnosticEventDetail,
-    renderPanelMetric,
-    safeEventDetail,
-    sanitizeTestIdPart,
+    formatBrowserDiagnosticFieldValue,
 } from './BrowserDiagnosticsFamilyPanel';
 
-function renderPageInfoEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-pageInfo-row-${eventId}`;
+const INFO_ORDER = ['title', 'url', 'readyState', 'nodeCount', 'elementCount', 'maxDepth', 'serviceWorker', 'webgl', 'webrtc'] as const;
+const MONO_KEYS = new Set(['url']);
+const COPY_KEYS = new Set(['url', 'title']);
 
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
-            </View>
-            <Text testID={`${testID}-pageInfo-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            <View testID={`${testID}-pageInfo-fields-${eventId}`} style={browserDiagnosticsPanelStyles.metricGrid}>
-                {(event.detail?.fields ?? []).map((field) => {
-                    const fieldId = sanitizeTestIdPart(field.key);
-                    const metric = renderPanelMetric({
-                        label: fieldLabel(field.key),
-                        value: field.value,
-                        testID: `${testID}-pageInfo-field-${eventId}-${fieldId}`,
-                    });
-                    return metric ? React.cloneElement(metric, { key: field.key }) : null;
-                })}
-            </View>
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
-            ) : null}
-        </View>
-    );
+/** One key/value sheet for the page: its latest value for each fact, each fact once. */
+function pageInfoFields(events: readonly BrowserDiagnosticEventProjection[]): DiagnosticsField[] {
+    const latest = new Map<string, string | number | boolean>();
+    for (const event of events) {
+        for (const field of event.detail?.fields ?? []) latest.set(field.key, field.value);
+    }
+    if (!latest.has('title') && latest.get('titleAvailable') === false) {
+        latest.set('title', t('browserDiagnostics.host.devtools.info.titleNotShared'));
+    }
+    const fields: DiagnosticsField[] = [];
+    const keys = [...INFO_ORDER, ...[...latest.keys()].filter((key) => !(INFO_ORDER as readonly string[]).includes(key))];
+    for (const key of keys) {
+        const value = latest.get(key);
+        const label = fieldLabel(key);
+        if (typeof value === 'undefined' || !label) continue;
+        fields.push({
+            key,
+            label,
+            value: formatBrowserDiagnosticFieldValue(value),
+            mono: MONO_KEYS.has(key),
+            copy: COPY_KEYS.has(key) && typeof value === 'string',
+        });
+    }
+    return fields;
 }
 
 export function BrowserPageInfoPanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const fields = React.useMemo(() => pageInfoFields(props.events), [props.events]);
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="pageInfo"
-            renderEvent={renderPageInfoEvent}
+            items={fields.length > 0 ? [fields] : []}
+            renderItems={() => (
+                <DiagnosticsFieldList variant="sheet" fields={fields} testID={`${props.testID}-pageInfo-fields`} />
+            )}
         />
     );
 }

@@ -15,14 +15,17 @@ import { t } from '@/text';
 import { BrowserConsolePanel, BrowserPageErrorPanel } from './BrowserConsolePanel';
 import {
     browserDiagnosticsPanelStyles as stylesheet,
+    DiagnosticsFieldList,
+    DiagnosticsRow,
     diagnosticFamilyLabel,
-    familyLabel,
+    formatBytes,
     formatNumber,
     renderBrowserDiagnosticEvent,
     sanitizeTestIdPart,
+    sourceLabel,
     statusLabel,
 } from './BrowserDiagnosticsFamilyPanel';
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
+import { BrowserDiagnosticsEvalConsole } from './BrowserDiagnosticsEvalConsole';
 import {
     BrowserDiagnosticsInteractionPanel,
     type BrowserDiagnosticsInteractionControls,
@@ -35,38 +38,28 @@ import { BrowserPerformancePanel } from './BrowserPerformancePanel';
 import { BrowserResourcesPanel } from './BrowserResourcesPanel';
 import { BrowserStoragePanel } from './BrowserStoragePanel';
 
-function flowTitle(flow: BrowserPreviewProxyFlowProjection): string {
-    if (flow.method || flow.path || typeof flow.statusCode === 'number') {
-        return t('browserDiagnostics.previewProxy.httpFlow', {
-            method: flow.method ?? 'HTTP',
-            path: flow.path ?? '/',
-            statusCode: typeof flow.statusCode === 'number' ? String(flow.statusCode) : '-',
-        });
-    }
-    if (flow.websocketSubprotocol) {
-        return t('browserDiagnostics.previewProxy.webSocketFlow', { subprotocol: flow.websocketSubprotocol });
-    }
-    return t('browserDiagnostics.previewProxy.tunnelFlow', { flowId: flow.flowId });
-}
-
 function renderFlow(flow: BrowserPreviewProxyFlowProjection, testID: string): React.ReactElement {
     const rowTestID = `${testID}-flow-${sanitizeTestIdPart(flow.flowId)}`;
+    const failed = typeof flow.statusCode === 'number' && flow.statusCode >= 400;
+    const lead = flow.websocketSubprotocol ? 'WS' : (flow.method ?? (flow.path ? 'HTTP' : null));
+    const subject = flow.path ?? flow.websocketSubprotocol ?? t('browserDiagnostics.previewProxy.tunnelFlow', { flowId: flow.flowId });
+    const fields = [
+        { key: 'bytes', label: t('browserDiagnostics.host.devtools.network.size'), value: t('browserDiagnostics.previewProxy.flowBytes', { bytesIn: formatNumber(flow.bytesIn), bytesOut: formatNumber(flow.bytesOut) }) },
+        { key: 'messages', label: t('browserDiagnostics.host.fields.messages'), value: t('browserDiagnostics.previewProxy.flowMessages', { messagesIn: formatNumber(flow.messagesIn), messagesOut: formatNumber(flow.messagesOut) }) },
+    ];
     return (
-        <View key={flow.flowId} testID={rowTestID} style={stylesheet.flowRow}>
-            <Text style={stylesheet.flowTitle}>{flowTitle(flow)}</Text>
-            <Text style={stylesheet.flowMeta}>
-                {t('browserDiagnostics.previewProxy.flowBytes', {
-                    bytesIn: formatNumber(flow.bytesIn),
-                    bytesOut: formatNumber(flow.bytesOut),
-                })}
-            </Text>
-            <Text style={stylesheet.flowMeta}>
-                {t('browserDiagnostics.previewProxy.flowMessages', {
-                    messagesIn: formatNumber(flow.messagesIn),
-                    messagesOut: formatNumber(flow.messagesOut),
-                })}
-            </Text>
-        </View>
+        <DiagnosticsRow
+            key={flow.flowId}
+            testID={rowTestID}
+            tone={failed ? 'danger' : 'neutral'}
+            lead={lead}
+            subject={subject}
+            meta={[
+                typeof flow.statusCode === 'number' ? { text: String(flow.statusCode), tone: failed ? 'danger' : undefined } : null,
+                { text: formatBytes(flow.bytesIn + flow.bytesOut) },
+            ]}
+            renderDetail={() => <DiagnosticsFieldList fields={fields} testID={`${rowTestID}-detail`} />}
+        />
     );
 }
 
@@ -83,22 +76,17 @@ function renderHostDiagnosticFamily(params: Readonly<{
     const familyTestID = `${params.testID}-family-${params.family.family}`;
     return (
         <View key={params.family.family} testID={familyTestID} style={stylesheet.familySection}>
-            <View style={stylesheet.titleRow}>
-                <Text style={stylesheet.flowTitle}>{params.family.family}</Text>
-                {params.family.status === 'unavailable' ? null : (
-                    <BrowserDiagnosticsFidelityBadge
-                        fidelity={params.family.fidelity}
-                        testID={`${familyTestID}-fidelity-${params.family.fidelity}`}
-                    />
-                )}
+            <View style={stylesheet.header}>
+                <Text style={stylesheet.title}>{diagnosticFamilyLabel(params.family.family)}</Text>
+                <Text style={stylesheet.stateLine}>
+                    {params.family.status === 'unavailable'
+                        ? t('browserDiagnostics.host.familyNotReported')
+                        : [
+                            t('browserDiagnostics.host.devtools.count.entries', { count: familyEvents.length }),
+                            sourceLabel(params.family.fidelity, params.family.trusted),
+                        ].filter(Boolean).join(' · ')}
+                </Text>
             </View>
-            <Text style={stylesheet.flowMeta}>
-                {params.family.status === 'unavailable'
-                    ? t('browserDiagnostics.host.familyNotReported')
-                    : t('browserDiagnostics.host.eventCount', {
-                        count: formatNumber(familyEvents.length),
-                    })}
-            </Text>
             {familyEvents.length > 0 ? (
                 familyEvents.map((event) => renderHostDiagnosticEvent(event, params.testID))
             ) : null}
@@ -109,6 +97,7 @@ function renderHostDiagnosticFamily(params: Readonly<{
 type BrowserDiagnosticsProductPanelComponent = React.ComponentType<{
     family: BrowserDiagnosticFamilyProjection;
     events: readonly BrowserDiagnosticEventProjection[];
+    projection?: BrowserViewDiagnosticsProjection;
     testID: string;
 }>;
 
@@ -141,6 +130,7 @@ function renderHostDiagnosticPanels(
                 key={family.family}
                 family={family}
                 events={diagnostics.events.filter((event) => event.family === family.family)}
+                projection={diagnostics}
                 testID={testID}
             />,
         );
@@ -164,61 +154,43 @@ function BrowserPreviewProxyDiagnosticsPanel(props: Readonly<{
 }>): React.ReactElement {
     const unavailableFamilies = props.diagnostics.families.filter((family) => family.status === 'unavailable');
 
+    const stateLine = [
+        t('browserDiagnostics.previewProxy.activeFlows', { count: formatNumber(props.diagnostics.activeFlowCount) }),
+        t('browserDiagnostics.previewProxy.attributionAllViews'),
+    ].join(' · ');
+
     return (
         <>
             <View style={stylesheet.header}>
-                <View style={stylesheet.titleRow}>
-                    <Text style={stylesheet.title}>{t('browserDiagnostics.previewProxy.title')}</Text>
-                    <BrowserDiagnosticsFidelityBadge
-                        fidelity={props.diagnostics.fidelity}
-                        testID={`${props.testID}-fidelity-${props.diagnostics.fidelity}`}
-                    />
-                </View>
-                <Text testID={`${props.testID}-status`} style={stylesheet.status}>
-                    {statusLabel(props.diagnostics.status)}
+                <Text testID={`${props.testID}-status`} style={stylesheet.stateLine}>
+                    {props.diagnostics.status === 'available' ? stateLine : statusLabel(props.diagnostics.status)}
                 </Text>
-                <Text testID={`${props.testID}-active-flow-count`} style={stylesheet.subtitle}>
-                    {t('browserDiagnostics.previewProxy.activeFlows', {
-                        count: formatNumber(props.diagnostics.activeFlowCount),
-                    })}
-                </Text>
-                <Text style={stylesheet.subtitle}>{t('browserDiagnostics.previewProxy.attributionAllViews')}</Text>
                 {props.diagnostics.status === 'stale' ? (
                     <Text testID={`${props.testID}-stale`} style={stylesheet.warning}>
                         {t('browserDiagnostics.previewProxy.staleNotice')}
                     </Text>
                 ) : null}
                 {props.diagnostics.status === 'unavailable' ? (
-                    <Text testID={`${props.testID}-unavailable`} style={stylesheet.warning}>
-                        {t('browserDiagnostics.previewProxy.unavailableReason', {
-                            reasonCode: props.diagnostics.unavailableReasonCode ?? 'observability_unavailable',
-                        })}
+                    <Text testID={`${props.testID}-unavailable`} style={stylesheet.subtitle}>
+                        {t('browserDiagnostics.host.devtools.unavailable.previewReason')}
                     </Text>
                 ) : null}
             </View>
 
-            <View style={stylesheet.content}>
-                {props.diagnostics.flows.length > 0 ? (
-                    props.diagnostics.flows.map((flow) => renderFlow(flow, props.testID))
-                ) : (
-                    <Text testID={`${props.testID}-network-empty`} style={stylesheet.subtitle}>
-                        {t('browserDiagnostics.previewProxy.networkEmpty')}
-                    </Text>
-                )}
-            </View>
+            {props.diagnostics.flows.length > 0 ? (
+                <View>{props.diagnostics.flows.map((flow) => renderFlow(flow, props.testID))}</View>
+            ) : (
+                <Text testID={`${props.testID}-network-empty`} style={stylesheet.note}>
+                    {t('browserDiagnostics.previewProxy.networkEmpty')}
+                </Text>
+            )}
 
             {unavailableFamilies.length > 0 ? (
-                <View style={stylesheet.familyList}>
-                    {unavailableFamilies.map((family) => (
-                        <View
-                            key={family.family}
-                            testID={`${props.testID}-family-${family.family}-unavailable`}
-                            style={stylesheet.familyPill}
-                        >
-                            <Text style={stylesheet.familyText}>{familyLabel(family)}</Text>
-                        </View>
-                    ))}
-                </View>
+                <Text testID={`${props.testID}-families-unavailable`} style={stylesheet.note}>
+                    {t('browserDiagnostics.host.devtools.unavailable.previewFamilies', {
+                        families: unavailableFamilies.map((family) => diagnosticFamilyLabel(family.family)).join(', '),
+                    })}
+                </Text>
             ) : null}
         </>
     );
@@ -254,12 +226,12 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
     const tools = props.diagnostics.families
         .filter((family) => family.status !== 'unavailable')
         .map((family) => diagnosticFamilyLabel(family.family));
-    const eventCount = t('browserDiagnostics.host.eventCount', { count: formatNumber(props.diagnostics.eventCount) });
+    const eventCount = t('browserDiagnostics.host.devtools.count.entries', { count: props.diagnostics.eventCount });
     return (
         <>
             {overview ? (
                 <View style={stylesheet.header}>
-                    <Text testID={`${props.testID}-status`} style={stylesheet.flowTitle}>
+                    <Text testID={`${props.testID}-status`} style={stylesheet.stateLine}>
                         {tools.length > 0 ? `${tools.join(', ')} · ${eventCount}` : eventCount}
                     </Text>
                 </View>
@@ -273,18 +245,23 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
                 />
             ) : null}
 
-            <View style={stylesheet.content}>
+            <View style={stylesheet.familySection}>
                 {props.diagnostics.families.length > 0 ? (
                     renderHostDiagnosticPanels(props.diagnostics, props.testID)
                 ) : props.diagnostics.events.length > 0 ? (
                     props.diagnostics.events.map((event) => renderHostDiagnosticEvent(event, props.testID))
                 ) : (
-                    <Text testID={`${props.testID}-events-empty`} style={stylesheet.subtitle}>
-                        {t('browserDiagnostics.host.eventsEmpty')}
+                    <Text testID={`${props.testID}-events-empty`} style={stylesheet.note}>
+                        {t('browserDiagnostics.host.devtools.empty')}
                     </Text>
                 )}
             </View>
 
+            {/* The REPL is the console's input line: it follows the log, as in every devtools console. */}
+            {props.interaction?.state === 'enabled' && props.interaction.evalConsole
+                && (props.interactionSurface === 'console' || props.interactionSurface === 'all' || !props.interactionSurface) ? (
+                <BrowserDiagnosticsEvalConsole controls={props.interaction.evalConsole} testID={`${props.testID}-eval`} />
+            ) : null}
         </>
     );
 }

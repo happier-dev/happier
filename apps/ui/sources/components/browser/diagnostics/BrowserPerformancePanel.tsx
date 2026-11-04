@@ -1,70 +1,81 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { Text } from '@/components/ui/text/Text';
 import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
-    browserDiagnosticsPanelStyles,
+    browserDiagnosticsPanelStyles as styles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsMetric,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
     fieldLabel,
-    renderBrowserDiagnosticEventDetail,
-    renderPanelMetric,
-    safeEventDetail,
-    sanitizeTestIdPart,
+    formatDurationMs,
+    formatNumber,
 } from './BrowserDiagnosticsFamilyPanel';
 
-function renderPerformanceEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-performance-row-${eventId}`;
+type Unit = 'ms' | 'score' | 'count';
 
-    return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
-                />
-            </View>
-            <Text testID={`${testID}-performance-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            <View testID={`${testID}-performance-metrics-${eventId}`} style={browserDiagnosticsPanelStyles.metricGrid}>
-                {(event.detail?.fields ?? []).map((field) => {
-                    const fieldId = sanitizeTestIdPart(field.key);
-                    const metric = renderPanelMetric({
-                        label: fieldLabel(field.key),
-                        value: field.value,
-                        testID: `${testID}-performance-metric-${eventId}-${fieldId}`,
-                    });
-                    return metric ? React.cloneElement(metric, { key: field.key }) : null;
-                })}
-            </View>
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
-            ) : null}
-        </View>
-    );
+/** Web-vitals thresholds (good, poor) from web.dev; between them is "needs improvement". */
+const METRICS: readonly Readonly<{ key: string; unit: Unit; thresholds?: readonly [number, number] }>[] = [
+    { key: 'lcpMs', unit: 'ms', thresholds: [2500, 4000] },
+    { key: 'inpMs', unit: 'ms', thresholds: [200, 500] },
+    { key: 'clsScore', unit: 'score', thresholds: [0.1, 0.25] },
+    { key: 'fcpMs', unit: 'ms', thresholds: [1800, 3000] },
+    { key: 'longTaskCount', unit: 'count' },
+    { key: 'longTaskTotalMs', unit: 'ms' },
+    { key: 'navResponseEndMs', unit: 'ms' },
+    { key: 'navDomContentLoadedMs', unit: 'ms' },
+    { key: 'navLoadEventEndMs', unit: 'ms' },
+];
+
+function formatMetric(value: number, unit: Unit): string {
+    if (unit === 'ms') return formatDurationMs(value);
+    if (unit === 'score') return new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(value);
+    return formatNumber(value);
+}
+
+function verdict(value: number, thresholds: readonly [number, number] | undefined) {
+    if (!thresholds) return null;
+    if (value <= thresholds[0]) return { label: t('browserDiagnostics.host.devtools.performance.good'), tone: 'success' as const };
+    if (value <= thresholds[1]) return { label: t('browserDiagnostics.host.devtools.performance.needsWork'), tone: 'warning' as const };
+    return { label: t('browserDiagnostics.host.devtools.performance.poor'), tone: 'danger' as const };
+}
+
+function latestMetrics(events: readonly BrowserDiagnosticEventProjection[]): ReadonlyMap<string, number> {
+    const values = new Map<string, number>();
+    for (const event of events) {
+        for (const field of event.detail?.fields ?? []) {
+            if (typeof field.value === 'number' && Number.isFinite(field.value)) values.set(field.key, field.value);
+        }
+    }
+    return values;
 }
 
 export function BrowserPerformancePanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const values = React.useMemo(() => latestMetrics(props.events), [props.events]);
+    const present = METRICS.filter((metric) => values.has(metric.key));
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="performance"
-            renderEvent={renderPerformanceEvent}
+            items={present}
+            renderItems={(metrics) => (
+                <View style={styles.metricGrid}>
+                    {metrics.map((metric) => {
+                        const value = values.get(metric.key) ?? 0;
+                        return (
+                            <DiagnosticsMetric
+                                key={metric.key}
+                                testID={`${props.testID}-performance-metric-${metric.key}`}
+                                label={fieldLabel(metric.key) ?? metric.key}
+                                value={formatMetric(value, metric.unit)}
+                                verdict={verdict(value, metric.thresholds)}
+                            />
+                        );
+                    })}
+                </View>
+            )}
         />
     );
 }

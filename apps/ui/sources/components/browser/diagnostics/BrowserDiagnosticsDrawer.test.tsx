@@ -10,7 +10,7 @@ import type {
     BrowserDiagnosticsUiStore,
 } from '@/sync/domains/browser/diagnostics';
 import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore, selectBrowserDiagnosticsForView } from '@/sync/domains/browser/diagnostics/store';
-import { browserViewKey } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 import type { BrowserDiagnosticsDrawerHandle } from './BrowserDiagnosticsDrawer';
 import type { BrowserDiagnosticsInteractionControls } from './BrowserDiagnosticsInteractionPanel';
@@ -489,7 +489,7 @@ describe('BrowserDiagnosticsDrawer', () => {
         await act(async () => { handleRef.current?.open(); });
 
         expect(screen.findByTestId('browser-diagnostics-drawer-body')).toBeTruthy();
-        expect(screen.findByTestId('browser-diagnostics-drawer-body-fidelity-previewProxy')).toBeTruthy();
+        expect(screen.findByTestId('browser-diagnostics-drawer-body-status')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-flow-tunnel_1')).toBeTruthy();
     });
 
@@ -583,6 +583,6 @@ describe('BrowserDiagnosticsDrawer', () => {
         expect(screen.findByTestId('browser-diagnostics-drawer-container-collapsed')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-performance-panel')).toBeTruthy();
         expect(screen.findByTestId('browser-diagnostics-drawer-body-console-panel')).toBeNull();
-        expect(screen.findByTestId('browser-diagnostics-drawer-body-performance-metric-evt_perf_2-lcpMs')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('980 ms');
     });
 });

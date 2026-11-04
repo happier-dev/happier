@@ -1,9 +1,13 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Pressable, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosedCodeText, DisclosureCaret, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { Typography } from '@/constants/Typography';
 import type {
     BrowserDiagnosticsEvalResultV1,
@@ -46,72 +50,103 @@ export type BrowserDiagnosticsEvalConsoleControls = Readonly<{
     onCancelEval: (evalRequestId: string) => void;
 }>;
 
+const MONO_MICRO = { ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() };
+
 const stylesheet = StyleSheet.create((theme) => ({
+    // The REPL reads as the console's tail: its log lines in the console's row rhythm, its input last.
     root: {
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border.default,
+    },
+    line: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
         gap: theme.space.s8,
+        paddingHorizontal: theme.space.s12,
+        paddingVertical: theme.space.s2,
+    },
+    entry: {
+        paddingVertical: theme.space.s2,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.subtle,
+    },
+    entryFailed: {
+        backgroundColor: theme.colors.state.danger.background,
+    },
+    prompt: {
+        ...MONO_MICRO,
+        width: ICON_SIZE.xxs + ICON_SIZE.xs + theme.space.s8,
+        color: theme.colors.text.secondary,
+    },
+    promptSlot: {
+        width: ICON_SIZE.xxs + ICON_SIZE.xs + theme.space.s8,
+        paddingTop: 1,
+    },
+    expression: {
+        ...MONO_MICRO,
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.primary,
+    },
+    meta: {
+        ...Typography.variant('micro', 'regular'),
+        color: theme.colors.text.secondary,
+    },
+    error: {
+        ...Typography.variant('micro', 'regular'),
+        flex: 1,
+        minWidth: 0,
+        // Semantic foregrounds are fill colours; the words stay ink, the glyph carries the hue.
+        color: theme.colors.text.primary,
+    },
+    errorBody: {
+        flex: 1,
+        minWidth: 0,
+        gap: theme.space.s2,
+        alignItems: 'flex-start',
     },
     inputRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+        paddingHorizontal: theme.space.s12,
+        paddingTop: theme.space.s6,
     },
     input: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
+        ...MONO_MICRO,
         flex: 1,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-        color: theme.colors.text.primary,
-    },
-    entry: {
-        gap: theme.space.s4,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-    },
-    expression: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.primary,
-    },
-    meta: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-    },
-    error: {
-        ...Typography.variant('meta'),
-        ...Typography.default('semiBold'),
-        // Q2 measured the theme's semantic FOREGROUNDS as text at 2.20–3.55:1 in light theme —
-        // they are fill colours, not text colours. The words carry their own meaning here, so
-        // they take `text.primary`; the hue stays on the border/glyph beside them, where it is a
-        // redundant cue rather than the only one.
+        minWidth: 0,
+        paddingVertical: theme.space.s4,
         color: theme.colors.text.primary,
     },
     empty: {
-        ...Typography.variant('meta'),
+        ...Typography.variant('micro', 'regular'),
         color: theme.colors.text.secondary,
+        paddingHorizontal: theme.space.s12,
+        paddingVertical: theme.space.s4,
     },
     node: {
+        flex: 1,
+        minWidth: 0,
         gap: theme.space.s2,
     },
     nodeRow: {
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
-        gap: theme.space.s6,
+        gap: theme.space.s4,
     },
     nodeName: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.primary,
+        ...MONO_MICRO,
+        color: theme.colors.text.secondary,
     },
     nodeValue: {
-        ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
-        color: theme.colors.text.secondary,
+        ...MONO_MICRO,
+        color: theme.colors.text.primary,
+    },
+    caretSlot: {
+        width: ICON_SIZE.xxs,
+        alignItems: 'center',
     },
     children: {
         gap: theme.space.s2,
@@ -142,22 +177,22 @@ function describeRemoteValue(
     return remote.description ?? remote.className ?? remote.type;
 }
 
-function entryStatusLabel(status: BrowserDiagnosticsEvalConsoleEntry['status']): string {
+/** The one sentence for an entry that did not produce a value; `null` while it has one or is still running. */
+function entryProblem(status: BrowserDiagnosticsEvalConsoleEntry['status']): string | null {
     switch (status) {
         case 'pending':
-            return t('browserDiagnostics.host.interaction.eval.statusPending');
         case 'completed':
-            return t('browserDiagnostics.host.interaction.eval.statusCompleted');
+            return null;
         case 'cancelled':
             return t('status.canceled');
         case 'failed':
-            return t('browserDiagnostics.host.interaction.eval.statusFailed');
+            return t('browserDiagnostics.host.devtools.eval.failed');
         case 'timedOut':
-            return t('browserDiagnostics.host.interaction.eval.statusTimedOut');
+            return t('browserDiagnostics.host.devtools.eval.timedOut');
         case 'blocked':
-            return t('browserDiagnostics.host.interaction.eval.statusBlocked');
+            return t('browserDiagnostics.host.devtools.eval.blocked');
         case 'collectorDegraded':
-            return t('browserDiagnostics.host.interaction.eval.statusDegraded');
+            return t('browserDiagnostics.host.devtools.eval.degraded');
     }
 }
 
@@ -199,29 +234,31 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
 
     return (
         <View testID={testID} style={stylesheet.node}>
-            <View style={stylesheet.nodeRow}>
-                <Text style={stylesheet.nodeName}>{props.name}</Text>
-                <Text style={stylesheet.nodeValue}>{describeRemoteValue(remote)}{remote.previewTruncated ? ' …' : ''}</Text>
-                {expandable ? (
-                    <ToolbarButton
-                        onPress={onToggle}
-                        testID={`${testID}-expand`}
-                        label={expanded
-                            ? t('browserDiagnostics.host.interaction.eval.collapse')
-                            : t('browserDiagnostics.host.interaction.eval.expand')}
-                    />
-                ) : null}
-            </View>
+            <Pressable
+                testID={expandable ? `${testID}-expand` : undefined}
+                disabled={!expandable}
+                onPress={onToggle}
+                accessibilityRole={expandable ? 'button' : undefined}
+                accessibilityState={expandable ? { expanded } : undefined}
+                accessibilityLabel={expandable
+                    ? (expanded
+                        ? t('browserDiagnostics.host.interaction.eval.collapse')
+                        : t('browserDiagnostics.host.interaction.eval.expand'))
+                    : undefined}
+                style={stylesheet.nodeRow}
+            >
+                <View style={stylesheet.caretSlot}>
+                    {expandable ? <DisclosureCaret expanded={expanded} density="compact" /> : null}
+                </View>
+                {props.name ? <Text style={stylesheet.nodeName}>{`${props.name}:`}</Text> : null}
+                <Text selectable style={stylesheet.nodeValue}>{describeRemoteValue(remote)}{remote.previewTruncated ? ' …' : ''}</Text>
+            </Pressable>
             {expanded && inspector ? (
                 <View style={stylesheet.children} testID={`${testID}-children`}>
                     {inspector.status === 'loading' ? (
                         <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.loading')}</Text>
                     ) : inspector.status === 'failed' ? (
-                        <Text style={stylesheet.error}>
-                            {t('browserDiagnostics.host.interaction.eval.propertiesFailed', {
-                                reasonCode: inspector.errorCode ?? 'unavailable',
-                            })}
-                        </Text>
+                        <Text style={stylesheet.meta}>{t('browserDiagnostics.host.devtools.eval.propertiesFailed')}</Text>
                     ) : inspector.properties.length === 0 ? (
                         <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.noProperties')}</Text>
                     ) : (
@@ -242,6 +279,36 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
     );
 }
 
+function EvalErrorLine(props: Readonly<{ problem: string; errorCode?: string; testID: string }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const binding = useCoreDisclosureToggleBinding();
+    const [open, setOpen] = React.useState(false);
+    return (
+        <View style={stylesheet.line}>
+            <View style={stylesheet.promptSlot}>
+                <Icon name="x-circle" size={ICON_SIZE.xs} color={theme.colors.state.danger.foreground} />
+            </View>
+            <View style={stylesheet.errorBody}>
+                <Text testID={`${props.testID}-problem`} style={stylesheet.error}>{props.problem}</Text>
+                {props.errorCode ? (
+                    <>
+                        <HappierDisclosureToggle
+                            testID={`${props.testID}-details`}
+                            label={t('browserDiagnostics.host.devtools.eval.details')}
+                            open={open}
+                            onPress={() => setOpen((value) => !value)}
+                            caret={binding.renderCaret(open)}
+                            renderLabel={binding.renderLabel}
+                            focusColor={binding.focusColor}
+                        />
+                        {open ? <DisclosedCodeText testID={`${props.testID}-code`}>{props.errorCode}</DisclosedCodeText> : null}
+                    </>
+                ) : null}
+            </View>
+        </View>
+    );
+}
+
 function BrowserDiagnosticsEvalEntryView(props: Readonly<{
     entry: BrowserDiagnosticsEvalConsoleEntry;
     controls: BrowserDiagnosticsEvalConsoleControls;
@@ -249,27 +316,35 @@ function BrowserDiagnosticsEvalEntryView(props: Readonly<{
 }>): React.ReactElement {
     const { entry, controls, testID } = props;
     const entryId = sanitizeTestIdPart(entry.evalRequestId);
+    const problem = entryProblem(entry.status) ?? (entry.errorCode ? t('browserDiagnostics.host.devtools.eval.failed') : null);
     return (
-        <View testID={`${testID}-entry-${sanitizeTestIdPart(entry.evalRequestId)}`} style={stylesheet.entry}>
-            <Text style={stylesheet.expression}>{entry.expression}</Text>
-            <Text style={stylesheet.meta}>{entryStatusLabel(entry.status)}</Text>
+        <View testID={`${testID}-entry-${entryId}`} style={[stylesheet.entry, problem && entry.status !== 'cancelled' ? stylesheet.entryFailed : null]}>
+            <View style={stylesheet.line}>
+                <Text style={stylesheet.prompt}>{'›'}</Text>
+                <Text selectable style={stylesheet.expression}>{entry.expression}</Text>
                 {entry.status === 'pending' ? (
                     <ToolbarButton testID={`${testID}-cancel-${entryId}`}
                         label={t('common.cancel')} onPress={() => controls.onCancelEval(entry.evalRequestId)} />
                 ) : null}
-            {entry.errorCode ? (
-                <Text style={stylesheet.error}>
-                    {t('browserDiagnostics.host.interaction.eval.error', { reasonCode: entry.errorCode })}
-                </Text>
+            </View>
+            {entry.status === 'pending' ? (
+                <View style={stylesheet.line}>
+                    <Text style={stylesheet.prompt}>{'‹'}</Text>
+                    <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.statusPending')}</Text>
+                </View>
             ) : null}
+            {problem ? <EvalErrorLine problem={problem} errorCode={entry.errorCode} testID={`${testID}-error-${entryId}`} /> : null}
             {entry.result ? (
-                <BrowserDiagnosticsObjectNode
-                    name={t('browserDiagnostics.host.interaction.eval.resultLabel')}
-                    remote={entry.result}
-                    objectGroupId={entry.objectGroupId}
-                    controls={controls}
-                    testID={`${testID}-result-${sanitizeTestIdPart(entry.evalRequestId)}`}
-                />
+                <View style={stylesheet.line}>
+                    <Text style={stylesheet.prompt}>{'‹'}</Text>
+                    <BrowserDiagnosticsObjectNode
+                        name=""
+                        remote={entry.result}
+                        objectGroupId={entry.objectGroupId}
+                        controls={controls}
+                        testID={`${testID}-result-${entryId}`}
+                    />
+                </View>
             ) : null}
         </View>
     );
@@ -293,24 +368,6 @@ export function BrowserDiagnosticsEvalConsole(props: Readonly<{
     return (
         <View testID={`${props.testID}-console`} style={stylesheet.root}>
             {/* It sits under the Console tab, so it carries no "Console" title of its own. */}
-            <View style={stylesheet.inputRow}>
-                <TextInput
-                    testID={`${props.testID}-input`}
-                    value={expression}
-                    onChangeText={setExpression}
-                    onSubmitEditing={submit}
-                    placeholder={t('browserDiagnostics.host.interaction.eval.placeholder')}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    style={stylesheet.input}
-                />
-                <ToolbarButton
-                    onPress={submit}
-                    size="md"
-                    testID={`${props.testID}-submit`}
-                    label={t('browserDiagnostics.host.interaction.eval.run')}
-                />
-            </View>
             {controls.entries.length === 0 ? (
                 <Text testID={`${props.testID}-empty`} style={stylesheet.empty}>
                     {t('browserDiagnostics.host.interaction.eval.empty')}
@@ -325,6 +382,24 @@ export function BrowserDiagnosticsEvalConsole(props: Readonly<{
                     />
                 ))
             )}
+            <View style={stylesheet.inputRow}>
+                <Text style={stylesheet.prompt}>{'›'}</Text>
+                <TextInput
+                    testID={`${props.testID}-input`}
+                    value={expression}
+                    onChangeText={setExpression}
+                    onSubmitEditing={submit}
+                    placeholder={t('browserDiagnostics.host.interaction.eval.placeholder')}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={stylesheet.input}
+                />
+                <ToolbarButton
+                    onPress={submit}
+                    testID={`${props.testID}-submit`}
+                    label={t('browserDiagnostics.host.interaction.eval.run')}
+                />
+            </View>
         </View>
     );
 }

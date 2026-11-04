@@ -1,194 +1,180 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { Text } from '@/components/ui/text/Text';
-import type { BrowserDiagnosticEventProjection } from '@/sync/domains/browser/diagnostics';
+import {
+    selectBrowserDiagnosticRequests,
+    type BrowserDiagnosticEventProjection,
+    type BrowserDiagnosticRequestProjection,
+} from '@/sync/domains/browser/diagnostics';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsFidelityBadge } from './BrowserDiagnosticsFidelityBadge';
 import {
     browserDiagnosticsPanelStyles,
     BrowserDiagnosticsFamilyPanelFrame,
+    DiagnosticsCodeBlock,
+    DiagnosticsColumnHeader,
+    DiagnosticsFieldList,
+    DiagnosticsRow,
     type BrowserDiagnosticsFamilyPanelProps,
-    eventTitle,
+    type DiagnosticsField,
     fieldLabel,
-    getBrowserDiagnosticField,
-    getBrowserDiagnosticFieldText,
-    renderBrowserDiagnosticEventDetail,
-    renderPanelField,
-    renderPanelMetric,
-    safeEventDetail,
+    formatBrowserDiagnosticFieldValue,
+    formatBytes,
+    formatDurationMs,
+    getBrowserDiagnosticString,
     sanitizeTestIdPart,
 } from './BrowserDiagnosticsFamilyPanel';
+import { BrowserNetworkRequestExtras } from './BrowserNetworkRequestExtras';
 
-const WEBSOCKET_METRIC_KEYS = [
-    'framesSent',
-    'framesReceived',
-    'messageCount',
-    'bytesSent',
-    'bytesReceived',
-] as const;
+/**
+ * One row per request. Pairing (start, response, finish, failure by `requestId` or socket id) and
+ * filtering belong to the store's `selectBrowserDiagnosticRequests`; this panel only draws them.
+ */
+type NetworkRequest = BrowserDiagnosticRequestProjection;
 
-const OWNER_VALUE_FIELD_KEYS = [
-    'requestHeaders',
-    'responseHeaders',
-    'requestBodyText',
-    'responseBodyText',
-] as const;
-
-function firstFieldText(
-    event: BrowserDiagnosticEventProjection,
-    keys: readonly string[],
-): string | null {
-    for (const key of keys) {
-        const value = getBrowserDiagnosticFieldText(event, key);
-        if (value) return value;
+function lastValue<T>(events: readonly BrowserDiagnosticEventProjection[], read: (event: BrowserDiagnosticEventProjection) => T | null): T | null {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const value = read(events[index]!);
+        if (value !== null) return value;
     }
     return null;
 }
 
-function renderNetworkChrome(
-    event: BrowserDiagnosticEventProjection,
-    rowTestID: string,
-    testID: string,
-    children: React.ReactNode,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
+
+/** The path a developer scans for; the full URL is in the detail. */
+function displayPath(url: string | null): string | null {
+    if (!url) return null;
+    const match = /^[a-z][a-z0-9+.-]*:\/\/[^/]+(\/.*)?$/i.exec(url);
+    return match ? (match[1] ?? '/') : url;
+}
+
+function leadLabel(request: NetworkRequest): string {
+    if (request.kind === 'socket') return 'WS';
+    if (request.kind === 'beacon') return 'BEACON';
+    return request.method ?? '—';
+}
+
+function statusText(request: NetworkRequest): string {
+    if (request.failed) return t('browserDiagnostics.host.devtools.network.failed');
+    if (request.status !== null) return String(request.status);
+    if (request.kind === 'socket') return request.state ?? '—';
+    return '…';
+}
+
+/** What the row cannot show: the full address, the failure, the type; the row already carries method, status, time and size. */
+function requestFields(request: NetworkRequest): DiagnosticsField[] {
+    const fields: DiagnosticsField[] = [];
+    const push = (key: string, value: string | null, options: Readonly<{ mono?: boolean; copy?: boolean }> = {}) => {
+        const label = fieldLabel(key);
+        if (value && label) fields.push({ key, label, value, ...options });
+    };
+    push('url', request.url, { mono: true, copy: true });
+    if (request.failed) push('errorText', request.errorText ?? t('browserDiagnostics.host.devtools.network.failedNoReason'));
+    push('resourceType', request.type);
+    const seen = new Set([...CODE_BLOCK_KEYS, 'requestBodyTruncated', 'responseBodyTruncated', 'url', 'path', 'method', 'status', 'statusCode', 'resourceType', 'durationMs', 'responseBytes', 'encodedDataLength', 'bytesQueued', 'errorText', 'requestId']);
+    for (const event of request.events) {
+        for (const field of event.detail?.fields ?? []) {
+            if (seen.has(field.key)) continue;
+            const label = fieldLabel(field.key);
+            if (!label) continue;
+            seen.add(field.key);
+            const mono = field.key === 'mimeType';
+            fields.push({ key: field.key, label, value: formatBrowserDiagnosticFieldValue(field.value), mono });
+        }
+    }
+    return fields;
+}
+
+/** Headers and bodies read as text blocks, not table cells; bodies appear when the owner admitted them. */
+const CODE_BLOCK_KEYS = ['requestHeaders', 'responseHeaders', 'requestBodyText', 'responseBodyText'] as const;
+
+function RequestDetail(props: Readonly<{ request: NetworkRequest; testID: string }>): React.ReactElement {
+    const fields = requestFields(props.request);
+    const blocks = CODE_BLOCK_KEYS.flatMap((key) => {
+        const text = lastValue(props.request.events, (event) => getBrowserDiagnosticString(event, key));
+        if (!text) return [];
+        const truncatedKey = key === 'requestBodyText' ? 'requestBodyTruncated' : key === 'responseBodyText' ? 'responseBodyTruncated' : null;
+        const truncated = truncatedKey
+            ? props.request.events.some((event) => event.detail?.fields.some((field) => field.key === truncatedKey && field.value === true))
+            : false;
+        return [{ key, text, truncated }];
+    });
     return (
-        <View key={event.eventId} testID={rowTestID} style={browserDiagnosticsPanelStyles.panelGroup}>
-            <View
-                testID={`${testID}-event-${eventId}`}
-                style={browserDiagnosticsPanelStyles.titleRow}
-            >
-                <Text style={browserDiagnosticsPanelStyles.panelGroupTitle}>{eventTitle(event)}</Text>
-                <BrowserDiagnosticsFidelityBadge
-                    fidelity={event.fidelity}
-                    testID={`${rowTestID}-fidelity-${event.fidelity}`}
+        <View testID={props.testID} style={browserDiagnosticsPanelStyles.detail}>
+            <DiagnosticsFieldList variant="plain" fields={fields} testID={`${props.testID}-fields`} />
+            {blocks.map((block) => (
+                <DiagnosticsCodeBlock
+                    key={block.key}
+                    testID={`${props.testID}-${block.key}`}
+                    label={fieldLabel(block.key) ?? block.key}
+                    text={block.text}
+                    truncated={block.truncated}
                 />
-            </View>
-            <Text testID={`${testID}-network-detail-${eventId}`} style={browserDiagnosticsPanelStyles.flowMeta}>
-                {safeEventDetail(event)}
-            </Text>
-            {children}
-            {event.detail ? renderBrowserDiagnosticEventDetail(event.detail, rowTestID) : null}
-            {!event.trusted ? (
-                <Text style={browserDiagnosticsPanelStyles.warning}>{t('browserDiagnostics.host.untrustedEvent')}</Text>
+            ))}
+            {props.request.kind === 'http' ? (
+                <BrowserNetworkRequestExtras requestId={props.request.requestId} testID={props.testID} />
             ) : null}
         </View>
     );
 }
 
-function renderWebSocketEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-network-row-${eventId}`;
-    const socketId = getBrowserDiagnosticField(event, 'socketId');
-    const state = getBrowserDiagnosticField(event, 'state');
-    const hasProtocol = getBrowserDiagnosticField(event, 'hasProtocol');
-    const protocolCount = getBrowserDiagnosticField(event, 'protocolCount');
-
-    return renderNetworkChrome(event, rowTestID, testID, (
-        <View testID={`${testID}-network-websocket-${eventId}`} style={browserDiagnosticsPanelStyles.metricGrid}>
-            {renderPanelMetric({
-                label: fieldLabel('socketId'),
-                value: socketId,
-                testID: `${testID}-network-websocket-${eventId}-socket`,
+function renderNetworkRows(requests: readonly NetworkRequest[], testID: string): React.ReactNode {
+    return (
+        <>
+            <DiagnosticsColumnHeader
+                testID={`${testID}-network-columns`}
+                lead={fieldLabel('method') ?? ''}
+                subject={fieldLabel('url') ?? ''}
+                meta={[
+                    fieldLabel('status') ?? '',
+                    fieldLabel('durationMs') ?? '',
+                    t('browserDiagnostics.host.devtools.network.size'),
+                ]}
+            />
+            {requests.map((request) => {
+                const rowTestID = `${testID}-network-row-${sanitizeTestIdPart(request.events[0]?.eventId ?? request.key)}`;
+                const failure = request.isFailure;
+                return (
+                    <DiagnosticsRow
+                        key={request.key}
+                        testID={rowTestID}
+                        tone={failure ? 'danger' : 'neutral'}
+                        lead={leadLabel(request)}
+                        subject={displayPath(request.url) ?? (request.kind === 'socket' ? lastValue(request.events, (event) => getBrowserDiagnosticString(event, 'socketId') ?? getBrowserDiagnosticString(event, 'sourceId')) : null) ?? request.events[0]?.summary ?? t('browserDiagnostics.host.devtools.network.noUrl')}
+                        subjectMuted={!request.url && !request.events[0]?.summary}
+                        meta={[
+                            { text: statusText(request), tone: failure ? 'danger' : undefined },
+                            request.durationMs !== null ? { text: formatDurationMs(request.durationMs) } : null,
+                            request.sizeBytes !== null ? { text: formatBytes(request.sizeBytes) } : null,
+                        ]}
+                        renderDetail={() => <RequestDetail request={request} testID={`${rowTestID}-detail`} />}
+                    />
+                );
             })}
-            {renderPanelMetric({
-                label: fieldLabel('state'),
-                value: state,
-                testID: `${testID}-network-websocket-${eventId}-state`,
-            })}
-            {typeof hasProtocol === 'boolean' || typeof protocolCount === 'number' ? renderPanelMetric({
-                label: fieldLabel('protocolCount'),
-                value: typeof protocolCount === 'number'
-                    ? protocolCount
-                    : hasProtocol,
-                testID: `${testID}-network-websocket-${eventId}-protocol`,
-            }) : null}
-            {WEBSOCKET_METRIC_KEYS.map((key) => {
-                const metric = renderPanelMetric({
-                    label: fieldLabel(key),
-                    value: getBrowserDiagnosticField(event, key),
-                    testID: `${testID}-network-websocket-${eventId}-metric-${key}`,
-                });
-                return metric ? React.cloneElement(metric, { key }) : null;
-            })}
-        </View>
-    ));
-}
-
-function renderNetworkRequestEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    const eventId = sanitizeTestIdPart(event.eventId);
-    const rowTestID = `${testID}-network-row-${eventId}`;
-    const method = getBrowserDiagnosticField(event, 'method') ?? (event.kind === 'network.sendBeacon' ? 'BEACON' : undefined);
-    const status = getBrowserDiagnosticField(event, 'statusCode') ?? getBrowserDiagnosticField(event, 'status');
-    const url = firstFieldText(event, ['url', 'path']) ?? safeEventDetail(event);
-    const duration = getBrowserDiagnosticField(event, 'durationMs');
-    const size = getBrowserDiagnosticField(event, 'responseBytes') ?? getBrowserDiagnosticField(event, 'requestBytes') ?? getBrowserDiagnosticField(event, 'bytesQueued');
-
-    return renderNetworkChrome(event, rowTestID, testID, (
-        <View testID={`${testID}-network-request-${eventId}`} style={browserDiagnosticsPanelStyles.panelRow}>
-            {renderPanelField({
-                label: fieldLabel('method'),
-                value: method,
-                testID: `${testID}-network-request-${eventId}-method`,
-            })}
-            {renderPanelField({
-                label: fieldLabel('statusCode'),
-                value: status,
-                testID: `${testID}-network-request-${eventId}-status`,
-            })}
-            {renderPanelField({
-                label: fieldLabel('url'),
-                value: url,
-                testID: `${testID}-network-request-${eventId}-url`,
-                wide: true,
-            })}
-            {renderPanelField({
-                label: fieldLabel('durationMs'),
-                value: duration,
-                testID: `${testID}-network-request-${eventId}-duration`,
-            })}
-            {renderPanelField({
-                label: fieldLabel('responseBytes'),
-                value: size,
-                testID: `${testID}-network-request-${eventId}-size`,
-            })}
-            {OWNER_VALUE_FIELD_KEYS.map((key) => {
-                const field = renderPanelField({
-                    label: fieldLabel(key),
-                    value: getBrowserDiagnosticField(event, key),
-                    testID: `${testID}-network-request-${eventId}-${key}`,
-                    wide: true,
-                });
-                return field ? React.cloneElement(field, { key }) : null;
-            })}
-        </View>
-    ));
-}
-
-function renderNetworkEvent(
-    event: BrowserDiagnosticEventProjection,
-    testID: string,
-): React.ReactElement {
-    if (event.kind.startsWith('network.websocket')) {
-        return renderWebSocketEvent(event, testID);
-    }
-    return renderNetworkRequestEvent(event, testID);
+        </>
+    );
 }
 
 export function BrowserNetworkPanel(props: BrowserDiagnosticsFamilyPanelProps): React.ReactElement {
+    const events = props.events;
+    const requests = React.useMemo(() => selectBrowserDiagnosticRequests({ events }), [events]);
+    const selectItems = React.useCallback(
+        (segment: string, query: string) => selectBrowserDiagnosticRequests({ events }, { failedOnly: segment === 'failed', search: query }),
+        [events],
+    );
     return (
         <BrowserDiagnosticsFamilyPanelFrame
             {...props}
             familyKey="network"
-            renderEvent={renderNetworkEvent}
+            items={requests}
+            countLabel={(count) => t('browserDiagnostics.host.devtools.count.requests', { count })}
+            segments={[
+                { id: 'all', label: t('browserDiagnostics.host.devtools.filter.all') },
+                { id: 'failed', label: t('browserDiagnostics.host.devtools.filter.failed') },
+            ]}
+            searchPlaceholder={t('browserDiagnostics.host.devtools.search.network')}
+            selectItems={selectItems}
+            renderItems={(visible) => renderNetworkRows(visible, props.testID)}
         />
     );
 }

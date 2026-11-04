@@ -8,7 +8,6 @@ import { Typography } from '@/constants/Typography';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
-import { BrowserDiagnosticsEvalConsole } from './BrowserDiagnosticsEvalConsole';
 import type { BrowserDiagnosticsEvalConsoleControls } from './BrowserDiagnosticsEvalConsole';
 
 export type { BrowserDiagnosticsEvalConsoleControls } from './BrowserDiagnosticsEvalConsole';
@@ -37,6 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     // around a mechanism.
     root: {
         gap: theme.space.s8,
+        paddingHorizontal: theme.space.s12,
     },
     row: {
         flexDirection: 'row',
@@ -81,7 +81,6 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
 }>): React.ReactElement {
     const surface = props.surface ?? 'all';
     const showElementPicker = surface === 'all' || surface === 'elements';
-    const showEvalConsole = surface === 'all' || surface === 'console';
     const pickerLabel = showElementPicker ? pickerStateLabel(props.controls.pickerState) : null;
     const showEnable = (
         props.controls.state === 'disabled'
@@ -153,12 +152,6 @@ export function BrowserDiagnosticsInteractionPanel(props: Readonly<{
                     />
                 ) : null}
             </View> : null}
-            {showEvalConsole && props.controls.state === 'enabled' && props.controls.evalConsole ? (
-                <BrowserDiagnosticsEvalConsole
-                    controls={props.controls.evalConsole}
-                    testID={`${props.testID}-eval`}
-                />
-            ) : null}
         </View>
     );
 }

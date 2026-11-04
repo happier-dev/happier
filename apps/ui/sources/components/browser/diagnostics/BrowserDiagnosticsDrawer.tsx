@@ -7,12 +7,10 @@ import Animated, {
     withTiming,
     type WithTimingConfig,
 } from 'react-native-reanimated';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type {
     BrowserDiagnosticFamilyProjection,
@@ -29,7 +27,7 @@ import { t } from '@/text';
 import { BROWSER_DRAWER_MAX_HEIGHT_FRACTION } from '../browserChromeDensity';
 import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
 import type { BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
-import { Icon } from '@/components/ui/icons/Icon';
+import { BrowserDiagnosticsRequestDetailSourceContext, type BrowserDiagnosticsRequestDetailSource } from './BrowserNetworkRequestExtras';
 import type {
     BrowserDiagnosticsInteractionControls,
     BrowserDiagnosticsInteractionSurface,
@@ -140,8 +138,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
         paddingHorizontal: theme.space.s12,
-        paddingTop: theme.space.s4,
-        paddingBottom: theme.space.s8,
+        paddingBottom: theme.space.s6,
     },
     grabberSlot: {
         alignItems: 'center',
@@ -157,22 +154,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     grabberActive: {
         backgroundColor: theme.colors.text.secondary,
     },
-    titleColumn: {
+    sectionScroll: {
         flex: 1,
         minWidth: 0,
-        gap: theme.space.s2,
-    },
-    title: {
-        ...Typography.variant('label', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    sectionBar: {
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border.default,
     },
     sectionBarContent: {
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s6,
+        alignItems: 'center',
     },
     bodyClip: {
         flexShrink: 1,
@@ -258,8 +245,19 @@ function BrowserDiagnosticsDrawerBody(props: Readonly<{
             ? projectionForSection(projection, props.section)
             : projection;
     }, [props.diagnostics, props.eventSource, props.state, props.section, props.diagnosticsAvailability, view, viewKey]);
-    return <BrowserDiagnosticsPanel diagnostics={diagnostics} interaction={props.interaction}
-        interactionSurface={props.interactionSurface} testID={props.testID} />;
+    const daemonView = props.daemonSnapshot?.view ?? null;
+    const daemonMachineId = props.daemonSnapshot?.machineId;
+    const daemonServerId = props.daemonSnapshot?.serverId;
+    const daemonEnabled = props.daemonSnapshot?.enabled;
+    const requestDetailSource = React.useMemo<BrowserDiagnosticsRequestDetailSource | null>(() => (daemonView
+        ? { view: daemonView, machineId: daemonMachineId, serverId: daemonServerId, enabled: daemonEnabled }
+        : null), [daemonEnabled, daemonMachineId, daemonServerId, daemonView]);
+    return (
+        <BrowserDiagnosticsRequestDetailSourceContext.Provider value={requestDetailSource}>
+            <BrowserDiagnosticsPanel diagnostics={diagnostics} interaction={props.interaction}
+                interactionSurface={props.interactionSurface} testID={props.testID} />
+        </BrowserDiagnosticsRequestDetailSourceContext.Provider>
+    );
 }
 
 export function BrowserDiagnosticsDrawer(props: Readonly<{
@@ -285,7 +283,6 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
 }>): React.ReactElement | null {
     const testID = props.testID ?? 'browser-diagnostics-drawer';
     const bodyTestID = `${testID}-body`;
-    const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
 
     const expandedHeight = React.useMemo(() => {
@@ -463,61 +460,19 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                             style={[stylesheet.grabber, dragging ? stylesheet.grabberActive : null]}
                         />
                     </View>
-                    <View style={stylesheet.handleRow}>
-                        <Icon name="bug" size={16} color={theme.colors.text.secondary} />
-                        <View style={stylesheet.titleColumn}>
-                            <Text style={stylesheet.title}>{t('browserShell.devtools.title')}</Text>
-                        </View>
-                        <>
-                            {drawerState === 'expanded' ? (
-                                <IconButton
-                                    testID={`${testID}-collapse`}
-                                    iconName="caret-down"
-                                    accessibilityLabel={t('browserShell.devtools.collapse')}
-                                    tooltip={t('browserShell.devtools.collapse')}
-                                    size={30}
-                                    interactiveTargetGapPx={8}
-                                    iconSize={16}
-                                    onPress={() => setDrawerState('collapsed')}
-                                />
-                            ) : (
-                                <IconButton
-                                    testID={`${testID}-expand`}
-                                    iconName="caret-up"
-                                    accessibilityLabel={t('browserShell.devtools.expand')}
-                                    tooltip={t('browserShell.devtools.expand')}
-                                    size={30}
-                                    interactiveTargetGapPx={8}
-                                    iconSize={16}
-                                    onPress={() => setDrawerState('expanded')}
-                                />
-                            )}
-                            <IconButton
-                                testID={`${testID}-close`}
-                                iconName="x"
-                                accessibilityLabel={t('browserShell.devtools.close')}
-                                tooltip={t('browserShell.devtools.close')}
-                                size={30}
-                                interactiveTargetGapPx={8}
-                                iconSize={16}
-                                onPress={() => setDrawerState('closed')}
-                            />
-                        </>
-                    </View>
                 </View>
-
-                {bodyVisible && activeSection !== null && tabs.length > 0 ? (
-                    <View style={stylesheet.sectionBar}>
-                        {/*
-                          * The canonical tab bar, not eight hand-rolled `role="tab"` Pressables in a
-                          * plain View. It brings the `tablist` container the old markup never had,
-                          * arrow-key roving focus, the sliding thumb and WCAG 2.5.8 sizing — all of
-                          * which already existed one import away.
-                          */}
+                {/*
+                  * One row: the sections (⋯ → Diagnostics already named the drawer, so it carries no
+                  * title of its own) and the drawer's two controls. The canonical tab bar brings the
+                  * tablist, roving focus, the sliding thumb and target sizing.
+                  */}
+                <View style={stylesheet.handleRow}>
+                    {activeSection !== null && tabs.length > 0 ? (
                         <ScrollView
                             testID={`${testID}-sections`}
                             horizontal
                             showsHorizontalScrollIndicator={false}
+                            style={stylesheet.sectionScroll}
                             contentContainerStyle={stylesheet.sectionBarContent}
                         >
                             <SegmentedTabBar<SectionKey>
@@ -530,13 +485,48 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                                 accessibilityLabel={t('browserShell.devtools.title')}
                             />
                         </ScrollView>
-                    </View>
-                ) : null}
+                    ) : (
+                        <View style={stylesheet.sectionScroll} />
+                    )}
+                    {drawerState === 'expanded' ? (
+                        <IconButton
+                            testID={`${testID}-collapse`}
+                            iconName="caret-down"
+                            accessibilityLabel={t('browserShell.devtools.collapse')}
+                            tooltip={t('browserShell.devtools.collapse')}
+                            size={30}
+                            interactiveTargetGapPx={8}
+                            iconSize={16}
+                            onPress={() => setDrawerState('collapsed')}
+                        />
+                    ) : (
+                        <IconButton
+                            testID={`${testID}-expand`}
+                            iconName="caret-up"
+                            accessibilityLabel={t('browserShell.devtools.expand')}
+                            tooltip={t('browserShell.devtools.expand')}
+                            size={30}
+                            interactiveTargetGapPx={8}
+                            iconSize={16}
+                            onPress={() => setDrawerState('expanded')}
+                        />
+                    )}
+                    <IconButton
+                        testID={`${testID}-close`}
+                        iconName="x"
+                        accessibilityLabel={t('browserShell.devtools.close')}
+                        tooltip={t('browserShell.devtools.close')}
+                        size={30}
+                        interactiveTargetGapPx={8}
+                        iconSize={16}
+                        onPress={() => setDrawerState('closed')}
+                    />
+                </View>
             </View>
 
             {bodyVisible ? (
                 <Animated.View testID={`${testID}-body-clip`} style={[stylesheet.bodyClip, bodyAnimatedStyle]}>
-                    <ScrollView style={stylesheet.bodyScroll} showsVerticalScrollIndicator={false}>
+                    <ScrollView style={stylesheet.bodyScroll}>
                         <BrowserDiagnosticsDrawerBody
                             diagnostics={bodyDiagnostics}
                             state={showingSupplemental ? undefined : props.state}
