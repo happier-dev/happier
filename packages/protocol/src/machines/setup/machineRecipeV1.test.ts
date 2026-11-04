@@ -3,6 +3,16 @@ import { createHash } from 'node:crypto';
 import { MachineRecipeStepV1Schema, MachineRecipeStepDeclarationV1Schema, MachineRecipeV1Schema, MachineRecipeSelectionV1Schema, MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, resolveMachineRecipeStepInputsV1 } from './machineRecipeV1.js';
 
 describe('machine recipe executable declarations', () => {
+    it('keeps reviewed script and check bytes literal in install and removal declarations', () => {
+        const step = { id: 'installer', kind: 'script', shell: 'bash',
+            body: '#!/bin/bash\nprintf "%s" "{kind:input,path:never}"\n',
+            check: { body: 'test -e /example/installed\n', unsatisfiedExitCodes: [1] } };
+        const recipe = MachineRecipeV1Schema.parse({ id: 'server', revision: '1', title: 'Server',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [step], removeSteps: [step] });
+        expect(resolveMachineRecipeStepInputsV1(recipe.steps[0]!, {})).toEqual(step);
+        expect(recipe.removeSteps?.[0]).toEqual(step);
+        expect(MachineRecipeStepV1Schema.safeParse({ ...step, privateField: true }).success).toBe(false);
+    });
     it('binds the daemon operator CHECK to the same captured identity as its command argv', () => {
         const declaration: unknown = { id: 'operator', revision: '1', title: 'Native operator',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false },

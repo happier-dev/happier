@@ -69,6 +69,7 @@ export function readMachineSetupStepExecutionUserV1(step: MachineRecipeStepV1 | 
         case 'pathTraversal':
         case 'file':
         case 'command':
+        case 'script':
         case 'packageSource':
         case 'serviceUnit':
         case 'firewall':

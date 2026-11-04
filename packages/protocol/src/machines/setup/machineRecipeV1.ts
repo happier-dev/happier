@@ -25,8 +25,8 @@ const Path = z.string().startsWith('/').refine((value) => !value.includes('\0'))
 const NativeExecutable = z.string().min(1).refine(value => {
     if (value.includes('\0')) return false;
     const name = value.replace(/\\/g, '/').split('/').pop()?.replace(/\.exe$/i, '') ?? '';
-    // This is an explicit-data contract, not a containment boundary. Scripts
-    // retain the separate daemon-user setupScript owner.
+    // Commands carry native argv. Reviewed recipe scripts use their own literal
+    // body step; setup.scripts retains its separate daemon-user owner.
     return !/^(?:sh|bash|dash|zsh|fish|ksh|csh|tcsh|cmd|powershell|pwsh|python[\d.]*|node|bun|perl|ruby|env)$/i.test(name);
 });
 export const MachineRecipeNativeCommandV1Schema = z.object({ executable: NativeExecutable, args: z.array(z.string().refine(value => !value.includes('\0'))) }).strict();
@@ -151,6 +151,13 @@ export const MachineRecipeCommandStepV1Schema =
     z.object({ ...Step, kind: z.literal('command'), ...Argv.shape,
         check: z.union([MachineRecipeNativeCheckV1Schema, KernelFact, UserManagerGroups]), remove: Argv.optional(), affects: MachineRecipeImpactV1Schema.optional(),
     }).strict();
+/** Exact POSIX shell bytes, reviewed and elevated with the containing recipe. */
+export const MachineRecipeScriptStepV1Schema = z.object({ ...Step, kind: z.literal('script'),
+    shell: z.enum(['sh', 'bash']), body: z.string().min(1).refine(value => !value.includes('\0')),
+    check: z.object({ body: z.string().min(1).refine(value => !value.includes('\0')),
+        unsatisfiedExitCodes: MachineRecipeNativeCheckV1Schema.shape.unsatisfiedExitCodes }).strict().optional(),
+    affects: MachineRecipeImpactV1Schema.optional(),
+}).strict();
 export const MachineRecipePackageStepV1Schema =
     z.object({ ...Step, kind: z.literal('package'), manager: PackageManager, state: z.enum(['present', 'absent']).optional(),
         packages: z.array(z.object({ ...PackageIdentityFields, version: PackageVersion.optional() }).strict()).min(1),
@@ -175,7 +182,7 @@ export const MachineRecipeRebootStepV1Schema = z.object({ ...Step, kind: z.liter
 export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
     MachineRecipeUserStepV1Schema, MachineRecipeGroupStepV1Schema, MachineRecipeDirectoryStepV1Schema,
     MachineRecipeWorkspaceAccessStepV1Schema, MachineRecipePathTraversalStepV1Schema, MachineRecipeFileStepV1Schema,
-    MachineRecipeCommandStepV1Schema, MachineRecipePackageStepV1Schema, MachineRecipePackageSourceStepV1Schema,
+    MachineRecipeCommandStepV1Schema, MachineRecipeScriptStepV1Schema, MachineRecipePackageStepV1Schema, MachineRecipePackageSourceStepV1Schema,
     MachineRecipeServiceUnitStepV1Schema, MachineRecipeFirewallStepV1Schema, MachineRecipeRebootStepV1Schema,
 ]);
 export type MachineRecipeStepV1 = z.infer<typeof MachineRecipeStepV1Schema>;
@@ -274,7 +281,7 @@ export const MachineRecipeStepDeclarationV1Schema = z.discriminatedUnion('kind',
     UserDeclaration.safeExtend({ when: When }), GroupDeclaration.safeExtend({ when: When }),
     DirectoryDeclaration.safeExtend({ when: When }), MachineRecipeWorkspaceAccessStepV1Schema.safeExtend({ when: When }),
     MachineRecipePathTraversalStepV1Schema.safeExtend({ when: When }), FileDeclaration.safeExtend({ when: When }),
-    CommandDeclaration.safeExtend({ when: When }), PackageDeclaration.safeExtend({ when: When }),
+    CommandDeclaration.safeExtend({ when: When }), MachineRecipeScriptStepV1Schema.safeExtend({ when: When }), PackageDeclaration.safeExtend({ when: When }),
     MachineRecipePackageSourceStepV1Schema.safeExtend({ when: When }), ServiceDeclaration.safeExtend({ when: When }),
     MachineRecipeFirewallStepV1Schema.safeExtend({ when: When }),
 ]);
