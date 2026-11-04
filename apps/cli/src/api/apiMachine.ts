@@ -563,7 +563,8 @@ export type MachinePublicationOutcome = 'published' | 'unchanged' | 'suppressed'
 
 /** Host-local classification; Machine activity is not a new policy scheduling fact. */
 export type ManagedMachinePolicyInvalidation = Readonly<{ kind: 'currentness' }>
-    | Readonly<{ kind: 'machines'; machineIds: readonly string[] }>;
+    | Readonly<{ kind: 'machines'; machineIds: readonly string[] }>
+    | Readonly<{ kind: 'managed'; managedIds: readonly string[] }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -5863,10 +5864,10 @@ export class ApiMachineClient {
             const hasRelevantMachineChange = changes.some(
                 (c) => c.kind === 'machine' && c.entityId === this.machine.id,
             );
-            const hasManagedPolicyChange = changes.some(change => {
-                if (change.kind !== 'account' || asRecord(change.hint)?.managedMachinePolicy !== true) return false;
+            const managedPolicyIds = changes.flatMap(change => {
+                if (change.kind !== 'account' || asRecord(change.hint)?.managedMachinePolicy !== true) return [];
                 const hint = ManagedMachinePolicyChangeHintV1Schema.safeParse(change.hint);
-                return hint.success && hint.data.machineId === this.machine.id;
+                return hint.success && (hint.data.machineId === undefined || hint.data.machineId === this.machine.id) ? [change.entityId] : [];
             });
             const accountSettingsVersions = changes
                 .filter((c) => c.kind === 'account' && c.entityId === 'self')
@@ -6167,8 +6168,10 @@ export class ApiMachineClient {
                 || hasWebhookAdmissionChange || hasTeamChange) {
                 await this.notifyPluginWebhookInvalidated(signal);
             }
-            if (reason !== 'live' || hasManagedPolicyChange || hasTeamChange) {
+            if (reason !== 'live' || hasTeamChange) {
                 await this.notifyManagedMachinePolicyInvalidated(signal);
+            } else if (managedPolicyIds.length) {
+                await this.notifyManagedMachinePolicyInvalidated(signal, { kind: 'managed', managedIds: managedPolicyIds });
             } else {
                 const machineIds = changes.filter(change => change.kind === 'machine' && change.entityId !== this.machine.id)
                     .map(change => change.entityId);

@@ -11,6 +11,7 @@ import { db } from '../../../../server/sources/storage/db';
 import { inTx } from '../../../../server/sources/storage/inTx';
 import { invalidateManagedMachineInTx } from '../../../../server/sources/app/machines/managed/managedRows';
 import { setMachineAccessGrantInTx } from '../../../../server/sources/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '../../../../server/sources/testkit/shareEligibility.testkit';
 
 let database: LightSqliteHarness;
 beforeAll(async () => {
@@ -51,6 +52,8 @@ it('consumes a committed managed-row invalidation for its controller without wak
         throw new Error(`Unexpected policy invalidation HTTP boundary: ${url}`);
     });
     const client = new ApiMachineClient('fixture-token', machine);
+    const classifiedManagedChanges: unknown[] = [];
+    client.onManagedMachinePolicyInvalidated(change => { classifiedManagedChanges.push(change); });
     const censuses: number[] = [];
     const signing = nacl.sign.keyPair();
     vi.spyOn(axios, 'post').mockImplementation(async () => {
@@ -73,6 +76,7 @@ it('consumes a committed managed-row invalidation for its controller without wak
         changes = [produced];
         await sync();
         expect(censuses).toHaveLength(1);
+        expect(classifiedManagedChanges).toEqual([{ kind: 'managed', managedIds: [row.id] }]);
         changes = [{ ...produced, hint: { managedMachinePolicy: true, machineId: 'other-controller' } }];
         await sync();
         expect(censuses).toHaveLength(1);
@@ -85,6 +89,7 @@ it('consumes a committed managed-row invalidation for its controller without wak
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const replacement = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
             installationId: randomUUID(), ...storedMachineContent, active: true } });
+        await makeShareEligibleForTest(account.id, viewer.id);
         expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: account.id, machineId: replacement.id,
             principal: { kind: 'account', accountId: viewer.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
         await inTx(async tx => {
@@ -118,6 +123,21 @@ it('consumes a committed managed-row invalidation for its controller without wak
             await sync(replacementClient);
             expect(replacementWakes).toBe(1);
         } finally { await replacementClient.shutdown(); }
+        await inTx(async tx => {
+            const accountOwned = await tx.managedMachine.update({ where: { id: row.id }, data: {
+                controllerMachineId: null, controllerInstallationId: null,
+            } });
+            await invalidateManagedMachineInTx(tx, accountOwned);
+        });
+        const accountOwnedChange = await db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'account', entityId: row.id },
+        } });
+        expect(accountOwnedChange.hint).toEqual({ managedMachinePolicy: true });
+        changes = [ChangeEntrySchema.parse({ cursor: accountOwnedChange.cursor, kind: accountOwnedChange.kind,
+            entityId: accountOwnedChange.entityId, changedAt: accountOwnedChange.changedAt.getTime(), hint: accountOwnedChange.hint })];
+        await sync();
+        expect(censuses).toHaveLength(2);
+        expect(classifiedManagedChanges).toContainEqual({ kind: 'managed', managedIds: [row.id] });
     } finally {
         await runtime.stop();
         await client.shutdown();
