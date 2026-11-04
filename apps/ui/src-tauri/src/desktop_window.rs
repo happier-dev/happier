@@ -7,11 +7,6 @@ pub(crate) fn is_app_window(label: &str) -> bool {
         && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
 }
 
-pub(crate) fn validate_display_inventory_caller(label: &str) -> Result<(), String> {
-    if label == MAIN_WINDOW_LABEL || is_app_window(label) { return Ok(()); }
-    Err(format!("Command `desktop_displays_list` is not allowed from window `{label}`"))
-}
-
 fn action_result_target<'a>(caller_label: &str, window_label: &'a str) -> Result<&'a str, String> {
     validate_action_result_destination(caller_label, window_label)?;
     Ok(if is_app_window(caller_label) && !is_app_window(window_label) { MAIN_WINDOW_LABEL } else { window_label })
@@ -50,6 +45,15 @@ pub(crate) const ACTION_EVENT: &str = "desktopWindow://action";
 #[cfg(desktop)]
 const ACTION_RESULT_EVENT: &str = "desktopWindow://action-result";
 
+#[cfg(desktop)]
+#[tauri::command]
+pub fn desktop_host_get_availability<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
+    serde_json::json!({
+        "activity": crate::activity_overlay::host_availability(&app),
+        "pet": crate::pet_overlay::host_availability(&app),
+        "windows": { "kind": "available" }
+    })
+}
 
 #[cfg(desktop)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -162,16 +166,6 @@ fn validate_action_result_destination(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn display_inventory_is_available_to_main_and_full_app_windows() {
-        for label in [MAIN_WINDOW_LABEL, "destination_settings-42"] {
-            assert!(validate_display_inventory_caller(label).is_ok(), "Display settings must work in {label}");
-        }
-        for label in [ACTIVITY_WINDOW_LABEL, "capture", "destination_", "destination_bad/path"] {
-            assert!(validate_display_inventory_caller(label).is_err());
-        }
-    }
 
     #[test]
     fn destination_requests_and_results_keep_actual_caller_identity() {

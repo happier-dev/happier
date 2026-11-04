@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "allow-desktop-pet-overlay-read-window-state",
+    "allow-desktop-pet-overlay-pointer-enter",
     "allow-desktop-pet-overlay-set-input-locked",
     "allow-desktop-pet-overlay-start-drag-session",
     "allow-desktop-pet-overlay-apply-drag-delta",

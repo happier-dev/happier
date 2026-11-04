@@ -1,12 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DisplayIdentityComponents {
-    pub(crate) cg_display_id: Option<u32>,
-    pub(crate) vendor_id: Option<u32>,
-    pub(crate) model_id: Option<u32>,
-    pub(crate) serial_number: Option<u32>,
-}
+pub(crate) use happier_desktop_native::geometry::DisplayIdentityComponents;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -34,44 +28,27 @@ pub(crate) struct DesktopActivityOverlayDisplayIdentity {
 pub(crate) fn resolve_display_identity(
     components: DisplayIdentityComponents,
 ) -> DesktopActivityOverlayDisplayIdentity {
-    if let (Some(vendor_id), Some(model_id), Some(serial_number)) = (
-        non_zero(components.vendor_id),
-        non_zero(components.model_id),
-        non_zero(components.serial_number),
-    ) {
-        return DesktopActivityOverlayDisplayIdentity {
-            storage_key: format!("edid-{vendor_id}-{model_id}-{serial_number}"),
-            source: DisplayIdentitySource::EdidComposite,
-            cg_display_id: components.cg_display_id,
-            vendor_id: Some(vendor_id),
-            model_id: Some(model_id),
-            serial_number: Some(serial_number),
-        };
-    }
-
-    if let Some(cg_display_id) = non_zero(components.cg_display_id) {
-        return DesktopActivityOverlayDisplayIdentity {
-            storage_key: format!("display-{cg_display_id}"),
-            source: DisplayIdentitySource::CgDisplayId,
-            cg_display_id: Some(cg_display_id),
-            vendor_id: components.vendor_id,
-            model_id: components.model_id,
-            serial_number: components.serial_number,
-        };
-    }
-
-    DesktopActivityOverlayDisplayIdentity {
-        storage_key: "display-unknown".to_string(),
-        source: DisplayIdentitySource::Unknown,
-        cg_display_id: None,
-        vendor_id: components.vendor_id,
-        model_id: components.model_id,
-        serial_number: components.serial_number,
-    }
+    happier_desktop_native::geometry::resolve_display_identity(components).into()
 }
 
-fn non_zero(value: Option<u32>) -> Option<u32> {
-    value.filter(|value| *value > 0)
+impl From<happier_desktop_native::geometry::DisplayIdentity>
+    for DesktopActivityOverlayDisplayIdentity
+{
+    fn from(value: happier_desktop_native::geometry::DisplayIdentity) -> Self {
+        use happier_desktop_native::geometry::DisplayIdentitySource as Source;
+        Self {
+            storage_key: value.storage_key,
+            source: match value.source {
+                Source::EdidComposite => DisplayIdentitySource::EdidComposite,
+                Source::CgDisplayId => DisplayIdentitySource::CgDisplayId,
+                Source::Unknown => DisplayIdentitySource::Unknown,
+            },
+            cg_display_id: value.cg_display_id,
+            vendor_id: value.vendor_id,
+            model_id: value.model_id,
+            serial_number: value.serial_number,
+        }
+    }
 }
 
 #[cfg(test)]

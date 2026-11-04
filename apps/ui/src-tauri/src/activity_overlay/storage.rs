@@ -1,423 +1,380 @@
+use super::dock::{Dock, FrameInput, Point};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::{path::BaseDirectory, AppHandle, Manager, Runtime};
+use tauri::{path::BaseDirectory, Manager, Runtime};
 
-use super::display_identity::DesktopActivityOverlayDisplayIdentity;
-use super::placement::{clamp, sanitize_offset};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Device-owned fractions of each display's available island travel area.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedOverlayDragOffsets {
-    pub(crate) offset_x: f64,
-    pub(crate) offset_y: f64,
+pub(crate) struct NotchPositionRecord {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating: Option<NotchFloatingPosition>,
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PersistedOverlayDragOffsetsRead {
-    pub(crate) offsets: Option<PersistedOverlayDragOffsets>,
-    pub(crate) migrated_from: Option<PathBuf>,
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct NotchFloatingPosition {
+    pub x: f64,
+    pub y: f64,
 }
+pub(crate) type NotchPositions = std::collections::BTreeMap<String, NotchPositionRecord>;
 
-pub(crate) fn sanitize_drag_offsets(
-    offsets: PersistedOverlayDragOffsets,
-) -> PersistedOverlayDragOffsets {
-    PersistedOverlayDragOffsets {
-        offset_x: clamp(sanitize_offset(offsets.offset_x), -4096.0, 4096.0),
-        offset_y: clamp(sanitize_offset(offsets.offset_y), -4096.0, 4096.0),
+pub(crate) fn position_for_dock(record: Option<&NotchPositionRecord>, dock: Dock) -> (f64, f64) {
+    match dock {
+        Dock::Top => (record.and_then(|r| r.top).unwrap_or(0.5), 0.5),
+        Dock::Left => (0.5, record.and_then(|r| r.left).unwrap_or(0.5)),
+        Dock::Right => (0.5, record.and_then(|r| r.right).unwrap_or(0.5)),
+        Dock::Floating => record
+            .and_then(|r| r.floating)
+            .map(|p| (p.x, p.y))
+            .unwrap_or((0.5, 0.5)),
     }
 }
 
-pub(crate) fn resolve_drag_offsets_path<R: Runtime>(
-    app: &impl Manager<R>,
-) -> tauri::Result<PathBuf> {
-    app.path().resolve(
-        "window-state/activity-overlay-position.json",
-        BaseDirectory::AppConfig,
-    )
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum NotchMovePosition {
+    Along(f64),
+    Floating(NotchFloatingPosition),
 }
 
-pub(crate) fn resolve_drag_offsets_path_for_display<R: Runtime>(
-    app: &impl Manager<R>,
-    identity: Option<&DesktopActivityOverlayDisplayIdentity>,
-) -> tauri::Result<PathBuf> {
-    let Some(identity) = identity else {
-        return resolve_drag_offsets_path(app);
-    };
-
-    resolve_drag_offsets_path_for_storage_key(app, &identity.storage_key)
-}
-
-pub(crate) fn resolve_drag_offsets_path_for_storage_key<R: Runtime>(
-    app: &impl Manager<R>,
-    storage_key: &str,
-) -> tauri::Result<PathBuf> {
-    app.path().resolve(
-        format!(
-            "window-state/activity-overlay-position/{}.json",
-            sanitize_storage_key(storage_key)
-        ),
-        BaseDirectory::AppConfig,
-    )
-}
-
-pub(crate) fn resolve_drag_offsets_legacy_storage_keys_for_display(
-    identity: Option<&DesktopActivityOverlayDisplayIdentity>,
-) -> Vec<String> {
-    let Some(identity) = identity else {
-        return Vec::new();
-    };
-    let Some(cg_display_id) = identity.cg_display_id.filter(|value| *value > 0) else {
-        return Vec::new();
-    };
-
-    let display_id_storage_key = format!("display-{cg_display_id}");
-    if display_id_storage_key == identity.storage_key {
-        Vec::new()
-    } else {
-        vec![display_id_storage_key]
-    }
-}
-
-pub(crate) fn read_persisted_drag_offsets(
-    path: Option<&Path>,
-) -> Option<PersistedOverlayDragOffsets> {
-    let path = path?;
-    let bytes = fs::read(path).ok()?;
-    serde_json::from_slice::<PersistedOverlayDragOffsets>(&bytes).ok()
-}
-
-pub(crate) fn read_persisted_drag_offsets_for_display_paths(
-    display_path: Option<&Path>,
-    legacy_paths: &[&Path],
-) -> PersistedOverlayDragOffsetsRead {
-    if let Some(display_path) = display_path {
-        if let Some(offsets) = read_persisted_drag_offsets(Some(display_path)) {
-            return PersistedOverlayDragOffsetsRead {
-                offsets: Some(sanitize_drag_offsets(offsets)),
-                migrated_from: None,
-            };
+pub(crate) fn validate_move(
+    position: Option<NotchMovePosition>,
+    delta: Option<Point>,
+) -> Result<(), String> {
+    match (position, delta) {
+        (Some(NotchMovePosition::Along(value)), None) if value.is_finite() => Ok(()),
+        (Some(NotchMovePosition::Floating(point)), None)
+            if point.x.is_finite() && point.y.is_finite() =>
+        {
+            Ok(())
         }
+        (None, Some(point)) if point.x.is_finite() && point.y.is_finite() => Ok(()),
+        _ => Err("Supply one finite notch position or delta".into()),
     }
+}
 
-    for legacy_path in legacy_paths {
-        if let Some(offsets) = read_persisted_drag_offsets(Some(legacy_path)) {
-            return PersistedOverlayDragOffsetsRead {
-                offsets: Some(sanitize_drag_offsets(offsets)),
-                migrated_from: Some((*legacy_path).to_path_buf()),
-            };
+pub(crate) fn update_notch_position(
+    positions: &mut NotchPositions,
+    key: &str,
+    name: &str,
+    input: FrameInput,
+    position: Option<NotchMovePosition>,
+    delta: Option<Point>,
+    commit: bool,
+    persist: impl FnOnce(&NotchPositions) -> Result<(), String>,
+) -> Result<bool, String> {
+    if input.dock == Dock::Top && input.camera_center.is_some() {
+        return Ok(false);
+    }
+    let mut next = input.position;
+    match position {
+        Some(NotchMovePosition::Along(value)) => match input.dock {
+            Dock::Top => next.0 = value,
+            Dock::Left | Dock::Right => next.1 = value,
+            Dock::Floating => return Err("Floating notch position requires x and y".into()),
+        },
+        Some(NotchMovePosition::Floating(point)) if input.dock == Dock::Floating => {
+            next = (point.x, point.y)
         }
-    }
-
-    PersistedOverlayDragOffsetsRead {
-        offsets: None,
-        migrated_from: None,
-    }
-}
-
-pub(crate) fn migrate_persisted_drag_offsets_for_display_paths(
-    display_path: &Path,
-    legacy_paths: &[&Path],
-) -> PersistedOverlayDragOffsetsRead {
-    let loaded = read_persisted_drag_offsets_for_display_paths(Some(display_path), legacy_paths);
-    if loaded.migrated_from.is_some() {
-        if let Some(offsets) = loaded.offsets {
-            persist_drag_offsets_to_path(display_path, offsets);
+        Some(NotchMovePosition::Floating(_)) => {
+            return Err("Docked notch position requires an along-edge fraction".into())
         }
-    }
-    loaded
-}
-
-pub(crate) fn persist_drag_offsets_for_display<R: Runtime>(
-    app: &AppHandle<R>,
-    identity: Option<&DesktopActivityOverlayDisplayIdentity>,
-    offsets: PersistedOverlayDragOffsets,
-) {
-    let Ok(path) = resolve_drag_offsets_path_for_display(app, identity) else {
-        return;
-    };
-    persist_drag_offsets_to_path(&path, offsets);
-}
-
-fn persist_drag_offsets_to_path(path: &Path, offsets: PersistedOverlayDragOffsets) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(payload) = serde_json::to_vec_pretty(&sanitize_drag_offsets(offsets)) else {
-        return;
-    };
-    let _ = fs::write(path, payload);
-}
-
-pub(crate) fn clear_persisted_drag_offsets_for_display<R: Runtime>(
-    app: &AppHandle<R>,
-    identity: Option<&DesktopActivityOverlayDisplayIdentity>,
-) {
-    let Ok(path) = resolve_drag_offsets_path_for_display(app, identity) else {
-        return;
-    };
-    let _ = clear_persisted_drag_offsets_path(&path);
-    for legacy_storage_key in resolve_drag_offsets_legacy_storage_keys_for_display(identity) {
-        let Ok(legacy_display_path) =
-            resolve_drag_offsets_path_for_storage_key(app, &legacy_storage_key)
-        else {
-            continue;
-        };
-        let _ = clear_persisted_drag_offsets_path(&legacy_display_path);
-    }
-    let Ok(legacy_path) = resolve_drag_offsets_path(app) else {
-        return;
-    };
-    let _ = clear_persisted_drag_offsets_path(&legacy_path);
-}
-
-fn clear_persisted_drag_offsets_path(path: &Path) -> std::io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-fn sanitize_storage_key(key: &str) -> String {
-    let sanitized: String = key
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
-                character
-            } else {
-                '-'
+        None => {
+            let delta = delta.expect("validated movement has one input");
+            match input.dock {
+                Dock::Top | Dock::Floating => {
+                    next.0 += travel_fraction(delta.x, input.visible.width, input.rest_extent.0)
+                }
+                _ => {}
             }
+            match input.dock {
+                Dock::Left | Dock::Right | Dock::Floating => {
+                    next.1 += travel_fraction(delta.y, input.visible.height, input.rest_extent.1)
+                }
+                _ => {}
+            }
+        }
+    }
+    // Keep pointer overshoot during a gesture; the frame owner clamps the visual
+    // position, and returning toward the display preserves the original grab.
+    let next = if commit {
+        (next.0.clamp(0., 1.), next.1.clamp(0., 1.))
+    } else {
+        next
+    };
+    let record = positions.entry(key.into()).or_default();
+    record.name = name.into();
+    match input.dock {
+        Dock::Top => record.top = Some(next.0),
+        Dock::Left => record.left = Some(next.1),
+        Dock::Right => record.right = Some(next.1),
+        Dock::Floating => {
+            record.floating = Some(NotchFloatingPosition {
+                x: next.0,
+                y: next.1,
+            })
+        }
+    }
+    if commit {
+        persist(positions)?;
+    }
+    Ok(true)
+}
+fn travel_fraction(delta: f64, available: f64, island: f64) -> f64 {
+    let travel = (available - island).max(0.);
+    if travel == 0. {
+        0.
+    } else {
+        delta / travel
+    }
+}
+
+fn notch_positions_path<R: Runtime>(app: &impl Manager<R>) -> Result<PathBuf, String> {
+    app.path()
+        .resolve("window-state/notch-position.json", BaseDirectory::AppConfig)
+        .map_err(|e| e.to_string())
+}
+pub(crate) fn read_notch_positions<R: Runtime>(app: &impl Manager<R>) -> NotchPositions {
+    notch_positions_path(app)
+        .ok()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+pub(crate) fn persist_notch_positions<R: Runtime>(
+    app: &impl Manager<R>,
+    positions: &NotchPositions,
+) -> Result<(), String> {
+    persist_notch_positions_to_path(&notch_positions_path(app)?, positions)
+}
+fn persist_notch_positions_to_path(path: &Path, positions: &NotchPositions) -> Result<(), String> {
+    // Display-name changes use this same writer and can arrive during a drag.
+    // Persist the normalized projection without losing the live pointer overshoot.
+    let persisted: NotchPositions = positions
+        .iter()
+        .map(|(key, record)| {
+            let mut record = record.clone();
+            record.top = record.top.map(|value| value.clamp(0., 1.));
+            record.left = record.left.map(|value| value.clamp(0., 1.));
+            record.right = record.right.map(|value| value.clamp(0., 1.));
+            record.floating = record.floating.map(|point| NotchFloatingPosition {
+                x: point.x.clamp(0., 1.),
+                y: point.y.clamp(0., 1.),
+            });
+            (key.clone(), record)
         })
         .collect();
-    let trimmed = sanitized.trim_matches('-');
-    if trimmed.is_empty() {
-        "display-unknown".to_string()
-    } else {
-        trimmed.to_string()
+    let bytes = serde_json::to_vec_pretty(&persisted).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(&temporary, bytes).map_err(|e| e.to_string())?;
+    fs::rename(temporary, path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activity_overlay::display_identity::{
-        DesktopActivityOverlayDisplayIdentity, DisplayIdentitySource,
-    };
-
+    use super::super::placement::Rect;
     #[test]
-    fn clears_persisted_drag_offsets_path_without_error_when_file_missing() {
-        let unique = format!(
-            "activity-overlay-position-{}-missing.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let path = std::env::temp_dir().join(unique);
-
-        clear_persisted_drag_offsets_path(&path)
-            .expect("clearing a missing drag-offset file should succeed");
-    }
-
-    #[test]
-    fn clears_persisted_drag_offsets_path_when_file_exists() {
-        let unique = format!(
-            "activity-overlay-position-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let path = std::env::temp_dir().join(unique);
-
-        persist_drag_offsets_to_path(
-            &path,
-            PersistedOverlayDragOffsets {
-                offset_x: 18.0,
-                offset_y: -24.0,
-            },
-        );
-        assert!(path.exists());
-
-        clear_persisted_drag_offsets_path(&path)
-            .expect("existing drag-offset file should be removed");
-
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn reads_display_scoped_drag_offsets_before_legacy_offsets() {
-        let unique = format!(
-            "activity-overlay-position-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let directory = std::env::temp_dir().join(unique);
-        let display_path = directory.join("edid-610-41056-12345678.json");
-        let legacy_path = directory.join("activity-overlay-position.json");
-        persist_drag_offsets_to_path(
-            &display_path,
-            PersistedOverlayDragOffsets {
-                offset_x: 12.0,
-                offset_y: -16.0,
-            },
-        );
-        persist_drag_offsets_to_path(
-            &legacy_path,
-            PersistedOverlayDragOffsets {
-                offset_x: 999.0,
-                offset_y: 999.0,
-            },
-        );
-
-        let loaded = read_persisted_drag_offsets_for_display_paths(
-            Some(&display_path),
-            &[legacy_path.as_path()],
-        );
-
-        assert_eq!(
-            loaded.offsets,
-            Some(PersistedOverlayDragOffsets {
-                offset_x: 12.0,
-                offset_y: -16.0,
-            }),
-        );
-        assert_eq!(loaded.migrated_from, None);
-        let _ = fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn migrates_legacy_drag_offsets_to_the_display_scoped_path() {
-        let unique = format!(
-            "activity-overlay-position-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let directory = std::env::temp_dir().join(unique);
-        let display_path = directory.join("display-72110592.json");
-        let legacy_path = directory.join("activity-overlay-position.json");
-        persist_drag_offsets_to_path(
-            &legacy_path,
-            PersistedOverlayDragOffsets {
-                offset_x: 18.0,
-                offset_y: -24.0,
-            },
-        );
-
-        let loaded = migrate_persisted_drag_offsets_for_display_paths(
-            &display_path,
-            &[legacy_path.as_path()],
-        );
-
-        assert_eq!(
-            loaded.offsets,
-            Some(PersistedOverlayDragOffsets {
-                offset_x: 18.0,
-                offset_y: -24.0,
-            }),
-        );
-        assert_eq!(loaded.migrated_from, Some(legacy_path));
-        assert_eq!(
-            read_persisted_drag_offsets(Some(&display_path)),
-            Some(PersistedOverlayDragOffsets {
-                offset_x: 18.0,
-                offset_y: -24.0,
-            }),
-        );
-        let _ = fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn edid_scoped_drag_offsets_consider_the_previous_display_id_storage_key() {
-        let identity = DesktopActivityOverlayDisplayIdentity {
-            storage_key: "edid-610-41056-12345678".to_string(),
-            source: DisplayIdentitySource::EdidComposite,
-            cg_display_id: Some(72_110_592),
-            vendor_id: Some(610),
-            model_id: Some(41_056),
-            serial_number: Some(12_345_678),
+    fn notch_moves_live_but_writes_once_on_commit_for_the_selected_display() {
+        use super::super::{
+            dock::{Dock, FrameInput, Point},
+            placement::Rect,
+            DesktopActivityOverlaySurface,
         };
+        let mut positions = NotchPositions::new();
+        let mut writes = 0;
+        for commit in (0..120).map(|_| false).chain(std::iter::once(true)) {
+            let position = positions
+                .get("studio")
+                .and_then(|r| r.floating)
+                .unwrap_or(NotchFloatingPosition { x: 0.5, y: 0.5 });
+            update_notch_position(
+                &mut positions,
+                "studio",
+                "Studio",
+                FrameInput {
+                    dock: Dock::Floating,
+                    visible: Rect {
+                        x: 100.,
+                        y: 25.,
+                        width: 1440.,
+                        height: 825.,
+                    },
+                    top: 0.,
+                    position: (position.x, position.y),
+                    extent: (270., 40.),
+                    screen_bounds: None,
+                    rest_extent: (270., 40.),
+                    surface: DesktopActivityOverlaySurface::Collapsed,
+                    camera_center: None,
+                    camera_offset: 0.,
+                },
+                None,
+                Some(Point {
+                    x: if commit { 0. } else { 1. },
+                    y: 0.,
+                }),
+                commit,
+                |_| {
+                    writes += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(writes, usize::from(commit));
+        }
+        let floating = positions["studio"].floating.unwrap();
+        assert!((floating.x - (0.5 + 120. / 1170.)).abs() < 1e-12);
+        assert_eq!(floating.y, 0.5);
+        assert_eq!(positions.len(), 1);
+    }
 
-        assert_eq!(
-            resolve_drag_offsets_legacy_storage_keys_for_display(Some(&identity)),
-            vec!["display-72110592".to_string()],
-        );
+    fn movement_input(dock: Dock, position: (f64, f64)) -> FrameInput {
+        FrameInput {
+            dock,
+            position,
+            visible: Rect {
+                x: 100.,
+                y: 25.,
+                width: 1000.,
+                height: 800.,
+            },
+            top: 0.,
+            extent: (100., 40.),
+            screen_bounds: None,
+            rest_extent: (100., 40.),
+            surface: super::super::DesktopActivityOverlaySurface::Collapsed,
+            camera_center: None,
+            camera_offset: 0.,
+        }
     }
 
     #[test]
-    fn migrates_display_id_drag_offsets_to_the_edid_scoped_path() {
-        let unique = format!(
-            "activity-overlay-position-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos()
-        );
-        let directory = std::env::temp_dir().join(unique);
-        let identity = DesktopActivityOverlayDisplayIdentity {
-            storage_key: "edid-610-41056-12345678".to_string(),
-            source: DisplayIdentitySource::EdidComposite,
-            cg_display_id: Some(72_110_592),
-            vendor_id: Some(610),
-            model_id: Some(41_056),
-            serial_number: Some(12_345_678),
-        };
-        let display_path = directory.join(format!("{}.json", identity.storage_key));
-        let legacy_display_id_path = directory.join(format!(
-            "{}.json",
-            resolve_drag_offsets_legacy_storage_keys_for_display(Some(&identity))
-                .first()
-                .expect("expected display-id fallback storage key")
-        ));
-        let legacy_global_path = directory.join("activity-overlay-position.json");
-        persist_drag_offsets_to_path(
-            &legacy_display_id_path,
-            PersistedOverlayDragOffsets {
-                offset_x: 32.0,
-                offset_y: -28.0,
-            },
-        );
-        persist_drag_offsets_to_path(
-            &legacy_global_path,
-            PersistedOverlayDragOffsets {
-                offset_x: 999.0,
-                offset_y: 999.0,
-            },
-        );
-
-        let loaded = migrate_persisted_drag_offsets_for_display_paths(
-            &display_path,
-            &[
-                legacy_display_id_path.as_path(),
-                legacy_global_path.as_path(),
-            ],
-        );
-
+    fn native_axis_masks_clamp_commits_and_leave_camera_top_fixed() {
+        let mut positions = NotchPositions::new();
+        for dock in [Dock::Top, Dock::Left, Dock::Right] {
+            update_notch_position(
+                &mut positions,
+                "studio",
+                "Studio",
+                movement_input(dock, (0.5, 0.5)),
+                None,
+                Some(Point { x: 900., y: -760. }),
+                true,
+                |_| Ok(()),
+            )
+            .unwrap();
+        }
+        let record = &positions["studio"];
         assert_eq!(
-            loaded.offsets,
-            Some(PersistedOverlayDragOffsets {
-                offset_x: 32.0,
-                offset_y: -28.0,
-            }),
+            (record.top, record.left, record.right),
+            (Some(1.), Some(0.), Some(0.))
         );
-        assert_eq!(loaded.migrated_from, Some(legacy_display_id_path));
+        assert_eq!(record.floating, None);
+        let before = positions.clone();
+        update_notch_position(
+            &mut positions,
+            "studio",
+            "Studio",
+            FrameInput {
+                camera_center: Some(600.),
+                ..movement_input(Dock::Top, (0.5, 0.5))
+            },
+            Some(NotchMovePosition::Along(0.2)),
+            None,
+            true,
+            |_| panic!("camera movement cannot persist"),
+        )
+        .unwrap();
+        assert_eq!(positions, before);
+    }
+
+    #[test]
+    fn pointer_overshoot_preserves_the_grab_until_it_returns_inside_the_edge() {
+        let mut positions = NotchPositions::new();
+        for (delta, expected_x) in [(900., 1000.), (-90., 1000.), (-450., 910.)] {
+            let position = position_for_dock(positions.get("studio"), Dock::Floating);
+            let input = movement_input(Dock::Floating, position);
+            update_notch_position(
+                &mut positions,
+                "studio",
+                "Studio",
+                input,
+                None,
+                Some(Point { x: delta, y: 0. }),
+                false,
+                |_| panic!("live drag cannot persist"),
+            )
+            .unwrap();
+            let moved = FrameInput {
+                position: position_for_dock(positions.get("studio"), Dock::Floating),
+                ..input
+            };
+            assert!((super::super::dock::frame_plan(moved).rect.x - expected_x).abs() < 1e-9);
+        }
+        let input = movement_input(
+            Dock::Floating,
+            position_for_dock(positions.get("studio"), Dock::Floating),
+        );
+        let mut writes = 0;
+        update_notch_position(
+            &mut positions,
+            "studio",
+            "Studio",
+            input,
+            None,
+            Some(Point { x: 900., y: 0. }),
+            true,
+            |_| {
+                writes += 1;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(writes, 1);
+        assert_eq!(positions["studio"].floating.unwrap().x, 1.);
+    }
+
+    #[test]
+    fn display_name_writes_during_a_drag_persist_bounded_fractions_and_keep_live_overshoot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notch-position.json");
+        let positions = NotchPositions::from([(
+            "studio".into(),
+            NotchPositionRecord {
+                name: "Renamed Display".into(),
+                top: Some(1.5),
+                left: Some(-0.2),
+                right: Some(0.3),
+                floating: Some(NotchFloatingPosition { x: 1.4, y: -0.1 }),
+            },
+        )]);
+        persist_notch_positions_to_path(&path, &positions).unwrap();
+        let saved: NotchPositions = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let record = &saved["studio"];
         assert_eq!(
-            read_persisted_drag_offsets(Some(&display_path)),
-            Some(PersistedOverlayDragOffsets {
-                offset_x: 32.0,
-                offset_y: -28.0,
-            }),
+            (record.top, record.left, record.right),
+            (Some(1.), Some(0.), Some(0.3))
         );
-        let _ = fs::remove_dir_all(directory);
+        assert_eq!(
+            record.floating,
+            Some(NotchFloatingPosition { x: 1., y: 0. })
+        );
+        assert_eq!(
+            positions["studio"].floating,
+            Some(NotchFloatingPosition { x: 1.4, y: -0.1 })
+        );
     }
 }

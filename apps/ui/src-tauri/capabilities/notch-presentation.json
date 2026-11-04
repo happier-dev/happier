@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notch-presentation",
+  "description": "allows the main app and activity overlay to request notch presentation",
+  "windows": ["main", "activity_overlay"],
+  "permissions": ["allow-desktop-activity-overlay-request-presentation"]
+}

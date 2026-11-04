@@ -1,21 +1,17 @@
 #[cfg(desktop)]
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(desktop)]
 use std::sync::{Arc, Mutex};
 #[cfg(desktop)]
 use std::time::Duration;
 #[cfg(desktop)]
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(target_os = "macos")]
-use std::ffi::c_void;
 #[cfg(desktop)]
 use std::sync::mpsc;
-
 #[cfg(target_os = "macos")]
-use objc2_app_kit::NSEvent;
+use std::ffi::c_void;
+
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
     CGDirectDisplayID, CGDisplayChangeSummaryFlags, CGDisplayRegisterReconfigurationCallback,
@@ -23,13 +19,19 @@ use objc2_core_graphics::{
 };
 #[cfg(desktop)]
 use tauri::{
-    App, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, State, WebviewWindow,
+    App, AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
 };
 
 #[cfg(desktop)]
 mod diagnostics;
 #[cfg(desktop)]
+mod dock;
+#[cfg(desktop)]
 mod display_change;
+#[cfg(desktop)]
+mod display_choice;
+#[cfg(desktop)]
+mod displays;
 #[cfg(desktop)]
 mod native_display;
 #[cfg(desktop)]
@@ -40,75 +42,72 @@ mod host_mode;
 mod host_window;
 #[cfg(desktop)]
 mod macos_display_context;
-#[cfg(target_os = "macos")]
-mod macos_event_repost;
 #[cfg(desktop)]
-mod monitor_resolution;
-#[cfg(desktop)]
-mod notch_native_geometry;
+pub(crate) mod monitor_resolution;
 #[cfg(desktop)]
 mod panel_host;
+#[cfg(desktop)]
+pub(crate) mod pointer;
+#[cfg(target_os = "macos")]
+mod macos_pointer;
+#[cfg(target_os = "linux")]
+mod linux_pointer;
+#[cfg(target_os = "linux")]
+mod linux_layer;
+#[cfg(target_os = "windows")]
+mod windows_pointer;
+#[cfg(any(target_os = "windows", test))]
+mod windows_fullscreen;
 #[cfg(desktop)]
 mod placement;
 #[cfg(desktop)]
 mod storage;
 #[cfg(desktop)]
+mod movement;
+#[cfg(desktop)]
+pub use movement::*;
+#[cfg(desktop)]
 mod window_lifecycle;
+#[cfg(desktop)]
+mod presentation_request;
+#[cfg(desktop)]
+pub use presentation_request::*;
+
+/// Native subscriptions are installed only when capture metadata is requested.
+/// The platform adapter owns signal resources, CaptureState owns invalidation.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) fn watch_capture_display_changes(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    { native_display::watch_linux(app) }
+    #[cfg(target_os = "windows")]
+    {
+        for window in app.webview_windows().values() {
+            if window.label() == crate::desktop_window::MAIN_WINDOW_LABEL || crate::desktop_window::is_capture_window(window.label()) {
+                watch_native_display_window(window)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn watch_native_display_window(window: &WebviewWindow) -> Result<(), String> {
+    native_display::watch_window(window)
+}
 
 #[cfg(desktop)]
-use self::diagnostics::{
-    build_overlay_placement_diagnostics, DesktopActivityOverlayHostFallbackReason,
-    DesktopActivityOverlayNativeHostPath, DesktopActivityOverlayPlacementDiagnosticsPayload,
-};
+use self::diagnostics::DesktopActivityOverlayPlacementDiagnosticsPayload;
 #[cfg(desktop)]
-use self::display_change::{
-    DesktopActivityOverlayDisplayChangeAction, DesktopActivityOverlayDisplayChangeDebounce,
-    DesktopActivityOverlayOpenReason,
-};
+use self::dock::{Dock, FrameInput, FramePresentation};
 #[cfg(desktop)]
-use self::host_mode::{
-    resolve_desktop_activity_overlay_host_mode_resolution, resolve_overlay_placement_for_host_mode,
-    DesktopActivityOverlayDisplayContext, DesktopActivityOverlayHostMode,
-};
+use self::display_change::DesktopActivityOverlayDisplayChangeDebounce;
 #[cfg(desktop)]
-use self::host_window::{
-    apply_macos_overlay_window_collection_behavior, resolve_macos_overlay_window_host_settings,
-    should_apply_raw_macos_overlay_window_collection_behavior,
-};
+use self::host_mode::DesktopActivityOverlayDisplayContext;
 #[cfg(desktop)]
-use self::macos_display_context::resolve_overlay_display_context_for_monitor;
-#[cfg(target_os = "macos")]
-use self::macos_event_repost::repost_macos_left_click_after_collapse;
-#[cfg(desktop)]
-use self::monitor_resolution::{
-    resolve_anchor_monitor_resolution, resolve_available_monitor_rects,
-};
-#[cfg(desktop)]
-use self::notch_native_geometry::{
-    advance_expanded_notch_native_mouse_state, advance_notch_native_mouse_state,
-    resolve_notch_integrated_hit_rect, resolve_notch_integrated_panel_rect,
-    resolve_notch_integrated_window_dimensions, DesktopActivityOverlayNativeMouseEffect,
-    DesktopActivityOverlayNativeMousePoint, DesktopActivityOverlayNativeMouseState,
-};
-#[cfg(desktop)]
-use self::panel_host::{apply_macos_overlay_panel_host, apply_macos_overlay_panel_position};
-#[cfg(desktop)]
-use self::placement::{
-    clamp, resolve_overlay_monitor_for_position, resolve_overlay_offsets_from_absolute_position,
-    sanitize_dimension, sanitize_offset, DesktopActivityOverlayDisplayMode, OverlayPlacementRect,
-    Rect, ResolvedOverlayAnchorMonitorRect,
-};
-#[cfg(desktop)]
-use self::storage::{
-    clear_persisted_drag_offsets_for_display, migrate_persisted_drag_offsets_for_display_paths,
-    persist_drag_offsets_for_display, read_persisted_drag_offsets,
-    resolve_drag_offsets_legacy_storage_keys_for_display, resolve_drag_offsets_path,
-    resolve_drag_offsets_path_for_display, resolve_drag_offsets_path_for_storage_key,
-    sanitize_drag_offsets, PersistedOverlayDragOffsets,
-};
+use self::placement::{OverlayPlacementRect, Rect};
 #[cfg(desktop)]
 use self::window_lifecycle::{
-    ensure_overlay_window, park_overlay_window_offscreen, show_overlay_window_without_activation,
+    apply_overlay_state, publish_overlay_state,
 };
 
 #[cfg(desktop)]
@@ -120,41 +119,9 @@ const OVERLAY_WINDOW_ROUTE: &str = "/desktop/activity-overlay?desktopOverlayWind
 #[cfg(desktop)]
 const OVERLAY_STATE_EVENT: &str = "activityOverlay://state";
 #[cfg(desktop)]
-const OVERLAY_INTERACTION_EVENT: &str = "activityOverlay://interaction";
-#[cfg(desktop)]
-const OVERLAY_INTERACTION_RESULT_EVENT: &str = "activityOverlay://interaction-result";
-#[cfg(desktop)]
-const OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS: &[&str] =
-    &[OVERLAY_WINDOW_LABEL, MAIN_WINDOW_LABEL];
-#[cfg(desktop)]
-const OVERLAY_SAFE_PADDING_PX: f64 = 12.0;
-#[cfg(desktop)]
-const NATIVE_NOTCH_MOUSE_POLL_INTERVAL_MS: u64 = 50;
-#[cfg(desktop)]
-const NATIVE_NOTCH_HOVER_EXPAND_DELAY_MS: u64 = 500;
-#[cfg(desktop)]
 const NATIVE_DISPLAY_CHANGE_DEBOUNCE_MS: u64 = 500;
 #[cfg(desktop)]
-const NATIVE_DISPLAY_CHANGE_POLL_INTERVAL_MS: u64 = 50;
-#[cfg(desktop)]
-const OVERLAY_INPUT_LOCK_HEARTBEAT_TIMEOUT_MS: u64 = 30_000;
-#[cfg(desktop)]
-const QA_PROOF_PIN_UNTIL_MODEL_KEY: &str = "__happierQaProofPinUntilEpochMs";
-#[cfg(desktop)]
-const PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S: f64 = 1600.0;
-#[cfg(desktop)]
-const PET_MOMENTUM_TICK_MS: u64 = 16;
-#[cfg(desktop)]
-const PET_MOMENTUM_FRICTION: f64 = 0.88;
-#[cfg(desktop)]
-const PET_MOMENTUM_STOP_SPEED_PX_PER_S: f64 = 65.0;
-#[cfg(desktop)]
-const PET_MOMENTUM_MAX_DURATION_MS: u64 = 900;
-
-// Keep the parked overlay far outside the monitor bounds so it remains "shown" (CDP target alive)
-// without being user-visible.
-#[cfg(desktop)]
-const OVERLAY_PARK_OFFSCREEN_DISTANCE_PX: f64 = 10_000.0;
+const OVERLAY_POINTER_EVENT: &str = "activityOverlay://pointer";
 
 #[cfg(desktop)]
 #[derive(Clone, Default)]
@@ -163,37 +130,21 @@ pub struct ActivityOverlayState(Arc<Mutex<ActivityOverlayRuntimeState>>);
 #[cfg(desktop)]
 #[derive(Clone, Default)]
 struct ActivityOverlayRuntimeState {
-    #[cfg(target_os = "macos")]
-    mouse_poll: Arc<crate::pet_overlay::NativeMousePollController>,
+    presentation_request: Option<presentation_request::PresentationRequest>,
     last_sync_payload: Option<DesktopActivityOverlaySyncPayload>,
     last_window_state: Option<DesktopActivityOverlayWindowStatePayload>,
-    desired_expanded: Option<bool>,
-    drag_offsets: PersistedOverlayDragOffsets,
-    drag_offsets_loaded: bool,
-    drag_offsets_storage_key: Option<String>,
+    present: Option<DesktopActivityOverlayPresentPayload>,
+    rest_extent: Option<DesktopActivityOverlayExtent>,
+    envelope: Option<Rect>,
+    last_host_settings: Option<(Dock, bool, bool)>,
+    native_visible: bool,
+    host_failure: Option<String>,
     last_display_context: Option<DesktopActivityOverlayDisplayContext>,
-    runtime_host_fallback: Option<ActivityOverlayRuntimeHostFallback>,
-    display_change_sender: Option<std::sync::mpsc::Sender<()>>,
     display_change_debounce: DesktopActivityOverlayDisplayChangeDebounce,
-    native_mouse_state: DesktopActivityOverlayNativeMouseState,
-    input_locked: bool,
-    input_lock_updated_at_epoch_ms: Option<u64>,
-    qa_pinned_sync_payload: Option<ActivityOverlayQaPinnedSyncPayload>,
-    momentum_generation: u64,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug)]
-struct ActivityOverlayQaPinnedSyncPayload {
-    payload: DesktopActivityOverlaySyncPayload,
-    expires_at_epoch_ms: u64,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, PartialEq)]
-struct ActivityOverlayRuntimeHostFallback {
-    display_context: DesktopActivityOverlayDisplayContext,
-    reason: DesktopActivityOverlayHostFallbackReason,
+    display_inventory: Option<Vec<monitor_resolution::MonitorFacts>>,
+    display_change_sender: Option<std::sync::mpsc::Sender<()>>,
+    resolved_display_key: Option<String>,
+    notch_positions: storage::NotchPositions,
 }
 
 #[cfg(desktop)]
@@ -201,369 +152,105 @@ struct ActivityOverlayRuntimeHostFallback {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopActivityOverlaySyncPayload {
     pub visible: bool,
-    pub expanded: bool,
     pub model: serde_json::Value,
     pub policy: DesktopActivityOverlayPolicyPayload,
-    pub window: DesktopActivityOverlayWindowDimensionsPayload,
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopActivityOverlayWindowStatePayload {
     pub visible: bool,
-    pub expanded: bool,
     pub model: serde_json::Value,
     pub policy: DesktopActivityOverlayPolicyPayload,
-    pub window: DesktopActivityOverlayWindowDimensionsPayload,
+    pub surface: DesktopActivityOverlaySurface,
+    pub engaged: bool,
+    pub availability: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<FramePresentation>,
+    #[serde(skip)]
+    pub frame_rect: Option<Rect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement_diagnostics: Option<DesktopActivityOverlayPlacementDiagnosticsPayload>,
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayDragVelocityPayload {
-    pub pointer_id: String,
-    pub vx: f64,
-    pub vy: f64,
-    pub sample_window_ms: f64,
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopActivityOverlaySurface {
+    #[default]
+    Hidden, Tip, CameraTip, Collapsed, Peek, Expanded, Pinned,
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayMomentumDeltaPayload {
-    pub generation: u64,
-    pub delta_x: f64,
-    pub delta_y: f64,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayScheduledMomentumDeltaPayload {
-    pub delta_x: f64,
-    pub delta_y: f64,
-    pub delay_ms: u64,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayMomentumPlanPayload {
-    pub generation: u64,
-    pub tick_ms: u64,
-    pub deltas: Vec<DesktopActivityOverlayScheduledMomentumDeltaPayload>,
-}
-
-#[cfg(desktop)]
-impl DesktopActivityOverlayWindowStatePayload {
-    fn from_sync_payload(
-        payload: &DesktopActivityOverlaySyncPayload,
-        placement_diagnostics: Option<DesktopActivityOverlayPlacementDiagnosticsPayload>,
-    ) -> Self {
-        Self {
-            visible: payload.visible,
-            expanded: payload.expanded,
-            model: payload.model.clone(),
-            policy: payload.policy.clone(),
-            window: payload.window.clone(),
-            placement_diagnostics,
-        }
-    }
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayWindowDimensionsPayload {
-    pub collapsed: DesktopActivityOverlayDimensionsPayload,
-    pub expanded: DesktopActivityOverlayDimensionsPayload,
+impl DesktopActivityOverlaySurface {
+    fn is_open(self) -> bool { matches!(self, Self::Expanded | Self::Pinned) }
 }
 
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayDimensionsPayload {
+pub struct DesktopActivityOverlayExtent {
     pub width: f64,
     pub height: f64,
+    #[serde(default)]
+    pub camera_offset: f64,
+    /// Additional measured layer bounds in logical screen coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_bounds: Option<Rect>,
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopActivityOverlayPresentPayload {
+    pub surface: DesktopActivityOverlaySurface,
+    pub engaged: bool,
+    pub extent: DesktopActivityOverlayExtent,
+    #[serde(default)]
+    pub settled: bool,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopActivityOverlayIdle {
+    #[default]
+    Tip, Full, Hidden,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopActivityOverlayPolicyPayload {
     pub enabled: bool,
-    pub visibility_mode: DesktopActivityOverlayVisibilityMode,
-    pub show_when_running: bool,
-    pub show_when_attention_required: bool,
-    pub show_when_ready: bool,
     pub always_on_top: bool,
-    pub auto_hide_enabled: bool,
-    pub auto_hide_delay_ms: i64,
-    pub expanded_behavior: DesktopActivityOverlayExpandedBehavior,
-    pub interactive_collapsed: bool,
     #[serde(default)]
-    pub presentation_mode: DesktopActivityOverlayPresentationMode,
-    pub click_action: DesktopActivityOverlayClickAction,
-    pub density: DesktopActivityOverlayDensity,
-    pub compact_style: DesktopActivityOverlayCompactStyle,
-    pub show_session_count: bool,
-    pub show_preview_text: bool,
-    pub placement_mode: DesktopActivityOverlayPlacementMode,
+    pub dock: Dock,
     #[serde(default)]
-    pub display_mode: DesktopActivityOverlayDisplayMode,
-    pub anchor: DesktopActivityOverlayAnchor,
-    pub offset_x: f64,
-    pub offset_y: f64,
-    pub enable_drag_reposition: bool,
-    pub lock_position: bool,
+    pub idle: DesktopActivityOverlayIdle,
+    #[serde(default = "automatic_display_mode")]
+    pub display_mode: String,
+    #[serde(flatten)]
+    pub content: serde_json::Map<String, serde_json::Value>,
 }
 
 #[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayVisibilityMode {
-    AttentionOnly,
-    ActiveSessions,
-    AlwaysWhenEnabled,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayClickAction {
-    ExpandOverlay,
-    OpenPrimarySession,
-    OpenSessions,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayExpandedBehavior {
-    Click,
-    Hover,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayPresentationMode {
-    #[default]
-    Automatic,
-    NotchIntegrated,
-    FloatingOverlay,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayDensity {
-    Compact,
-    Comfortable,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayCompactStyle {
-    Pill,
-    Panel,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayPlacementMode {
-    Anchored,
-    Custom,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopActivityOverlayAnchor {
-    TopCenter,
-    TopLeft,
-    TopRight,
-    BottomCenter,
-    BottomLeft,
-    BottomRight,
-    LeftCenter,
-    RightCenter,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayInteractionPayload {
-    #[serde(default)]
-    pub request_id: Option<String>,
-    pub action_identifier: String,
-    #[serde(default)]
-    pub data: serde_json::Value,
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopActivityOverlayInteractionResultPayload {
-    pub request_id: String,
-    pub ok: bool,
-    #[serde(default)]
-    pub error_code: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[cfg(desktop)]
-fn validate_overlay_command_caller(
-    command_name: &str,
-    caller_label: &str,
-    allowed_labels: &[&str],
-) -> Result<(), String> {
-    if allowed_labels.iter().any(|label| *label == caller_label) {
-        return Ok(());
-    }
-    Err(format!(
-        "Command `{command_name}` is not allowed from window `{caller_label}`"
-    ))
-}
-
-#[cfg(desktop)]
-fn ensure_overlay_command_caller<R: Runtime>(
-    command_name: &str,
-    caller_window: &WebviewWindow<R>,
-    allowed_labels: &[&str],
-) -> Result<(), String> {
-    validate_overlay_command_caller(command_name, caller_window.label(), allowed_labels)
-}
-
-#[cfg(desktop)]
-fn activity_overlay_allows_drag(state: &ActivityOverlayRuntimeState) -> bool {
-    state
-        .last_sync_payload
-        .as_ref()
-        .map(|payload| {
-            payload.policy.enable_drag_reposition
-                && !payload.policy.lock_position
-                && matches!(
-                    payload.policy.placement_mode,
-                    DesktopActivityOverlayPlacementMode::Custom
-                )
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(desktop)]
-fn cap_activity_overlay_velocity(vx: f64, vy: f64) -> (f64, f64) {
-    let magnitude = vx.hypot(vy);
-    if magnitude <= PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S || magnitude <= 0.0 {
-        return (vx, vy);
-    }
-    let scale = PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S / magnitude;
-    (vx * scale, vy * scale)
-}
-
-#[cfg(desktop)]
-fn resolve_activity_overlay_momentum_deltas(vx: f64, vy: f64) -> Vec<(f64, f64)> {
-    let (mut vx, mut vy) = cap_activity_overlay_velocity(vx, vy);
-    let mut elapsed_ms = 0;
-    let mut deltas = Vec::new();
-    while elapsed_ms < PET_MOMENTUM_MAX_DURATION_MS
-        && vx.hypot(vy) >= PET_MOMENTUM_STOP_SPEED_PX_PER_S
-    {
-        let seconds = PET_MOMENTUM_TICK_MS as f64 / 1_000.0;
-        deltas.push((vx * seconds, vy * seconds));
-        vx *= PET_MOMENTUM_FRICTION;
-        vy *= PET_MOMENTUM_FRICTION;
-        elapsed_ms += PET_MOMENTUM_TICK_MS;
-    }
-    deltas
-}
-
-#[cfg(desktop)]
-fn resolve_activity_overlay_window_rect(
-    window_state: &DesktopActivityOverlayWindowStatePayload,
-) -> Rect {
-    let dimensions = if window_state.expanded {
-        window_state.window.expanded
-    } else {
-        window_state.window.collapsed
-    };
-
-    Rect {
-        x: 0.0,
-        y: 0.0,
-        width: sanitize_dimension(dimensions.width, 340.0, 1.0, 4096.0),
-        height: sanitize_dimension(dimensions.height, 72.0, 1.0, 4096.0),
-    }
-}
-
-#[cfg(desktop)]
-fn resolve_activity_overlay_drag_retarget<R: Runtime>(
-    app: &AppHandle<R>,
-    overlay_window: &WebviewWindow<R>,
-    payload: &DesktopActivityOverlaySyncPayload,
-    window_state: &DesktopActivityOverlayWindowStatePayload,
-    cached_display_context: Option<DesktopActivityOverlayDisplayContext>,
-    delta_x: f64,
-    delta_y: f64,
-) -> Option<(
-    PersistedOverlayDragOffsets,
-    Option<DesktopActivityOverlayDisplayContext>,
-)> {
-    let placement_diagnostics = window_state.placement_diagnostics.as_ref()?;
-    let overlay = resolve_activity_overlay_window_rect(window_state);
-    let desired_position = OverlayPlacementRect {
-        x: placement_diagnostics.computed_position.x + delta_x,
-        y: placement_diagnostics.computed_position.y + delta_y,
-    };
-    let monitors = resolve_available_monitor_rects(app, overlay_window);
-    let target_monitor = resolve_overlay_monitor_for_position(
-        &monitors,
-        placement_diagnostics.effective_monitor,
-        desired_position,
-        overlay,
-    );
-    let target_display_context = resolve_effective_overlay_display_context(
-        resolve_overlay_display_context_for_monitor(app, target_monitor),
-        cached_display_context,
-        target_monitor,
-    );
-    let (offset_x, offset_y) = resolve_overlay_offsets_from_absolute_position(
-        target_monitor,
-        overlay,
-        payload.policy.anchor,
-        sanitize_offset(payload.policy.offset_x),
-        sanitize_offset(payload.policy.offset_y),
-        desired_position,
-        OVERLAY_SAFE_PADDING_PX,
-    );
-
-    Some((
-        sanitize_drag_offsets(PersistedOverlayDragOffsets { offset_x, offset_y }),
-        target_display_context,
-    ))
-}
+fn automatic_display_mode() -> String { "automatic".into() }
 
 #[cfg(desktop)]
 pub(crate) fn release_for_menu_bar(app: &AppHandle) {
+    let _ = pointer::set_visible(app, OVERLAY_WINDOW_LABEL, false);
     let Some(state) = app.try_state::<ActivityOverlayState>() else {
         return;
     };
     if let Ok(mut guard) = state.0.lock() {
-        #[cfg(target_os = "macos")]
-        guard.mouse_poll.set_enabled(false);
         guard.last_sync_payload = None;
         guard.last_window_state = None;
-        guard.desired_expanded = None;
-        guard.qa_pinned_sync_payload = None;
+        guard.present = None;
+        guard.envelope = None;
+        guard.last_host_settings = None;
         guard.display_change_debounce = Default::default();
-        guard.native_mouse_state = Default::default();
-        guard.momentum_generation = guard.momentum_generation.wrapping_add(1);
     };
 }
 
@@ -571,18 +258,19 @@ pub(crate) fn release_for_menu_bar(app: &AppHandle) {
 pub fn register<R: Runtime + 'static>(app: &mut App<R>) -> tauri::Result<()> {
     let state = app.state::<ActivityOverlayState>();
     if let Ok(mut guard) = state.0.lock() {
-        if !guard.drag_offsets_loaded {
-            guard.drag_offsets = sanitize_drag_offsets(
-                read_persisted_drag_offsets(resolve_drag_offsets_path(app).ok().as_deref())
-                    .unwrap_or_default(),
-            );
-            guard.drag_offsets_loaded = true;
-        }
+        guard.notch_positions = storage::read_notch_positions(app);
     }
-    start_native_notch_mouse_poll_loop(app.handle().clone(), state.inner().clone());
     start_native_display_change_listener(app.handle().clone(), state.inner().clone());
-    #[cfg(target_os="windows")]
     if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let handle=app.handle().clone();
+        let owner=state.inner().clone();
+        main.on_window_event(move |event| {
+            if matches!(event,tauri::WindowEvent::Moved(_)) {
+                let handle=handle.clone(); let owner=owner.clone();
+                tauri::async_runtime::spawn_blocking(move || { let _=displays::main_moved(&handle,&owner); });
+            }
+        });
+        #[cfg(target_os="windows")]
         native_display::watch_window(&main).map_err(std::io::Error::other)?;
     }
     #[cfg(target_os="linux")]
@@ -653,6 +341,15 @@ fn native_display_change_flags_should_refresh(flags: CGDisplayChangeSummaryFlags
 }
 
 #[cfg(desktop)]
+pub(super) fn request_display_refresh<R:Runtime>(app:&AppHandle<R>) {
+    if let Some(state)=app.try_state::<ActivityOverlayState>() {
+        if let Ok(guard)=state.0.lock() {
+            if let Some(sender)=&guard.display_change_sender { let _=sender.send(()); }
+        };
+    }
+}
+
+#[cfg(desktop)]
 fn run_native_display_change_listener<R: Runtime + 'static>(
     app: AppHandle<R>,
     state: ActivityOverlayState,
@@ -662,7 +359,7 @@ fn run_native_display_change_listener<R: Runtime + 'static>(
         let _ = record_native_display_change(&app, &state);
         loop {
             match rx.recv_timeout(Duration::from_millis(
-                NATIVE_DISPLAY_CHANGE_POLL_INTERVAL_MS,
+                NATIVE_DISPLAY_CHANGE_DEBOUNCE_MS,
             )) {
                 Ok(()) => {
                     let _ = record_native_display_change(&app, &state);
@@ -687,42 +384,40 @@ fn record_native_display_change<R: Runtime>(
     app: &AppHandle<R>,
     state: &ActivityOverlayState,
 ) -> Result<(), String> {
-    if let Some(capture) = app.try_state::<crate::capture::CaptureState>() {
+    let capture = app.try_state::<crate::capture::CaptureState>();
+    record_native_display_change_in_state(state, capture.as_deref())?;
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn record_native_display_change_in_state(
+    state: &ActivityOverlayState,
+    capture: Option<&crate::capture::CaptureState>,
+) -> Result<(), String> {
+    // One completed native topology signal serves both consumers. Retire
+    // capture's display-bound inventory before activity's visual debounce;
+    // inactive capture performs no discovery, window work or publication.
+    if let Some(capture) = capture {
         capture.invalidate_selection(None);
     }
-    let should_collapse_expanded = {
+    {
         let mut guard = state
             .0
             .lock()
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        let was_expanded = guard
-            .last_sync_payload
-            .as_ref()
-            .map(|payload| payload.expanded)
-            .unwrap_or(false);
         guard
             .display_change_debounce
-            .record_display_change(current_epoch_millis(), was_expanded);
-        guard.last_display_context = None;
-        guard.runtime_host_fallback = None;
-        guard.drag_offsets_loaded = false;
-        guard.drag_offsets_storage_key = None;
-        if was_expanded {
-            apply_expanded_override_to_runtime_state(&mut guard, false);
-        }
-        was_expanded
-    };
-
-    if should_collapse_expanded {
-        apply_overlay_state(app, state)?;
+            .record_display_change(current_epoch_millis());
+        displays::invalidate_projection(&mut guard);
     }
+
     Ok(())
 }
 
 #[cfg(desktop)]
 fn resolve_native_display_change_action(
     state: &ActivityOverlayState,
-) -> Result<Option<DesktopActivityOverlayDisplayChangeAction>, String> {
+) -> Result<Option<()>, String> {
     let mut guard = state
         .0
         .lock()
@@ -736,351 +431,22 @@ fn resolve_native_display_change_action(
 fn apply_native_display_change_action<R: Runtime>(
     app: &AppHandle<R>,
     state: &ActivityOverlayState,
-    action: DesktopActivityOverlayDisplayChangeAction,
+    _action: (),
 ) -> Result<(), String> {
-    if action.reopen_expanded {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        apply_expanded_override_to_runtime_state(&mut guard, true);
-    }
-
-    apply_overlay_state(app, state)?;
-
-    if action.reopen_expanded {
-        app.emit_to(
-            MAIN_WINDOW_LABEL,
-            OVERLAY_INTERACTION_EVENT,
-            DesktopActivityOverlayInteractionPayload {
-                request_id: None,
-                action_identifier: "overlay-set-expanded".to_string(),
-                data: build_display_changed_set_expanded_interaction_data(true, action.open_reason),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct NativeNotchMouseObservation {
-    point: DesktopActivityOverlayNativeMousePoint,
-    left_mouse_pressed: bool,
-}
-
-#[cfg(target_os = "macos")]
-type NativeNotchMouseMainThreadTask = Box<dyn FnOnce() + Send + 'static>;
-
-#[cfg(target_os = "macos")]
-fn schedule_native_notch_mouse_task_if_idle(
-    pending: &Arc<AtomicBool>,
-    dispatch: impl FnOnce(NativeNotchMouseMainThreadTask) -> Result<(), String>,
-    task: impl FnOnce() + Send + 'static,
-) -> Result<bool, String> {
-    if pending.swap(true, Ordering::AcqRel) {
-        return Ok(false);
-    }
-
-    let pending_for_task = pending.clone();
-    let wrapped_task: NativeNotchMouseMainThreadTask = Box::new(move || {
-        task();
-        pending_for_task.store(false, Ordering::Release);
-    });
-
-    match dispatch(wrapped_task) {
-        Ok(()) => Ok(true),
-        Err(error) => {
-            pending.store(false, Ordering::Release);
-            Err(error)
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn start_native_notch_mouse_poll_loop<R: Runtime + 'static>(
-    app: AppHandle<R>,
-    state: ActivityOverlayState,
-) {
-    let controller = state
-        .0
-        .lock()
-        .expect("activity overlay state")
-        .mouse_poll
-        .clone();
-    let pending = Arc::new(AtomicBool::new(false));
-    std::thread::spawn(move || loop {
-        if !controller.wait_until_enabled() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(NATIVE_NOTCH_MOUSE_POLL_INTERVAL_MS));
-        if !controller.is_enabled() {
-            continue;
-        }
-        let dispatch_app = app.clone();
-        let task_app = app.clone();
-        let task_state = state.clone();
-        let result = schedule_native_notch_mouse_task_if_idle(
-            &pending,
-            move |task| {
-                dispatch_app
-                    .run_on_main_thread(task)
-                    .map_err(|error| error.to_string())
-            },
-            move || {
-                if crate::menu_bar::is_active(&task_app) {
-                    return;
-                }
-                let observation = read_native_notch_mouse_observation_on_main_thread();
-                let _ = handle_native_notch_mouse_observation(&task_app, &task_state, observation);
-            },
-        );
-        if result.is_err() {
-            break;
-        }
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn start_native_notch_mouse_poll_loop<R: Runtime>(
-    _app: AppHandle<R>,
-    _state: ActivityOverlayState,
-) {
-}
-
-#[cfg(target_os = "macos")]
-fn read_native_notch_mouse_observation_on_main_thread() -> NativeNotchMouseObservation {
-    let _main_thread = objc2::MainThreadMarker::new()
-        .expect("expected native notch mouse observation to run on the main thread");
-    let location = unsafe { NSEvent::mouseLocation() };
-    let pressed_buttons = unsafe { NSEvent::pressedMouseButtons() };
-
-    NativeNotchMouseObservation {
-        point: DesktopActivityOverlayNativeMousePoint {
-            x: location.x,
-            y: location.y,
-        },
-        left_mouse_pressed: pressed_buttons & 1 == 1,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn handle_native_notch_mouse_observation<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
-    observation: NativeNotchMouseObservation,
-) -> Result<(), String> {
-    let now_ms = current_epoch_millis();
-    let (effect, display_context) = {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        let Some(window_state) = guard.last_window_state.clone() else {
-            guard.native_mouse_state = DesktopActivityOverlayNativeMouseState::default();
-            return Ok(());
-        };
-        let Some(diagnostics) = window_state.placement_diagnostics.clone() else {
-            guard.native_mouse_state = DesktopActivityOverlayNativeMouseState::default();
-            return Ok(());
-        };
-        let Some(display_context) = diagnostics.display_context else {
-            guard.native_mouse_state = DesktopActivityOverlayNativeMouseState::default();
-            return Ok(());
-        };
-        if !window_state.visible
-            || !matches!(
-                diagnostics.host_mode,
-                DesktopActivityOverlayHostMode::NotchIntegrated
-            )
-        {
-            guard.native_mouse_state = DesktopActivityOverlayNativeMouseState::default();
-            return Ok(());
-        }
-
-        let effect = if window_state.expanded {
-            let expanded_rect = resolve_notch_integrated_panel_rect(
-                diagnostics.computed_position,
-                window_state.window.expanded,
-                display_context.clone(),
-                diagnostics.applied_native_frame,
-            );
-            let expanded_effect = advance_expanded_notch_native_mouse_state(
-                &mut guard.native_mouse_state,
-                expanded_rect,
-                observation.point,
-                observation.left_mouse_pressed,
-            );
-            maybe_suppress_native_mouse_effect_for_input_lock(
-                expanded_effect,
-                is_overlay_input_lock_active(&guard, now_ms),
-            )
-        } else {
-            let hit_rect = resolve_notch_integrated_hit_rect(
-                diagnostics.computed_position,
-                window_state.window.collapsed,
-                display_context.clone(),
-                diagnostics.applied_native_frame,
-            );
-            advance_notch_native_mouse_state(
-                &mut guard.native_mouse_state,
-                hit_rect,
-                observation.point,
-                observation.left_mouse_pressed,
-                now_ms,
-                NATIVE_NOTCH_HOVER_EXPAND_DELAY_MS,
-            )
-        };
-        (effect, display_context)
-    };
-
-    match effect {
-        DesktopActivityOverlayNativeMouseEffect::None => Ok(()),
-        DesktopActivityOverlayNativeMouseEffect::ExpandFromClick
-        | DesktopActivityOverlayNativeMouseEffect::ExpandFromHover => {
-            set_overlay_expanded_from_native(app, state, true, effect)
-        }
-        DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => {
-            set_overlay_expanded_from_native(app, state, false, effect)?;
-            repost_macos_left_click_after_collapse(observation.point, display_context);
-            Ok(())
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_overlay_expanded_from_native<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
-    expanded: bool,
-    effect: DesktopActivityOverlayNativeMouseEffect,
-) -> Result<(), String> {
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        if let Some(payload) = guard.last_sync_payload.as_mut() {
-            if payload.expanded == expanded {
-                return Ok(());
-            }
-        }
-        apply_expanded_override_to_runtime_state(&mut guard, expanded);
-        guard.native_mouse_state = DesktopActivityOverlayNativeMouseState::default();
-    }
-
-    apply_overlay_state(app, state)?;
-    app.emit_to(
-        MAIN_WINDOW_LABEL,
-        OVERLAY_INTERACTION_EVENT,
-        DesktopActivityOverlayInteractionPayload {
-            request_id: None,
-            action_identifier: "overlay-set-expanded".to_string(),
-            data: build_native_set_expanded_interaction_data(expanded, effect),
-        },
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn build_native_set_expanded_interaction_data(
-    expanded: bool,
-    effect: DesktopActivityOverlayNativeMouseEffect,
-) -> serde_json::Value {
-    serde_json::json!({
-        "expanded": expanded,
-        "reason": native_mouse_effect_reason(effect),
-        "openReason": native_mouse_effect_open_reason(effect),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn native_mouse_effect_reason(effect: DesktopActivityOverlayNativeMouseEffect) -> &'static str {
-    match effect {
-        DesktopActivityOverlayNativeMouseEffect::None => "none",
-        DesktopActivityOverlayNativeMouseEffect::ExpandFromClick => "click",
-        DesktopActivityOverlayNativeMouseEffect::ExpandFromHover => "hover",
-        DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => "outside_click",
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn native_mouse_effect_open_reason(
-    effect: DesktopActivityOverlayNativeMouseEffect,
-) -> DesktopActivityOverlayOpenReason {
-    match effect {
-        DesktopActivityOverlayNativeMouseEffect::ExpandFromClick => {
-            DesktopActivityOverlayOpenReason::Click
-        }
-        DesktopActivityOverlayNativeMouseEffect::ExpandFromHover => {
-            DesktopActivityOverlayOpenReason::Hover
-        }
-        DesktopActivityOverlayNativeMouseEffect::None
-        | DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => {
-            DesktopActivityOverlayOpenReason::Unknown
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn build_display_changed_set_expanded_interaction_data(
-    expanded: bool,
-    open_reason: DesktopActivityOverlayOpenReason,
-) -> serde_json::Value {
-    serde_json::json!({
-        "expanded": expanded,
-        "reason": open_reason,
-        "openReason": open_reason,
-    })
+    apply_overlay_state(app, state)
 }
 
 #[cfg(desktop)]
 fn current_epoch_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(desktop)]
-fn apply_input_lock_to_runtime_state(
-    state: &mut ActivityOverlayRuntimeState,
-    locked: bool,
-    now_ms: u64,
-) {
-    state.input_locked = locked;
-    state.input_lock_updated_at_epoch_ms = locked.then_some(now_ms);
+#[tauri::command]
+pub fn desktop_displays_list<R:Runtime>(app:AppHandle<R>, state:State<'_,ActivityOverlayState>) -> Result<displays::DesktopDisplaysList,String> {
+    displays::list(&app,&state)
 }
 
-#[cfg(desktop)]
-fn is_overlay_input_lock_active(state: &ActivityOverlayRuntimeState, now_ms: u64) -> bool {
-    state
-        .input_lock_updated_at_epoch_ms
-        .map(|updated_at_ms| {
-            state.input_locked
-                && now_ms.saturating_sub(updated_at_ms) <= OVERLAY_INPUT_LOCK_HEARTBEAT_TIMEOUT_MS
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(target_os = "macos")]
-fn maybe_suppress_native_mouse_effect_for_input_lock(
-    effect: DesktopActivityOverlayNativeMouseEffect,
-    input_lock_active: bool,
-) -> DesktopActivityOverlayNativeMouseEffect {
-    if input_lock_active
-        && matches!(
-            effect,
-            DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick
-        )
-    {
-        return DesktopActivityOverlayNativeMouseEffect::None;
-    }
-
-    effect
-}
 
 #[cfg(desktop)]
 #[tauri::command]
@@ -1088,44 +454,28 @@ pub fn desktop_activity_overlay_sync<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ActivityOverlayState>,
     payload: DesktopActivityOverlaySyncPayload,
-    caller_window: WebviewWindow<R>,
 ) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_sync",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL],
-    )?;
 
-    {
+    let reframe = {
         let mut guard = state
             .0
             .lock()
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        ensure_drag_offsets_loaded(&app, &mut guard);
-        let mut next_payload =
-            apply_qa_sync_pin_override(&mut guard, payload, current_epoch_millis());
-        apply_desired_expanded_override(&mut guard, &mut next_payload);
-        guard.last_sync_payload = Some(next_payload.clone());
-        #[cfg(target_os = "macos")]
-        guard
-            .mouse_poll
-            .set_enabled(next_payload.visible && !crate::menu_bar::is_active(&app));
-    }
+        let changed = sync_requires_frame(guard.last_sync_payload.as_ref(), &payload, guard.present);
+        if changed { guard.envelope = None; }
+        guard.last_sync_payload = Some(payload);
+        changed
+    };
 
-    apply_overlay_state(&app, state.inner())
+    if reframe { apply_overlay_state(&app, state.inner())?; } else { publish_overlay_state(&app, state.inner())?; }
+    Ok(())
 }
 
 #[cfg(desktop)]
 #[tauri::command]
-pub fn desktop_activity_overlay_get_window_state<R: Runtime>(
-    caller_window: WebviewWindow<R>,
+pub fn desktop_activity_overlay_get_window_state(
     state: State<'_, ActivityOverlayState>,
 ) -> Result<Option<DesktopActivityOverlayWindowStatePayload>, String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_get_window_state",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL, OVERLAY_WINDOW_LABEL],
-    )?;
 
     let guard = state
         .0
@@ -1135,998 +485,142 @@ pub fn desktop_activity_overlay_get_window_state<R: Runtime>(
 }
 
 #[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_set_expanded<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ActivityOverlayState>,
-    expanded: bool,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_set_expanded",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL, OVERLAY_WINDOW_LABEL],
-    )?;
+fn sync_requires_frame(previous: Option<&DesktopActivityOverlaySyncPayload>, next: &DesktopActivityOverlaySyncPayload, present: Option<DesktopActivityOverlayPresentPayload>) -> bool {
+    let Some(previous) = previous else { return true; };
+    let (a, b) = (&previous.policy, &next.policy);
+    let bootstrap_changed = present.is_none() && (previous.visible || a.idle != DesktopActivityOverlayIdle::Hidden)
+        != (next.visible || b.idle != DesktopActivityOverlayIdle::Hidden);
+    bootstrap_changed || a.enabled != b.enabled || a.always_on_top != b.always_on_top || a.dock != b.dock
+        || a.display_mode != b.display_mode
+}
 
+#[cfg(desktop)]
+#[tauri::command]
+pub fn desktop_activity_overlay_present<R: Runtime>(
+    app: AppHandle<R>, state: State<'_, ActivityOverlayState>,
+    payload: DesktopActivityOverlayPresentPayload,
+) -> Result<(), String> {
+    let extent = payload.extent;
+    if !extent.width.is_finite() || !extent.height.is_finite() || !extent.camera_offset.is_finite()
+        || extent.screen_bounds.is_some_and(|rect| !rect.x.is_finite() || !rect.y.is_finite()
+            || !rect.width.is_finite() || !rect.height.is_finite() || rect.width <= 0. || rect.height <= 0.)
+        || (payload.surface != DesktopActivityOverlaySurface::Hidden && (extent.width <= 0. || extent.height <= 0.)) {
+        return Err("Desktop activity overlay extent must be finite and positive".to_string());
+    }
     {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        apply_expanded_override_to_runtime_state(&mut guard, expanded);
+        let mut guard = state.0.lock().map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
+        if guard.present == Some(payload) { return Ok(()); }
+        if payload.surface != DesktopActivityOverlaySurface::Hidden && (!payload.surface.is_open() || guard.rest_extent.is_none()) { guard.rest_extent = Some(extent); }
+        guard.present = Some(payload);
     }
     apply_overlay_state(&app, state.inner())
 }
 
 #[cfg(desktop)]
 #[tauri::command]
-pub fn desktop_activity_overlay_set_input_locked<R: Runtime>(
-    state: State<'_, ActivityOverlayState>,
-    locked: bool,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_set_input_locked",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL, OVERLAY_WINDOW_LABEL],
-    )?;
-
-    let mut guard = state
-        .0
-        .lock()
-        .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-    apply_input_lock_to_runtime_state(&mut guard, locked, current_epoch_millis());
-    Ok(())
+pub fn desktop_activity_overlay_pointer_enter<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    pointer::enter(&app, OVERLAY_WINDOW_LABEL)
 }
 
 #[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_apply_drag_delta<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ActivityOverlayState>,
-    delta_x: f64,
-    delta_y: f64,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_apply_drag_delta",
-        &caller_window,
-        &[OVERLAY_WINDOW_LABEL],
-    )?;
-    if !delta_x.is_finite() || !delta_y.is_finite() {
-        return Err("Desktop activity overlay drag delta must be finite".to_string());
-    }
-
-    let drag_retarget = {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        ensure_drag_offsets_loaded(&app, &mut guard);
-        if !activity_overlay_allows_drag(&guard) {
-            return Ok(());
-        }
-
-        guard
-            .last_sync_payload
-            .as_ref()
-            .zip(guard.last_window_state.as_ref())
-            .and_then(|(payload, window_state)| {
-                resolve_activity_overlay_drag_retarget(
-                    &app,
-                    &caller_window,
-                    payload,
-                    window_state,
-                    guard.last_display_context.clone(),
-                    delta_x,
-                    delta_y,
-                )
-            })
-    };
-
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        ensure_drag_offsets_loaded(&app, &mut guard);
-        if !activity_overlay_allows_drag(&guard) {
-            return Ok(());
-        }
-
-        if let Some((offsets, display_context)) = drag_retarget {
-            guard.drag_offsets = offsets;
-            guard.drag_offsets_storage_key = display_context
-                .as_ref()
-                .and_then(|context| context.display_identity.as_ref())
-                .map(|identity| identity.storage_key.clone());
-            if let Some(display_context) = display_context {
-                guard.last_display_context = Some(display_context);
-            }
-        } else {
-            guard.drag_offsets.offset_x =
-                clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
-            guard.drag_offsets.offset_y =
-                clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
-        }
-        let display_identity = guard
-            .last_display_context
-            .as_ref()
-            .and_then(|context| context.display_identity.as_ref());
-        persist_drag_offsets_for_display(&app, display_identity, guard.drag_offsets);
-    }
-
-    apply_overlay_state(&app, state.inner())
+pub(crate) fn host_availability<R: Runtime>(app: &AppHandle<R>) -> serde_json::Value {
+    let reason = app.try_state::<ActivityOverlayState>().and_then(|state| state.0.lock().ok().and_then(|guard| guard.host_failure.clone()));
+    availability_for_failure(reason.as_deref())
 }
 
 #[cfg(desktop)]
-fn apply_activity_overlay_momentum_delta<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
-    generation: u64,
-    delta_x: f64,
-    delta_y: f64,
-) -> Result<bool, String> {
-    let drag_retarget = {
-        let Some(overlay_window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
-            return Ok(false);
-        };
-        let guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        if guard.momentum_generation != generation || !activity_overlay_allows_drag(&guard) {
-            return Ok(false);
-        }
-        guard
-            .last_sync_payload
-            .as_ref()
-            .zip(guard.last_window_state.as_ref())
-            .and_then(|(payload, window_state)| {
-                resolve_activity_overlay_drag_retarget(
-                    app,
-                    &overlay_window,
-                    payload,
-                    window_state,
-                    guard.last_display_context.clone(),
-                    delta_x,
-                    delta_y,
-                )
-            })
-    };
-
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        if guard.momentum_generation != generation || !activity_overlay_allows_drag(&guard) {
-            return Ok(false);
-        }
-        ensure_drag_offsets_loaded(app, &mut guard);
-        if let Some((offsets, display_context)) = drag_retarget {
-            guard.drag_offsets = offsets;
-            guard.drag_offsets_storage_key = display_context
-                .as_ref()
-                .and_then(|context| context.display_identity.as_ref())
-                .map(|identity| identity.storage_key.clone());
-            if let Some(display_context) = display_context {
-                guard.last_display_context = Some(display_context);
-            }
-        } else {
-            guard.drag_offsets.offset_x =
-                clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
-            guard.drag_offsets.offset_y =
-                clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
-        }
-        let display_identity = guard
-            .last_display_context
-            .as_ref()
-            .and_then(|context| context.display_identity.as_ref());
-        persist_drag_offsets_for_display(app, display_identity, guard.drag_offsets);
+fn availability_for_failure(reason: Option<&str>) -> serde_json::Value {
+    match reason {
+        Some(reason) => serde_json::json!({"kind":"unavailable", "reason":reason}),
+        None => serde_json::json!({"kind":"available"}),
     }
-
-    apply_overlay_state(app, state)?;
-    Ok(true)
-}
-
-#[cfg(desktop)]
-fn resolve_activity_overlay_momentum_plan(
-    generation: u64,
-    velocity: (f64, f64),
-) -> DesktopActivityOverlayMomentumPlanPayload {
-    DesktopActivityOverlayMomentumPlanPayload {
-        generation,
-        tick_ms: PET_MOMENTUM_TICK_MS,
-        deltas: resolve_activity_overlay_momentum_deltas(velocity.0, velocity.1)
-            .into_iter()
-            .map(
-                |(delta_x, delta_y)| DesktopActivityOverlayScheduledMomentumDeltaPayload {
-                    delta_x,
-                    delta_y,
-                    delay_ms: PET_MOMENTUM_TICK_MS,
-                },
-            )
-            .collect(),
-    }
-}
-
-#[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_apply_momentum_delta<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ActivityOverlayState>,
-    payload: DesktopActivityOverlayMomentumDeltaPayload,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_apply_momentum_delta",
-        &caller_window,
-        &[OVERLAY_WINDOW_LABEL],
-    )?;
-    if !payload.delta_x.is_finite() || !payload.delta_y.is_finite() {
-        return Err("Desktop activity overlay momentum delta must be finite".to_string());
-    }
-
-    apply_activity_overlay_momentum_delta(
-        &app,
-        state.inner(),
-        payload.generation,
-        payload.delta_x,
-        payload.delta_y,
-    )?;
-    Ok(())
-}
-
-#[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_release_drag_velocity<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ActivityOverlayState>,
-    payload: DesktopActivityOverlayDragVelocityPayload,
-    caller_window: WebviewWindow<R>,
-) -> Result<DesktopActivityOverlayMomentumPlanPayload, String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_release_drag_velocity",
-        &caller_window,
-        &[OVERLAY_WINDOW_LABEL],
-    )?;
-    if payload.pointer_id.trim().is_empty() {
-        return Err("Desktop activity overlay pointer id is required".to_string());
-    }
-    if !payload.vx.is_finite() || !payload.vy.is_finite() {
-        return Err("Desktop activity overlay drag velocity must be finite".to_string());
-    }
-    if !payload.sample_window_ms.is_finite() || payload.sample_window_ms <= 0.0 {
-        return Err("Desktop activity overlay velocity sample window must be positive".to_string());
-    }
-
-    let (generation, velocity) = {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        ensure_drag_offsets_loaded(&app, &mut guard);
-        if !activity_overlay_allows_drag(&guard) {
-            return Ok(DesktopActivityOverlayMomentumPlanPayload {
-                generation: guard.momentum_generation,
-                tick_ms: PET_MOMENTUM_TICK_MS,
-                deltas: Vec::new(),
-            });
-        }
-        guard.momentum_generation = guard.momentum_generation.wrapping_add(1);
-        (
-            guard.momentum_generation,
-            cap_activity_overlay_velocity(payload.vx, payload.vy),
-        )
-    };
-
-    Ok(resolve_activity_overlay_momentum_plan(generation, velocity))
-}
-
-#[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_reset_position<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ActivityOverlayState>,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_reset_position",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL],
-    )?;
-
-    {
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        guard.drag_offsets = PersistedOverlayDragOffsets::default();
-        guard.drag_offsets_loaded = true;
-        guard.drag_offsets_storage_key = guard
-            .last_display_context
-            .as_ref()
-            .and_then(|context| context.display_identity.as_ref())
-            .map(|identity| identity.storage_key.clone());
-    }
-    let display_identity = {
-        let guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        guard
-            .last_display_context
-            .as_ref()
-            .and_then(|context| context.display_identity.clone())
-    };
-    clear_persisted_drag_offsets_for_display(&app, display_identity.as_ref());
-
-    apply_overlay_state(&app, state.inner())
-}
-
-#[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_emit_interaction<R: Runtime>(
-    app: AppHandle<R>,
-    payload: DesktopActivityOverlayInteractionPayload,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_emit_interaction",
-        &caller_window,
-        OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
-    )?;
-
-    app.emit_to(MAIN_WINDOW_LABEL, OVERLAY_INTERACTION_EVENT, payload)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(desktop)]
-#[tauri::command]
-pub fn desktop_activity_overlay_emit_interaction_result<R: Runtime>(
-    app: AppHandle<R>,
-    payload: DesktopActivityOverlayInteractionResultPayload,
-    caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
-    ensure_overlay_command_caller(
-        "desktop_activity_overlay_emit_interaction_result",
-        &caller_window,
-        &[MAIN_WINDOW_LABEL],
-    )?;
-
-    app.emit_to(
-        OVERLAY_WINDOW_LABEL,
-        OVERLAY_INTERACTION_RESULT_EVENT,
-        payload,
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(desktop)]
-fn apply_overlay_state<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
-) -> Result<(), String> {
-    if crate::menu_bar::is_active(app) {
-        return Ok(());
-    }
-    let (payload, cached_display_context, runtime_host_fallback) = {
-        let guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        let payload = guard.last_sync_payload.clone();
-        (
-            payload,
-            guard.last_display_context.clone(),
-            guard.runtime_host_fallback.clone(),
-        )
-    };
-
-    let Some(payload) = payload else {
-        return Ok(());
-    };
-
-    let action = resolve_overlay_window_visibility_action(&payload);
-    if action == OverlayWindowVisibilityAction::Hide {
-        let window_state =
-            DesktopActivityOverlayWindowStatePayload::from_sync_payload(&payload, None);
-        {
-            let mut guard = state
-                .0
-                .lock()
-                .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-            guard.last_window_state = Some(window_state.clone());
-        }
-        if let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
-            let _ = window.hide();
-            let _ = window.emit(OVERLAY_STATE_EVENT, window_state);
-        }
-        return Ok(());
-    }
-
-    let window = ensure_overlay_window(app, payload.policy.always_on_top)?;
-    if action == OverlayWindowVisibilityAction::ParkOffscreen {
-        park_overlay_window_offscreen(app, &window)?;
-        let window_state =
-            DesktopActivityOverlayWindowStatePayload::from_sync_payload(&payload, None);
-        let _ = window.emit(OVERLAY_STATE_EVENT, window_state.clone());
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-        guard.last_window_state = Some(window_state);
-        return Ok(());
-    }
-    let mut monitor_resolution = resolve_anchor_monitor_resolution(
-        app,
-        &window,
-        payload.policy.placement_mode,
-        payload.policy.display_mode,
-    )?;
-    monitor_resolution = resolve_custom_overlay_monitor_resolution_with_cached_display(
-        monitor_resolution,
-        payload.policy.placement_mode,
-        cached_display_context.as_ref(),
-        &resolve_available_monitor_rects(app, &window),
-    );
-    let monitor = monitor_resolution.rect;
-    let display_context = resolve_effective_overlay_display_context(
-        resolve_overlay_display_context_for_monitor(app, monitor),
-        cached_display_context,
-        monitor,
-    );
-    let drag_offsets = resolve_drag_offsets_for_display(app, state, display_context.as_ref())?;
-    let (offset_x, offset_y) = resolve_effective_overlay_offsets(&payload.policy, drag_offsets);
-    let mut host_mode_resolution = resolve_desktop_activity_overlay_host_mode_resolution(
-        payload.policy.presentation_mode,
-        payload.policy.placement_mode,
-        payload.policy.anchor,
-        display_context.clone(),
-    );
-    host_mode_resolution = resolve_host_mode_resolution_with_runtime_fallback(
-        host_mode_resolution,
-        runtime_host_fallback.as_ref(),
-        display_context.as_ref(),
-    );
-    let mut host_mode = host_mode_resolution.effective_mode;
-    let mut next_runtime_host_fallback = if matches!(
-        host_mode_resolution.requested_mode,
-        DesktopActivityOverlayHostMode::NotchIntegrated
-    ) {
-        runtime_host_fallback.filter(|fallback| {
-            runtime_host_fallback_matches_display_context(fallback, display_context.as_ref())
-        })
-    } else {
-        None
-    };
-    let mut native_host_path = match apply_overlay_host_window_settings(
-        &window,
-        host_mode,
-        display_context.clone(),
-        payload.expanded,
-    ) {
-        Ok(path) => path,
-        Err(error) if matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) => {
-            let _ = error;
-            host_mode_resolution = host_mode_resolution.with_runtime_fallback(
-                DesktopActivityOverlayHostFallbackReason::PanelHostApplyFailed,
-            );
-            host_mode = host_mode_resolution.effective_mode;
-            next_runtime_host_fallback = build_runtime_host_fallback(
-                display_context.clone(),
-                DesktopActivityOverlayHostFallbackReason::PanelHostApplyFailed,
-            );
-            apply_overlay_host_window_settings(
-                &window,
-                host_mode,
-                display_context.clone(),
-                payload.expanded,
-            )?
-        }
-        Err(error) => return Err(error),
-    };
-    let dimensions = resolve_notch_integrated_window_dimensions(
-        payload.window.clone(),
-        payload.expanded,
-        host_mode,
-        display_context.clone(),
-    );
-    let effective_payload = build_overlay_payload_with_effective_dimensions(&payload, dimensions);
-    let width = sanitize_dimension(dimensions.width, 340.0, 1.0, 4096.0);
-    let height = sanitize_dimension(dimensions.height, 72.0, 1.0, 4096.0);
-
-    let mut placement = resolve_overlay_placement_for_host_mode(
-        monitor,
-        Rect {
-            x: 0.0,
-            y: 0.0,
-            width,
-            height,
-        },
-        payload.policy.anchor,
-        offset_x,
-        offset_y,
-        OVERLAY_SAFE_PADDING_PX,
-        host_mode,
-        display_context.clone(),
-    );
-    let mut applied_native_frame = None;
-
-    if matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) {
-        match apply_macos_overlay_panel_position(
-            &window,
-            host_mode,
-            display_context.clone(),
-            placement,
-            width,
-            height,
-        ) {
-            Ok(frame) => {
-                native_host_path = DesktopActivityOverlayNativeHostPath::Panel;
-                applied_native_frame = Some(frame);
-            }
-            Err(_) => {
-                host_mode_resolution = host_mode_resolution.with_runtime_fallback(
-                    DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
-                );
-                host_mode = host_mode_resolution.effective_mode;
-                next_runtime_host_fallback = build_runtime_host_fallback(
-                    display_context.clone(),
-                    DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
-                );
-                native_host_path = apply_overlay_host_window_settings(
-                    &window,
-                    host_mode,
-                    display_context.clone(),
-                    payload.expanded,
-                )?;
-                placement = resolve_overlay_placement_for_host_mode(
-                    monitor,
-                    Rect {
-                        x: 0.0,
-                        y: 0.0,
-                        width,
-                        height,
-                    },
-                    payload.policy.anchor,
-                    offset_x,
-                    offset_y,
-                    OVERLAY_SAFE_PADDING_PX,
-                    host_mode,
-                    display_context.clone(),
-                );
-            }
-        }
-    }
-
-    if should_apply_overlay_tauri_always_on_top(host_mode) {
-        window
-            .set_always_on_top(resolve_overlay_tauri_always_on_top(
-                payload.policy.always_on_top,
-                host_mode,
-            ))
-            .map_err(|error| error.to_string())?;
-    }
-
-    if applied_native_frame.is_none() {
-        window
-            .set_size(LogicalSize::new(width, height))
-            .map_err(|error| error.to_string())?;
-        window
-            .set_position(LogicalPosition::new(placement.x, placement.y))
-            .map_err(|error| error.to_string())?;
-    }
-    show_overlay_window_without_activation(&window)?;
-
-    let window_state = DesktopActivityOverlayWindowStatePayload::from_sync_payload(
-        &effective_payload,
-        Some(build_overlay_placement_diagnostics(
-            monitor_resolution,
-            placement,
-            payload.policy.anchor,
-            payload.policy.placement_mode,
-            host_mode_resolution.requested_mode,
-            host_mode,
-            host_mode_resolution.fallback_reason,
-            display_context.clone(),
-            offset_x,
-            offset_y,
-            native_host_path,
-            applied_native_frame,
-        )),
-    );
-    let _ = window.emit(OVERLAY_STATE_EVENT, window_state.clone());
-
-    let mut guard = state
-        .0
-        .lock()
-        .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-    if let Some(display_context) = display_context {
-        guard.last_display_context = Some(display_context);
-    }
-    guard.runtime_host_fallback = next_runtime_host_fallback;
-    guard.last_window_state = Some(window_state);
-    Ok(())
-}
-
-#[cfg(desktop)]
-fn apply_overlay_host_window_settings<R: Runtime>(
-    window: &WebviewWindow<R>,
-    host_mode: DesktopActivityOverlayHostMode,
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
-    expanded: bool,
-) -> Result<DesktopActivityOverlayNativeHostPath, String> {
-    let Some(settings) =
-        resolve_macos_overlay_window_host_settings(host_mode, display_context, expanded)
-    else {
-        return Ok(DesktopActivityOverlayNativeHostPath::Window);
-    };
-
-    window
-        .set_visible_on_all_workspaces(settings.visible_on_all_workspaces)
-        .map_err(|error| error.to_string())?;
-    window
-        .set_shadow(settings.shadow)
-        .map_err(|error| error.to_string())?;
-    apply_macos_overlay_panel_host(window, settings)?;
-    if should_apply_raw_macos_overlay_window_collection_behavior(settings) {
-        apply_macos_overlay_window_collection_behavior(window, settings)?;
-        Ok(DesktopActivityOverlayNativeHostPath::Window)
-    } else {
-        Ok(DesktopActivityOverlayNativeHostPath::Panel)
-    }
-}
-
-#[cfg(desktop)]
-fn resolve_overlay_tauri_always_on_top(
-    policy_always_on_top: bool,
-    host_mode: DesktopActivityOverlayHostMode,
-) -> bool {
-    policy_always_on_top && !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated)
-}
-
-#[cfg(desktop)]
-fn should_apply_overlay_tauri_always_on_top(host_mode: DesktopActivityOverlayHostMode) -> bool {
-    !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated)
-}
-
-#[cfg(desktop)]
-fn apply_desired_expanded_override(
-    state: &mut ActivityOverlayRuntimeState,
-    payload: &mut DesktopActivityOverlaySyncPayload,
-) {
-    let Some(desired) = state.desired_expanded else {
-        return;
-    };
-
-    if payload.expanded == desired {
-        state.desired_expanded = None;
-        return;
-    }
-
-    payload.expanded = desired;
-}
-
-#[cfg(desktop)]
-fn read_qa_sync_pin_until_epoch_ms(payload: &DesktopActivityOverlaySyncPayload) -> Option<u64> {
-    payload
-        .model
-        .get(QA_PROOF_PIN_UNTIL_MODEL_KEY)
-        .and_then(|value| value.as_u64())
-}
-
-#[cfg(desktop)]
-fn apply_qa_sync_pin_override(
-    state: &mut ActivityOverlayRuntimeState,
-    payload: DesktopActivityOverlaySyncPayload,
-    now_epoch_ms: u64,
-) -> DesktopActivityOverlaySyncPayload {
-    if let Some(pin_until_epoch_ms) = read_qa_sync_pin_until_epoch_ms(&payload) {
-        if pin_until_epoch_ms > now_epoch_ms {
-            state.qa_pinned_sync_payload = Some(ActivityOverlayQaPinnedSyncPayload {
-                payload: payload.clone(),
-                expires_at_epoch_ms: pin_until_epoch_ms,
-            });
-            state.desired_expanded = None;
-            return payload;
-        }
-    }
-
-    if let Some(pinned) = state.qa_pinned_sync_payload.clone() {
-        if pinned.expires_at_epoch_ms > now_epoch_ms {
-            state.desired_expanded = None;
-            return pinned.payload;
-        }
-        state.qa_pinned_sync_payload = None;
-    }
-
-    payload
-}
-
-#[cfg(desktop)]
-fn apply_expanded_override_to_runtime_state(
-    state: &mut ActivityOverlayRuntimeState,
-    expanded: bool,
-) {
-    if let Some(payload) = state.last_sync_payload.as_mut() {
-        payload.expanded = expanded;
-    }
-    // Persist through the next main-window sync because the canonical React runtime may still
-    // publish one stale expanded value before it processes the interaction event.
-    state.desired_expanded = Some(expanded);
-}
-
-#[cfg(desktop)]
-fn build_overlay_payload_with_effective_dimensions(
-    payload: &DesktopActivityOverlaySyncPayload,
-    dimensions: DesktopActivityOverlayDimensionsPayload,
-) -> DesktopActivityOverlaySyncPayload {
-    let mut next = payload.clone();
-    if payload.expanded {
-        next.window.expanded = dimensions;
-        write_model_window_dimensions(&mut next.model, "expanded", dimensions);
-    } else {
-        next.window.collapsed = dimensions;
-        write_model_window_dimensions(&mut next.model, "collapsed", dimensions);
-    }
-    next
-}
-
-#[cfg(desktop)]
-fn write_model_window_dimensions(
-    model: &mut serde_json::Value,
-    key: &str,
-    dimensions: DesktopActivityOverlayDimensionsPayload,
-) {
-    let Some(window) = model
-        .get_mut("window")
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    let Some(target) = window
-        .get_mut(key)
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    target.insert("width".to_string(), serde_json::json!(dimensions.width));
-    target.insert("height".to_string(), serde_json::json!(dimensions.height));
-}
-
-#[cfg(desktop)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OverlayWindowVisibilityAction {
-    Hide,
-    ParkOffscreen,
-    Show,
-}
-
-#[cfg(desktop)]
-fn resolve_overlay_window_visibility_action(
-    payload: &DesktopActivityOverlaySyncPayload,
-) -> OverlayWindowVisibilityAction {
-    if !payload.policy.enabled {
-        return OverlayWindowVisibilityAction::Hide;
-    }
-    if payload.visible {
-        return OverlayWindowVisibilityAction::Show;
-    }
-
-    // Keep the webview alive (even when we don't want the overlay visible) so automation and state
-    // transitions do not lose the overlay window's CDP target mid-run.
-    OverlayWindowVisibilityAction::ParkOffscreen
-}
-
-#[cfg(desktop)]
-fn ensure_drag_offsets_loaded<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &mut ActivityOverlayRuntimeState,
-) {
-    if state.drag_offsets_loaded {
-        return;
-    }
-    state.drag_offsets = sanitize_drag_offsets(
-        read_persisted_drag_offsets(resolve_drag_offsets_path(app).ok().as_deref())
-            .unwrap_or_default(),
-    );
-    state.drag_offsets_loaded = true;
-    state.drag_offsets_storage_key = None;
-}
-
-#[cfg(desktop)]
-fn resolve_drag_offsets_for_display<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
-    display_context: Option<&DesktopActivityOverlayDisplayContext>,
-) -> Result<PersistedOverlayDragOffsets, String> {
-    let mut guard = state
-        .0
-        .lock()
-        .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
-    ensure_drag_offsets_loaded_for_display(app, &mut guard, display_context);
-    Ok(guard.drag_offsets)
-}
-
-#[cfg(desktop)]
-fn ensure_drag_offsets_loaded_for_display<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &mut ActivityOverlayRuntimeState,
-    display_context: Option<&DesktopActivityOverlayDisplayContext>,
-) {
-    let display_identity = display_context.and_then(|context| context.display_identity.as_ref());
-    let next_storage_key = display_identity.map(|identity| identity.storage_key.clone());
-    if state.drag_offsets_loaded && state.drag_offsets_storage_key == next_storage_key {
-        return;
-    }
-
-    let offsets =
-        if let Ok(display_path) = resolve_drag_offsets_path_for_display(app, display_identity) {
-            let mut legacy_path_bufs: Vec<std::path::PathBuf> =
-                resolve_drag_offsets_legacy_storage_keys_for_display(display_identity)
-                    .into_iter()
-                    .filter_map(|storage_key| {
-                        resolve_drag_offsets_path_for_storage_key(app, &storage_key).ok()
-                    })
-                    .filter(|path| path != &display_path)
-                    .collect();
-            if let Ok(legacy_path) = resolve_drag_offsets_path(app) {
-                if legacy_path != display_path {
-                    legacy_path_bufs.push(legacy_path);
-                }
-            }
-            let legacy_paths: Vec<&std::path::Path> = legacy_path_bufs
-                .iter()
-                .map(std::path::PathBuf::as_path)
-                .collect();
-            migrate_persisted_drag_offsets_for_display_paths(&display_path, &legacy_paths)
-                .offsets
-                .unwrap_or_default()
-        } else {
-            read_persisted_drag_offsets(resolve_drag_offsets_path(app).ok().as_deref())
-                .unwrap_or_default()
-        };
-
-    state.drag_offsets = sanitize_drag_offsets(offsets);
-    state.drag_offsets_loaded = true;
-    state.drag_offsets_storage_key = next_storage_key;
-}
-
-#[cfg(desktop)]
-fn resolve_effective_overlay_offsets(
-    policy: &DesktopActivityOverlayPolicyPayload,
-    drag_offsets: PersistedOverlayDragOffsets,
-) -> (f64, f64) {
-    if matches!(
-        policy.placement_mode,
-        DesktopActivityOverlayPlacementMode::Anchored
-    ) {
-        return (0.0, 0.0);
-    }
-
-    let persisted_custom_offset = sanitize_drag_offsets(drag_offsets);
-    (
-        sanitize_offset(policy.offset_x) + persisted_custom_offset.offset_x,
-        sanitize_offset(policy.offset_y) + persisted_custom_offset.offset_y,
-    )
-}
-
-#[cfg(desktop)]
-fn resolve_effective_overlay_display_context(
-    resolved_display_context: Option<DesktopActivityOverlayDisplayContext>,
-    cached_display_context: Option<DesktopActivityOverlayDisplayContext>,
-    monitor: Rect,
-) -> Option<DesktopActivityOverlayDisplayContext> {
-    if let Some(display_context) = resolved_display_context {
-        return Some(display_context);
-    }
-
-    cached_display_context.filter(|display_context| {
-        rect_matches_for_runtime_display_context(display_context.screen_frame, monitor)
-    })
-}
-
-#[cfg(desktop)]
-fn resolve_custom_overlay_monitor_resolution_with_cached_display(
-    monitor_resolution: ResolvedOverlayAnchorMonitorRect,
-    placement_mode: DesktopActivityOverlayPlacementMode,
-    cached_display_context: Option<&DesktopActivityOverlayDisplayContext>,
-    available_monitors: &[Rect],
-) -> ResolvedOverlayAnchorMonitorRect {
-    if !matches!(placement_mode, DesktopActivityOverlayPlacementMode::Custom) {
-        return monitor_resolution;
-    }
-
-    let Some(cached_display_context) = cached_display_context else {
-        return monitor_resolution;
-    };
-
-    if !available_monitors.iter().any(|monitor| {
-        rect_matches_for_runtime_display_context(cached_display_context.screen_frame, *monitor)
-    }) {
-        return monitor_resolution;
-    }
-
-    ResolvedOverlayAnchorMonitorRect {
-        source: monitor_resolution.source,
-        rect: cached_display_context.screen_frame,
-    }
-}
-
-#[cfg(desktop)]
-fn rect_matches_for_runtime_display_context(left: Rect, right: Rect) -> bool {
-    (left.x - right.x).abs() <= 1.0
-        && (left.y - right.y).abs() <= 1.0
-        && (left.width - right.width).abs() <= 1.0
-        && (left.height - right.height).abs() <= 1.0
-}
-
-#[cfg(desktop)]
-fn resolve_host_mode_resolution_with_runtime_fallback(
-    resolution: self::host_mode::DesktopActivityOverlayHostModeResolution,
-    runtime_fallback: Option<&ActivityOverlayRuntimeHostFallback>,
-    display_context: Option<&DesktopActivityOverlayDisplayContext>,
-) -> self::host_mode::DesktopActivityOverlayHostModeResolution {
-    if !matches!(
-        resolution.effective_mode,
-        DesktopActivityOverlayHostMode::NotchIntegrated
-    ) {
-        return resolution;
-    }
-
-    let Some(runtime_fallback) = runtime_fallback else {
-        return resolution;
-    };
-
-    if !runtime_host_fallback_matches_display_context(runtime_fallback, display_context) {
-        return resolution;
-    }
-
-    resolution.with_runtime_fallback(runtime_fallback.reason)
-}
-
-#[cfg(desktop)]
-fn runtime_host_fallback_matches_display_context(
-    runtime_fallback: &ActivityOverlayRuntimeHostFallback,
-    display_context: Option<&DesktopActivityOverlayDisplayContext>,
-) -> bool {
-    let Some(display_context) = display_context else {
-        return false;
-    };
-
-    rect_matches_for_runtime_display_context(
-        runtime_fallback.display_context.screen_frame,
-        display_context.screen_frame,
-    ) && runtime_fallback.display_context.is_macos == display_context.is_macos
-        && runtime_fallback.display_context.is_builtin_display == display_context.is_builtin_display
-        && runtime_fallback.display_context.has_physical_notch == display_context.has_physical_notch
-}
-
-#[cfg(desktop)]
-fn build_runtime_host_fallback(
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
-    reason: DesktopActivityOverlayHostFallbackReason,
-) -> Option<ActivityOverlayRuntimeHostFallback> {
-    display_context.map(|display_context| ActivityOverlayRuntimeHostFallback {
-        display_context,
-        reason,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activity_overlay::monitor_resolution::{
-        logical_rect_from_physical_bounds, resolve_monitor_logical_scale_factor,
-    };
-    use crate::activity_overlay::placement::{
-        DesktopActivityOverlayMonitorSource, OverlayPlacementRect, ResolvedOverlayAnchorMonitorRect,
-    };
-    use crate::activity_overlay::window_lifecycle::build_overlay_window_navigation_url;
+    use super::monitor_resolution::{logical_rect_from_physical_bounds, resolve_monitor_logical_scale_factor};
+    use super::placement::DesktopActivityOverlayMonitorSource;
+    use super::window_lifecycle::build_overlay_window_navigation_url;
     use serde_json::{json, Value};
     use std::{env, fs, path::PathBuf};
+    #[test]
+    fn sync_accepts_content_without_main_window_presentation() {
+        let payload = serde_json::json!({
+            "visible": true, "model": { "word": "Ready" },
+            "policy": { "enabled": true, "visibilityMode": "active_sessions", "showWhenRunning": true,
+                "showWhenAttentionRequired": true, "showWhenReady": true, "alwaysOnTop": true,
+                "autoHideEnabled": false, "autoHideDelayMs": 6000, "expandedBehavior": "click",
+                "interactiveCollapsed": true, "clickAction": "expand_overlay", "density": "compact",
+                "compactStyle": "pill", "showSessionCount": true, "showPreviewText": false,
+                "placementMode": "anchored", "displayMode": "automatic", "anchor": "top_center",
+                "offsetX": 0, "offsetY": 0, "enableDragReposition": false, "lockPosition": true,
+                "dock": "top", "idle": "tip" }
+        });
+        let parsed: DesktopActivityOverlaySyncPayload = serde_json::from_value(payload).unwrap();
+        let published = serde_json::to_value(parsed).unwrap();
+        assert!(published.get("expanded").is_none());
+        assert!(published.get("window").is_none());
+    }
+
+    fn sync_payload(visible: bool) -> DesktopActivityOverlaySyncPayload {
+        serde_json::from_value(json!({"visible":visible,"model":{"word":"Ready"},
+            "policy":{"enabled":true,"alwaysOnTop":true,"dock":"top","idle":"hidden"}})).unwrap()
+    }
+
+    #[test]
+    fn first_visible_content_bootstraps_an_idle_hidden_route() {
+        let hidden = sync_payload(false);
+        let visible = sync_payload(true);
+        assert!(sync_requires_frame(Some(&hidden), &visible, None));
+    }
+
+
+
+    #[test]
+    fn content_changes_do_not_schedule_native_geometry() {
+        let previous = sync_payload(true);
+        let mut next = previous.clone();
+        next.model = json!({"word":"Working","sessionCount":3});
+        next.policy.content.insert("showPreviewText".into(), json!(true));
+        assert!(!sync_requires_frame(Some(&previous), &next, None));
+        next.policy.dock = Dock::Left;
+        assert!(sync_requires_frame(Some(&previous), &next, None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_display_change_signal_includes_same_scale_changes_and_display_removal() {
+        use happier_desktop_native::capture::{CaptureBackend, CaptureError, CaptureTarget, Inventory, RgbaFrame, CancelSignal};
+        struct NativeDisplays;
+        impl CaptureBackend for NativeDisplays {
+            fn discover(&self) -> Result<Inventory, CaptureError> { Ok(Inventory { displays: vec![], windows: vec![] }) }
+            fn capture_display(&self, _: u32, _: &CancelSignal) -> Result<RgbaFrame, CaptureError> { panic!("a display signal cannot read pixels") }
+            fn capture_window(&self, _: u32, _include_shadow: bool, _: &CancelSignal) -> Result<RgbaFrame, CaptureError> { panic!("a display signal cannot read pixels") }
+        }
+        for flags in [CGDisplayChangeSummaryFlags::MovedFlag, CGDisplayChangeSummaryFlags::SetModeFlag,
+            CGDisplayChangeSummaryFlags::RemoveFlag] {
+            let capture = crate::capture::CaptureState::default();
+            let activity = ActivityOverlayState::default();
+            let snapshot = capture.begin(crate::capture::CaptureMode::Still, || Ok(Arc::new(NativeDisplays))).unwrap();
+            let (tx, rx) = mpsc::channel::<()>();
+            unsafe { activity_overlay_display_reconfiguration_callback(7, flags,
+                (&tx as *const mpsc::Sender<()>).cast_mut().cast()); }
+            assert_eq!(rx.try_recv(), Ok(()), "the existing activity signal must also reach capture");
+            record_native_display_change_in_state(&activity, Some(&capture)).unwrap();
+            assert_eq!(capture.snapshot(), crate::capture::CaptureSnapshot::Failed { reason: CaptureError::TargetUnavailable });
+            assert!(activity.0.lock().unwrap().display_change_debounce.resolve_ready_action(u64::MAX,
+                NATIVE_DISPLAY_CHANGE_DEBOUNCE_MS).is_some(), "capture invalidation cannot suppress activity's existing display change");
+            assert_eq!(capture.commit(snapshot.operation_ref().unwrap(), CaptureTarget::Display { display_id: 7 },
+                std::path::Path::new("unused"), || panic!("retired selection must not acquire pixels")), Err(CaptureError::OperationUnavailable));
+            assert_eq!(rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        }
+        let (tx, rx) = mpsc::channel::<()>();
+        unsafe { activity_overlay_display_reconfiguration_callback(7,
+            CGDisplayChangeSummaryFlags::BeginConfigurationFlag | CGDisplayChangeSummaryFlags::SetModeFlag,
+            (&tx as *const mpsc::Sender<()>).cast_mut().cast()); }
+        assert_eq!(rx.try_recv(), Err(mpsc::TryRecvError::Empty), "an unfinished topology is not a completed change");
+    }
 
     fn read_capability_file(name: &str) -> Value {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2166,99 +660,12 @@ mod tests {
         })
     }
 
-    fn read_activity_overlay_source_file() -> String {
-        let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("activity_overlay.rs");
-        fs::read_to_string(&source_path).unwrap_or_else(|error| {
-            panic!(
-                "failed to read activity overlay source {}: {error}",
-                source_path.display()
-            )
-        })
-    }
-
-    #[test]
-    fn validates_overlay_command_caller_against_allowed_labels() {
-        let command_name = "desktop_activity_overlay_sync";
-        assert!(validate_overlay_command_caller(command_name, "main", &["main"]).is_ok());
-        assert!(
-            validate_overlay_command_caller(command_name, "activity_overlay", &["main"]).is_err()
-        );
-    }
-
-    #[test]
-    fn overlay_interaction_command_can_sync_from_overlay_or_main_window() {
-        let command_name = "desktop_activity_overlay_emit_interaction";
-        assert!(validate_overlay_command_caller(
-            command_name,
-            OVERLAY_WINDOW_LABEL,
-            OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
-        )
-        .is_ok());
-        assert!(validate_overlay_command_caller(
-            command_name,
-            MAIN_WINDOW_LABEL,
-            OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn overlay_interaction_result_command_can_only_sync_from_main_window() {
-        let command_name = "desktop_activity_overlay_emit_interaction_result";
-        assert!(validate_overlay_command_caller(
-            command_name,
-            MAIN_WINDOW_LABEL,
-            &[MAIN_WINDOW_LABEL]
-        )
-        .is_ok());
-        assert!(validate_overlay_command_caller(
-            command_name,
-            OVERLAY_WINDOW_LABEL,
-            &[MAIN_WINDOW_LABEL],
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn release_drag_velocity_command_can_only_sync_from_overlay_window() {
-        let command_name = "desktop_activity_overlay_release_drag_velocity";
-        assert!(validate_overlay_command_caller(
-            command_name,
-            OVERLAY_WINDOW_LABEL,
-            &[OVERLAY_WINDOW_LABEL]
-        )
-        .is_ok());
-        assert!(validate_overlay_command_caller(
-            command_name,
-            MAIN_WINDOW_LABEL,
-            &[OVERLAY_WINDOW_LABEL]
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn apply_momentum_delta_command_can_only_sync_from_overlay_window() {
-        let command_name = "desktop_activity_overlay_apply_momentum_delta";
-        assert!(validate_overlay_command_caller(
-            command_name,
-            OVERLAY_WINDOW_LABEL,
-            &[OVERLAY_WINDOW_LABEL]
-        )
-        .is_ok());
-        assert!(validate_overlay_command_caller(
-            command_name,
-            MAIN_WINDOW_LABEL,
-            &[OVERLAY_WINDOW_LABEL]
-        )
-        .is_err());
-    }
-
     #[test]
     fn activity_overlay_uses_a_dedicated_capability_instead_of_the_main_default_scope() {
         let default_capability = read_capability_file("default.json");
-        assert_eq!(default_capability["windows"], json!(["main"]));
+        let main_windows = default_capability["windows"].as_array().unwrap();
+        assert!(main_windows.contains(&json!("main")));
+        assert!(!main_windows.contains(&json!(OVERLAY_WINDOW_LABEL)));
 
         let overlay_capability = read_capability_file("overlay.json");
         assert_eq!(overlay_capability["windows"], json!(["activity_overlay"]));
@@ -2271,12 +678,12 @@ mod tests {
         for required_permission in [
             "allow-desktop-show-main-window",
             "allow-desktop-activity-overlay-get-window-state",
-            "allow-desktop-activity-overlay-set-expanded",
-            "allow-desktop-activity-overlay-set-input-locked",
-            "allow-desktop-activity-overlay-apply-drag-delta",
-            "allow-desktop-activity-overlay-release-drag-velocity",
-            "allow-desktop-activity-overlay-apply-momentum-delta",
-            "allow-desktop-activity-overlay-emit-interaction",
+            "allow-desktop-activity-overlay-present",
+            "allow-desktop-activity-overlay-take-presentation-request",
+            "allow-desktop-activity-overlay-set-keyboard-wanted",
+            "allow-desktop-activity-overlay-pointer-enter",
+            "allow-desktop-activity-overlay-move",
+            "allow-desktop-window-emit-action",
         ] {
             assert!(
                 permissions.contains(&Value::String(required_permission.to_string())),
@@ -2297,8 +704,8 @@ mod tests {
             "allow-respond-system-task-prompt",
             "allow-desktop-read-stack-boot-credentials",
             "allow-desktop-activity-overlay-sync",
-            "allow-desktop-activity-overlay-reset-position",
-            "allow-desktop-activity-overlay-emit-interaction-result",
+            "allow-desktop-displays-list",
+            "allow-desktop-window-emit-action-result",
         ] {
             assert!(
                 !permissions.contains(&Value::String(forbidden_permission.to_string())),
@@ -2332,18 +739,20 @@ mod tests {
             "allow-desktop-set-window-mode",
             "allow-desktop-read-stack-boot-credentials",
             "allow-desktop-activity-overlay-sync",
+            "allow-desktop-displays-list",
             "allow-desktop-activity-overlay-get-window-state",
-            "allow-desktop-activity-overlay-set-expanded",
-            "allow-desktop-activity-overlay-set-input-locked",
-            "allow-desktop-activity-overlay-reset-position",
-            "allow-desktop-activity-overlay-emit-interaction",
-            "allow-desktop-activity-overlay-emit-interaction-result",
+            "allow-desktop-activity-overlay-move",
+            "allow-desktop-host-get-availability",
+            "allow-desktop-window-emit-action-result",
         ] {
             assert!(
                 default_permissions.contains(&Value::String(required_permission.to_string())),
                 "default capability should include {required_permission}",
             );
         }
+        let presentation = read_capability_file("notch-presentation.json");
+        assert_eq!(presentation["windows"], json!(["main", "activity_overlay"]));
+        assert_eq!(presentation["permissions"], json!(["allow-desktop-activity-overlay-request-presentation"]));
     }
 
     #[test]
@@ -2362,14 +771,15 @@ mod tests {
             "allow-desktop-read-stack-boot-credentials",
             "allow-desktop-activity-overlay-sync",
             "allow-desktop-activity-overlay-get-window-state",
-            "allow-desktop-activity-overlay-set-expanded",
-            "allow-desktop-activity-overlay-set-input-locked",
-            "allow-desktop-activity-overlay-apply-drag-delta",
-            "allow-desktop-activity-overlay-release-drag-velocity",
-            "allow-desktop-activity-overlay-apply-momentum-delta",
-            "allow-desktop-activity-overlay-reset-position",
-            "allow-desktop-activity-overlay-emit-interaction",
-            "allow-desktop-activity-overlay-emit-interaction-result",
+            "allow-desktop-activity-overlay-present",
+            "allow-desktop-activity-overlay-request-presentation",
+            "allow-desktop-activity-overlay-take-presentation-request",
+            "allow-desktop-activity-overlay-set-keyboard-wanted",
+            "allow-desktop-activity-overlay-pointer-enter",
+            "allow-desktop-activity-overlay-move",
+            "allow-desktop-host-get-availability",
+            "allow-desktop-window-emit-action",
+            "allow-desktop-window-emit-action-result",
         ] {
             assert!(
                 permissions.contains_key(permission),
@@ -2401,66 +811,9 @@ mod tests {
                 capabilities.contains(&Value::String("overlay".to_string())),
                 "{config_name} should include the overlay capability for the overlay window",
             );
+            assert!(capabilities.contains(&json!("notch-presentation")),
+                "{config_name} should include the notch presentation capability");
         }
-    }
-
-    #[test]
-    fn caps_activity_overlay_release_velocity_to_the_native_momentum_limit() {
-        let (vx, vy) = cap_activity_overlay_velocity(3_200.0, 0.0);
-
-        assert_eq!(vx, PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S);
-        assert_eq!(vy, 0.0);
-    }
-
-    #[test]
-    fn resolves_bounded_activity_overlay_momentum_deltas_from_the_native_constants() {
-        let deltas = resolve_activity_overlay_momentum_deltas(3_200.0, 0.0);
-        let max_ticks = PET_MOMENTUM_MAX_DURATION_MS / PET_MOMENTUM_TICK_MS;
-
-        assert!(!deltas.is_empty());
-        assert!(deltas.len() as u64 <= max_ticks);
-        assert_eq!(
-            deltas[0].0,
-            PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S * (PET_MOMENTUM_TICK_MS as f64 / 1_000.0),
-        );
-        assert_eq!(deltas[0].1, 0.0);
-        assert!(deltas
-            .windows(2)
-            .all(|window| { window[1].0 <= (window[0].0 * PET_MOMENTUM_FRICTION) + 0.000_001 }));
-    }
-
-    #[test]
-    fn resolves_activity_overlay_momentum_plan_from_the_native_constants() {
-        let plan = resolve_activity_overlay_momentum_plan(17, (3_200.0, 0.0));
-
-        assert_eq!(plan.generation, 17);
-        assert_eq!(plan.tick_ms, PET_MOMENTUM_TICK_MS);
-        assert!(!plan.deltas.is_empty());
-        assert!(plan
-            .deltas
-            .iter()
-            .all(|delta| delta.delay_ms == PET_MOMENTUM_TICK_MS));
-    }
-
-    #[test]
-    fn release_velocity_returns_momentum_plan_instead_of_applying_all_ticks_synchronously() {
-        let source = read_activity_overlay_source_file();
-        let production_source = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("activity overlay source should contain production code before tests");
-
-        assert!(
-            production_source
-                .contains("resolve_activity_overlay_momentum_plan(generation, velocity)"),
-            "release velocity should return a scheduled momentum plan",
-        );
-        assert!(
-            !production_source.contains(
-                "apply_activity_overlay_momentum(&app, state.inner(), generation, velocity)"
-            ),
-            "release velocity must not apply every momentum tick before returning",
-        );
     }
 
     #[test]
@@ -2473,149 +826,6 @@ mod tests {
             next_url.as_str(),
             "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1"
         );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_set_expanded_payload_serializes_expanded_flag_with_reason() {
-        let cases = [
-            (
-                true,
-                DesktopActivityOverlayNativeMouseEffect::ExpandFromClick,
-                "click",
-            ),
-            (
-                true,
-                DesktopActivityOverlayNativeMouseEffect::ExpandFromHover,
-                "hover",
-            ),
-            (
-                false,
-                DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick,
-                "outside_click",
-            ),
-        ];
-
-        for (expanded, effect, expected_reason) in cases {
-            let data = build_native_set_expanded_interaction_data(expanded, effect);
-
-            assert_eq!(
-                data.get("expanded").and_then(serde_json::Value::as_bool),
-                Some(expanded),
-            );
-            assert_eq!(
-                data.get("reason").and_then(serde_json::Value::as_str),
-                Some(expected_reason),
-            );
-            assert_eq!(
-                data.get("openReason").and_then(serde_json::Value::as_str),
-                Some(match effect {
-                    DesktopActivityOverlayNativeMouseEffect::ExpandFromClick => "click",
-                    DesktopActivityOverlayNativeMouseEffect::ExpandFromHover => "hover",
-                    DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => "unknown",
-                    DesktopActivityOverlayNativeMouseEffect::None => "unknown",
-                }),
-            );
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_display_changed_payload_serializes_open_reason() {
-        let data = build_display_changed_set_expanded_interaction_data(
-            true,
-            DesktopActivityOverlayOpenReason::DisplayChanged,
-        );
-
-        assert_eq!(
-            data.get("expanded").and_then(serde_json::Value::as_bool),
-            Some(true),
-        );
-        assert_eq!(
-            data.get("reason").and_then(serde_json::Value::as_str),
-            Some("displayChanged"),
-        );
-        assert_eq!(
-            data.get("openReason").and_then(serde_json::Value::as_str),
-            Some("displayChanged"),
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn native_notch_mouse_poll_task_runs_only_after_main_thread_dispatch_executes() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        let pending = Arc::new(AtomicBool::new(false));
-        let captured_task = Arc::new(Mutex::new(None));
-        let task_ran = Arc::new(AtomicBool::new(false));
-
-        let result = schedule_native_notch_mouse_task_if_idle(
-            &pending,
-            {
-                let captured_task = captured_task.clone();
-                move |task| {
-                    *captured_task
-                        .lock()
-                        .expect("expected captured task mutex to lock") = Some(task);
-                    Ok(())
-                }
-            },
-            {
-                let task_ran = task_ran.clone();
-                move || {
-                    task_ran.store(true, Ordering::SeqCst);
-                }
-            },
-        );
-
-        assert_eq!(result, Ok(true));
-        assert!(pending.load(Ordering::SeqCst));
-        assert!(!task_ran.load(Ordering::SeqCst));
-
-        let task = captured_task
-            .lock()
-            .expect("expected captured task mutex to lock")
-            .take()
-            .expect("expected task to be scheduled");
-        task();
-
-        assert!(!pending.load(Ordering::SeqCst));
-        assert!(task_ran.load(Ordering::SeqCst));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn active_input_lock_suppresses_native_outside_click_collapse_effect() {
-        assert_eq!(
-            maybe_suppress_native_mouse_effect_for_input_lock(
-                DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick,
-                true,
-            ),
-            DesktopActivityOverlayNativeMouseEffect::None,
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn active_input_lock_does_not_suppress_native_expand_effects() {
-        assert_eq!(
-            maybe_suppress_native_mouse_effect_for_input_lock(
-                DesktopActivityOverlayNativeMouseEffect::ExpandFromClick,
-                true,
-            ),
-            DesktopActivityOverlayNativeMouseEffect::ExpandFromClick,
-        );
-    }
-
-    #[test]
-    fn input_lock_expires_without_a_heartbeat() {
-        let mut state = ActivityOverlayRuntimeState::default();
-
-        apply_input_lock_to_runtime_state(&mut state, true, 1_000);
-
-        assert!(is_overlay_input_lock_active(&state, 1_000 + 30_000));
-        assert!(!is_overlay_input_lock_active(&state, 1_000 + 30_001));
     }
 
     #[test]
@@ -2645,976 +855,6 @@ mod tests {
             next_url.as_str(),
             "http://localhost:8081/desktop/activity-overlay?desktopOverlayWindow=1&server=http%3A%2F%2F127.0.0.1%3A3009"
         );
-    }
-
-    #[test]
-    fn keeps_the_overlay_window_alive_when_enabled_even_if_the_surface_is_hidden() {
-        let payload = DesktopActivityOverlaySyncPayload {
-            visible: false,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-
-        assert_eq!(
-            resolve_overlay_window_visibility_action(&payload),
-            OverlayWindowVisibilityAction::ParkOffscreen
-        );
-    }
-
-    #[test]
-    fn does_not_keep_the_overlay_window_alive_when_disabled() {
-        let payload = DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: false,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-
-        assert_eq!(
-            resolve_overlay_window_visibility_action(&payload),
-            OverlayWindowVisibilityAction::Hide
-        );
-    }
-
-    #[test]
-    fn shows_the_overlay_window_when_enabled_and_visible() {
-        let payload = DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-
-        assert_eq!(
-            resolve_overlay_window_visibility_action(&payload),
-            OverlayWindowVisibilityAction::Show
-        );
-    }
-
-    #[test]
-    fn notch_integrated_mode_disables_tauri_always_on_top_in_favor_of_native_level_override() {
-        assert!(!resolve_overlay_tauri_always_on_top(
-            true,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-        ));
-        assert!(!resolve_overlay_tauri_always_on_top(
-            false,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-        ));
-        assert!(!should_apply_overlay_tauri_always_on_top(
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-        ));
-    }
-
-    #[test]
-    fn floating_mode_preserves_the_existing_tauri_always_on_top_policy() {
-        assert!(resolve_overlay_tauri_always_on_top(
-            true,
-            DesktopActivityOverlayHostMode::Floating,
-        ));
-        assert!(!resolve_overlay_tauri_always_on_top(
-            false,
-            DesktopActivityOverlayHostMode::Floating,
-        ));
-        assert!(should_apply_overlay_tauri_always_on_top(
-            DesktopActivityOverlayHostMode::Floating,
-        ));
-    }
-
-    #[test]
-    fn ignores_stale_offsets_when_overlay_uses_anchored_placement() {
-        let policy = DesktopActivityOverlayPolicyPayload {
-            enabled: true,
-            visibility_mode: DesktopActivityOverlayVisibilityMode::AttentionOnly,
-            show_when_running: true,
-            show_when_attention_required: true,
-            show_when_ready: true,
-            always_on_top: true,
-            auto_hide_enabled: true,
-            auto_hide_delay_ms: 6_000,
-            expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-            interactive_collapsed: true,
-            presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-            click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-            density: DesktopActivityOverlayDensity::Compact,
-            compact_style: DesktopActivityOverlayCompactStyle::Pill,
-            show_session_count: true,
-            show_preview_text: false,
-            placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-            display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-            anchor: DesktopActivityOverlayAnchor::TopCenter,
-            offset_x: 240.0,
-            offset_y: -160.0,
-            enable_drag_reposition: true,
-            lock_position: false,
-        };
-
-        let offsets = resolve_effective_overlay_offsets(
-            &policy,
-            PersistedOverlayDragOffsets {
-                offset_x: 96.0,
-                offset_y: -48.0,
-            },
-        );
-
-        assert_eq!(offsets, (0.0, 0.0));
-    }
-
-    #[test]
-    fn combines_policy_and_persisted_offsets_in_custom_mode() {
-        let policy = DesktopActivityOverlayPolicyPayload {
-            enabled: true,
-            visibility_mode: DesktopActivityOverlayVisibilityMode::AttentionOnly,
-            show_when_running: true,
-            show_when_attention_required: true,
-            show_when_ready: true,
-            always_on_top: true,
-            auto_hide_enabled: true,
-            auto_hide_delay_ms: 6_000,
-            expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-            interactive_collapsed: true,
-            presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-            click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-            density: DesktopActivityOverlayDensity::Compact,
-            compact_style: DesktopActivityOverlayCompactStyle::Pill,
-            show_session_count: true,
-            show_preview_text: false,
-            placement_mode: DesktopActivityOverlayPlacementMode::Custom,
-            display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-            anchor: DesktopActivityOverlayAnchor::TopCenter,
-            offset_x: 24.0,
-            offset_y: -16.0,
-            enable_drag_reposition: true,
-            lock_position: false,
-        };
-
-        let offsets = resolve_effective_overlay_offsets(
-            &policy,
-            PersistedOverlayDragOffsets {
-                offset_x: 96.0,
-                offset_y: -48.0,
-            },
-        );
-
-        assert_eq!(offsets, (120.0, -64.0));
-    }
-
-    #[test]
-    fn builds_overlay_placement_diagnostics_for_the_effective_monitor_and_position() {
-        let diagnostics = build_overlay_placement_diagnostics(
-            ResolvedOverlayAnchorMonitorRect {
-                source: DesktopActivityOverlayMonitorSource::OverlayWindow,
-                rect: Rect {
-                    x: 3000.0,
-                    y: 0.0,
-                    width: 1280.0,
-                    height: 800.0,
-                },
-            },
-            OverlayPlacementRect { x: 3120.0, y: 24.0 },
-            DesktopActivityOverlayAnchor::TopCenter,
-            DesktopActivityOverlayPlacementMode::Custom,
-            DesktopActivityOverlayHostMode::Floating,
-            DesktopActivityOverlayHostMode::Floating,
-            None,
-            None,
-            12.0,
-            -8.0,
-            DesktopActivityOverlayNativeHostPath::Window,
-            None,
-        );
-
-        assert_eq!(
-            diagnostics.monitor_source,
-            DesktopActivityOverlayMonitorSource::OverlayWindow
-        );
-        assert!((diagnostics.effective_monitor.x - 3000.0).abs() < 0.001);
-        assert_eq!(diagnostics.anchor, DesktopActivityOverlayAnchor::TopCenter);
-        assert_eq!(
-            diagnostics.placement_mode,
-            DesktopActivityOverlayPlacementMode::Custom
-        );
-        assert_eq!(
-            diagnostics.host_mode,
-            DesktopActivityOverlayHostMode::Floating
-        );
-        assert_eq!(diagnostics.display_context, None);
-        assert!((diagnostics.effective_offset_x - 12.0).abs() < 0.001);
-        assert!((diagnostics.effective_offset_y + 8.0).abs() < 0.001);
-        assert!((diagnostics.computed_position.x - 3120.0).abs() < 0.001);
-        assert_eq!(diagnostics.applied_native_frame, None);
-    }
-
-    #[test]
-    fn carries_overlay_placement_diagnostics_into_window_state() {
-        let payload = DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::AttentionOnly,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-        let diagnostics = build_overlay_placement_diagnostics(
-            ResolvedOverlayAnchorMonitorRect {
-                source: DesktopActivityOverlayMonitorSource::MainWindow,
-                rect: Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 1400.0,
-                    height: 900.0,
-                },
-            },
-            OverlayPlacementRect { x: 540.0, y: 12.0 },
-            DesktopActivityOverlayAnchor::TopCenter,
-            DesktopActivityOverlayPlacementMode::Anchored,
-            DesktopActivityOverlayHostMode::Floating,
-            DesktopActivityOverlayHostMode::Floating,
-            None,
-            None,
-            0.0,
-            0.0,
-            DesktopActivityOverlayNativeHostPath::Window,
-            None,
-        );
-
-        let window_state = DesktopActivityOverlayWindowStatePayload::from_sync_payload(
-            &payload,
-            Some(diagnostics.clone()),
-        );
-
-        assert_eq!(window_state.placement_diagnostics, Some(diagnostics));
-    }
-
-    #[test]
-    fn carries_notch_host_mode_and_display_context_into_window_state() {
-        let display_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-        let payload = DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::AttentionOnly,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-        let diagnostics = build_overlay_placement_diagnostics(
-            ResolvedOverlayAnchorMonitorRect {
-                source: DesktopActivityOverlayMonitorSource::Primary,
-                rect: display_context.screen_frame,
-            },
-            OverlayPlacementRect { x: 576.0, y: 0.0 },
-            DesktopActivityOverlayAnchor::TopCenter,
-            DesktopActivityOverlayPlacementMode::Anchored,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-            None,
-            Some(display_context.clone()),
-            0.0,
-            0.0,
-            DesktopActivityOverlayNativeHostPath::Panel,
-            Some(Rect {
-                x: 576.0,
-                y: 914.0,
-                width: 320.0,
-                height: 72.0,
-            }),
-        );
-
-        let window_state = DesktopActivityOverlayWindowStatePayload::from_sync_payload(
-            &payload,
-            Some(diagnostics.clone()),
-        );
-
-        assert_eq!(window_state.placement_diagnostics, Some(diagnostics));
-        let placement_diagnostics = window_state
-            .placement_diagnostics
-            .expect("expected notch diagnostics to be present");
-        assert_eq!(
-            placement_diagnostics.host_mode,
-            DesktopActivityOverlayHostMode::NotchIntegrated
-        );
-        assert_eq!(placement_diagnostics.display_context, Some(display_context));
-        assert_eq!(
-            placement_diagnostics.applied_native_frame,
-            Some(Rect {
-                x: 576.0,
-                y: 914.0,
-                width: 320.0,
-                height: 72.0,
-            }),
-        );
-    }
-
-    #[test]
-    fn carries_requested_host_mode_fallback_reason_and_native_host_path_into_diagnostics() {
-        let display_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-        let diagnostics = build_overlay_placement_diagnostics(
-            ResolvedOverlayAnchorMonitorRect {
-                source: DesktopActivityOverlayMonitorSource::Primary,
-                rect: display_context.screen_frame,
-            },
-            OverlayPlacementRect { x: 576.0, y: 12.0 },
-            DesktopActivityOverlayAnchor::TopCenter,
-            DesktopActivityOverlayPlacementMode::Anchored,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-            DesktopActivityOverlayHostMode::Floating,
-            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable),
-            Some(display_context.clone()),
-            0.0,
-            0.0,
-            DesktopActivityOverlayNativeHostPath::Window,
-            None,
-        );
-
-        assert_eq!(
-            diagnostics.requested_host_mode,
-            DesktopActivityOverlayHostMode::NotchIntegrated
-        );
-        assert_eq!(
-            diagnostics.host_mode,
-            DesktopActivityOverlayHostMode::Floating
-        );
-        assert_eq!(
-            diagnostics.host_fallback_reason,
-            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable)
-        );
-        assert_eq!(
-            diagnostics.native_host_path,
-            DesktopActivityOverlayNativeHostPath::Window
-        );
-    }
-
-    #[test]
-    fn reuses_last_display_context_when_resolution_is_temporarily_unavailable() {
-        let display_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-
-        assert_eq!(
-            resolve_effective_overlay_display_context(
-                None,
-                Some(display_context.clone()),
-                display_context.screen_frame,
-            ),
-            Some(display_context.clone()),
-        );
-    }
-
-    #[test]
-    fn drops_last_display_context_when_monitor_changes() {
-        let display_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-
-        assert_eq!(
-            resolve_effective_overlay_display_context(
-                None,
-                Some(display_context),
-                Rect {
-                    x: 1512.0,
-                    y: 0.0,
-                    width: 1728.0,
-                    height: 1117.0,
-                },
-            ),
-            None,
-        );
-    }
-
-    #[test]
-    fn keeps_runtime_panel_fallback_sticky_for_the_same_display_context() {
-        let display_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-        let resolution = resolve_desktop_activity_overlay_host_mode_resolution(
-            DesktopActivityOverlayPresentationMode::Automatic,
-            DesktopActivityOverlayPlacementMode::Anchored,
-            DesktopActivityOverlayAnchor::TopCenter,
-            Some(display_context.clone()),
-        );
-        let runtime_fallback = ActivityOverlayRuntimeHostFallback {
-            display_context: display_context.clone(),
-            reason: DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
-        };
-
-        let sticky_resolution = resolve_host_mode_resolution_with_runtime_fallback(
-            resolution,
-            Some(&runtime_fallback),
-            Some(&display_context),
-        );
-
-        assert_eq!(
-            sticky_resolution.requested_mode,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-        );
-        assert_eq!(
-            sticky_resolution.effective_mode,
-            DesktopActivityOverlayHostMode::Floating,
-        );
-        assert_eq!(
-            sticky_resolution.fallback_reason,
-            Some(DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable),
-        );
-    }
-
-    #[test]
-    fn ignores_runtime_panel_fallback_after_display_context_changes() {
-        let original_context = DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            },
-            visible_frame: Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 908.0,
-            },
-        };
-        let next_context = DesktopActivityOverlayDisplayContext {
-            screen_frame: Rect {
-                x: 1512.0,
-                y: 0.0,
-                width: 1728.0,
-                height: 1117.0,
-            },
-            visible_frame: Rect {
-                x: 1512.0,
-                y: 0.0,
-                width: 1728.0,
-                height: 1043.0,
-            },
-            ..original_context.clone()
-        };
-        let resolution = resolve_desktop_activity_overlay_host_mode_resolution(
-            DesktopActivityOverlayPresentationMode::Automatic,
-            DesktopActivityOverlayPlacementMode::Anchored,
-            DesktopActivityOverlayAnchor::TopCenter,
-            Some(next_context.clone()),
-        );
-        let runtime_fallback = ActivityOverlayRuntimeHostFallback {
-            display_context: original_context,
-            reason: DesktopActivityOverlayHostFallbackReason::PanelPositionUnavailable,
-        };
-
-        let sticky_resolution = resolve_host_mode_resolution_with_runtime_fallback(
-            resolution,
-            Some(&runtime_fallback),
-            Some(&next_context),
-        );
-
-        assert_eq!(
-            sticky_resolution.effective_mode,
-            DesktopActivityOverlayHostMode::NotchIntegrated,
-        );
-        assert_eq!(sticky_resolution.fallback_reason, None);
-    }
-
-    #[test]
-    fn applies_desired_expanded_override_until_main_sync_catches_up() {
-        let mut state = ActivityOverlayRuntimeState {
-            last_sync_payload: None,
-            last_window_state: None,
-            desired_expanded: Some(true),
-            drag_offsets: PersistedOverlayDragOffsets::default(),
-            drag_offsets_loaded: true,
-            drag_offsets_storage_key: None,
-            last_display_context: None,
-            runtime_host_fallback: None,
-            display_change_debounce: DesktopActivityOverlayDisplayChangeDebounce::default(),
-            native_mouse_state: DesktopActivityOverlayNativeMouseState::default(),
-            input_locked: false,
-            input_lock_updated_at_epoch_ms: None,
-            qa_pinned_sync_payload: None,
-            momentum_generation: 0,
-            #[cfg(target_os = "macos")]
-            mouse_poll: Default::default(),
-        };
-
-        let mut payload = DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded: false,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-
-        apply_desired_expanded_override(&mut state, &mut payload);
-
-        assert_eq!(payload.expanded, true);
-        assert_eq!(state.desired_expanded, Some(true));
-
-        let mut caught_up_payload = payload;
-        apply_desired_expanded_override(&mut state, &mut caught_up_payload);
-
-        assert_eq!(caught_up_payload.expanded, true);
-        assert_eq!(state.desired_expanded, None);
-    }
-
-    #[test]
-    fn expanded_override_survives_the_next_stale_main_sync() {
-        let build_payload = |expanded| DesktopActivityOverlaySyncPayload {
-            visible: true,
-            expanded,
-            model: serde_json::json!({}),
-            policy: DesktopActivityOverlayPolicyPayload {
-                enabled: true,
-                visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                show_when_running: true,
-                show_when_attention_required: true,
-                show_when_ready: true,
-                always_on_top: true,
-                auto_hide_enabled: true,
-                auto_hide_delay_ms: 6_000,
-                expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                interactive_collapsed: true,
-                presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                density: DesktopActivityOverlayDensity::Compact,
-                compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                show_session_count: true,
-                show_preview_text: false,
-                placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                anchor: DesktopActivityOverlayAnchor::TopCenter,
-                offset_x: 0.0,
-                offset_y: 0.0,
-                enable_drag_reposition: false,
-                lock_position: true,
-            },
-            window: DesktopActivityOverlayWindowDimensionsPayload {
-                collapsed: DesktopActivityOverlayDimensionsPayload {
-                    width: 320.0,
-                    height: 72.0,
-                },
-                expanded: DesktopActivityOverlayDimensionsPayload {
-                    width: 420.0,
-                    height: 240.0,
-                },
-            },
-        };
-        let mut state = ActivityOverlayRuntimeState {
-            last_sync_payload: Some(build_payload(false)),
-            last_window_state: None,
-            desired_expanded: None,
-            drag_offsets: PersistedOverlayDragOffsets::default(),
-            drag_offsets_loaded: true,
-            drag_offsets_storage_key: None,
-            last_display_context: None,
-            runtime_host_fallback: None,
-            display_change_debounce: DesktopActivityOverlayDisplayChangeDebounce::default(),
-            native_mouse_state: DesktopActivityOverlayNativeMouseState::default(),
-            input_locked: false,
-            input_lock_updated_at_epoch_ms: None,
-            qa_pinned_sync_payload: None,
-            momentum_generation: 0,
-            #[cfg(target_os = "macos")]
-            mouse_poll: Default::default(),
-        };
-
-        apply_expanded_override_to_runtime_state(&mut state, true);
-
-        assert_eq!(
-            state
-                .last_sync_payload
-                .as_ref()
-                .map(|payload| payload.expanded),
-            Some(true),
-        );
-        assert_eq!(state.desired_expanded, Some(true));
-
-        let mut stale_main_sync_payload = build_payload(false);
-        apply_desired_expanded_override(&mut state, &mut stale_main_sync_payload);
-
-        assert_eq!(stale_main_sync_payload.expanded, true);
-        assert_eq!(state.desired_expanded, Some(true));
-
-        let mut caught_up_main_sync_payload = build_payload(true);
-        apply_desired_expanded_override(&mut state, &mut caught_up_main_sync_payload);
-
-        assert_eq!(caught_up_main_sync_payload.expanded, true);
-        assert_eq!(state.desired_expanded, None);
-    }
-
-    #[test]
-    fn qa_pinned_sync_payload_ignores_unpinned_live_sync_until_expiry() {
-        let build_payload = |kind: &str, pin_until: Option<u64>| {
-            let mut model = serde_json::json!({ "kind": kind });
-            if let Some(pin_until) = pin_until {
-                model[QA_PROOF_PIN_UNTIL_MODEL_KEY] = serde_json::json!(pin_until);
-            }
-            DesktopActivityOverlaySyncPayload {
-                visible: true,
-                expanded: kind == "idle",
-                model,
-                policy: DesktopActivityOverlayPolicyPayload {
-                    enabled: true,
-                    visibility_mode: DesktopActivityOverlayVisibilityMode::ActiveSessions,
-                    show_when_running: true,
-                    show_when_attention_required: true,
-                    show_when_ready: true,
-                    always_on_top: true,
-                    auto_hide_enabled: true,
-                    auto_hide_delay_ms: 6_000,
-                    expanded_behavior: DesktopActivityOverlayExpandedBehavior::Click,
-                    interactive_collapsed: true,
-                    presentation_mode: DesktopActivityOverlayPresentationMode::Automatic,
-                    click_action: DesktopActivityOverlayClickAction::ExpandOverlay,
-                    density: DesktopActivityOverlayDensity::Compact,
-                    compact_style: DesktopActivityOverlayCompactStyle::Pill,
-                    show_session_count: true,
-                    show_preview_text: false,
-                    placement_mode: DesktopActivityOverlayPlacementMode::Anchored,
-                    display_mode: DesktopActivityOverlayDisplayMode::Automatic,
-                    anchor: DesktopActivityOverlayAnchor::TopCenter,
-                    offset_x: 0.0,
-                    offset_y: 0.0,
-                    enable_drag_reposition: false,
-                    lock_position: true,
-                },
-                window: DesktopActivityOverlayWindowDimensionsPayload {
-                    collapsed: DesktopActivityOverlayDimensionsPayload {
-                        width: 320.0,
-                        height: 72.0,
-                    },
-                    expanded: DesktopActivityOverlayDimensionsPayload {
-                        width: 420.0,
-                        height: 240.0,
-                    },
-                },
-            }
-        };
-        let mut state = ActivityOverlayRuntimeState {
-            last_sync_payload: None,
-            last_window_state: None,
-            desired_expanded: Some(false),
-            drag_offsets: PersistedOverlayDragOffsets::default(),
-            drag_offsets_loaded: true,
-            drag_offsets_storage_key: None,
-            last_display_context: None,
-            runtime_host_fallback: None,
-            display_change_debounce: DesktopActivityOverlayDisplayChangeDebounce::default(),
-            native_mouse_state: DesktopActivityOverlayNativeMouseState::default(),
-            input_locked: false,
-            input_lock_updated_at_epoch_ms: None,
-            qa_pinned_sync_payload: None,
-            momentum_generation: 0,
-            #[cfg(target_os = "macos")]
-            mouse_poll: Default::default(),
-        };
-
-        let pinned =
-            apply_qa_sync_pin_override(&mut state, build_payload("idle", Some(2_000)), 1_000);
-        assert_eq!(pinned.model["kind"], "idle");
-        assert_eq!(pinned.expanded, true);
-        assert_eq!(state.desired_expanded, None);
-
-        let live_before_expiry =
-            apply_qa_sync_pin_override(&mut state, build_payload("live", None), 1_100);
-        assert_eq!(live_before_expiry.model["kind"], "idle");
-        assert_eq!(live_before_expiry.expanded, true);
-
-        let live_after_expiry =
-            apply_qa_sync_pin_override(&mut state, build_payload("live", None), 2_001);
-        assert_eq!(live_after_expiry.model["kind"], "live");
-        assert_eq!(live_after_expiry.expanded, false);
     }
 
     #[test]
@@ -3657,34 +897,5 @@ mod tests {
                 height: 864.0,
             },
         );
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-pub(crate) fn watch_capture_display_changes(app: &AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    { native_display::watch_linux(app) }
-    #[cfg(target_os = "windows")]
-    {
-        for window in app.webview_windows().values() {
-            if window.label() == crate::desktop_window::MAIN_WINDOW_LABEL || crate::desktop_window::is_capture_window(window.label()) {
-                watch_native_display_window(window)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn watch_native_display_window(window: &WebviewWindow) -> Result<(), String> {
-    native_display::watch_window(window)
-}
-
-#[cfg(desktop)]
-pub(super) fn request_display_refresh<R:Runtime>(app:&AppHandle<R>) {
-    if let Some(state)=app.try_state::<ActivityOverlayState>() {
-        if let Ok(guard)=state.0.lock() {
-            if let Some(sender)=&guard.display_change_sender { let _=sender.send(()); }
-        };
     }
 }

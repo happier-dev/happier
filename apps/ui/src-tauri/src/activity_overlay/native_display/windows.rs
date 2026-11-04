@@ -45,12 +45,15 @@ pub(in crate::activity_overlay) fn watch<R: Runtime>(window: &WebviewWindow<R>) 
         let result = window.hwnd().map_err(|error| error.to_string()).and_then(|hwnd| {
             let app = window.app_handle().clone();
             let retained = window.label() == crate::desktop_window::MAIN_WINDOW_LABEL || crate::desktop_window::is_capture_window(window.label());
+            let activity = window.label() == super::super::OVERLAY_WINDOW_LABEL;
             // SAFETY: this is the HWND's owning GUI thread; Windows drops the
             // signal exactly once at WM_NCDESTROY after removing the subclass.
             unsafe { install(hwnd, move |change| {
                 // Selector DPI is operation-scoped by Tauri ScaleFactorChanged.
                 // Retained-window DPI hints withdraw cached targets only.
-                if retained {
+                if activity {
+                    if change == DisplayChange::WindowDpi { super::notify_activity(&app); }
+                } else if retained {
                     super::notify(&app, change);
                 }
             }) }

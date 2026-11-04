@@ -9,11 +9,14 @@
     "core:default",
     "allow-desktop-show-main-window",
     "allow-desktop-activity-overlay-get-window-state",
-    "allow-desktop-activity-overlay-set-expanded",
-    "allow-desktop-activity-overlay-set-input-locked",
-    "allow-desktop-activity-overlay-apply-drag-delta",
-    "allow-desktop-activity-overlay-release-drag-velocity",
-    "allow-desktop-activity-overlay-apply-momentum-delta",
-    "allow-desktop-activity-overlay-emit-interaction"
+    "allow-desktop-activity-overlay-present",
+    "allow-desktop-activity-overlay-take-presentation-request",
+    "allow-desktop-activity-overlay-set-keyboard-wanted",
+    "allow-desktop-activity-overlay-pointer-enter",
+    "allow-desktop-get-glass-state",
+    "allow-desktop-set-glass-panel-shape",
+    "allow-desktop-host-get-availability",
+    "allow-desktop-activity-overlay-move",
+    "allow-desktop-window-emit-action"
   ]
 }

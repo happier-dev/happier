@@ -1,134 +1,177 @@
-use super::host_mode::{DesktopActivityOverlayDisplayContext, DesktopActivityOverlayHostMode};
-use super::host_window::{
-    DesktopActivityOverlayMacHostPath, DesktopActivityOverlayMacWindowHostSettings,
-    DesktopActivityOverlayMacWindowLevelOverride,
-};
-use super::placement::{OverlayPlacementRect, Rect};
+use super::dock::Dock;
+use super::host_mode::DesktopActivityOverlayDisplayContext;
+use super::placement::Rect;
+#[cfg(target_os = "linux")]
+use tauri::Manager;
 
-#[cfg(target_os = "macos")]
-use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
-#[cfg(target_os = "macos")]
-use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, StyleMask, WebviewWindowExt};
-
-#[cfg(target_os = "macos")]
-tauri_panel! {
-    panel!(DesktopActivityOverlayPanel {
-        config: {
-            can_become_key_window: true,
-            can_become_main_window: false,
-            hides_on_deactivate: false
-        }
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn resolve_panel_level_override(
-    settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> Option<i64> {
-    match settings.window_level_override {
-        Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel) => Some(27),
-        Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanelExpanded) => Some(101),
-        None => None,
+#[cfg(any(not(target_os = "macos"), test))]
+fn physical_frame(rect: Rect, scale: f64) -> Rect {
+    Rect {
+        x: (rect.x * scale).round(),
+        y: (rect.y * scale).round(),
+        width: (rect.width * scale).round(),
+        height: (rect.height * scale).round(),
     }
 }
 
-#[cfg(target_os = "macos")]
-fn resolve_panel_collection_behavior(
-    settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> CollectionBehavior {
-    let mut behavior = CollectionBehavior::new();
+#[cfg(any(target_os = "macos", test))]
+fn appkit_frame(rect: Rect, monitor: Rect, display: &DesktopActivityOverlayDisplayContext) -> Rect {
+    Rect {
+        x: display.screen_frame.x + rect.x - monitor.x,
+        y: display.screen_frame.y + display.screen_frame.height
+            - (rect.y - monitor.y)
+            - rect.height,
+        width: rect.width,
+        height: rect.height,
+    }
+}
 
-    if settings.visible_on_all_workspaces {
-        behavior = behavior.can_join_all_spaces();
+pub(crate) fn visible_frame(
+    monitor: Rect,
+    work_area: Rect,
+    display: Option<&DesktopActivityOverlayDisplayContext>,
+) -> Result<Rect, String> {
+    if let Some(display) = display {
+        // AppKit coordinates have their origin at the bottom of each screen.
+        return Ok(Rect {
+            x: monitor.x + display.visible_frame.x - display.screen_frame.x,
+            y: monitor.y + display.screen_frame.height
+                - (display.visible_frame.y - display.screen_frame.y)
+                - display.visible_frame.height,
+            width: display.visible_frame.width,
+            height: display.visible_frame.height,
+        });
     }
-    if settings.full_screen_auxiliary {
-        behavior = behavior.full_screen_auxiliary();
-    }
-    if settings.stationary {
-        behavior = behavior.stationary();
-    }
-    if settings.ignores_cycle {
-        behavior = behavior.ignores_cycle();
-    }
-
-    behavior
+    Ok(work_area)
 }
 
 #[cfg(target_os = "macos")]
-fn resolve_panel_style_mask(settings: DesktopActivityOverlayMacWindowHostSettings) -> StyleMask {
-    let mut style_mask = StyleMask::empty().borderless();
-
-    if settings.nonactivating_panel {
-        style_mask = style_mask.nonactivating_panel();
+fn panel_level(dock: Dock, open: bool) -> i64 {
+    use objc2_app_kit::{NSFloatingWindowLevel, NSMainMenuWindowLevel, NSPopUpMenuWindowLevel};
+    match dock {
+        Dock::Floating => NSFloatingWindowLevel as i64,
+        _ if open => NSPopUpMenuWindowLevel as i64,
+        _ => NSMainMenuWindowLevel as i64 + 3,
     }
-
-    style_mask
 }
 
-#[cfg(target_os = "macos")]
-fn run_panel_task_on_main_thread<R: Runtime, T: Send + 'static>(
-    app: &AppHandle<R>,
-    task: impl FnOnce() -> T + Send + 'static,
-    completion_error: &'static str,
-) -> Result<T, String> {
-    if objc2::MainThreadMarker::new().is_some() {
-        return Ok(task());
-    }
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    app.run_on_main_thread(move || {
-        let _ = tx.send(task());
-    })
-    .map_err(|error| error.to_string())?;
-
-    rx.recv().map_err(|_| completion_error.to_string())
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn apply_macos_overlay_panel_host<R: Runtime>(
-    window: &WebviewWindow<R>,
-    settings: DesktopActivityOverlayMacWindowHostSettings,
+pub(crate) fn apply_overlay_host<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    dock: Dock,
+    open: bool,
+    always_on_top: bool,
 ) -> Result<(), String> {
-    if !matches!(settings.host_path, DesktopActivityOverlayMacHostPath::Panel) {
-        return Ok(());
+    #[cfg(target_os = "macos")]
+    {
+        let mut behavior = CollectionBehavior::new()
+            .can_join_all_spaces()
+            .stationary()
+            .ignores_cycle();
+        if always_on_top {
+            behavior = behavior.full_screen_auxiliary();
+        }
+        crate::desktop_panel::apply(
+            window,
+            crate::desktop_panel::PanelOptions {
+                shadow: false,
+                opaque: false,
+                movable: false,
+                movable_by_window_background: false,
+                accepts_mouse_moved_events: true,
+                ignores_mouse_events: false,
+                nonactivating: true,
+                keyboard_on_request: true,
+                level: Some(panel_level(dock, open)),
+                collection_behavior: behavior,
+            },
+        )
     }
-
-    let app = window.app_handle().clone();
-    let window = window.clone();
-    run_panel_task_on_main_thread(
-        &app,
-        move || {
-            let label = window.label().to_string();
-            let panel = match window.app_handle().get_webview_panel(&label) {
-                Ok(panel) => panel,
-                Err(_) => window
-                    .to_panel::<DesktopActivityOverlayPanel<R>>()
-                    .map_err(|error| error.to_string())?,
-            };
-
-            panel.set_has_shadow(settings.shadow);
-            panel.set_opaque(settings.opaque);
-            panel.set_transparent(true);
-            panel.set_hides_on_deactivate(false);
-            panel.set_movable_by_window_background(settings.movable_by_window_background);
-            panel.set_becomes_key_only_if_needed(settings.nonactivating_panel);
-            panel.set_floating_panel(settings.window_level_override.is_some());
-            panel.set_collection_behavior(resolve_panel_collection_behavior(settings).into());
-            panel.set_style_mask(resolve_panel_style_mask(settings).into());
-            let ns_panel = panel.as_panel();
-            ns_panel.setMovable(settings.movable);
-            ns_panel.setAcceptsMouseMovedEvents(settings.accepts_mouse_moved_events);
-            ns_panel.setIgnoresMouseEvents(settings.ignores_mouse_events);
-
-            if let Some(level_override) = resolve_panel_level_override(settings) {
-                panel.set_level(level_override);
-            }
-
-            Ok(())
-        },
-        "Panel host application did not return",
-    )?
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (dock, open, always_on_top);
+        window
+            .set_always_on_top(true)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        let _ = (open, always_on_top);
+        let native_window = window.clone();
+        crate::desktop_panel::run_on_main_thread(
+            window.app_handle(),
+            move || {
+                let native = native_window
+                    .gtk_window()
+                    .map_err(|error| error.to_string())?;
+                if native.display().type_().name() == "GdkX11Display" {
+                    native.set_type_hint(if dock == Dock::Floating {
+                        gtk::gdk::WindowTypeHint::Normal
+                    } else {
+                        gtk::gdk::WindowTypeHint::Dock
+                    });
+                    native.stick();
+                    native.set_keep_above(true);
+                }
+                Ok::<_, String>(())
+            },
+            "Overlay X11 window policy did not return",
+        )?
+    }
 }
+
+pub(crate) fn apply_overlay_frame<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    rect: Rect,
+    monitor: Rect,
+    display: Option<&DesktopActivityOverlayDisplayContext>,
+    target_scale: f64,
+    dock: Dock,
+    always_on_top: bool,
+) -> Result<Option<Rect>, String> {
+    #[cfg(target_os = "linux")]
+    if super::linux_layer::apply(window, dock, rect, monitor, always_on_top)? {
+        return Ok(Some(physical_frame(rect, target_scale)));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (dock, always_on_top);
+    #[cfg(target_os = "macos")]
+    {
+        let display = display.ok_or("Panel positioning requires a resolved display context")?;
+        let native = appkit_frame(rect, monitor, display);
+        crate::desktop_panel::set_content_frame(
+            window,
+            objc2_foundation::NSRect::new(
+                objc2_foundation::NSPoint::new(native.x, native.y),
+                objc2_foundation::NSSize::new(native.width, native.height),
+            ),
+        )
+        .map(rect_from_ns_rect)
+        .map(Some)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = display;
+        let scale = target_scale;
+        let native = physical_frame(rect, scale);
+        window
+            .set_position(tauri::PhysicalPosition::new(
+                native.x as i32,
+                native.y as i32,
+            ))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_size(tauri::PhysicalSize::new(
+                native.width as u32,
+                native.height as u32,
+            ))
+            .map_err(|error| error.to_string())?;
+        Ok(Some(native))
+    }
+}
+
+#[cfg(target_os = "macos")]
+use tauri_nspanel::CollectionBehavior;
 
 #[cfg(target_os = "macos")]
 fn rect_from_ns_rect(rect: objc2_foundation::NSRect) -> Rect {
@@ -140,199 +183,146 @@ fn rect_from_ns_rect(rect: objc2_foundation::NSRect) -> Rect {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn resolve_macos_overlay_panel_top_left_point(
-    placement: OverlayPlacementRect,
-    display_context: DesktopActivityOverlayDisplayContext,
-) -> OverlayPlacementRect {
-    OverlayPlacementRect {
-        x: placement.x,
-        y: display_context.screen_frame.y + display_context.screen_frame.height - placement.y,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn resolve_macos_overlay_panel_content_rect(
-    top_left: OverlayPlacementRect,
-    width: f64,
-    height: f64,
-) -> Rect {
-    Rect {
-        x: top_left.x,
-        y: top_left.y - height,
-        width,
-        height,
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn apply_macos_overlay_panel_position<R: Runtime>(
-    window: &WebviewWindow<R>,
-    host_mode: DesktopActivityOverlayHostMode,
-    display_context: Option<DesktopActivityOverlayDisplayContext>,
-    placement: OverlayPlacementRect,
-    width: f64,
-    height: f64,
-) -> Result<Rect, String> {
-    if !matches!(host_mode, DesktopActivityOverlayHostMode::NotchIntegrated) {
-        return Err("Panel positioning requires notch-integrated host mode".to_string());
-    }
-
-    let Some(display_context) = display_context else {
-        return Err("Panel positioning requires a resolved display context".to_string());
-    };
-
-    let top_left = resolve_macos_overlay_panel_top_left_point(placement, display_context);
-    let content_rect = resolve_macos_overlay_panel_content_rect(top_left, width, height);
-    let app = window.app_handle().clone();
-    let window = window.clone();
-    run_panel_task_on_main_thread(
-        &app,
-        move || {
-            let panel = match window.app_handle().get_webview_panel(window.label()) {
-                Ok(panel) => panel,
-                Err(_) => window
-                    .to_panel::<DesktopActivityOverlayPanel<R>>()
-                    .map_err(|error| error.to_string())?,
-            };
-            let ns_panel = panel.as_panel();
-            let style_mask = ns_panel.styleMask();
-            let content_frame = objc2_foundation::NSRect::new(
-                objc2_foundation::NSPoint::new(content_rect.x, content_rect.y),
-                objc2_foundation::NSSize::new(content_rect.width, content_rect.height),
-            );
-            let frame_rect = unsafe {
-                objc2_app_kit::NSWindow::frameRectForContentRect_styleMask(
-                    content_frame,
-                    style_mask,
-                    objc2::MainThreadMarker::new()
-                        .expect("expected panel frame conversion to run on the main thread"),
-                )
-            };
-            ns_panel.setFrame_display(frame_rect, false);
-            Ok(rect_from_ns_rect(ns_panel.frame()))
-        },
-        "Panel positioning did not return a native frame",
-    )?
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn apply_macos_overlay_panel_host<R: tauri::Runtime>(
-    _window: &tauri::WebviewWindow<R>,
-    _settings: DesktopActivityOverlayMacWindowHostSettings,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn apply_macos_overlay_panel_position<R: tauri::Runtime>(
-    _window: &tauri::WebviewWindow<R>,
-    _host_mode: DesktopActivityOverlayHostMode,
-    _display_context: Option<DesktopActivityOverlayDisplayContext>,
-    _placement: OverlayPlacementRect,
-    _width: f64,
-    _height: f64,
-) -> Result<Rect, String> {
-    Err("Panel positioning is unavailable outside macOS".to_string())
-}
-
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::activity_overlay::host_mode::DesktopActivityOverlayDisplayContext;
-    use crate::activity_overlay::placement::{OverlayPlacementRect, Rect};
-
-    fn display_context(screen_frame: Rect) -> DesktopActivityOverlayDisplayContext {
-        DesktopActivityOverlayDisplayContext {
-            is_macos: true,
-            is_builtin_display: true,
-            has_physical_notch: true,
-            safe_area_top: 74.0,
-            physical_notch_size: None,
-            display_identity: None,
-            screen_frame,
-            visible_frame: screen_frame,
+    #[test]
+    fn frame_table_preserves_visible_island_and_target_monitor_pixels() {
+        use super::super::dock::{frame_plan, Dock, FrameInput};
+        for dock in [Dock::Top, Dock::Left, Dock::Right, Dock::Floating] {
+            for camera in [false, true] {
+                for taskbar_left in [false, true] {
+                    for scale in [1., 2.] {
+                        let visible = if taskbar_left {
+                            Rect {
+                                x: -680.,
+                                y: 0.,
+                                width: 680.,
+                                height: 500.,
+                            }
+                        } else {
+                            Rect {
+                                x: -720.,
+                                y: 30.,
+                                width: 720.,
+                                height: 470.,
+                            }
+                        };
+                        let top = if camera { 0. } else { visible.y };
+                        let input = FrameInput {
+                            dock,
+                            visible,
+                            top,
+                            position: (0.9, 0.9),
+                            extent: (480., 300.),
+                            screen_bounds: None,
+                            rest_extent: (100., 36.),
+                            surface: super::super::DesktopActivityOverlaySurface::Expanded,
+                            camera_center: camera.then_some(-360.),
+                            camera_offset: 18.,
+                        };
+                        let frame = frame_plan(input);
+                        let bounds_top = if dock == Dock::Top { top } else { visible.y };
+                        assert!(
+                            frame.rect.x >= visible.x
+                                && frame.rect.x + frame.rect.width <= visible.x + visible.width
+                        );
+                        assert!(
+                            frame.rect.y >= bounds_top
+                                && frame.rect.y + frame.rect.height <= visible.y + visible.height
+                        );
+                        let centre = (
+                            frame.rect.x
+                                + frame.rect.width / 2.
+                                + frame.presentation.anchor_offset.x,
+                            frame.rect.y
+                                + frame.rect.height / 2.
+                                + frame.presentation.anchor_offset.y,
+                        );
+                        assert!(
+                            centre.0 - 50. >= visible.x
+                                && centre.0 + 50. <= visible.x + visible.width
+                        );
+                        assert!(
+                            centre.1 - 18. >= bounds_top
+                                && centre.1 + 18. <= visible.y + visible.height
+                        );
+                        let physical = physical_frame(frame.rect, scale);
+                        assert_eq!(
+                            physical,
+                            Rect {
+                                x: (frame.rect.x * scale).round(),
+                                y: (frame.rect.y * scale).round(),
+                                width: (frame.rect.width * scale).round(),
+                                height: (frame.rect.height * scale).round()
+                            }
+                        );
+                    }
+                }
+            }
         }
     }
-
     #[test]
-    fn notch_integrated_panel_style_mask_is_borderless_and_nonactivating() {
-        let style_mask = resolve_panel_style_mask(DesktopActivityOverlayMacWindowHostSettings {
-            host_path: DesktopActivityOverlayMacHostPath::Panel,
-            visible_on_all_workspaces: true,
-            accepts_mouse_moved_events: true,
-            ignores_mouse_events: true,
-            shadow: false,
-            full_screen_auxiliary: true,
-            stationary: true,
-            ignores_cycle: true,
-            movable: false,
-            movable_by_window_background: false,
-            nonactivating_panel: true,
-            opaque: false,
-            window_level_override: Some(DesktopActivityOverlayMacWindowLevelOverride::NotchPanel),
-        });
-
-        assert_eq!(
-            style_mask,
-            StyleMask::empty().borderless().nonactivating_panel(),
-        );
-    }
-
-    #[test]
-    fn panel_top_left_point_hugs_the_top_screen_edge_for_notch_mode() {
-        let point = resolve_macos_overlay_panel_top_left_point(
-            OverlayPlacementRect { x: 576.0, y: 0.0 },
-            display_context(Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            }),
-        );
-
-        assert!((point.x - 576.0).abs() < 0.001);
-        assert!((point.y - 982.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn panel_top_left_point_respects_secondary_display_offsets() {
-        let point = resolve_macos_overlay_panel_top_left_point(
-            OverlayPlacementRect { x: 1888.0, y: 18.0 },
-            display_context(Rect {
-                x: 1512.0,
-                y: 120.0,
-                width: 1728.0,
-                height: 1117.0,
-            }),
-        );
-
-        assert!((point.x - 1888.0).abs() < 0.001);
-        assert!((point.y - 1219.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn panel_content_rect_can_be_converted_to_a_top_edge_aligned_borderless_frame() {
-        let top_left = resolve_macos_overlay_panel_top_left_point(
-            OverlayPlacementRect { x: 576.0, y: 0.0 },
-            display_context(Rect {
-                x: 0.0,
-                y: 0.0,
-                width: 1512.0,
-                height: 982.0,
-            }),
-        );
-        let content_rect = resolve_macos_overlay_panel_content_rect(top_left, 344.0, 68.0);
-
-        let frame_rect = Rect {
-            x: content_rect.x,
-            y: content_rect.y,
-            width: content_rect.width,
-            height: content_rect.height,
+    fn appkit_frame_respects_secondary_display_origin_and_top_edge() {
+        let screen = Rect {
+            x: 1512.,
+            y: 120.,
+            width: 1728.,
+            height: 1117.,
         };
-
-        assert!((frame_rect.x - 576.0).abs() < 0.001);
-        assert!((frame_rect.y - 914.0).abs() < 0.001);
-        assert!((frame_rect.height - 68.0).abs() < 0.001);
+        let display = DesktopActivityOverlayDisplayContext {
+            is_macos: true,
+            is_builtin_display: false,
+            has_physical_notch: false,
+            safe_area_top: 0.,
+            physical_notch_size: None,
+            display_identity: None,
+            screen_frame: screen,
+            visible_frame: screen,
+        };
+        let monitor = Rect {
+            x: 1512.,
+            y: -255.,
+            width: 1728.,
+            height: 1117.,
+        };
+        assert_eq!(
+            appkit_frame(
+                Rect {
+                    x: 1888.,
+                    y: -237.,
+                    width: 344.,
+                    height: 68.
+                },
+                monitor,
+                &display
+            ),
+            Rect {
+                x: 1888.,
+                y: 1151.,
+                width: 344.,
+                height: 68.
+            }
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn one_level_mapper_covers_every_dock_and_surface_phase() {
+        for open in [false, true] {
+            assert_eq!(
+                panel_level(Dock::Floating, open),
+                objc2_app_kit::NSFloatingWindowLevel as i64
+            );
+        }
+        for dock in [Dock::Top, Dock::Left, Dock::Right] {
+            assert_eq!(
+                panel_level(dock, false),
+                objc2_app_kit::NSMainMenuWindowLevel as i64 + 3
+            );
+            assert_eq!(
+                panel_level(dock, true),
+                objc2_app_kit::NSPopUpMenuWindowLevel as i64
+            );
+        }
     }
 }

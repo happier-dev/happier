@@ -173,7 +173,6 @@ pub fn run() {
                     dock_icon::apply();
                 }
                 activity_overlay::register(app)?;
-                pet_overlay::register(app)?;
             }
 
             #[cfg(desktop)]

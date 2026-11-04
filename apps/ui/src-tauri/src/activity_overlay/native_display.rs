@@ -57,6 +57,18 @@ fn notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>, change: DisplayChange) {
     });
 }
 
+#[cfg(target_os = "windows")]
+fn notify_activity<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(activity) = app.try_state::<super::ActivityOverlayState>() {
+            if let Err(error) = super::window_lifecycle::reframe_after_display_change(&app, &activity) {
+                log::warn!("Overlay display-scale refresh failed: {error}");
+            }
+        }
+    });
+}
 
 #[cfg(target_os = "linux")]
 pub(super) use linux::watch as watch_linux;
