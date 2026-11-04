@@ -178,6 +178,13 @@ marks a partial preview with an ellipsis and keeps Expand available. Console and
 read the canonical retained diagnostics and select newest evidence under the context protocol's
 output budget before presenting it chronologically. Omitted summary material is flagged truncated.
 
+The view subscription returns retained history on bootstrap or reconnect; subsequent
+responses use its existing revision cursor and contain only events added or changed
+after that cursor. Repeated equal events do not advance it.
+Admitted owner-value capture preserves injected console, body, header, and storage text
+without a separate 4,096-character cutoff. Existing batch transport bounds and destination
+redaction still apply. Reading a cloned response body does not delay the page's fetch response.
+
 The overflow menu and non-framable/slow-frame escape use `browser.view.openExternal`. Its closed
 input names the Browser Session, view and command; the runtime resolves the current page URL from
 that mounted owner and opens it in the answering client's system browser without navigating or

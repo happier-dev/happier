@@ -56,18 +56,21 @@ export type RedactedDiagnosticsHeaders = Readonly<{
  */
 export function redactDiagnosticsHeaders(
   headers: TelemetryHeaders | undefined,
-  options: Readonly<{ valueLimit?: number }> = {},
+  options: Readonly<{ valueLimit?: number | null }> = {},
 ): Readonly<Record<string, string>> {
   return redactDiagnosticsHeadersWithResult(headers, options).headers;
 }
 
-/** Report clipping separately from policy-based exclusions of unsafe header values. */
+/**
+ * Report clipping separately from policy-based exclusions of unsafe header values.
+ * `valueLimit: null` preserves complete values for admitted local-owner diagnostics.
+ */
 export function redactDiagnosticsHeadersWithResult(
   headers: TelemetryHeaders | undefined,
-  options: Readonly<{ valueLimit?: number }> = {},
+  options: Readonly<{ valueLimit?: number | null }> = {},
 ): RedactedDiagnosticsHeaders {
   if (!headers) return { headers: {}, truncated: false };
-  const valueLimit = options.valueLimit ?? 256;
+  const valueLimit = options.valueLimit === undefined ? 256 : options.valueLimit;
   const out: Record<string, string> = {};
   let truncated = false;
   for (const [name, value] of Object.entries(headers)) {
@@ -76,7 +79,7 @@ export function redactDiagnosticsHeadersWithResult(
     const values = headerValues(value);
     if (values.length === 0) continue;
     const joined = values.join(', ');
-    const redacted = truncate(joined, valueLimit);
+    const redacted = valueLimit === null ? joined : truncate(joined, valueLimit);
     out[normalized] = redacted;
     truncated ||= redacted !== joined;
   }

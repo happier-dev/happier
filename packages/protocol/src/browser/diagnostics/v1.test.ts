@@ -90,7 +90,7 @@ describe('browser diagnostics protocol contracts', () => {
     expect(parsed.collector?.nonce).toBe('nonce_1');
   });
 
-  it('accepts an injected console.entry carrying length-capped owner text', async () => {
+  it('accepts an injected console.entry carrying owner text', async () => {
     const mod = await import('./v1.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
@@ -119,12 +119,11 @@ describe('browser diagnostics protocol contracts', () => {
     expect(parsed.data.text).toBe('hello from the page console');
   });
 
-  it('rejects an injected console.entry whose text exceeds the owner cap', async () => {
+  it('accepts complete injected owner console text beyond the former guessed cap', async () => {
     const mod = await import('./v1.js').catch(() => null);
-    const egress = await import('./egress/index.js').catch(() => null);
+    const { redactBrowserDiagnosticDataForDestination } = await import('./egress/classifier.js');
     expect(mod).not.toBeNull();
-    expect(egress).not.toBeNull();
-    if (!mod || !egress) return;
+    if (!mod) return;
 
     const result = mod.BrowserDiagnosticEventV1Schema.safeParse({
       v: 1,
@@ -142,12 +141,17 @@ describe('browser diagnostics protocol contracts', () => {
         level: 'log',
         argCount: 1,
         textAvailable: true,
-        text: 'x'.repeat(egress.INJECTED_CONSOLE_TEXT_MAX_LENGTH + 1),
+        text: 'x'.repeat(5_000),
       },
       redaction: { level: 'none', truncated: true },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(redactBrowserDiagnosticDataForDestination(result.data, 'localOwner').text).toBe('x'.repeat(5_000));
+      expect(redactBrowserDiagnosticDataForDestination(result.data, 'agentContext').text).toBeUndefined();
+      expect(redactBrowserDiagnosticDataForDestination(result.data, 'remoteSnapshot').text).toBeUndefined();
+    }
   });
 
   it('parses injected sendBeacon metadata (url + queued byte count only)', async () => {
@@ -318,7 +322,7 @@ describe('browser diagnostics protocol contracts', () => {
     ]);
   });
 
-  it('rejects over-cap injected storage values', async () => {
+  it('accepts complete injected storage values beyond the former guessed cap', async () => {
     const mod = await import('./v1.js').catch(() => null);
 
     expect(mod).not.toBeNull();
@@ -326,7 +330,7 @@ describe('browser diagnostics protocol contracts', () => {
 
     const result = mod.BrowserDiagnosticEventV1Schema.safeParse({
       v: 1,
-      eventId: 'evt_storage_keys_unsafe',
+      eventId: 'evt_storage_keys_complete',
       browserSessionId: 'bs_1',
       viewId: 'view_1',
       navigationGeneration: 1,
@@ -340,12 +344,15 @@ describe('browser diagnostics protocol contracts', () => {
         storageType: 'localStorage',
         keyCount: 1,
         keys: ['theme'],
-        entries: [{ key: 'theme', value: 'x'.repeat(4097), valueTruncated: true }],
+        entries: [{ key: 'theme', value: 'x'.repeat(5000), valueTruncated: false }],
       },
-      redaction: { level: 'none', truncated: true },
+      redaction: { level: 'none', truncated: false },
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.data.entries).toEqual([{ key: 'theme', value: 'x'.repeat(5000), valueTruncated: false }]);
+    }
   });
 
   it('parses injected DOM-snapshot structural counts (no text/attribute values)', async () => {
@@ -1214,6 +1221,29 @@ describe('browser diagnostics egress classifier + header SSOT', () => {
     expect(out).toEqual({ 'content-type': 'application/json', 'x-request-id': 'req_1' });
     expect(JSON.stringify(out)).not.toContain('secret-token');
     expect(JSON.stringify(out)).not.toContain('bearer');
+  });
+
+  it('reports only actual clipping of allowed header values', async () => {
+    const { redactDiagnosticsHeadersWithResult } = await import('./egress/headers.js');
+    const value = 'a'.repeat(257);
+
+    expect(redactDiagnosticsHeadersWithResult({ Accept: value })).toEqual({
+      headers: { accept: `${'a'.repeat(253)}...` },
+      truncated: true,
+    });
+    expect(redactDiagnosticsHeadersWithResult({ Accept: 'a'.repeat(256), Authorization: value })).toEqual({
+      headers: { accept: 'a'.repeat(256) },
+      truncated: false,
+    });
+    expect(redactDiagnosticsHeadersWithResult({ Accept: ['ab', 'cd'] }, { valueLimit: 5 })).toEqual({
+      headers: { accept: 'ab...' },
+      truncated: true,
+    });
+    expect(redactDiagnosticsHeadersWithResult(undefined)).toEqual({ headers: {}, truncated: false });
+    expect(redactDiagnosticsHeadersWithResult({ Accept: value, Authorization: value }, { valueLimit: null })).toEqual({
+      headers: { accept: value },
+      truncated: false,
+    });
   });
 
   it('redactDiagnosticsUrl surfaces only safe query-param NAMES, never token values', async () => {

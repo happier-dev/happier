@@ -52,6 +52,7 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
         const event = snapshotWithOwnerConsoleText().events[0];
         store.publishEvent({ ...event, browserSessionId: 'other' });
+        for (let n = 0; n < 1_000; n++) store.publishEvent({ ...event, eventId: `history-${n}`, capturedAtMs: n });
         let wholeMachineReads = 0;
         const routes = createBrowserDiagnosticsRoutes({ store: { ...store, getSnapshot() {
             wholeMachineReads++; return store.getSnapshot();
@@ -62,13 +63,16 @@ describe('daemon browser diagnostics snapshot rpc handler', () => {
         const request = { machineId: 'machine_1', view: { browserSessionId: event.browserSessionId,
             viewId: event.viewId, navigationGeneration: event.navigationGeneration } };
         const initial = await read(request) as { revision: number; snapshot: BrowserDiagnosticsSnapshotV1 };
-        expect(initial.snapshot.events).toEqual([]);
+        expect(initial.snapshot.events).toHaveLength(1_000);
         const pushed = read({ ...request, sinceRevision: initial.revision });
-        store.publishEvent(event);
+        store.publishEvent({ ...event, capturedAtMs: 1_001 });
         const response = await pushed as { snapshot: BrowserDiagnosticsSnapshotV1 };
+        expect(response.snapshot.events).toHaveLength(1);
         expect(response.snapshot.events).toEqual([expect.objectContaining({ eventId: event.eventId,
             redaction: expect.objectContaining({ level: 'metadataOnly' }) })]);
         expect(response.snapshot.events[0].data.text).toBeUndefined();
+        const reconnected = await read(request) as { snapshot: BrowserDiagnosticsSnapshotV1 };
+        expect(reconnected.snapshot.events).toHaveLength(1_000);
         expect(wholeMachineReads).toBe(0);
     });
     it('serves daemon-owned browser diagnostics snapshots over machine rpc', async () => {

@@ -1,4 +1,3 @@
-import { INJECTED_CONSOLE_TEXT_MAX_LENGTH, INJECTED_OWNER_VALUE_MAX_LENGTH } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 import { SAFE_TELEMETRY_HEADER_NAMES, redactDiagnosticsHeaders } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 import { BrowserDiagnosticEventBatchV1Schema, BrowserDiagnosticsElementPickerCommandMessageV1Schema, BrowserDiagnosticsElementPickerResultMessageV1Schema, BrowserDiagnosticsEvalCommandMessageV1Schema, BrowserDiagnosticsEvalResultMessageV1Schema, BrowserDiagnosticsGetPropertiesCommandMessageV1Schema, BrowserDiagnosticsGetPropertiesResultMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupCommandMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupResultMessageV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticsElementPickerCommandMessageV1, type BrowserDiagnosticsElementPickerRequestV1, type BrowserDiagnosticsElementPickerResultV1, type BrowserDiagnosticsEvalCommandMessageV1, type BrowserDiagnosticsEvalRequestV1, type BrowserDiagnosticsEvalResultV1, type BrowserDiagnosticsGetPropertiesCommandMessageV1, type BrowserDiagnosticsGetPropertiesRequestV1, type BrowserDiagnosticsGetPropertiesResultV1, type BrowserDiagnosticsReleaseObjectGroupCommandMessageV1, type BrowserDiagnosticsReleaseObjectGroupRequestV1, type BrowserDiagnosticsReleaseObjectGroupResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { stripUrlValuesInString } from '@happier-dev/protocol/browser/diagnostics/egress/url';
@@ -25,7 +24,7 @@ export type BuildInjectedBrowserDiagnosticsScriptInput = InjectedBrowserDiagnost
     presentationActive?: boolean;
     /**
      * DEV-2: the LOCAL owner's `browser.diagnostics` value-capture policy. When set, the in-page
-     * console collector surfaces a length-capped (`INJECTED_CONSOLE_TEXT_MAX_LENGTH`) `text` rendering
+     * console collector surfaces a complete `text` rendering
      * of the console arguments and stamps the event `redaction.level = 'none'` (full fidelity for the
      * local owner). When unset (the fail-closed default for non-owner), only `{level,argCount,
      * textAvailable}` metadata is emitted and the level stays `valuesRedacted`. The egress classifier
@@ -142,7 +141,7 @@ function normalizeWebPostMessageTargetOrigin(value: string | undefined): string 
 
 /**
  * Host re-sanitizer policy. `consoleValueCapture` mirrors the producer's owner-value-capture policy:
- * when set, the defense-in-depth re-sanitizer preserves the length-capped owner console `text`
+ * when set, the re-sanitizer preserves the owner console `text`
  * instead of collapsing console entries to metadata. It defaults to the fail-closed (strip) behavior.
  */
 type InjectedDiagnosticsSanitizeOptions = Readonly<{
@@ -168,18 +167,9 @@ function sanitizeDiagnosticData(value: unknown): unknown {
     return value;
 }
 
-function cappedOwnerConsoleText(value: unknown): string | undefined {
+function ownerValueText(value: unknown): string | undefined {
     if (typeof value !== 'string' || value.length === 0) return undefined;
-    return value.length > INJECTED_CONSOLE_TEXT_MAX_LENGTH
-        ? value.slice(0, INJECTED_CONSOLE_TEXT_MAX_LENGTH)
-        : value;
-}
-
-function cappedOwnerValueText(value: unknown): string | undefined {
-    if (typeof value !== 'string' || value.length === 0) return undefined;
-    return value.length > INJECTED_OWNER_VALUE_MAX_LENGTH
-        ? value.slice(0, INJECTED_OWNER_VALUE_MAX_LENGTH)
-        : value;
+    return value;
 }
 
 function sanitizeOwnerHeaderBag(value: unknown): Record<string, string> | undefined {
@@ -189,7 +179,7 @@ function sanitizeOwnerHeaderBag(value: unknown): Record<string, string> | undefi
         if (typeof headerValue !== 'string' || headerValue.length === 0) continue;
         headers[name] = headerValue;
     }
-    const out = redactDiagnosticsHeaders(headers, { valueLimit: INJECTED_OWNER_VALUE_MAX_LENGTH });
+    const out = redactDiagnosticsHeaders(headers, { valueLimit: null });
     return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -198,7 +188,7 @@ function sanitizeOwnerStorageEntries(value: unknown): readonly Record<string, un
     const entries = value.slice(0, 200).flatMap((entry) => {
         if (!isRecord(entry)) return [];
         const key = typeof entry.key === 'string' ? entry.key.slice(0, 256) : '';
-        const valueText = cappedOwnerValueText(entry.value);
+        const valueText = ownerValueText(entry.value);
         if (!key || valueText === undefined) return [];
         return [{
             key,
@@ -228,11 +218,11 @@ function sanitizeInjectedDiagnosticDataForEvent(
             || (typeof data.text === 'string' && data.text.length > 0)
             || (Array.isArray(data.args) && data.args.length > 0)
         );
-        // DEV-2: preserve the length-capped owner `text` ONLY for console entries when the LOCAL
+        // DEV-2: preserve the owner `text` ONLY for console entries when the LOCAL
         // owner's value-capture policy is enabled. `pageError` text stays metadata-only, and the
         // fail-closed default (no policy) keeps the prior `{level,argCount,textAvailable}` shape.
         const ownerText = options?.consoleValueCapture === true && event.family === 'console'
-            ? cappedOwnerConsoleText(data.text)
+            ? ownerValueText(data.text)
             : undefined;
         return {
             ...(event.family === 'console' && typeof data.level === 'string' ? { level: data.level } : {}),
@@ -327,10 +317,10 @@ function sanitizeInjectedDiagnosticDataForEvent(
             ? sanitizeOwnerHeaderBag(data.responseHeaders)
             : undefined;
         const requestBodyText = options?.valueCapture === true
-            ? cappedOwnerValueText(data.requestBodyText)
+            ? ownerValueText(data.requestBodyText)
             : undefined;
         const responseBodyText = options?.valueCapture === true
-            ? cappedOwnerValueText(data.responseBodyText)
+            ? ownerValueText(data.responseBodyText)
             : undefined;
         return {
             ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
@@ -758,11 +748,9 @@ export function buildInjectedBrowserDiagnosticsScript(
         } : {}),
         ...(input.ownerConsoleValueCapture ? {
             ownerConsoleValueCapture: true,
-            consoleTextMaxLength: INJECTED_CONSOLE_TEXT_MAX_LENGTH,
         } : {}),
         ...(input.ownerDiagnosticsValueCapture ? {
             ownerDiagnosticsValueCapture: true,
-            ownerValueMaxLength: INJECTED_OWNER_VALUE_MAX_LENGTH,
             safeTelemetryHeaderNames: [...SAFE_TELEMETRY_HEADER_NAMES],
         } : {}),
     });

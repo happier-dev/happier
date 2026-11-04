@@ -14,11 +14,16 @@ const DEFAULT_MAX_EVENTS_PER_VIEW = 1_000;
 const DEFAULT_MAX_SNAPSHOT_EVENTS = 5_000;
 const DEFAULT_MAX_DIAGNOSTICS = 50;
 
+type BrowserDiagnosticsRetainedEvent = Readonly<{
+    event: BrowserDiagnosticEventV1;
+    revision: number;
+}>;
+
 type BrowserDiagnosticsDaemonViewState = Readonly<{
     browserSessionId: string;
     viewId: string;
     navigationGeneration: number;
-    events: readonly BrowserDiagnosticEventV1[];
+    events: readonly BrowserDiagnosticsRetainedEvent[];
     revision: number;
     evictedEventCount: number;
 }>;
@@ -39,7 +44,7 @@ export type BrowserDiagnosticsDaemonStore = Readonly<{
     clearView(input: Readonly<{ browserSessionId: string; viewId: string }>): void;
     clearSession(input: Readonly<{ browserSessionId: string }>): void;
     getSnapshot(): BrowserDiagnosticsSnapshotV1;
-    getViewSnapshot(input: Readonly<{ browserSessionId: string; viewId: string }>): BrowserDiagnosticsSnapshotV1;
+    getViewSnapshot(input: Readonly<{ browserSessionId: string; viewId: string; sinceRevision?: number }>): BrowserDiagnosticsSnapshotV1;
     getViewRevision(input: Readonly<{ browserSessionId: string; viewId: string; navigationGeneration: number }>): number;
     subscribeView(input: Readonly<{ browserSessionId: string; viewId: string }>, listener: () => void): () => void;
     getNetworkRequest(input: Readonly<{ browserSessionId: string; viewId: string; navigationGeneration: number; requestId: string }>): BrowserDiagnosticEventV1 | undefined;
@@ -47,7 +52,11 @@ export type BrowserDiagnosticsDaemonStore = Readonly<{
 }>;
 
 function sortEvents(events: readonly BrowserDiagnosticEventV1[]): readonly BrowserDiagnosticEventV1[] {
-    return [...events].sort((a, b) => a.capturedAtMs - b.capturedAtMs || a.eventId.localeCompare(b.eventId));
+    return [...events].sort(compareEvents);
+}
+
+function compareEvents(a: BrowserDiagnosticEventV1, b: BrowserDiagnosticEventV1): number {
+    return a.capturedAtMs - b.capturedAtMs || a.eventId.localeCompare(b.eventId);
 }
 
 function appendBoundedEvent(
@@ -59,10 +68,12 @@ function appendBoundedEvent(
     const previousEvents = view && event.navigationGeneration === view.navigationGeneration
         ? view.events
         : [];
-    const dedupedEvents = previousEvents.filter((previous) => previous.eventId !== event.eventId
+    const dedupedEvents = previousEvents.filter(({ event: previous }) => previous.eventId !== event.eventId
         && !(isBrowserDiagnosticLifecycleEvent(event) && isBrowserDiagnosticLifecycleEvent(previous) && previous.family === event.family));
-    const lifecycle = [...dedupedEvents, event].filter(isBrowserDiagnosticLifecycleEvent);
-    const content = [...dedupedEvents, event].filter(event => !isBrowserDiagnosticLifecycleEvent(event));
+    const retained = [...dedupedEvents, { event, revision }];
+    const lifecycle = retained.filter(({ event }) => isBrowserDiagnosticLifecycleEvent(event));
+    const content = retained.filter(({ event }) => !isBrowserDiagnosticLifecycleEvent(event))
+        .sort((a, b) => compareEvents(a.event, b.event));
     const evictedEventCount = (view?.navigationGeneration === event.navigationGeneration ? view.evictedEventCount : 0)
         + Math.max(0, content.length - maxEventsPerView);
     return {
@@ -71,7 +82,7 @@ function appendBoundedEvent(
         navigationGeneration: event.navigationGeneration,
         revision,
         evictedEventCount,
-        events: sortEvents([...lifecycle, ...sortEvents(content).slice(-maxEventsPerView)]),
+        events: [...lifecycle, ...content.slice(-maxEventsPerView)].sort((a, b) => compareEvents(a.event, b.event)),
     };
 }
 
@@ -126,7 +137,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
             return { status: 'rejected', reason: 'stale_navigation' };
         }
 
-        const previous = existing?.events.find(previous => previous.eventId === event.eventId);
+        const previous = existing?.events.find(previous => previous.event.eventId === event.eventId)?.event;
         const previousPrivate = previous ? privateRequests.get(previous) : undefined;
         if (privateRequest) privateRequests.set(event, { ...previousPrivate, ...privateRequest,
             requestExtraInfo: [...previousPrivate?.requestExtraInfo ?? [], ...privateRequest.requestExtraInfo ?? []],
@@ -158,12 +169,12 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
         getNetworkRequest(request) {
             const view = viewsByKey.get(browserViewKey(request));
             return view?.navigationGeneration === request.navigationGeneration
-                ? view.events.find(event => event.family === 'network' && event.data.requestId === request.requestId) : undefined;
+                ? view.events.find(({ event }) => event.family === 'network' && event.data.requestId === request.requestId)?.event : undefined;
         },
         getPrivateNetworkRequest(request) {
             const view = viewsByKey.get(browserViewKey(request));
             const event = view?.navigationGeneration === request.navigationGeneration
-                ? view.events.find(event => event.family === 'network' && event.data.requestId === request.requestId) : undefined;
+                ? view.events.find(({ event }) => event.family === 'network' && event.data.requestId === request.requestId)?.event : undefined;
             const privateRequest = event ? privateRequests.get(event) : undefined;
             return event && privateRequest ? { event, privateRequest } : undefined;
         },
@@ -180,7 +191,7 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
             }
         },
         getSnapshot: () => {
-            const allEvents = sortEvents([...viewsByKey.values()].flatMap(view => view.events));
+            const allEvents = sortEvents([...viewsByKey.values()].flatMap(view => view.events.map(({ event }) => event)));
             const events = allEvents.slice(-maxSnapshotEvents);
             const omitted = allEvents.slice(0, Math.max(0, allEvents.length - maxSnapshotEvents));
             const omittedByView = new Map<string, number>();
@@ -205,7 +216,11 @@ export function createBrowserDiagnosticsDaemonStore(input: Readonly<{
                 machineId: input.machineId,
                 generatedAt: now(),
                 refreshState: 'idle',
-                events: sortEvents(view?.events ?? []).slice(-maxSnapshotEvents),
+                // Retained publication revisions are the existing watch cursor's changed facts.
+                // Apply the snapshot retention projection before selecting the incremental batch.
+                events: (view?.events ?? []).slice(-maxSnapshotEvents)
+                    .filter(entry => viewInput.sinceRevision === undefined || entry.revision > viewInput.sinceRevision)
+                    .map(({ event }) => event),
                 // The runtime-action snapshot is view scoped. Store-level diagnostics do not
                 // currently carry view identity, so exposing them here would reintroduce
                 // cross-view metadata leakage. The internal machine RPC keeps `getSnapshot()`.

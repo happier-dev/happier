@@ -24,15 +24,6 @@ export function resolveBrowserDiagnosticsPersonDestination(authority: unknown): 
 }
 
 /**
- * Maximum length (in UTF-16 code units) of the length-capped console `text`/`args` rendering the
- * injected collector may surface to the local owner. The producer and Protocol ingress schema
- * share this console-value contract. A console entry whose `text` exceeds this is rejected (fail-closed) rather than
- * silently truncated downstream.
- */
-export const INJECTED_CONSOLE_TEXT_MAX_LENGTH = 4096;
-export const INJECTED_OWNER_VALUE_MAX_LENGTH = INJECTED_CONSOLE_TEXT_MAX_LENGTH;
-
-/**
  * Fields that are credential-egress vectors regardless of event kind. Stripped at capture, never
  * surfaced even to the local owner. Names are normalized (lowercase) for comparison.
  */
@@ -54,7 +45,7 @@ const ALWAYS_STRIP_FIELD_NAMES: ReadonlySet<string> = new Set([
 export const INJECTED_EVENT_ALLOWED_FIELDS: Readonly<
   Partial<Record<BrowserDiagnosticEventKindV1, ReadonlySet<string>>>
 > = {
-  // `text` is the length-capped console rendering. It is accepted at INGESTION (the local-owner
+  // `text` is the console rendering. It is accepted at INGESTION (the local-owner
   // producer emits it) but is an OWNER-ONLY field at egress: kept for `localOwner`, dropped for
   // agent/remote (see `INJECTED_OWNER_ONLY_FIELDS` + `classifyBrowserDiagnosticFieldForDestination`).
   'console.entry': new Set(['level', 'argCount', 'textAvailable', 'text']),
@@ -251,7 +242,7 @@ export type BrowserDiagnosticEgressDestination = 'localOwner' | 'agentContext' |
  *
  * Injected-page events are page-tamperable, so structural injected kinds stay metadata-only at every
  * destination. The ONE exception (DEV-2 reconcile, plan B3 "full fidelity to the LOCAL owner") is the
- * injected console entry: its length-capped `text` is the local owner's own page console output and
+ * injected console entry: its `text` is the local owner's own page console output and
  * is rendered at full fidelity (`none`) for the `localOwner` destination with owner-full fidelity.
  * It still reduces to `metadataOnly` for agent/remote, preserving the WS-leak / secret-drop model.
  */

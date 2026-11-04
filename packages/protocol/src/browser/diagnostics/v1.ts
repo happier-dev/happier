@@ -3,9 +3,7 @@ import { z } from 'zod/mini';
 
 import { isRecord } from '../../common/records.js';
 import {
-  INJECTED_CONSOLE_TEXT_MAX_LENGTH,
   INJECTED_EVENT_ALLOWED_FIELDS,
-  INJECTED_OWNER_VALUE_MAX_LENGTH,
 } from './egress/classifier.js';
 import { isSafeTelemetryHeaderName } from './egress/headers.js';
 import { rejectUnsafeBrowserEgressKeys } from './egress/keyRejection.js';
@@ -220,7 +218,7 @@ function refineInjectedStorageKeyInventory(
       if (typeof entry.key !== 'string' || entry.key.length > 256) {
         addInjectedDiagnosticDataIssue(context, ['entries', index, 'key']);
       }
-      if (typeof entry.value !== 'string' || entry.value.length > INJECTED_OWNER_VALUE_MAX_LENGTH) {
+      if (typeof entry.value !== 'string') {
         addInjectedDiagnosticDataIssue(context, ['entries', index, 'value']);
       }
       if ('valueTruncated' in entry && typeof entry.valueTruncated !== 'boolean') {
@@ -244,7 +242,7 @@ function refineInjectedHeaderBag(
       addInjectedDiagnosticDataIssue(context, [...path, name]);
       continue;
     }
-    if (typeof headerValue !== 'string' || headerValue.length > INJECTED_OWNER_VALUE_MAX_LENGTH) {
+    if (typeof headerValue !== 'string') {
       addInjectedDiagnosticDataIssue(context, [...path, name]);
     }
   }
@@ -267,7 +265,7 @@ function refineInjectedNetworkResponse(
     }
   }
   for (const key of ['requestBodyText', 'responseBodyText'] as const) {
-    if (key in data && (typeof data[key] !== 'string' || data[key].length > INJECTED_OWNER_VALUE_MAX_LENGTH)) {
+    if (key in data && typeof data[key] !== 'string') {
       addInjectedDiagnosticDataIssue(context, [key]);
     }
   }
@@ -332,14 +330,13 @@ function refineInjectedDiagnosticData(
 
   switch (event.kind) {
     case 'console.entry':
-      // Allowlisted metadata + the OWNER-ONLY length-capped `text` (DEV-2). `text` is accepted at
+      // Allowlisted metadata + the OWNER-ONLY `text` (DEV-2). `text` is accepted at
       // ingestion (the local-owner producer emits it) but is stripped for agent/remote by the egress
-      // classifier (`INJECTED_OWNER_ONLY_FIELDS`). Injected events are page-tamperable, so enforce the
-      // 4 KiB cap here (fail-closed: reject an over-cap rendering rather than truncate downstream).
+      // classifier (`INJECTED_OWNER_ONLY_FIELDS`).
       rejectUnknownInjectedDiagnosticKeys(event.data, allowed, context);
       if (
         'text' in event.data
-        && (typeof event.data.text !== 'string' || event.data.text.length > INJECTED_CONSOLE_TEXT_MAX_LENGTH)
+        && typeof event.data.text !== 'string'
       ) {
         addInjectedDiagnosticDataIssue(context, ['text']);
       }

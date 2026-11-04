@@ -78,8 +78,6 @@ export {
   resolveRedactionLevel,
   INJECTED_EVENT_ALLOWED_FIELDS,
   INJECTED_OWNER_ONLY_FIELDS,
-  INJECTED_CONSOLE_TEXT_MAX_LENGTH,
-  INJECTED_OWNER_VALUE_MAX_LENGTH,
   ALWAYS_STRIP_FIELD_NAMES,
   isForbiddenBrowserEgressKey,
   rejectUnsafeBrowserEgressKeys,

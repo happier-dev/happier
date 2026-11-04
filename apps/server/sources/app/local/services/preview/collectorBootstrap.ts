@@ -1,6 +1,5 @@
 import { STATUS_CODES } from 'node:http';
 import type { DefaultTreeAdapterMap } from 'parse5';
-import { INJECTED_CONSOLE_TEXT_MAX_LENGTH, INJECTED_OWNER_VALUE_MAX_LENGTH } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 import { SAFE_TELEMETRY_HEADER_NAMES } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 import { buildCooperativeNavigationRuntimeScript, buildInjectedBrowserDiagnosticsRuntimeScript } from '@happier-dev/peer-mediation/browser/collector/build';
 import {
@@ -109,8 +108,7 @@ export async function prepareCooperativePreview(input: ProxyLocalServicePreviewH
         }
         const runtimeConfig = config ? JSON.stringify({
             ...config, cooperativePreview: true,
-            ...(config.ownerConsoleValueCapture ? { consoleTextMaxLength: INJECTED_CONSOLE_TEXT_MAX_LENGTH } : {}),
-            ...(config.ownerDiagnosticsValueCapture ? { ownerValueMaxLength: INJECTED_OWNER_VALUE_MAX_LENGTH, safeTelemetryHeaderNames: [...SAFE_TELEMETRY_HEADER_NAMES] } : {}),
+            ...(config.ownerDiagnosticsValueCapture ? { safeTelemetryHeaderNames: [...SAFE_TELEMETRY_HEADER_NAMES] } : {}),
         }).replace(/</g, '\\u003c') : 'null';
         const script = query.get(COOPERATIVE_COLLECTOR_NAVIGATION_QUERY) === '1'
             ? buildCooperativeNavigationRuntimeScript(runtimeConfig)

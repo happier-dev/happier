@@ -603,7 +603,7 @@ describe('injected browser diagnostics collector', () => {
         expect(JSON.stringify(parsed)).not.toContain('token=');
     });
 
-    it('preserves length-capped console text for the local owner when value capture is enabled', async () => {
+    it('preserves complete console text for the local owner when value capture is enabled', async () => {
         const mod = await loadInjectedPageModule();
 
         expect(mod?.parseInjectedBrowserDiagnosticsMessage).toBeTypeOf('function');
@@ -631,7 +631,7 @@ describe('injected browser diagnostics collector', () => {
                         level: 'log',
                         argCount: 1,
                         textAvailable: true,
-                        text: 'visible owner console line',
+                        text: 'visible owner console line'.repeat(250),
                     },
                     redaction: {
                         level: 'none',
@@ -646,7 +646,7 @@ describe('injected browser diagnostics collector', () => {
                 expect.objectContaining({
                     data: expect.objectContaining({
                         level: 'log',
-                        text: 'visible owner console line',
+                        text: 'visible owner console line'.repeat(250),
                     }),
                     redaction: expect.objectContaining({ level: 'none' }),
                 }),
@@ -697,7 +697,7 @@ describe('injected browser diagnostics collector', () => {
         }
     });
 
-    it('emits length-capped console text from the in-page collector when owner value capture is set', async () => {
+    it('emits complete console arguments through owner ingress when value capture is set', async () => {
         const mod = await loadInjectedPageModule();
         expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
         if (!mod?.buildInjectedBrowserDiagnosticsScript) return;
@@ -712,7 +712,7 @@ describe('injected browser diagnostics collector', () => {
         const longText = 'y'.repeat(5_000);
         const messages = executeInjectedDiagnosticsScript(script, {
             afterRun: ({ console: pageConsole }) => {
-                pageConsole.log('hello owner', longText);
+                pageConsole.log('hello owner', longText, 'last argument');
             },
         });
 
@@ -724,9 +724,16 @@ describe('injected browser diagnostics collector', () => {
         expect(consoleMessage).toBeDefined();
         expect(typeof consoleMessage?.data?.text).toBe('string');
         expect(consoleMessage?.data?.text).toContain('hello owner');
-        expect((consoleMessage?.data?.text ?? '').length).toBeLessThanOrEqual(4096);
+        expect(consoleMessage?.data?.text).toBe(`hello owner ${longText} last argument`);
         expect(consoleMessage?.redaction?.level).toBe('none');
-        expect(consoleMessage?.redaction?.truncated).toBe(true);
+        expect(consoleMessage?.redaction?.truncated).toBe(false);
+        const ownerEvents = messages.flatMap((message) => {
+            const parsed = mod.parseInjectedBrowserDiagnosticsMessage?.(message, expectedCollector, { consoleValueCapture: true });
+            expect(parsed).toMatchObject({ ok: true });
+            return parsed?.events ?? [];
+        });
+        expect(ownerEvents.filter((event) => event.kind === 'console.entry')).toHaveLength(1);
+        expect(ownerEvents.find((event) => event.kind === 'console.entry')?.data.text).toBe(`hello owner ${longText} last argument`);
     });
 
     it('omits console text from the in-page collector when owner value capture is unset', async () => {
@@ -920,7 +927,7 @@ describe('injected browser diagnostics collector', () => {
         if (!mod?.buildInjectedBrowserDiagnosticsScript || !mod.parseInjectedBrowserDiagnosticsMessage) return;
 
         const localEntries: Record<string, string> = {
-            theme: 'super-secret-value',
+            theme: 'super-secret-value'.repeat(300),
             lastRoute: 'another-secret-value',
         };
         const localKeys = Object.keys(localEntries);
@@ -968,7 +975,7 @@ describe('injected browser diagnostics collector', () => {
                     keyCount: 2,
                     keys: expect.arrayContaining(['theme', 'lastRoute']),
                     entries: expect.arrayContaining([
-                        { key: 'theme', value: 'super-secret-value', valueTruncated: false },
+                        { key: 'theme', value: localEntries.theme, valueTruncated: false },
                         { key: 'lastRoute', value: 'another-secret-value', valueTruncated: false },
                     ]),
                 }),
@@ -1166,16 +1173,18 @@ describe('injected browser diagnostics collector', () => {
         expect(JSON.stringify(events)).not.toContain('request body');
     });
 
-    it('captures XMLHttpRequest headers and bounded bodies for the local owner only', async () => {
+    it('captures complete XMLHttpRequest headers and bodies for the local owner only', async () => {
         const mod = await loadInjectedPageModule();
 
         expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
         expect(mod?.parseInjectedBrowserDiagnosticsMessage).toBeTypeOf('function');
         if (!mod?.buildInjectedBrowserDiagnosticsScript || !mod.parseInjectedBrowserDiagnosticsMessage) return;
 
+        const requestText = 'local-owner-request-body'.repeat(250);
+        const responseText = '{"ok":true}'.repeat(500);
         class FakeXMLHttpRequest implements FakeDiagnosticsXMLHttpRequest {
             status = 202;
-            responseText = '{"ok":true}';
+            responseText = responseText;
             private readonly listeners = new Map<string, Set<FakeWindowEventListener>>();
             private readonly requestHeaders = new Map<string, string>();
 
@@ -1231,7 +1240,7 @@ describe('injected browser diagnostics collector', () => {
                 xhr.setRequestHeader?.('content-type', 'application/json');
                 xhr.setRequestHeader?.('authorization', 'Bearer request-secret');
                 xhr.setRequestHeader?.('sec-websocket-protocol', 'base64url.bearer.authorization.k8s.io.request-secret');
-                xhr.send('local-owner-request-body');
+                xhr.send(requestText);
                 xhr.dispatchForTest('loadend');
             },
         });
@@ -1248,8 +1257,8 @@ describe('injected browser diagnostics collector', () => {
                 statusCode: 202,
                 requestHeaders: { 'content-type': 'application/json' },
                 responseHeaders: { 'content-type': 'application/json', 'x-request-id': 'res-1' },
-                requestBodyText: 'local-owner-request-body',
-                responseBodyText: '{"ok":true}',
+                requestBodyText: requestText,
+                responseBodyText: responseText,
             }),
             redaction: expect.objectContaining({ level: 'none' }),
         });
@@ -1341,7 +1350,7 @@ describe('injected browser diagnostics collector', () => {
         expect(JSON.stringify(events)).not.toContain('token=secret');
     });
 
-    it('captures only a bounded fetch response prefix without fully buffering via clone.text', async () => {
+    it('captures complete owner fetch bodies across stream chunks without cancelling at a guessed size', async () => {
         const mod = await loadInjectedPageModule();
 
         expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
@@ -1352,6 +1361,9 @@ describe('injected browser diagnostics collector', () => {
         let textCallCount = 0;
         let readCallCount = 0;
         let cancelCallCount = 0;
+        const responseText = `${'a'.repeat(4096)}COMPLETE_RESPONSE`;
+        const requestText = 'request'.repeat(800);
+        const requestId = 'request-id'.repeat(600);
         const script = mod.buildInjectedBrowserDiagnosticsScript({
             ...expectedCollector,
             version: '1.0.0',
@@ -1363,6 +1375,7 @@ describe('injected browser diagnostics collector', () => {
                 headers: {
                     forEach(callback: (value: string, name: string) => void): void {
                         callback('application/json', 'content-type');
+                        callback(requestId, 'x-request-id');
                     },
                 },
                 clone() {
@@ -1372,9 +1385,10 @@ describe('injected browser diagnostics collector', () => {
                                 return {
                                     read: () => {
                                         readCallCount += 1;
+                                        if (readCallCount > 2) return Promise.resolve({ done: true });
                                         return Promise.resolve({
                                             done: false,
-                                            value: encoder.encode(`${'a'.repeat(4096)}SHOULD_NOT_APPEAR`),
+                                            value: encoder.encode(readCallCount === 1 ? responseText.slice(0, 4096) : responseText.slice(4096)),
                                         });
                                     },
                                     cancel: () => {
@@ -1392,7 +1406,7 @@ describe('injected browser diagnostics collector', () => {
                 },
             }),
             afterRun: ({ window }) => {
-                void window.fetch?.('https://api.example.test/large', { method: 'GET' });
+                void window.fetch?.('https://api.example.test/large', { method: 'POST', body: requestText });
             },
         });
 
@@ -1405,12 +1419,118 @@ describe('injected browser diagnostics collector', () => {
         });
 
         const response = events.find((event) => event.kind === 'network.response');
-        expect(response?.data.responseBodyText).toHaveLength(4096);
-        expect(response?.data.responseBodyTruncated).toBe(true);
-        expect(JSON.stringify(response)).not.toContain('SHOULD_NOT_APPEAR');
+        expect(events.filter((event) => event.kind === 'network.response')).toHaveLength(1);
+        expect(response?.data.responseBodyText).toBe(responseText);
+        expect(response?.data.requestBodyText).toBe(requestText);
+        expect(response?.data.responseHeaders).toEqual({ 'content-type': 'application/json', 'x-request-id': requestId });
+        expect(response?.data.responseBodyTruncated).toBe(false);
         expect(textCallCount).toBe(0);
-        expect(readCallCount).toBe(1);
-        expect(cancelCallCount).toBe(1);
+        expect(readCallCount).toBe(3);
+        expect(cancelCallCount).toBe(0);
+    });
+
+    it('delivers the page fetch response while owner diagnostics still await the cloned body', async () => {
+        const mod = await loadInjectedPageModule();
+        expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
+        if (!mod?.buildInjectedBrowserDiagnosticsScript) return;
+
+        let finishBody = () => {};
+        const bodyDone = new Promise<{ done: true }>((resolve) => {
+            finishBody = () => resolve({ done: true });
+        });
+        let pageResponseDelivered = false;
+        let readCount = 0;
+        const response = {
+            status: 200,
+            clone: () => ({
+                body: {
+                    getReader: () => ({
+                        read: () => {
+                            readCount += 1;
+                            return bodyDone;
+                        },
+                    }),
+                },
+            }),
+        };
+        const messages = executeInjectedDiagnosticsScript(mod.buildInjectedBrowserDiagnosticsScript({
+            ...expectedCollector,
+            version: '1.0.0',
+            ownerDiagnosticsValueCapture: true,
+        }), {
+            fetch: () => Promise.resolve(response),
+            afterRun: ({ window }) => {
+                void window.fetch?.('https://api.example.test/stream').then((value) => {
+                    pageResponseDelivered = value === response;
+                });
+            },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const deliveredBeforeBody = pageResponseDelivered;
+        finishBody();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(deliveredBeforeBody).toBe(true);
+        expect(readCount).toBe(1);
+        const events = messages.flatMap((message) => JSON.parse(message).events ?? []);
+        expect(events.filter((event: { kind: string }) => event.kind === 'network.response')).toHaveLength(1);
+    });
+
+    it('stops pending owner response capture at the existing teardown boundary', async () => {
+        const mod = await loadInjectedPageModule();
+        expect(mod?.buildInjectedBrowserDiagnosticsScript).toBeTypeOf('function');
+        if (!mod?.buildInjectedBrowserDiagnosticsScript) return;
+
+        let finishChunk = () => {};
+        const chunk = new Promise<{ done: false; value: Uint8Array }>((resolve) => {
+            finishChunk = () => resolve({ done: false, value: new TextEncoder().encode('retired-body') });
+        });
+        let readCount = 0;
+        let cancelCount = 0;
+        let teardown = () => {};
+        const originalFetch = () => Promise.resolve({
+            status: 200,
+            clone: () => ({
+                body: {
+                    getReader: () => ({
+                        read: () => {
+                            readCount += 1;
+                            return readCount === 1 ? chunk : Promise.resolve({ done: true });
+                        },
+                        cancel: () => {
+                            cancelCount += 1;
+                            return Promise.resolve();
+                        },
+                    }),
+                },
+            }),
+        });
+        const messages = executeInjectedDiagnosticsScript(mod.buildInjectedBrowserDiagnosticsScript({
+            ...expectedCollector,
+            version: '1.0.0',
+            ownerDiagnosticsValueCapture: true,
+        }), {
+            fetch: originalFetch,
+            afterRun: ({ window }) => {
+                const runtime = window.__happierBrowserRuntime as { teardown(): void };
+                teardown = () => {
+                    runtime.teardown();
+                    expect(window.fetch).toBe(originalFetch);
+                };
+                void window.fetch?.('https://api.example.test/stream');
+            },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        teardown();
+        finishChunk();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(readCount).toBe(1);
+        expect(cancelCount).toBe(1);
+        const events = messages.flatMap((message) => JSON.parse(message).events ?? []);
+        expect(events.filter((event: { kind: string }) => event.kind === 'network.response')).toHaveLength(0);
     });
 
     it('redacts path-bearing non-http diagnostic URLs at collection time', async () => {

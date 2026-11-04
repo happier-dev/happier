@@ -3,12 +3,11 @@ export const INJECTED_NETWORK_HELPERS = `
 	    return presentationActive && config.ownerDiagnosticsValueCapture === true;
 	  }
 
-	  function capOwnerValue(value) {
+	  function captureOwnerValue(value) {
 	    if (typeof value !== 'string' || !value) return undefined;
-	    var cap = typeof config.ownerValueMaxLength === 'number' ? config.ownerValueMaxLength : 4096;
 	    return {
-	      text: value.length > cap ? value.slice(0, cap) : value,
-	      truncated: value.length > cap
+	      text: value,
+	      truncated: false
 	    };
 	  }
 
@@ -24,7 +23,7 @@ export const INJECTED_NETWORK_HELPERS = `
 	      if (!normalized || !isSafeName(normalized)) return;
 	      var value = headers[name];
 	      if (typeof value !== 'string' || !value) return;
-	      out[normalized] = capOwnerValue(value).text;
+	      out[normalized] = value;
 		    });
 		    return out;
 		  }
@@ -94,25 +93,9 @@ export const INJECTED_NETWORK_HELPERS = `
 	      if (!body || typeof body.getReader !== 'function' || typeof TextDecoder !== 'function') {
 	        return Promise.resolve(undefined);
 	      }
-	      var cap = typeof config.ownerValueMaxLength === 'number' ? config.ownerValueMaxLength : 4096;
 	      var reader = body.getReader();
 	      var decoder = new TextDecoder();
 	      var text = '';
-	      var truncated = false;
-	      function append(chunk) {
-	        if (typeof chunk !== 'string' || !chunk) return;
-	        var remaining = cap - text.length;
-	        if (remaining <= 0) {
-	          truncated = true;
-	          return;
-	        }
-	        if (chunk.length > remaining) {
-	          text += chunk.slice(0, remaining);
-	          truncated = true;
-	          return;
-	        }
-	        text += chunk;
-	      }
 	      function cancelReader() {
 	        try {
 	          if (typeof reader.cancel === 'function') {
@@ -127,22 +110,17 @@ export const INJECTED_NETWORK_HELPERS = `
 	          cancelReader();
 	          return Promise.resolve(undefined);
 	        }
-	        if (truncated || text.length >= cap) {
-	          truncated = true;
-	          cancelReader();
-	          return Promise.resolve({ text: text, truncated: true });
-	        }
 	        return reader.read().then(function (result) {
 	          if (result && result.done) {
 	            try {
-	              append(decoder.decode());
+	              text += decoder.decode();
 	            } catch (_error) {
 	              // Ignore decoder flush failures for diagnostics preview.
 	            }
-	            return { text: text, truncated: truncated };
+	            return { text: text, truncated: false };
 	          }
 	          try {
-	            append(decoder.decode(result && result.value, { stream: true }));
+	            text += decoder.decode(result && result.value, { stream: true });
 	          } catch (_error) {
 	            return undefined;
 	          }
@@ -196,7 +174,7 @@ export const INJECTED_NETWORK_INTERCEPTORS = `
 	        if (ownerValueCaptureEnabled()) {
 	          var responseBody;
 	          try {
-	            responseBody = capOwnerValue(typeof xhr.responseText === 'string' ? xhr.responseText : '');
+	            responseBody = captureOwnerValue(typeof xhr.responseText === 'string' ? xhr.responseText : '');
 	          } catch (_error) {
 	            responseBody = undefined;
 	          }
@@ -254,7 +232,7 @@ export const INJECTED_NETWORK_INTERCEPTORS = `
 	      if (typeof originalSend === 'function') {
 	        xhr.send = function (body) {
 	          postRequestStarted();
-	          requestBody = ownerValueCaptureEnabled() ? capOwnerValue(typeof body === 'string' ? body : '') : undefined;
+	          requestBody = ownerValueCaptureEnabled() ? captureOwnerValue(typeof body === 'string' ? body : '') : undefined;
 	          try {
 	            return originalSend.apply(xhr, arguments);
           } catch (error) {
@@ -306,7 +284,7 @@ export const INJECTED_NETWORK_INTERCEPTORS = `
         ? ownerHeadersFromHeaderLike(init && init.headers || input && input.headers)
         : {};
       var requestBody = ownerValueCaptureEnabled() && init && typeof init.body === 'string'
-        ? capOwnerValue(init.body)
+        ? captureOwnerValue(init.body)
         : undefined;
       postEvents([Object.assign(baseEvent('network', 'network.requestStarted', {
         requestId: requestEventId,
@@ -339,13 +317,12 @@ export const INJECTED_NETWORK_INTERCEPTORS = `
           })]);
         }
         if (ownerValueCaptureEnabled() && response && typeof response.clone === 'function') {
-          return readOwnerResponseBodyPreview(response).then(function (bodyPreview) {
+          readOwnerResponseBodyPreview(response).then(function (bodyPreview) {
             postFinished(bodyPreview);
-            return response;
           }, function () {
             postFinished(undefined);
-            return response;
           });
+          return response;
         }
         postFinished(undefined);
         return response;

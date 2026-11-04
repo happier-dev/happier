@@ -7,7 +7,10 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import type { BrowserDiagnosticsRequestDetailClientInput, BrowserDiagnosticsRequestDetailClientResult } from './machineRpc';
-import { BrowserDiagnosticsSnapshotV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { BrowserDiagnosticEventV1Schema, BrowserDiagnosticsSnapshotV1Schema, DaemonBrowserDiagnosticsSnapshotResponseV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import { createBrowserDiagnosticsDaemonStore } from '../../../../../../cli/src/daemon/browser/diagnostics/store';
+import { createBrowserDiagnosticsRoutes } from '../../../../../../cli/src/daemon/browser/diagnostics/routes';
+import { applyBrowserDiagnosticEvents, createBrowserDiagnosticsUiStore } from './store';
 import { useBrowserDiagnosticsDaemonSnapshot, useBrowserDiagnosticsRequestDetail, type BrowserDiagnosticsSnapshotClient } from './daemonSnapshot';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -128,25 +131,46 @@ it('keeps preview Machine authority and does not grant client-local views a daem
 });
 
 it('bootstraps once, then delivers daemon changes without rereading unchanged history', async () => {
-    const snapshot = BrowserDiagnosticsSnapshotV1Schema.parse({ v: 1, machineId: 'machine', generatedAt: 42,
-        refreshState: 'idle', events: [] });
-    const snapshotClient = vi.fn<BrowserDiagnosticsSnapshotClient>(async () => ({ ok: true, snapshot, revision: 0 }));
-    type Result = Awaited<ReturnType<BrowserDiagnosticsSnapshotClient>>;
-    let deliver: (result: Result) => void = () => {};
-    const watchClient = vi.fn<BrowserDiagnosticsSnapshotClient>(() => new Promise<Result>(resolve => { deliver = resolve; }));
-    const client: BrowserDiagnosticsSnapshotClient = input => input.sinceRevision === undefined ? snapshotClient(input) : watchClient(input);
-    const onEvents = vi.fn();
+    const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', now: () => 42 });
+    const routes = createBrowserDiagnosticsRoutes({ store });
+    const event = BrowserDiagnosticEventV1Schema.parse({ v: 1, eventId: 'history', browserSessionId: view.browserSessionId,
+        viewId: view.viewId, navigationGeneration: view.navigationGeneration, capturedAtMs: 1,
+        family: 'pageInfo', kind: 'pageInfo.snapshot', fidelity: 'nativeCallback', trusted: true,
+        redaction: { level: 'metadataOnly' }, data: { loading: false } });
+    // Fill the daemon's existing retained ring, rather than projecting a synthetic transport reply.
+    for (let n = 0; n < 1_000; n++) store.publishEvent({ ...event, eventId: `history-${n}`, capturedAtMs: n });
+    const transported: number[] = [];
+    const client = vi.fn<BrowserDiagnosticsSnapshotClient>(async input => {
+        const response = DaemonBrowserDiagnosticsSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+            ...await routes.readViewSnapshot({ ...view, sinceRevision: input.sinceRevision, signal: input.signal }) });
+        transported.push(response.snapshot.events.length);
+        return { ok: true, ...response };
+    });
+    let uiState = createBrowserDiagnosticsUiStore();
+    const onEvents = vi.fn<Parameters<typeof useBrowserDiagnosticsDaemonSnapshot>[0]['onEvents']>(events => {
+        uiState = applyBrowserDiagnosticEvents(uiState, { events });
+    });
     const hook = await renderHook(() => useBrowserDiagnosticsDaemonSnapshot({ view, snapshotClient: client, onEvents }));
+    expect(transported).toEqual([1_000]);
+    expect(onEvents.mock.calls.map(([events]) => events.length)).toEqual([1_000]);
     await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
-    expect(snapshotClient).toHaveBeenCalledTimes(1);
-    expect(watchClient).toHaveBeenCalledTimes(1);
-    const event = { v: 1 as const, eventId: 'pushed', browserSessionId: view.browserSessionId, viewId: view.viewId,
-        navigationGeneration: 1, capturedAtMs: 43, family: 'pageInfo' as const, kind: 'pageInfo.snapshot' as const,
-        fidelity: 'nativeCallback' as const, trusted: true, redaction: { level: 'metadataOnly' as const, queryRedacted: true, headersRedacted: true, truncated: false }, data: { loading: false } };
-    await act(async () => { deliver({ ok: true, revision: 1, snapshot: { ...snapshot, events: [event] } }); });
-    expect(onEvents).toHaveBeenLastCalledWith([event]);
-    expect(snapshotClient).toHaveBeenCalledTimes(1);
-    expect(watchClient).toHaveBeenCalledTimes(2);
+    expect(transported).toEqual([1_000]);
+    const pushed = { ...event, eventId: 'pushed', capturedAtMs: 1_001 };
+    await act(async () => { store.publishEvent(pushed); });
+    expect(transported).toEqual([1_000, 1]);
+    expect(onEvents.mock.calls.map(([events]) => events.length)).toEqual([1_000, 1]);
+    expect(Object.values(uiState.viewsByKey)[0].events).toContainEqual(pushed);
+    const changed = { ...pushed, data: { loading: true } };
+    await act(async () => { store.publishEvent(changed); });
+    expect(transported).toEqual([1_000, 1, 1]);
+    expect(Object.values(uiState.viewsByKey)[0].events).toContainEqual(changed);
+    await act(async () => { for (let n = 0; n < 10; n++) store.publishEvent(changed); });
+    expect(transported).toEqual([1_000, 1, 1]);
+    expect(onEvents.mock.calls.map(([events]) => events.length)).toEqual([1_000, 1, 1]);
+    await act(async () => { for (const recover of recoveryListeners) recover(); });
+    expect(transported).toEqual([1_000, 1, 1, 1_000]);
+    expect(onEvents.mock.calls.map(([events]) => events.length)).toEqual([1_000, 1, 1, 1_000]);
+    expect(vi.getTimerCount()).toBe(0);
     await hook.unmount();
 });
 

@@ -55,12 +55,12 @@ export const INJECTED_STORAGE_RUNTIME = `
 	          if (ownerValueCaptureEnabled() && typeof storage.getItem === 'function') {
 	            try {
 	              var value = storage.getItem(name);
-	              var capped = capOwnerValue(typeof value === 'string' ? value : '');
-	              if (capped) {
+	              var captured = captureOwnerValue(typeof value === 'string' ? value : '');
+	              if (captured) {
 	                entries.push({
 	                  key: keyName,
-	                  value: capped.text,
-	                  valueTruncated: capped.truncated
+	                  value: captured.text,
+	                  valueTruncated: captured.truncated
 	                });
 	              }
 	            } catch (_error) {
