@@ -5,11 +5,12 @@ import { createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTP
 
 describe('createLegacyVoiceOutputAdapter', () => {
   it.each([
-    { text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: true },
+    { text: '你好🙂'.repeat(15_000), actionCount: 1, incomplete: false },
+    { text: '你好🙂'.repeat(25_000), actionCount: 1, incomplete: true },
     { text: 'word '.repeat(9_000), actionCount: 230, incomplete: false },
-    { text: 'word '.repeat(9_000), actionCount: 300, incomplete: true },
+    { text: 'word '.repeat(9_000), actionCount: 300, incomplete: false },
     { text: 'word '.repeat(12_800), actionCount: 1, incomplete: false },
-  ])('keeps predecessor speech, actions and final within the receiving Protocol budget ($actionCount actions)', ({ text, actionCount, incomplete }) => {
+  ])('preserves predecessor speech and actions within the receiving wire envelope ($actionCount actions)', ({ text, actionCount, incomplete }) => {
     const adapter = createLegacyVoiceOutputAdapter({ streamId: 'stream-budget' });
     const events = [
       ...adapter.ingest(0, { t: 'delta', textDelta: text }),
@@ -25,6 +26,7 @@ describe('createLegacyVoiceOutputAdapter', () => {
     expect(state.terminal).toBe('final');
     expect(final?.kind).toBe('turn_final');
     if (final?.kind !== 'turn_final') throw new Error('missing final');
+    expect(Array.from(final.text).length).toBeLessThanOrEqual(65_536);
     expect(final.text.startsWith(speech.trimEnd())).toBe(true);
     expect(final.text.endsWith(VOICE_OUTPUT_INCOMPLETE_TEXT)).toBe(incomplete);
     expect(speech.length).toBeGreaterThan(text.length / 4);
