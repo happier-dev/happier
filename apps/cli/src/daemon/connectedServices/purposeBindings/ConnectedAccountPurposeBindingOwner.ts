@@ -23,10 +23,12 @@ import { MCP_REQUEST_AUTH_PURPOSE } from '@/mcp/runtime/mcpRequestAuth';
 import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeTeamResourceSelectionV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
 import { readActiveConnectedAccountCatalog, refreshActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import {
+  commitActiveConnectedAccountCatalog,
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
   subscribeActiveAccountSettingsSnapshotChanges,
@@ -2122,7 +2124,7 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
       assertCurrent();
     };
     assertCurrent();
-    return { assertCurrent, verifyCurrent };
+    return { assertCurrent, verifyCurrent, lifetimeToken: lifetime };
   };
   const credentialsForOperation = async (operation: ReturnType<typeof captureOperation>, signal?: AbortSignal) => {
     const credentials = input.operationContext?.credentials ?? input.credentials ?? await readStoredCredentials();
@@ -2187,24 +2189,13 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
           details: { currentVersion: String(result.revision) } });
       }
       if (result.status !== 'updated') throw unavailable(result.status);
-      const acknowledgedUnavailable = (reason: string) => new PluginError({
-        code: 'plugin_connected_account_settings_unavailable',
-        message: 'Bindings unavailable after the acknowledged Connected Account mutation',
-        details: { reason, mutationStatus: 'updated', revision: result.revision },
-      });
-      const verifyAcknowledgedReadback = async () => {
-        try { await operation.verifyCurrent(); } catch {
-          throw acknowledgedUnavailable('scope-retired');
-        }
-      };
-      await verifyAcknowledgedReadback();
-      const observed = await refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', signal,
-        operationContext: input.operationContext }, true);
-      await verifyAcknowledgedReadback();
-      if (observed.status !== 'ready' || observed.record.key !== 'purposes' || observed.revision < result.revision) {
-        throw acknowledgedUnavailable('authority-not-confirmed');
-      }
-      return observed.record.value;
+      const catalog = { status: 'ready' as const, revision: result.revision, record: { key: 'purposes' as const, value } };
+      const published = input.operationContext
+        ? await input.operationContext.commitConnectedAccountCatalog({ key: 'purposes', catalog })
+        : commitActiveConnectedAccountCatalog({ key: 'purposes', catalog,
+            scopeKey: resolveAccountSettingsScopeKey(credentials), lifetimeToken: operation.lifetimeToken });
+      if (!published) throw unavailable('scope-retired');
+      return value;
     },
     subscribe(listener) {
       // Publish purpose-reader demand only for its Account inputs. Independent

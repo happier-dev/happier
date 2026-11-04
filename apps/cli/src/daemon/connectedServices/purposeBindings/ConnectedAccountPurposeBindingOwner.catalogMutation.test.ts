@@ -22,7 +22,7 @@ describe('connected purpose row mutation', () => {
 
   const concurrentBinding = { ...binding, purpose: { ...purpose,
     consumer: { pluginId: 'happier.voice.other', localId: 'speech' } } };
-  function boundary(disposition: 'updated' | 'conflict' | 'lost-response' | 'updated-and-retired' | 'concurrent-reconciliation'
+  function boundary(disposition: 'updated' | 'updated-read-unreachable' | 'conflict' | 'lost-response' | 'updated-and-retired' | 'concurrent-reconciliation'
     | 'reconciliation-lost-response' | 'reconciliation-unknown' | 'reconciliation-read-unreachable') {
     const unknownReconciliation = disposition.startsWith('reconciliation-');
     let record: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { v: 1,
@@ -31,6 +31,7 @@ describe('connected purpose row mutation', () => {
     let concurrentWrite = disposition === 'concurrent-reconciliation';
     let unknownWrite = unknownReconciliation;
     let readUnavailable = false;
+    let rowReads = 0;
     const raw = { themePreference: 'dark' };
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
       settings: accountSettingsParse(raw), rawSettings: raw, settingsVersion: 7,
@@ -42,9 +43,11 @@ describe('connected purpose row mutation', () => {
       if (path.endsWith('/currentness')) return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (path.endsWith('/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-      if (path.endsWith('/connected-accounts/purposes')) return readUnavailable
-        ? { status: 503, data: { error: 'unavailable' } }
-        : { status: 200, data: { status: 'present', revision, content: { t: 'plain', v: record } } };
+      if (path.endsWith('/connected-accounts/purposes')) {
+        rowReads++;
+        return readUnavailable ? { status: 503, data: { error: 'unavailable' } }
+          : { status: 200, data: { status: 'present', revision, content: { t: 'plain', v: record } } };
+      }
       if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: raw } } };
       return { status: 404, data: { error: 'unsupported' } };
     });
@@ -72,6 +75,7 @@ describe('connected purpose row mutation', () => {
       }
       record = mutation.content.v;
       revision += 1;
+      readUnavailable = disposition === 'updated-read-unreachable';
       if (disposition === 'lost-response') throw new Error('Response lost after durable commit');
       if (disposition === 'updated-and-retired') {
         const snapshot = getActiveAccountSettingsSnapshot();
@@ -81,7 +85,7 @@ describe('connected purpose row mutation', () => {
       }
       return { status: 200, data: { status: 'updated', revision, cursor: 4 } };
     });
-    return { read: () => ({ record, revision, raw }) };
+    return { read: () => ({ record, revision, raw }), rowReads: () => rowReads };
   }
 
   it('reads an acknowledged selection before its change hint reaches this daemon', async () => {
@@ -102,12 +106,16 @@ describe('connected purpose row mutation', () => {
     await expect(store.read()).resolves.toEqual({ v: 1, bindings: [] });
   });
 
-  it('publishes the durable opened row after ACK without mirroring or advancing preferences', async () => {
-    const server = boundary('updated');
+  it('publishes the acknowledged row when subsequent reads are unavailable without advancing preferences', async () => {
+    const server = boundary('updated-read-unreachable');
     const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials });
     await expect(store.update(current => ({ ...current, bindings: [binding] }))).resolves.toEqual({ v: 1, bindings: [binding] });
     expect(server.read()).toEqual({ record: { key: 'purposes', value: { v: 1, bindings: [binding] } },
       revision: 4, raw: { themePreference: 'dark' } });
+    expect(getActiveAccountSettingsSnapshot()?.connectedPurposeCatalog).toMatchObject({
+      status: 'ready', revision: 4, record: server.read().record,
+    });
+    expect(server.rowReads()).toBe(1); // Admission reads once; the ACK publishes without readback.
   });
 
   it('surfaces row CAS conflict without replaying user intent', async () => {
@@ -339,7 +347,7 @@ describe('connected purpose row mutation', () => {
     await expect(createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials }).update(current => ({
       ...current, bindings: [binding],
     }))).rejects.toMatchObject({ code: 'plugin_connected_account_settings_unavailable',
-      details: { reason: 'scope-retired', mutationStatus: 'updated', revision: 4 } });
+      details: { reason: 'scope-retired' } });
     expect(server.read().record).toEqual({ key: 'purposes', value: { v: 1, bindings: [binding] } });
   });
 
