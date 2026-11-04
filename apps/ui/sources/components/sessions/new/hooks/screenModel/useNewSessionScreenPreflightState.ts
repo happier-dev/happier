@@ -8,6 +8,8 @@ import {
     resolveNewSessionOperationalBackendTarget,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { useSettingsSelector } from '@/sync/store/hooks';
+import { getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
+import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type {
     AgentPluginSettingsReadiness,
     AgentPluginSettingsSnapshot,
@@ -69,6 +71,13 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         backendTarget: params.backendTarget,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId,
     }), [params.backendTarget, params.runtimeCarrierAgentId]);
+    const behaviorAgentId = params.runtimeCarrierAgentId?.trim()
+        || resolveCatalogAgentIdForBackendTarget(operationalBackendTarget);
+    const runtimeSettingsKeys = getAgentUiSettingsKeys({
+        agentIds: behaviorAgentId ? [behaviorAgentId] : [],
+        machineId: params.selectedMachineId,
+        domain: 'runtime',
+    });
     const capabilityProbeContext = useSettingsSelector(React.useCallback((settings) => {
         if (!probesEnabled) return null;
         return resolveNewSessionCapabilityProbeContext({
@@ -79,7 +88,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             machineId: params.selectedMachineId,
             pluginSettings: effectivePluginSettings,
         });
-    }, [effectivePluginSettings, params.backendTarget, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]));
+    }, [effectivePluginSettings, params.backendTarget, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
     const modelCapabilityProbeContext = useSettingsSelector(React.useCallback((settings) => {
         if (!probesEnabled) return null;
         return resolveNewSessionModelCapabilityProbeContext({
@@ -92,7 +101,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             connectedServices: params.connectedServicesBindingsPayload,
             connectedServicesCacheIdentity: params.connectedServicesModelProbeCacheIdentity,
         });
-    }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]));
+    }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
 
     const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,

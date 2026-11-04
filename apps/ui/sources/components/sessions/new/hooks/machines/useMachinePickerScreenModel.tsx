@@ -4,7 +4,8 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -118,11 +119,11 @@ export function useMachinePickerScreenModel() {
         () => buildNewSessionPickerFallbackHref(currentRouteParams),
         [currentRouteParams],
     );
-    const accountSettings = useSettingsSelector((settings) => ({
-        serverSelectionGroups: settings.serverSelectionGroups,
-        serverSelectionActiveTargetKind: settings.serverSelectionActiveTargetKind,
-        serverSelectionActiveTargetId: settings.serverSelectionActiveTargetId,
-    }));
+    const accountSettings = useSettingsValues([
+        'serverSelectionGroups',
+        'serverSelectionActiveTargetKind',
+        'serverSelectionActiveTargetId',
+    ]);
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
     const settings = React.useMemo(() => ({ ...accountSettings, ...homeViewSelectionSettings }), [accountSettings, homeViewSelectionSettings]);
     const activeServerSource = useNewSessionActiveServerSource();

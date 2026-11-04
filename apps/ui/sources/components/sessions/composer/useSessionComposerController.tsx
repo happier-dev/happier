@@ -96,7 +96,7 @@ import { useTeamCredentialSelectionCoordinator } from "@/components/sessions/tea
 import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness";
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
 import { storage, useIsMachineListSettled, useLocalSetting, useProfile, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
-import { useSettingsSelector } from "@/sync/store/hooks";
+import { useSettingsValues } from "@/sync/store/settingsReadHooks";
 import type { Settings } from "@/sync/domains/settings/settings";
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
@@ -337,19 +337,6 @@ const PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS = 30 * 1000;
 const EMPTY_SESSION_MODEL_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
 const EMPTY_TEAM_CREDENTIAL_RESOURCES: readonly never[] = [];
 const EMPTY_SESSION_ROUTE_HIDDEN_SOURCES: readonly never[] = [];
-
-// Full Agent Settings belong to the deferred detail readers. The retained
-// Session observes only the Account inputs its visible policy consumes.
-const selectSessionViewSettings = (settings: Settings) => ({
-    backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    favoriteBackendTargetKeysV1: settings.favoriteBackendTargetKeysV1,
-    usageLimitRecoverySettingsV1: settings.usageLimitRecoverySettingsV1,
-    sessionPermissionModeApplyTiming: settings.sessionPermissionModeApplyTiming,
-    connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    connectedServicesProviderStateSharingSettingsV1: settings.connectedServicesProviderStateSharingSettingsV1,
-    connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-});
 
 /**
  * Where one submitted localId has got to, canonically — the single reader for
@@ -1171,7 +1158,17 @@ export function useSessionComposerController({
         typeof scmSessionAutoRefreshIntervalMsSetting === 'number' && Number.isFinite(scmSessionAutoRefreshIntervalMsSetting) && scmSessionAutoRefreshIntervalMsSetting >= 5_000
             ? scmSessionAutoRefreshIntervalMsSetting
             : 5 * 60 * 1000;
-    const settings = useSettingsSelector(selectSessionViewSettings);
+    // Full Agent Settings belong to deferred details; the retained Session reads its visible policy inputs.
+    const settings = useSettingsValues([
+        'backendEnabledByTargetKey',
+        'favoriteBackendTargetKeysV1',
+        'usageLimitRecoverySettingsV1',
+        'sessionPermissionModeApplyTiming',
+        'connectedServicesDefaultProfileByServiceId',
+        'connectedServicesProviderStateSharingSettingsV1',
+        'connectedServicesDefaultAuthByAgentIdV1',
+        'connectedServicesAdditionalDefaultAuthByAgentIdV1',
+    ]);
     const currentLifecycleAgentCapabilities = React.useMemo(() => (
         daemonMergedProjection.phase === 'ready'
             ? readCurrentProjectedAgentCapabilities({

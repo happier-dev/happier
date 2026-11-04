@@ -6,7 +6,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
-import { useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
@@ -37,9 +38,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     const popoverBoundaryRef = React.useRef<any>(null);
 
     const enabledAgentIds = useEnabledAgentIds();
-    const settings = useSettingsSelector((settings) => ({
-        opencodeBackendMode: (settings as Record<string, unknown>).opencodeBackendMode,
-    }));
+    const settings = useSettingsValues(['opencodeBackendMode']);
     const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
     const transcriptStorageSettings = React.useMemo(() => ({
         opencodeBackendMode: (settings as Record<string, unknown>).opencodeBackendMode,

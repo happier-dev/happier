@@ -17,8 +17,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { getPreferredLanguage, t } from '@/text';
-import { useLocalSettingMutable, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
+import { usePreferredLanguage, t } from '@/text';
+import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SessionGestureSettingsRows } from '@/components/settings/session/SessionGestureSettingsRows';
@@ -38,7 +38,7 @@ const ATTENTION_PREVIEW_ASPECT_RATIO = 1.5;
 const DENSITY_PREVIEW_ASPECT_RATIO = 1.9;
 
 export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
-    const preferredLanguage = useSettingsSelector(getPreferredLanguage);
+    const preferredLanguage = usePreferredLanguage();
     const router = useRouter();
     const popoverBoundaryRef = React.useRef<any>(null);
     const [codingPromptBehavior] = useSettingMutable('codingPromptBehaviorV1');

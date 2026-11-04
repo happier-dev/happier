@@ -10,6 +10,7 @@ import {
 } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { useSettingsSelector } from '@/sync/store/hooks';
+import { getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 type PersistedAuthoringDraftLike = Readonly<{
@@ -54,7 +55,11 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
             machineId: params.selectedMachineId,
             settings,
         })
-    ), [params.agentType, params.selectedMachineId, params.resolvedBackendTargets]));
+    ), [params.agentType, params.selectedMachineId, params.resolvedBackendTargets]), getAgentUiSettingsKeys({
+        agentIds: [params.agentType],
+        machineId: params.selectedMachineId,
+        domain: 'transcriptStorage',
+    }));
     const [transcriptStorage, setTranscriptStorage] = React.useState<NewSessionTranscriptStorage>(() => {
         const tempTranscriptStorage = params.hydratedTempAuthoringDraft?.transcriptStorage;
         if (tempTranscriptStorage === 'direct' || tempTranscriptStorage === 'persisted') {

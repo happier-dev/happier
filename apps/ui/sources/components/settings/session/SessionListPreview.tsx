@@ -10,10 +10,9 @@ import {
     type SessionListRowDensity,
 } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
-import { getPreferredLanguage, t } from '@/text';
+import { usePreferredLanguage, t } from '@/text';
 import type { SessionListLayoutChoice } from '@/sync/domains/session/listing/sessionListLayout';
 import { buildSessionListArrangementSample, type SessionListAttentionPlacementChoice } from '@/components/settings/session/sessionListArrangementSample';
-import { useSettingsSelector } from '@/sync/domains/state/storage';
 
 // A viewport onto normal-sized rows: the stage draws a column at its own width and scales it to the
 // tile, so a small natural tile and a wide filling tile both show the same rows, legibly.
@@ -69,7 +68,7 @@ export function PreviewRows(props: Readonly<{ density: SessionListRowDensity; id
 export const SessionListDensityPreview = React.memo(function SessionListDensityPreview(props: Readonly<{
     density: 'detailed' | 'cozy' | 'narrow';
 }>) {
-    useSettingsSelector(getPreferredLanguage);
+    usePreferredLanguage();
     const viewState = resolveSessionListDensityViewState(props.density);
     const rowDensity: SessionListRowDensity = viewState.compactMinimal ? 'minimal' : viewState.compact ? 'compact' : 'default';
     return <PreviewStage><PreviewRows density={rowDensity} ids={SAMPLE_IDS} /></PreviewStage>;
@@ -89,7 +88,7 @@ export const SessionListLayoutPreview = React.memo(function SessionListLayoutPre
     attention?: SessionListAttentionPlacementChoice;
     density?: 'detailed' | 'cozy' | 'narrow';
 }>) {
-    const language = useSettingsSelector(getPreferredLanguage);
+    const language = usePreferredLanguage();
     const layout: SessionListLayoutChoice = props.layout.replace(/^layout:/, '') === 'recent_activity' ? 'recent_activity' : 'projects';
     const attention = props.attention ?? 'both';
     const groups = React.useMemo(() => buildSessionListArrangementSample(layout, attention), [layout, attention, language]);

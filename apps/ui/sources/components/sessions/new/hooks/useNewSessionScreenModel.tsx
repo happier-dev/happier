@@ -30,7 +30,8 @@ import {
 import { useAccountSettingsScope, useActiveServerAccountScope, useSettingsSelector } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
+import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { projectCurrentSecretBindingsByProfileId } from '@/sync/domains/settings/secretBindings';
 import { usePathname } from 'expo-router';
 import { useNewSessionPlacementSessions } from '@/components/sessions/new/hooks/screenModel/useNewSessionPlacementSessions';
@@ -338,22 +339,6 @@ const RECENT_PATHS_DEFAULT_VISIBLE = 5;
 const styles = newSessionScreenStyles;
 
 const readSettings = () => storage.getState().settings;
-const selectTerminalSettings = (settings: Settings) => ({
-    sessionTerminalHost: settings.sessionTerminalHost,
-    sessionUseTmux: settings.sessionUseTmux,
-    sessionTmuxByMachineId: settings.sessionTmuxByMachineId,
-    sessionTerminalHostByMachineId: settings.sessionTerminalHostByMachineId,
-    sessionTmuxSessionName: settings.sessionTmuxSessionName,
-    sessionTmuxIsolated: settings.sessionTmuxIsolated,
-    sessionTmuxTmpDir: settings.sessionTmuxTmpDir,
-    sessionWindowsTerminalWindowName: settings.sessionWindowsTerminalWindowName,
-});
-const selectConnectedServicesSettings = (settings: Settings) => ({
-    connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-});
-const selectExecutionRunsEnabled = (settings: Settings) => resolveLocalFeaturePolicyEnabled('execution.runs', settings);
 
 function resolveCompatibilityBackendTarget(
     agentTarget: AgentExecutionTargetV1 | null | undefined,
@@ -763,11 +748,24 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
-    const executionRunsEnabled = useSettingsSelector(selectExecutionRunsEnabled);
+    const executionRunsEnabled = resolveLocalFeaturePolicyEnabled('execution.runs', useFeatureLocalPolicySettings());
     const profileEnabledByIdSetting = useSetting('profileEnabledById');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const terminalSettings = useSettingsSelector(selectTerminalSettings);
-    const connectedServicesSettings = useSettingsSelector(selectConnectedServicesSettings);
+    const terminalSettings = useSettingsValues([
+        'sessionTerminalHost',
+        'sessionUseTmux',
+        'sessionTmuxByMachineId',
+        'sessionTerminalHostByMachineId',
+        'sessionTmuxSessionName',
+        'sessionTmuxIsolated',
+        'sessionTmuxTmpDir',
+        'sessionWindowsTerminalWindowName',
+    ]);
+    const connectedServicesSettings = useSettingsValues([
+        'connectedServicesDefaultProfileByServiceId',
+        'connectedServicesDefaultAuthByAgentIdV1',
+        'connectedServicesAdditionalDefaultAuthByAgentIdV1',
+    ]);
     const sessionWindowsRemoteSessionLaunchMode = useSetting('sessionWindowsRemoteSessionLaunchMode');
     const windowsLaunchSettings = React.useMemo(() => ({ sessionWindowsRemoteSessionLaunchMode }), [sessionWindowsRemoteSessionLaunchMode]);
     const availabilitySettings = React.useMemo(() => ({ ...terminalSettings, backendEnabledByTargetKey }), [backendEnabledByTargetKey, terminalSettings]);

@@ -34,7 +34,7 @@ async function renderSettingsView(element: React.ReactElement) {
     const wrapper = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>;
     return renderBaseSettingsView(element, { wrapper });
 }
-let translationPrefix = 'en';
+const translation = vi.hoisted(() => ({ prefix: 'en' }));
 
 await vi.hoisted(async () => {
     const { installSessionSettingsEntryModuleMocks } = await import('./sessionSettingsEntryTestHelpers');
@@ -42,9 +42,9 @@ await vi.hoisted(async () => {
         textModule: async () => {
             const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
             return createTextModuleMock({
-                translate: (key: string) => `${translationPrefix}:${key}`,
-                translateLoose: (key: string) => `${translationPrefix}:${key}`,
-                getPreferredLanguage: () => translationPrefix,
+                translate: (key: string) => `${translation.prefix}:${key}`,
+                translateLoose: (key: string) => `${translation.prefix}:${key}`,
+                getPreferredLanguage: () => translation.prefix,
             });
         },
     });
@@ -56,7 +56,7 @@ afterEach(async () => {
     account = undefined;
     storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
-    translationPrefix = 'en';
+    translation.prefix = 'en';
 });
 
 describe('Session settings mobile workspace experience', () => {

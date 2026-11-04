@@ -6,7 +6,8 @@ import {
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import { useProfile } from '@/sync/store/hooks';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from './useConnectedMetadataCatalog';
 import {
     connectedServiceProfileKey,
@@ -219,10 +220,10 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
         connectedServicesV2: profile.connectedServicesV2,
         connectedAccountGroupsV4: profile.connectedAccountGroupsV4,
     }));
-    const quotaSettings = useSettingsSelector((settings) => ({
-        connectedServicesQuotaPinnedMeterIdsByKey: settings.connectedServicesQuotaPinnedMeterIdsByKey,
-        connectedServicesQuotaSummaryStrategyByKey: settings.connectedServicesQuotaSummaryStrategyByKey,
-    }));
+    const quotaSettings = useSettingsValues([
+        'connectedServicesQuotaPinnedMeterIdsByKey',
+        'connectedServicesQuotaSummaryStrategyByKey',
+    ]);
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();

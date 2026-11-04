@@ -12,6 +12,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { commitPreferredLanguage } from '@/text/preferredLanguage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import {
@@ -56,7 +57,7 @@ async function expectPersistedSettings(delta: Partial<Settings>) {
     }))).toMatchObject(delta));
 }
 
-let translationPrefix = 'en';
+const translation = vi.hoisted(() => ({ prefix: 'en' }));
 
 await vi.hoisted(async () => {
     const { installSessionSettingsEntryModuleMocks } = await import('./sessionSettingsEntryTestHelpers');
@@ -64,9 +65,9 @@ await vi.hoisted(async () => {
         textModule: async () => {
             const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
             return createTextModuleMock({
-                translate: (key: string) => `${translationPrefix}:${key}`,
-                translateLoose: (key: string) => `${translationPrefix}:${key}`,
-                getPreferredLanguage: () => translationPrefix,
+                translate: (key: string) => `${translation.prefix}:${key}`,
+                translateLoose: (key: string) => `${translation.prefix}:${key}`,
+                getPreferredLanguage: () => translation.prefix,
             });
         },
     });
@@ -112,7 +113,8 @@ afterEach(async () => {
     account = undefined;
     storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
-    translationPrefix = 'en';
+    translation.prefix = 'en';
+    commitPreferredLanguage('en');
 });
 
 describe('Session settings session list density', () => {
@@ -167,7 +169,7 @@ describe('Session settings session list density', () => {
     });
 
     it('refreshes density and canonical layout labels when the language changes and the screen rerenders', async () => {
-        translationPrefix = 'en';
+        translation.prefix = 'en';
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
@@ -192,10 +194,11 @@ describe('Session settings session list density', () => {
         const preview = await renderSettingsView(readDropdowns().density);
         expect(preview.getTextContent()).toContain('en:settingsSessionPages.preview.userMessage');
 
-        translationPrefix = 'fr';
+        translation.prefix = 'fr';
         const { sync } = await import('@/sync/sync');
         await act(async () => {
             sync.applySettings({ preferredLanguage: 'fr' }, { expectedSettingsScope: account!.scope });
+            commitPreferredLanguage('fr');
         });
         await expectPersistedSettings({ preferredLanguage: 'fr' });
         await act(async () => {
