@@ -159,23 +159,26 @@ test('stopLocalDaemon remembers the scoped owner before a stop command removes d
   }
 });
 
-test('stopLocalDaemon retires every retained bundle daemon PID without requiring moving CLI dist', async () => {
+test('stopLocalDaemon retires retained bundle PIDs only for its CLI home without requiring moving CLI dist', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-source-pid-set-'));
   const pids = [];
   try {
     const cliHomeDir = join(tmp, 'cli-home');
     const internalServerUrl = 'http://127.0.0.1:3005';
     const stackName = 'source-pid-set-stop';
-    pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName }));
-    pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName }));
+    // Legacy retained daemons may lack the current process-kind discovery marker.
+    pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName, processKind: '' }));
+    pids.push(await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl, stackName, processKind: '' }));
+    pids.push(await spawnDaemonLikeProcess({ cliHomeDir: join(tmp, 'cli-identities', 'account-b'),
+      internalServerUrl, stackName, processKind: '' }));
     const runtimeStatePath = join(tmp, 'stack.runtime.json');
     await recordStackRuntimeStart(runtimeStatePath, { stackName, ownerPid: process.pid,
-      processes: { daemonPid: pids[1], daemonPids: pids } });
+      processes: { daemonPid: pids[2], daemonPids: pids } });
     await stopLocalDaemon({ cliBin: join(tmp, 'missing', 'happier.mjs'), cliHomeDir,
       internalServerUrl, runtimeStatePath, stackName,
       env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName } });
-    for (const pid of pids) assert.throws(() => process.kill(pid, 0), `retained bundle PID ${pid} must be retired`);
-    pids.length = 0;
+    for (const pid of pids.slice(0, 2)) assert.throws(() => process.kill(pid, 0), `retained bundle PID ${pid} must be retired`);
+    assert.doesNotThrow(() => process.kill(pids[2], 0), 'another identity must survive even when it is the latest runtime PID');
   } finally {
     for (const pid of pids) { try { process.kill(pid, 'SIGKILL'); } catch {} }
     await rm(tmp, { recursive: true, force: true });

@@ -50,6 +50,17 @@ function getRuntimeDaemonPidSet(processes) {
   return Array.from(set);
 }
 
+export async function readStackRuntimeDaemonPidsForCliHome(runtimeState, { cliHomeDir, stackName } = {}) {
+  const pids = getRuntimeDaemonPidSet(runtimeState?.processes);
+  const ownership = await Promise.all(pids.map(pid => resolvePidStackOwnership(pid, {
+    stackName: stackName || runtimeState?.stackName,
+    cliHomeDir,
+    // The shared stack env file proves stack ownership, not CLI identity.
+    // Retirement requires this identity's home binding instead.
+  })));
+  return pids.filter((_pid, index) => ownership[index].owned === true);
+}
+
 function pruneLiveDaemonPids(pids, isPidAliveImpl) {
   const out = [];
   for (const pid of pids) {

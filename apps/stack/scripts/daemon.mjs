@@ -42,7 +42,7 @@ import {
   resolveCliDistBuildLockPath,
   withCliDistBuildLock,
 } from './utils/proc/cliDistBuildLock.mjs';
-import { readStackRuntimeDaemonDesiredState, recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
+import { readStackRuntimeDaemonDesiredState, readStackRuntimeDaemonPidsForCliHome, recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 import {
   getStackRuntimeProcessEntries,
   getStackRuntimeProcessInstanceFingerprint,
@@ -1864,9 +1864,7 @@ export async function stopLocalDaemon({
     scopedDaemonState.pid,
     retainedLock?.pid,
     ...unpublishedPids,
-    ...getStackRuntimeProcessEntries(runtimeState)
-      .filter(({ key }) => key === 'daemonPid' || key === 'daemonPids')
-      .map(({ pid }) => pid),
+    ...await readStackRuntimeDaemonPidsForCliHome(runtimeState, { cliHomeDir, stackName: scopedStackName }),
   ].filter((pid) => Number.isSafeInteger(pid) && pid > 1))];
 
   const explicitCommand = String(cliCommand ?? '').trim();

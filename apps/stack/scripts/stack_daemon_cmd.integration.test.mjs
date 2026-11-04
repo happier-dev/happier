@@ -445,6 +445,47 @@ test('hstack stack daemon start rejects credentials scoped to a different server
   );
 });
 
+test('hstack stack daemon start, restart and stop retire only the selected identity', async (t) => {
+  const fixture = await createDaemonFixture(t, { prefix: 'hstack-daemon-retirement-identity-' });
+  const identity = 'account-b';
+  const identityHome = join(fixture.storageDir, fixture.stackName, 'cli-identities', identity);
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await writeDummyAuth({ cliHomeDir: identityHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, identity });
+  const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
+  await recordStackRuntimeStart(runtimePath, { stackName: fixture.stackName, ownerPid: process.pid });
+  const command = async (action, selectedIdentity = 'default') => {
+    const result = await runHstack(['stack', 'daemon', fixture.stackName, action, '--source',
+      `--identity=${selectedIdentity}`, '--json'], { env: fixture.baseEnv });
+    assertExitOk(result, `daemon ${action} identity=${selectedIdentity}`);
+  };
+  const readPid = async home => Number(JSON.parse(await readFile(join(home, 'daemon.state.json'), 'utf8')).pid);
+  await command('start');
+  const defaultPid = await readPid(fixture.stackCliHome);
+  await command('start', identity);
+  assert.doesNotThrow(() => process.kill(defaultPid, 0), 'starting a named identity must preserve the default daemon');
+  const firstNamedPid = await readPid(identityHome);
+  await command('restart', identity);
+  assert.doesNotThrow(() => process.kill(defaultPid, 0), 'restarting a named identity must preserve the default daemon');
+  assert.throws(() => process.kill(firstNamedPid, 0), 'restart must retire its own previous daemon');
+  const namedPid = await readPid(identityHome);
+
+  // A stale bundle can lose all state publications while its process remains live.
+  await rm(join(fixture.stackCliHome, 'daemon.state.json'));
+  await rm(join(fixture.stackCliHome, 'servers'), { recursive: true, force: true });
+  await recordStackRuntimeStart(runtimePath, { stackName: fixture.stackName, ownerPid: process.pid,
+    processes: { daemonPid: namedPid, daemonPids: [defaultPid, namedPid] } });
+  await command('restart');
+  assert.throws(() => process.kill(defaultPid, 0), 'default restart must retire its stale recorded daemon');
+  assert.doesNotThrow(() => process.kill(namedPid, 0), 'default restart must preserve the named daemon');
+  const replacementDefaultPid = await readPid(fixture.stackCliHome);
+  await command('stop', identity);
+  assert.throws(() => process.kill(namedPid, 0), 'named stop must retire its own daemon');
+  assert.doesNotThrow(() => process.kill(replacementDefaultPid, 0), 'named stop must preserve the default daemon');
+});
+
 test('hstack stack daemon <name> start/stop with --identity uses an isolated cli home dir', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happy-stacks-stack-daemon-identity-',
