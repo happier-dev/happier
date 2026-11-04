@@ -439,6 +439,17 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
 })));
 export type AutomationDefinitionListRequest = z.infer<typeof AutomationDefinitionListRequestSchema>;
 
+export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.safeExtend(AutomationDefinitionListRequestSchema, {
+  details: z.literal(true),
+}));
+export type AutomationDefinitionDetailsRequest = z.infer<typeof AutomationDefinitionDetailsRequestSchema>;
+
+export const AutomationDefinitionDetailsResponseSchema = lazyZodSchema(() => z.strictObject({
+  automations: z.array(AutomationDefinitionDetailSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
+  nextCursor: z.nullable(OPAQUE_CURSOR_SCHEMA),
+}));
+export type AutomationDefinitionDetailsResponse = z.infer<typeof AutomationDefinitionDetailsResponseSchema>;
+
 export const AutomationDefinitionListResponseSchema = lazyZodSchema(() => z.strictObject({
   automations: z.array(AutomationDefinitionListItemSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   nextCursor: zMini.nullable(OPAQUE_CURSOR_SCHEMA),

@@ -1,3 +1,4 @@
+import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { z } from "zod/mini";
 import type { FastifyReply } from "fastify";
 
@@ -135,13 +136,17 @@ const AutomationRunNowHeadersSchema = z.looseObject({
     "idempotency-key": z.optional(AutomationManualIdempotencyKeyV1Schema),
 });
 
+const AutomationDefinitionQueryRequestSchema = z.union([
+    AutomationDefinitionListRequestSchema, AutomationDefinitionDetailsRequestSchema,
+]);
+
 export function registerAutomationV3Routes(
     app: Fastify,
     workerPublisherDependencies: AutomationWorkerPublisherDependencies = DEFAULT_AUTOMATION_WORKER_PUBLISHER_DEPENDENCIES,
 ): void {
     const readDefinitions = async (accountId: string, input: unknown, reply: FastifyReply) => {
         try {
-            const query = AutomationDefinitionListRequestSchema.parse(input);
+            const query = AutomationDefinitionQueryRequestSchema.parse(input);
             const page = await listAutomationDefinitionsPage({
                 accountId,
                 limit: query.limit,
@@ -153,12 +158,22 @@ export function registerAutomationV3Routes(
                 ...(query.managedTarget !== undefined ? { managedTarget: query.managedTarget } : {}),
                 ...(query.includeUnindexedManagedTargets !== undefined ? { includeUnindexedManagedTargets: query.includeUnindexedManagedTargets } : {}),
                 ...(query.managedTargetUnindexed !== undefined ? { managedTargetUnindexed: query.managedTargetUnindexed } : {}),
+                ...('details' in query ? { details: true as const } : {}),
             });
             const rows = page.automations;
             const [eventProjections, lifecycleProjections] = await Promise.all([
                 loadAutomationEventStatusProjections({ automations: rows }),
                 loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
             ]);
+            if ('details' in query) {
+                const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
+                if (!accountCurrentness) return sendStoredContentFailure(reply);
+                return AutomationDefinitionDetailsResponseSchema.parse({
+                    automations: rows.map(row => toAutomationDefinitionDetailApiDto(row, accountCurrentness,
+                        eventProjections, lifecycleProjections.get(row.id))),
+                    nextCursor: page.nextCursor,
+                });
+            }
             return AutomationDefinitionListResponseSchema.parse({
                 automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
                     row,
@@ -168,6 +183,7 @@ export function registerAutomationV3Routes(
                 nextCursor: page.nextCursor,
             });
         } catch (error) {
+            if (error instanceof AutomationStoredContentReadError) return sendStoredContentFailure(reply);
             if (!isAutomationDefinitionValidationError(error)) throw error;
             return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
         }
@@ -180,7 +196,7 @@ export function registerAutomationV3Routes(
     // retains the same list policy, projection and keyset owner as GET.
     app.post("/v3/automations/query", {
         preHandler: [app.authenticate, requirePresentUser],
-        schema: { body: AutomationDefinitionListRequestSchema },
+        schema: { body: AutomationDefinitionQueryRequestSchema },
     }, async (request, reply) => readDefinitions(request.userId, request.body, reply));
 
     app.get("/v3/automations/settings", {

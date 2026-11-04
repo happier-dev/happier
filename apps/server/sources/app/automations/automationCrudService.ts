@@ -4613,6 +4613,8 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     managedTarget?: AutomationManagedTargetV1;
     includeUnindexedManagedTargets?: true;
     managedTargetUnindexed?: true;
+    /** The explicit private-detail query uses the canonical full definition selection. */
+    details?: true;
 }>): Promise<Readonly<{
     automations: AutomationListItem[];
     nextCursor: string | null;
@@ -4641,7 +4643,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
                 ] }] : []),
             ],
         },
-        select: automationDefinitionListItemSelect,
+        select: params.details ? automationListItemSelect : automationDefinitionListItemSelect,
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
         take: limit + 1,
     });
