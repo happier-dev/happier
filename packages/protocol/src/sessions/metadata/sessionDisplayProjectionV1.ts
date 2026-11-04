@@ -34,6 +34,7 @@ export function projectSessionOwnerDisplayV1(owner: SessionOwnerMetadataV1): Ses
   const runtime = owner.runtime;
   const terminal = runtime?.terminal?.controlServiceabilityV1;
   const recovery = runtime?.sessionUsageLimitRecoveryV1;
+  const imageInputSupported = runtime?.agentRuntimeCapabilitiesV1?.backend?.session?.media?.acceptsImageInput?.supported;
   const linked = owner.nativeSession ? resolveLinkedExternalSessionMetadataV1(owner.nativeSession, 'stored') : null;
   const external = linked?.ok ? linked.linkedSession : null;
   const fork = owner.history?.forkV1;
@@ -63,6 +64,7 @@ export function projectSessionOwnerDisplayV1(owner: SessionOwnerMetadataV1): Ses
     ...(owner.cursors?.readStateV1 ? { readStateV1: owner.cursors.readStateV1 } : {}),
     ...(owner.cursors?.externalSessionAttentionV1 ? { externalSessionAttentionV1: owner.cursors.externalSessionAttentionV1 } : {}),
     ...(runtime?.lifecycleState !== undefined ? { lifecycleState: runtime.lifecycleState } : {}),
+    ...(imageInputSupported !== undefined ? { imageInputSupported } : {}),
     ...(terminal ? { terminalControlServiceabilityV1: {
       v: 1, state: terminal.state, observedAt: terminal.observedAt,
       ...(terminal.reason !== undefined ? { reason: terminal.reason } : {}),

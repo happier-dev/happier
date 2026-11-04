@@ -2987,6 +2987,7 @@ const enCommon = {
   send: 'Send',
   attach: 'Attach',
   addImage: 'Add image',
+  imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} can't read images`,
   addFile: 'Add file',
   linkFile: 'Link file',
   files: 'Files',

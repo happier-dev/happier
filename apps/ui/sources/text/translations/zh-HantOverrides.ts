@@ -3138,6 +3138,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         send: '傳送',
         attach: '附加',
         addImage: '新增圖片',
+        imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} 無法讀取圖片`,
         addFile: '新增檔案',
         linkFile: '連結檔案',
         files: '檔案',

@@ -2701,6 +2701,7 @@ export const pl: TranslationStructure = {
     send: "Wyślij",
     attach: "Dołącz",
     addImage: "Dodaj obraz",
+    imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} nie może odczytywać obrazów`,
     addFile: "Dodaj plik",
     linkFile: "Połącz plik",
     files: "Pliki",

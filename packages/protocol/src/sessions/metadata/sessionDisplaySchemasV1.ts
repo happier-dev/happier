@@ -80,6 +80,7 @@ export const SessionOwnerDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   readStateV1: SessionOwnerCursorsV1Schema.shape.readStateV1,
   externalSessionAttentionV1: SessionOwnerCursorsV1Schema.shape.externalSessionAttentionV1,
   lifecycleState: z.optional(z.string().check(z.maxLength(2_000))),
+  imageInputSupported: z.optional(z.boolean()),
   terminalControlServiceabilityV1: z.optional(z.strictObject({
     ...z.pick(createSessionTerminalControlServiceabilityV1Schema(z), { v: true, state: true, observedAt: true, reason: true }).shape,
   })),

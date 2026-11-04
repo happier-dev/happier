@@ -2543,6 +2543,7 @@ export const de: TranslationStructure = {
         send: 'Senden',
         attach: 'Anhängen',
         addImage: 'Bild hinzufügen',
+        imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} kann keine Bilder lesen`,
         addFile: 'Datei hinzufügen',
         linkFile: 'Datei verknüpfen',
         files: 'Dateien',

@@ -2843,6 +2843,7 @@ export const ja: TranslationStructure = {
     send: "送信",
     attach: "添付",
     addImage: "画像を追加",
+    imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} は画像を読み取れません`,
     addFile: "ファイルを追加",
     linkFile: "ファイルをリンク",
     files: "ファイル",

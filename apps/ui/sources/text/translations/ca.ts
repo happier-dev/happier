@@ -2688,6 +2688,7 @@ export const ca: TranslationStructure = {
         send: 'Envia',
         attach: 'Adjunta',
         addImage: 'Afegeix imatge',
+        imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} no pot llegir imatges`,
         addFile: 'Afegeix fitxer',
         linkFile: 'Enllaça fitxer',
         files: 'Fitxers',

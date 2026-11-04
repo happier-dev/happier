@@ -2865,6 +2865,7 @@ export const es: TranslationStructure = {
     send: "Enviar",
     attach: "Adjuntar",
     addImage: "Agregar imagen",
+    imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} no puede leer imágenes`,
     addFile: "Agregar archivo",
     linkFile: "Vincular archivo",
     files: "Archivos",

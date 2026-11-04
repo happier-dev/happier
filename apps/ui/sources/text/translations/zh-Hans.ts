@@ -2659,6 +2659,7 @@ export const zhHans: TranslationStructure = {
     send: "发送",
     attach: "附加",
     addImage: "添加图片",
+    imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} 无法读取图片`,
     addFile: "添加文件",
     linkFile: "链接文件",
     files: "文件",

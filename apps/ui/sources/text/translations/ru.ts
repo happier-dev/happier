@@ -2704,6 +2704,7 @@ export const ru: TranslationStructure = {
     send: "Отправить",
     attach: "Прикрепить",
     addImage: "Добавить изображение",
+    imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} не может читать изображения`,
     addFile: "Добавить файл",
     linkFile: "Связать файл",
     files: "Файлы",
