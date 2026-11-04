@@ -970,6 +970,9 @@ importers:
       '@happier-dev/deployment-protocol':
         specifier: 0.0.0
         version: link:../../packages/deployment-protocol
+      '@happier-dev/deployments':
+        specifier: 0.0.0
+        version: link:../../packages/deployments
       '@happier-dev/iroh-native':
         specifier: 0.0.0
         version: link:../../packages/iroh-native
