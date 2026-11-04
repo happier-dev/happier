@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { unlinkSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -14,72 +14,209 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 
-test('wait diagnostics report live lock holders from the acquisition snapshot', async (t) => {
-  for (const kind of ['reader', 'writer']) await t.test(kind, async (t) => {
-    const fixture = await createTempFixture(t, { prefix: 'json-owner-live-holders-' });
-    const lockPath = fixture.path('owner.lock');
-    const secondReader = kind === 'reader'
-      ? spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
-      : null;
-    if (secondReader) {
-      t.after(async () => {
-        if (secondReader.exitCode !== null || secondReader.signalCode !== null) return;
-        const exited = once(secondReader, 'exit');
-        secondReader.kill();
-        await exited;
-      });
-      await once(secondReader, 'spawn');
-    }
-    const nowMs = Date.now();
-    const liveOwner = { pid: process.pid, createdAtMs: nowMs - 9000, updatedAtMs: nowMs - 1000 };
-    const deadOwner = { pid: 99999999, createdAtMs: nowMs - 30000, updatedAtMs: nowMs - 30000 };
-    const liveReaders = [liveOwner, {
-      pid: secondReader?.pid, createdAtMs: nowMs - 7000, updatedAtMs: nowMs - 500,
-    }];
-    await writeFile(lockPath, JSON.stringify(kind === 'reader'
-      ? { ...deadOwner, priority: 'reader', readers: [deadOwner, ...liveReaders] }
-      : { ...liveOwner, priority: 'writer' }));
-    let clockNowMs = nowMs;
-    t.mock.method(Date, 'now', () => clockNowMs);
-    const read = fs.readFileSync;
-    let reads = 0;
-    t.mock.method(fs, 'readFileSync', (path, ...args) => {
-      if (path === lockPath) reads += 1;
-      return read(path, ...args);
-    });
-    syncBuiltinESMExports();
-    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-    let notices = '';
-    t.mock.method(process.stderr, 'write', chunk => { notices += String(chunk); return true; });
-    const notice = createWorkspaceBuildWaitNotifier({
-      label: 'dependency refresh', kind: 'lock', env: { HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0' },
-    });
-    const cancellation = new AbortController();
-    let observed;
-    let notifierReread;
-    await assert.rejects(withJsonOwnerFileLock(() => assert.fail('live holder must block acquisition'), {
-      lockPath, sharedReaders: true, priority: 'writer', signal: cancellation.signal,
-      onWait(event) {
-        observed = event;
-        unlinkSync(lockPath);
-        clockNowMs = nowMs + 60000;
-        const readsBeforeNotice = reads;
-        notice(event);
-        notifierReread = reads !== readsBeforeNotice;
-        cancellation.abort();
-      },
-    }), { name: 'AbortError' });
-    assert.equal(notifierReread, false, 'the notifier must not reread the lock');
-    assert.ok(Array.isArray(observed.holders), 'the wait event must identify live holders');
-    assert.deepEqual(observed.holders.map(({ pid, kind, heldMs, heartbeatAgeMs }) => ({ pid, kind, heldMs, heartbeatAgeMs })), [
-      { pid: process.pid, kind, heldMs: 9000, heartbeatAgeMs: 1000 },
-      ...(secondReader ? [{ pid: secondReader.pid, kind, heldMs: 7000, heartbeatAgeMs: 500 }] : []),
-    ]);
-    assert.equal(observed.owner.pid, process.pid);
-    assert.match(notices, new RegExp(`${kind} pid=${process.pid}.*heldMs=9000.*heartbeatAgeMs=1000`));
-    if (secondReader) assert.match(notices, new RegExp(`reader pid=${secondReader.pid}.*heldMs=7000.*heartbeatAgeMs=500`));
-    assert.doesNotMatch(notices, /99999999/);
+test('exclusive admission preserves arrival order across release and later arrivals, skipping cancellation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-fifo-' });
+  const lockPath = fixture.path('owner.lock');
+  const order = [];
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const holder = withJsonOwnerFileLock(() => held, { lockPath });
+  const cancellation = new AbortController();
+  let observed;
+  const waiting = new Promise(resolve => { observed = resolve; });
+  const early = withJsonOwnerFileLock(() => { order.push('early'); }, { lockPath, onWait: observed });
+  const cancelled = withJsonOwnerFileLock(() => assert.fail('cancelled waiter entered'), {
+    lockPath, signal: cancellation.signal, onWait: () => cancellation.abort(),
   });
+  await assert.rejects(cancelled, { name: 'AbortError' });
+  await waiting;
+  // Promise continuations run before the native filesystem wake. A newcomer
+  // must respect the queued early waiter even when it sees the path free first.
+  release();
+  await holder;
+  const later = Array.from({ length: 12 }, (_, index) => withJsonOwnerFileLock(() => {
+    order.push(index);
+  }, { lockPath }));
+  await Promise.all([early, ...later]);
+  assert.deepEqual(order, ['early', ...Array.from({ length: 12 }, (_, index) => index)]);
+});
+
+test('nonwaiting acquisition cannot bypass an already waiting caller', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-no-barge-' });
+  const lockPath = fixture.path('owner.lock');
+  let release;
+  const holder = withJsonOwnerFileLock(() => new Promise(resolve => { release = resolve; }), { lockPath });
+  let observed;
+  const waiting = new Promise(resolve => { observed = resolve; });
+  const early = withJsonOwnerFileLock(() => {}, { lockPath, onWait: observed });
+  await waiting;
+  release();
+  await holder;
+  await assert.rejects(withJsonOwnerFileLock(() => assert.fail('newcomer bypassed queue'), {
+    lockPath, wait: false,
+  }), { code: 'EJSONOWNERFILELOCKBUSY' });
+  await early;
+  assert.equal(await withJsonOwnerFileLock(() => 'idle', { lockPath, wait: false }), 'idle');
+});
+
+test('cancelling the head waiter leaves its successor ahead of later arrivals', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-head-abort-' });
+  const lockPath = fixture.path('owner.lock');
+  let release;
+  const holder = withJsonOwnerFileLock(() => new Promise(resolve => { release = resolve; }), { lockPath });
+  const controller = new AbortController();
+  let observed;
+  const waiting = new Promise(resolve => { observed = resolve; });
+  const head = withJsonOwnerFileLock(() => assert.fail('cancelled head entered'), {
+    lockPath, signal: controller.signal, onWait: observed,
+  });
+  await waiting;
+  const order = [];
+  const successor = withJsonOwnerFileLock(() => { order.push('successor'); }, { lockPath });
+  controller.abort();
+  await assert.rejects(head, { name: 'AbortError' });
+  release();
+  await holder;
+  const newcomer = withJsonOwnerFileLock(() => { order.push('newcomer'); }, { lockPath });
+  await Promise.all([successor, newcomer]);
+  assert.deepEqual(order, ['successor', 'newcomer']);
+});
+
+test('separate processes preserve established waiter order', { timeout: 10000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-process-order-' });
+  const lockPath = fixture.path('owner.lock');
+  const orderPath = fixture.path('order');
+  let release;
+  const holder = withJsonOwnerFileLock(() => new Promise(resolve => { release = resolve; }), { lockPath });
+  const children = [];
+  const script = `import {appendFileSync} from 'node:fs';
+    import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./jsonOwnerFileLock.mjs', import.meta.url).href)};
+    let announced=false;await withJsonOwnerFileLock(()=>appendFileSync(process.argv[2],process.argv[3]+'\\n'),
+      {lockPath:process.argv[1],onWait(){if(!announced){announced=true;process.stdout.write('waiting');}}});`;
+  try {
+    for (const id of ['first', 'second', 'third']) {
+      const child = spawnTestProcess(process.execPath, ['--input-type=module', '-e', script, lockPath, orderPath, id], {
+        stdio: ['ignore', 'pipe', 'inherit'],
+      });
+      const exited = new Promise(resolve => child.once('exit', resolve));
+      children.push({ child, exited });
+      const [chunk] = await once(child.stdout, 'data', { signal: t.signal });
+      assert.equal(String(chunk), 'waiting');
+    }
+    release();
+    await holder;
+    for (const { exited } of children) assert.equal(await exited, 0);
+    assert.equal(await readFile(orderPath, 'utf8'), 'first\nsecond\nthird\n');
+  } finally {
+    release();
+    for (const { child } of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+    await Promise.all([holder, ...children.map(({ exited }) => exited)]);
+  }
+});
+
+test('a departed queued process cannot strand its successor', { timeout: 10000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-waiter-death-' });
+  const lockPath = fixture.path('owner.lock');
+  let release;
+  const holder = withJsonOwnerFileLock(() => new Promise(resolve => { release = resolve; }), { lockPath });
+  const script = `import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./jsonOwnerFileLock.mjs', import.meta.url).href)};
+    process.stdin.resume();let announced=false;
+    await withJsonOwnerFileLock(()=>{process.stdout.write('unexpected');},{lockPath:process.argv[1],
+      onWait(){if(!announced){announced=true;process.stdout.write('waiting');}}});`;
+  const child = spawnTestProcess(process.execPath, ['--input-type=module', '-e', script, lockPath], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
+  const exited = new Promise(resolve => child.once('exit', resolve));
+  let successor;
+  try {
+    const [chunk] = await once(child.stdout, 'data', { signal: t.signal });
+    assert.equal(String(chunk), 'waiting');
+    successor = withJsonOwnerFileLock(() => 'recovered', { lockPath, signal: t.signal });
+    child.kill('SIGKILL');
+    await exited;
+    release();
+    await holder;
+    assert.equal(await successor, 'recovered');
+  } finally {
+    release();
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+    await Promise.allSettled([holder, successor].filter(Boolean));
+  }
+});
+
+test('an idle exclusive lock is available despite a pending former queue ticket', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-exclusive-' });
+  const lockPath = fixture.path('owner.lock');
+  await mkdir(`${lockPath}.waiters`);
+  await writeFile(join(`${lockPath}.waiters`, '1.json'), JSON.stringify({
+    pid: process.pid, createdAtMs: Date.now(), updatedAtMs: Date.now(), priority: 'writer',
+  }));
+  assert.equal(await withJsonOwnerFileLock(async () => 'acquired', { lockPath, wait: false }), 'acquired');
+});
+
+test('obsolete shared-reader records do not exclude work while live writer records remain protected', async t => {
+  for (const priority of ['reader', 'writer', undefined]) await t.test(priority ?? 'untyped', async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-retired-reader-' });
+    const lockPath = fixture.path('owner.lock');
+    // Captured owner shape from the shared-reader implementation removed in
+    // this change. Already-loaded readers can leave it until their next release.
+    const raw = JSON.stringify({ pid: process.pid, createdAtMs: 1, updatedAtMs: 1,
+      ...(priority ? { priority } : {}), ...(priority === 'reader' ? { readers: [{ pid: process.pid }] } : {}) });
+    await writeFile(lockPath, raw);
+    const acquire = () => withJsonOwnerFileLock(async () => 'acquired', { lockPath, wait: false, staleAfterMs: 1 });
+    if (priority === 'reader') assert.equal(await acquire(), 'acquired');
+    else {
+      await assert.rejects(acquire(), { code: 'EJSONOWNERFILELOCKBUSY' });
+      assert.equal(await readFile(lockPath, 'utf8'), raw);
+    }
+  });
+});
+
+test('wait diagnostics report the live exclusive holder from the acquisition snapshot', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'json-owner-live-holder-' });
+  const lockPath = fixture.path('owner.lock');
+  const nowMs = Date.now();
+  const owner = { pid: process.pid, createdAtMs: nowMs - 9000, updatedAtMs: nowMs - 1000 };
+  await writeFile(lockPath, JSON.stringify(owner));
+  let clockNowMs = nowMs;
+  t.mock.method(Date, 'now', () => clockNowMs);
+  const read = fs.readFileSync;
+  let reads = 0;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === lockPath) reads += 1;
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  let notices = '';
+  t.mock.method(process.stderr, 'write', chunk => { notices += String(chunk); return true; });
+  const notice = createWorkspaceBuildWaitNotifier({
+    label: 'dependency refresh', kind: 'lock', env: { HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0' },
+  });
+  const cancellation = new AbortController();
+  let observed;
+  let notifierReread;
+  await assert.rejects(withJsonOwnerFileLock(() => assert.fail('live holder must block acquisition'), {
+    lockPath, signal: cancellation.signal,
+    onWait(event) {
+      observed = event;
+      unlinkSync(lockPath);
+      clockNowMs = nowMs + 60000;
+      const readsBeforeNotice = reads;
+      notice(event);
+      notifierReread = reads !== readsBeforeNotice;
+      cancellation.abort();
+    },
+  }), { name: 'AbortError' });
+  assert.equal(notifierReread, false, 'the notifier must not reread the lock');
+  assert.deepEqual(observed.holders.map(({ pid, kind, heldMs, heartbeatAgeMs }) => ({ pid, kind, heldMs, heartbeatAgeMs })), [
+    { pid: process.pid, kind: 'writer', heldMs: 9000, heartbeatAgeMs: 1000 },
+  ]);
+  assert.equal(observed.owner.pid, process.pid);
+  assert.match(notices, /writer pid=.*heldMs=9000.*heartbeatAgeMs=1000/);
 });
 
 test('owner creation and heartbeat never expose an incomplete owner record', async t => {
@@ -164,98 +301,6 @@ test('stale reclaim preserves a fresh replacement even when restoration is inter
   });
 });
 
-test('queued-owner heartbeats and unrelated files do not rescan the waiter population', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-queue-noise-' });
-  const lockPath = fixture.path('owner.lock');
-  const waitersDir = `${lockPath}.waiters`;
-  await mkdir(waitersDir);
-  const owner = { pid: process.pid, createdAtMs: Date.now(), updatedAtMs: Date.now() };
-  await writeFile(lockPath, JSON.stringify(owner));
-  const tickets = ['1.json', '2.json', '3.json'].map(name => join(waitersDir, name));
-  for (const path of tickets) await writeFile(path, JSON.stringify({ ...owner, priority: 'writer' }));
-  let reads = 0;
-  const read = fs.readFileSync;
-  t.mock.method(fs, 'readFileSync', (path, ...args) => {
-    if (typeof path === 'string' && dirname(path) === waitersDir) reads += 1;
-    return read(path, ...args);
-  });
-  syncBuiltinESMExports();
-  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
-  const cancellation = new AbortController();
-  let notify;
-  const waiting = new Promise(resolve => { notify = resolve; });
-  const contender = withJsonOwnerFileLock(() => assert.fail('live owner excludes contender'), {
-    lockPath, sharedReaders: true, priority: 'writer', signal: cancellation.signal,
-    watchFallbackMs: 10_000, onWait: notify,
-  }).catch(error => error.name);
-  try {
-    await waiting;
-    await delay(20);
-    const before = reads;
-    for (const path of tickets) {
-      const pending = `${path}.pending-fixture`;
-      await writeFile(pending, JSON.stringify({ ...owner, priority: 'writer', updatedAtMs: Date.now() + 1 }));
-      await rename(pending, path);
-      await writeFile(fixture.path('unrelated.log'), 'another lane wrote output');
-      await delay(20);
-    }
-    assert.equal(reads, before, 'heartbeat replacement and unrelated logs do not change queue eligibility');
-  } finally {
-    cancellation.abort();
-    assert.equal(await contender, 'AbortError');
-  }
-});
-
-test('a free lock blocked by a queued writer reports that writer instead of an unknown holder', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-queued-diagnostic-' });
-  const lockPath = fixture.path('owner.lock');
-  await mkdir(`${lockPath}.waiters`);
-  await writeFile(join(`${lockPath}.waiters`, '1.json'), JSON.stringify({
-    pid: process.pid, priority: 'writer', createdAtMs: Date.now(), updatedAtMs: Date.now(),
-  }));
-  let notices = '';
-  t.mock.method(process.stderr, 'write', chunk => { notices += String(chunk); return true; });
-  const notice = createWorkspaceBuildWaitNotifier({
-    label: 'dependency refresh', kind: 'lock', env: { HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0' },
-  });
-  const cancellation = new AbortController();
-  await assert.rejects(withJsonOwnerFileLock(() => assert.fail('reader overtook the queued writer'), {
-    lockPath, sharedReaders: true, priority: 'reader', signal: cancellation.signal,
-    onWait(event) { notice(event); cancellation.abort(); },
-  }), { name: 'AbortError' });
-  assert.match(notices, new RegExp(`queued.*pid=${process.pid}.*heldMs=.*heartbeatAgeMs=`));
-  assert.doesNotMatch(notices, /owner=unknown/);
-});
-
-test('writer re-entry reuses its live process ticket without losing queue position', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-json-writer-reentry-' });
-  const lockPath = fixture.path('owner.lock');
-  const waitersDir = `${lockPath}.waiters`;
-  await mkdir(waitersDir);
-  const original = { pid: process.pid, priority: 'writer', createdAtMs: Date.now() - 1000, updatedAtMs: Date.now() };
-  const ticketPath = join(waitersDir, '1.json');
-  await writeFile(ticketPath, JSON.stringify(original));
-  const holderRaw = JSON.stringify({ pid: process.pid, createdAtMs: Date.now(), updatedAtMs: Date.now() });
-  await writeFile(lockPath, holderRaw);
-  let notify;
-  const waiting = new Promise(resolve => { notify = resolve; });
-  const cancellation = new AbortController();
-  const writer = withJsonOwnerFileLock(() => assert.fail('writer entered the held lock'), {
-    lockPath, priority: 'writer', sharedReaders: true, signal: cancellation.signal, onWait: notify,
-  });
-  const outcome = writer.catch(error => error.name);
-  try {
-    await waiting;
-    assert.deepEqual(await readdir(waitersDir), ['1.json'], 're-entry must adopt its original ticket, not append a new one');
-    assert.equal(JSON.parse(await readFile(ticketPath, 'utf8')).createdAtMs, original.createdAtMs);
-  } finally {
-    cancellation.abort();
-    assert.equal(await outcome, 'AbortError');
-  }
-  assert.deepEqual(await readdir(waitersDir), [], 'cancellation removes the retained ticket');
-  assert.equal(await readFile(lockPath, 'utf8'), holderRaw);
-});
-
 test('release wakes queued JSON owners without the catch-up delay, including release during onWait', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-events-' });
   for (const duringOnWait of [false, true]) {
@@ -282,16 +327,26 @@ test('JSON owner heartbeat-only changes do not rescan healthy contention', async
   writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAtMs, updatedAtMs: createdAtMs }));
   const controller = new AbortController();
   let waits = 0;
+  let queueScans = 0;
+  const readdir = fs.readdirSync;
+  t.mock.method(fs, 'readdirSync', (path, ...args) => {
+    if (path === `${lockPath}.waiters`) queueScans++;
+    return readdir(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const contender = withJsonOwnerFileLock(async () => assert.fail('live owner must exclude contender'), {
     lockPath, pollIntervalMs: 125, signal: controller.signal, onWait() { waits++; },
   });
   const outcome = contender.catch(error => error.name);
+  const initialQueueScans = queueScans;
   try {
     for (let i = 0; i < 8; i++) {
       await delay(50);
       writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAtMs, updatedAtMs: Date.now() }));
     }
     assert.equal(waits, 1, 'healthy contention must not wake for heartbeat writes or the old 250ms poll');
+    assert.equal(queueScans, initialQueueScans, 'heartbeat-only events must not rescan tickets or queued PIDs');
   } finally {
     controller.abort();
     assert.equal(await outcome, 'AbortError');
@@ -299,82 +354,12 @@ test('JSON owner heartbeat-only changes do not rescan healthy contention', async
   }
 });
 
-test('waiters acquire in arrival order even with different catch-up intervals', async t => {
-  const fixture = await createTempFixture(t, {prefix:'hstack-json-owner-fifo-'});
-  const lockPath = fixture.path('owner.lock');
-  const order = [];
-  const tasks = [];
-  let release;
-  const held = new Promise(resolve => { release = resolve; });
-  let entered;
-  const entry = new Promise(resolve => { entered = resolve; });
-  tasks.push(withJsonOwnerFileLock(async () => { entered(); await held; }, {lockPath}));
-  try {
-    await entry;
-    for (const [name, pollIntervalMs] of [['first', 300], ['second', 5], ['third', 5]]) {
-      let observed;
-      const waiting = new Promise(resolve => { observed = resolve; });
-      tasks.push(withJsonOwnerFileLock(async ({waited}) => {
-        assert.equal(waited, true);
-        order.push(name);
-      }, {lockPath, timeoutMs:3000, watchFallbackMs:pollIntervalMs, onWait:observed}));
-      await waiting;
-    }
-    release();
-    await Promise.all(tasks);
-    assert.deepEqual(order, ['first', 'second', 'third']);
-  } finally {
-    release();
-    await Promise.allSettled(tasks);
-  }
-});
-
-test('a dead queued writer does not block new readers', async t => {
-  const fixture = await createTempFixture(t, {prefix:'hstack-json-owner-dead-waiter-'});
-  const lockPath = fixture.path('owner.lock');
-  let release;
-  const held = new Promise(resolve => { release = resolve; });
-  let entered;
-  const entry = new Promise(resolve => { entered = resolve; });
-  const holder = withJsonOwnerFileLock(async () => { entered(); await held; }, {lockPath, sharedReaders:true, priority:'reader'});
-  await entry;
-  const script = `import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./jsonOwnerFileLock.mjs', import.meta.url).href)};
-    await withJsonOwnerFileLock(async()=>{}, {lockPath:process.argv[1], timeoutMs:Infinity, sharedReaders:true, priority:'writer',
-      onWait:()=>{process.stdout.write('waiting');}});`;
-  const child = spawnTestProcess(process.execPath, ['--input-type=module', '--eval', script, lockPath], {stdio:['ignore','pipe','inherit']});
-  let later;
-  try {
-    await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); });
-    const queued = await readdir(`${lockPath}.waiters`).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
-    assert.equal(queued.length, 1, 'the waiting process must have joined the filesystem queue');
-    await assert.rejects(withJsonOwnerFileLock(() => assert.fail('reader overtook live writer'), {
-      lockPath, sharedReaders:true, priority:'reader', wait:false,
-    }), { code:'EJSONOWNERFILELOCKBUSY' });
-    const exited = new Promise(resolve => child.once('exit', resolve));
-    child.kill();
-    await exited;
-    later = withJsonOwnerFileLock(async () => 'acquired', {lockPath, timeoutMs:1000, sharedReaders:true, priority:'reader', wait:false});
-    assert.equal(await later, 'acquired');
-    release();
-    await holder;
-    assert.deepEqual(await readdir(`${lockPath}.waiters`), []);
-  } finally {
-    release();
-    if (child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise(resolve => child.once('exit', resolve));
-      child.kill();
-      await exited;
-    }
-    await Promise.allSettled([holder, later].filter(Boolean));
-  }
-});
-
-test('shared reader death without a file event is recovered through catch-up', async t => {
+test('exclusive owner death without a file event is recovered through catch-up', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-death-events-' });
   const lockPath = fixture.path('owner.lock');
   const script = `import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./jsonOwnerFileLock.mjs', import.meta.url).href)};
     await withJsonOwnerFileLock(async()=>{process.stdout.write('held');process.stdin.resume();
-      await new Promise(()=>{});}, {lockPath:process.argv[1], sharedReaders:true, priority:'reader'});`;
+      await new Promise(()=>{});}, {lockPath:process.argv[1]});`;
   const child = spawnTestProcess(process.execPath, ['--input-type=module', '--eval', script, lockPath], { stdio: ['pipe', 'pipe', 'inherit'] });
   const exited = new Promise(resolve => child.once('exit', resolve));
   let contender;
@@ -384,7 +369,7 @@ test('shared reader death without a file event is recovered through catch-up', a
     let observed;
     const waiting = new Promise(resolve => { observed = resolve; });
     contender = withJsonOwnerFileLock(async () => 'recovered', { lockPath, watchFallbackMs: 100,
-      timeoutMs: 2_000, onWait: observed, sharedReaders:true, priority:'writer' });
+      timeoutMs: 2_000, onWait: observed });
     await waiting;
     child.kill('SIGKILL'); await exited;
     assert.equal(await readFile(lockPath, 'utf8'), raw, 'death left the held file intact');
@@ -396,7 +381,7 @@ test('shared reader death without a file event is recovered through catch-up', a
   }
 });
 
-for (const priority of ['reader', 'writer']) test(`an unreaped ${priority} process cannot retain JSON lock ownership`, {
+test('an unreaped process cannot retain exclusive JSON lock ownership', {
   skip: process.platform !== 'linux', timeout: 10000,
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-json-owner-zombie-' });
@@ -405,18 +390,18 @@ for (const priority of ['reader', 'writer']) test(`an unreaped ${priority} proce
   const ownerScript = `import {withJsonOwnerFileLock} from ${JSON.stringify(new URL('./jsonOwnerFileLock.mjs', import.meta.url).href)};
     process.stdin.once('data',()=>process.exit(0));
     await withJsonOwnerFileLock(async()=>{process.stdout.write('held');await new Promise(()=>{});},
-      {lockPath:process.argv[1],sharedReaders:true,priority:process.argv[2]});`;
+      {lockPath:process.argv[1]});`;
   // Block only this fixture parent's event loop until released. Its child can
   // exit, but libuv cannot reap it yet: signal 0 still succeeds for the zombie.
   const parentScript = `import {spawn} from 'node:child_process'; import {existsSync} from 'node:fs';
-    const child=spawn(process.execPath,['--input-type=module','-e',${JSON.stringify(ownerScript)},process.argv[1],process.argv[3]],
+    const child=spawn(process.execPath,['--input-type=module','-e',${JSON.stringify(ownerScript)},process.argv[1]],
       {stdio:['pipe','pipe','inherit']});
     child.stdout.once('data',()=>{process.stdout.write(String(child.pid)+'\\n');child.stdin.end('exit');
       const state=new Int32Array(new SharedArrayBuffer(4));
       while(!existsSync(process.argv[2]))Atomics.wait(state,0,0,10);
     });`;
   const parent = spawnTestProcess(process.execPath, ['--input-type=module', '-e', parentScript,
-    lockPath, releasePath, priority], { stdio: ['ignore', 'pipe', 'inherit'] });
+    lockPath, releasePath], { stdio: ['ignore', 'pipe', 'inherit'] });
   const exited = new Promise(resolve => parent.once('close', resolve));
   try {
     const [chunk] = await once(parent.stdout, 'data', { signal: t.signal });
@@ -429,81 +414,12 @@ for (const priority of ['reader', 'writer']) test(`an unreaped ${priority} proce
     }
     assert.doesNotThrow(() => process.kill(pid, 0), 'the real OS signal probe still sees this departed PID');
     assert.equal(await withJsonOwnerFileLock(async () => 'recovered', {
-      lockPath, sharedReaders: true, priority: 'writer', wait: false,
+      lockPath, wait: false,
     }), 'recovered');
     await assert.rejects(readFile(lockPath), { code: 'ENOENT' });
   } finally {
     await writeFile(releasePath, 'release');
     assert.equal(await exited, 0, 'the fixture parent must resume and reap its departed child');
-  }
-});
-
-test('stale malformed queue heads use the existing mtime reclaim rule', async t => {
-  const fixture = await createTempFixture(t, {prefix:'hstack-json-owner-stale-head-'});
-  const lockPath = fixture.path('owner.lock');
-  await mkdir(`${lockPath}.waiters`);
-  const head = join(`${lockPath}.waiters`, '1.json');
-  await writeFile(head, '{not json');
-  const stale = new Date(Date.now() - 60_000);
-  await utimes(head, stale, stale);
-  assert.equal(await withJsonOwnerFileLock(async () => 'acquired', {
-    lockPath, timeoutMs:1000, staleAfterMs:10, pollIntervalMs:5,
-  }), 'acquired');
-  assert.deepEqual(await readdir(`${lockPath}.waiters`), []);
-});
-
-test('a timed-out head leaves the queue and its successor can acquire', async t => {
-  const fixture = await createTempFixture(t, {prefix:'hstack-json-owner-timeout-head-'});
-  const lockPath = fixture.path('owner.lock');
-  let release;
-  const held = new Promise(resolve => { release = resolve; });
-  let entered;
-  const entry = new Promise(resolve => { entered = resolve; });
-  const holder = withJsonOwnerFileLock(async () => { entered(); await held; }, {lockPath});
-  let next;
-  try {
-    await entry;
-    await assert.rejects(withJsonOwnerFileLock(async () => assert.fail('head entered early'), {
-      lockPath, timeoutMs:30, pollIntervalMs:5,
-    }), /Timed out waiting/);
-    assert.deepEqual(await readdir(`${lockPath}.waiters`), []);
-    next = withJsonOwnerFileLock(async () => 'next', {lockPath, pollIntervalMs:5});
-    release();
-    assert.equal(await next, 'next');
-  } finally {
-    release();
-    await Promise.allSettled([holder, next].filter(Boolean));
-  }
-});
-
-test('legacy exclusive-create contenders can bypass the queue without deadlocking queued waiters', async t => {
-  const fixture = await createTempFixture(t, {prefix:'hstack-json-owner-legacy-'});
-  const lockPath = fixture.path('owner.lock');
-  const legacyRaw = JSON.stringify({pid:process.pid, createdAtMs:Date.now(), updatedAtMs:Date.now()});
-  // The preceding implementation's shared-file protocol: wx plus PID/heartbeat
-  // JSON, with no knowledge of queue entries or the registration lock.
-  writeFileSync(lockPath, legacyRaw, {flag:'wx'});
-  const order = [];
-  const tasks = [];
-  try {
-    for (const [name, pollIntervalMs] of [['first', 100], ['second', 5]]) {
-      let observed;
-      const waiting = new Promise(resolve => { observed = resolve; });
-      tasks.push(withJsonOwnerFileLock(async () => order.push(name), {
-        lockPath, timeoutMs:2000, pollIntervalMs, onWait:observed,
-      }));
-      await waiting;
-    }
-    unlinkSync(lockPath);
-    writeFileSync(lockPath, legacyRaw, {flag:'wx'}); // An already loaded legacy waiter wins.
-    await delay(20);
-    assert.deepEqual(order, [], 'queued code must still exclude a legacy owner');
-    unlinkSync(lockPath);
-    await Promise.all(tasks);
-    assert.deepEqual(order, ['first', 'second']);
-  } finally {
-    if (await readFile(lockPath, 'utf8').catch(() => null) === legacyRaw) unlinkSync(lockPath);
-    await Promise.allSettled(tasks);
   }
 });
 
@@ -650,32 +566,9 @@ test('a cancelled contender stops waiting without disturbing the active owner', 
     ]);
     assert.equal(outcome, 'AbortError');
     assert.equal(await readFile(lockPath, 'utf8'), originalOwner);
-    assert.deepEqual(await readdir(`${lockPath}.waiters`), [], 'cancellation must remove its queue entry');
   } finally {
     releaseHolder();
     await Promise.allSettled([holder, contender].filter(Boolean));
     await rm(root, { recursive: true, force: true });
   }
-});
-
-
-test('a satisfied queued mutation leaves without entering the exclusive action', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'hstack-json-satisfied-mutation-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const lockPath = join(root, 'mutation.lock');
-  let release, entered;
-  const held = new Promise(resolve => { release = resolve; });
-  const started = new Promise(resolve => { entered = resolve; });
-  const holder = withJsonOwnerFileLock(async () => { entered(); await held; }, { lockPath });
-  await started;
-  let required = true, observed;
-  const waiting = new Promise(resolve => { observed = resolve; });
-  const queued = withJsonOwnerFileLock(() => assert.fail('satisfied mutation acquired exclusive action'), {
-    lockPath, shouldAcquire: () => required, onWait: () => observed(),
-  });
-  await waiting;
-  required = false;
-  release();
-  await Promise.all([holder, queued]);
-  assert.equal(await withJsonOwnerFileLock(() => 'next', { lockPath }), 'next');
 });
