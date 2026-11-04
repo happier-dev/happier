@@ -42,6 +42,73 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent'] as const)(
+    'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
+      const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
+        accountId: 'alice', currentAccount: true });
+      const features = createRootLayoutFeaturesResponse();
+      expect(tryWriteServerEnabledBitInPlace(features, 'voice', true)).toBe(true);
+      home.answer(serverId, '/v1/features', { body: features });
+      let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
+        t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: source !== 'voice-off' } },
+      };
+      let version = 1;
+      home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content, version } }) });
+      home.answer(serverId, 'POST /v2/account/settings', { select: raw => {
+        const request = AccountSettingsV2UpdateRequestSchema.parse(raw);
+        expect(request.expectedVersion).toBe(version);
+        if (request.content?.t !== 'plain') throw new Error('Expected the plain settings fixture');
+        content = request.content;
+        return { body: { success: true, version: ++version } };
+      } });
+      const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+      setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'live-person-call',
+        status: 'connected', mode: 'listening', canStop: true });
+      const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+        playHostText: async () => ({ status: 'completed' as const }) });
+      let noteApproval!: () => void;
+      const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
+      home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
+      const controller = new AbortController();
+      const input = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
+      const pending = source === 'coding-agent'
+        ? createDefaultActionExecutor().execute('settings.set', input, {
+          surface: 'agent', serverId, actionRequestId: 'coding-session-request', signal: controller.signal,
+        }).then(result => result)
+        : handlers.action_execute!({ actionId: 'settings.set', input }, {
+          serverId, effectId: 'live-person-request', signal: controller.signal,
+          turnOrigin: source === 'synthetic' ? 'synthetic' : 'person',
+        }).then(value => JSON.parse(value));
+      try {
+        const outcome = await Promise.race([
+          pending.then(value => ({ kind: 'settled', value })),
+          approvalCreated.then(() => ({ kind: 'approval' })),
+        ]);
+        if (source === 'voice-on') {
+          expect(outcome).toMatchObject({ kind: 'settled', value: { ok: true,
+            result: { anchor: input.anchor, value: input.value } } });
+          expect(home.artifacts(serverId).list()).toEqual([]);
+          expect(version).toBe(2);
+        } else {
+          expect(outcome).toEqual({ kind: 'approval' });
+          expect(version).toBe(1);
+          const asks = home.artifacts(serverId).list();
+          expect(asks).toHaveLength(1);
+          expect(await createDefaultActionExecutor().execute('approval.request.decide', {
+            artifactId: asks[0]!.id, decision: 'approve',
+          }, { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+          expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+            artifactId: asks[0]!.id, actionId: 'settings.set' } });
+          expect(version).toBe(2);
+          expect(home.artifacts(serverId).list()).toHaveLength(1);
+        }
+      } finally {
+        controller.abort();
+        await pending.catch(() => undefined);
+        resetVoiceSessionStoreForTests();
+      }
+    },
+  );
   it('projects every public review-comment operation through the same Voice resolver and handler', () => {
     const tools = listVoiceToolActionSpecs();
     const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });

@@ -1992,11 +1992,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     kind: 'ready',
     admission,
     invocation: createOneShotInvocation(async () => {
-      try {
-        admission.context.assertDecisionAuthorityCurrent?.();
-      } catch (error) {
-        return settleActionOutput(admission.actionId, { ok: false, ...normalizeActionExecutorThrownError(error) });
-      }
       return runOnce
         ? settleActionOutput(admission.actionId, await runOnce())
         : await executeCoreTerminal(

@@ -1,5 +1,6 @@
 import { readSpokenActionOutcomeOwner, resolveSpokenActionOutcome } from '@/voice/context/spokenActionOutcome';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
+import type { SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import {
   createVoiceToolHandlers,
@@ -134,6 +135,7 @@ function redactCompletedLocalEffectOutcome(
 export async function runVoiceAgentTurnWithTools(params: Readonly<{
   sessionId: string;
   userText: string;
+  turnOrigin?: SpokenActionTurnOrigin;
   durableLocalId: string;
   currentToolSessionId?: string | null;
   currentToolSessionAddress?: SessionAddress | null;
@@ -202,6 +204,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     toolName: string;
     args: unknown;
     handler: VoiceToolHandler;
+    turnOrigin: SpokenActionTurnOrigin;
   }>): Promise<Readonly<{
     result: LocalVoiceAgentToolResultEntry;
     completedOrReused: boolean;
@@ -223,6 +226,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         const parsedResult = parseToolResult(await input.handler(input.args, {
           ...(params.signal ? { signal: params.signal } : {}),
           effectId: input.effectId,
+          turnOrigin: input.turnOrigin,
         }));
         const result = readToolResultErrorCode(parsedResult) === 'action_failed'
           ? createLocalToolErrorResult(input.toolName, input.args, 'outcome_unknown')
@@ -240,6 +244,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
   const runActionsOnce = async (
     actions: ReadonlyArray<unknown>,
+    turnOrigin: SpokenActionTurnOrigin,
   ): Promise<Readonly<{
     results: LocalVoiceAgentToolResultEntry[];
     interruptedAfterRetainedOutcome: boolean;
@@ -277,6 +282,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           toolName,
           args: action?.args ?? null,
           handler,
+          turnOrigin,
         });
         results.push(retained.result);
         if (retained.completedOrReused && isAbortRequested(params.signal)) {
@@ -289,6 +295,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         const value = await handler(action?.args ?? null, {
           ...(params.signal ? { signal: params.signal } : {}),
           ...(effectId ? { effectId } : {}),
+          turnOrigin,
         });
         throwIfAborted(params.signal);
         results.push({
@@ -381,7 +388,8 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       };
     }
 
-    const actionRun = await runActionsOnce(actions);
+    // Tool-result rounds continue the initiating turn, including its approval authority.
+    const actionRun = await runActionsOnce(actions, params.turnOrigin ?? 'person');
     const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
     const outcomes = toolResults.map(resolveSpokenActionOutcome).filter(outcome => outcome !== null);

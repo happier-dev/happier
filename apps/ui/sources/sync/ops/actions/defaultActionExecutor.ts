@@ -1044,9 +1044,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         artifactId, request,
         read: async id => await (artifactAccount ? artifactAccount.fetchArtifact(id, { fresh: true }) : sync.fetchArtifactWithBody(id, { fresh: true })),
         write: async (basis, header, body) => {
-          context?.assertDecisionAuthorityCurrent?.();
           if (artifactAccount) {
-            await artifactAccount.updateArtifact(artifactId, header, body, basis, context?.assertDecisionAuthorityCurrent);
+            await artifactAccount.updateArtifact(artifactId, header, body, basis);
             return;
           }
           // Focused Sync borrows this validated read as its expected CAS basis.
@@ -2844,7 +2843,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           // Private authenticated transport metadata, not caller-authored Action input.
           payload: { artifactId, sessionId: subject.personaSessionRef.sessionId, decision,
             ...(context.surface === 'voice' ? { decisionSource: 'voice' as const } : {}) }, timeoutMs: null,
-          ...(context?.assertDecisionAuthorityCurrent ? { onIssued: context.assertDecisionAuthorityCurrent } : {}),
           ...(signal ? { signal } : {}),
         });
         accountContext.assertResultCurrent(getActionSpec('approval.request.decide').sideEffectClass);
@@ -3704,7 +3702,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       try {
         await withAccountLifetime(signal, ownedSignal => sessionRespondToPermission(sessionId, request, {
           serverId: serverId ?? undefined, signal: ownedSignal,
-          ...(context?.assertDecisionAuthorityCurrent ? { onIssued: context.assertDecisionAuthorityCurrent } : {}),
         }));
       } catch (error) {
         return projectSessionInteractionRpcFailure(error);
@@ -3776,7 +3773,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
           ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
         }, { serverId: serverId ?? undefined, signal: ownedSignal,
-          ...(context?.assertDecisionAuthorityCurrent ? { onIssued: context.assertDecisionAuthorityCurrent } : {}),
         })));
       } catch (error) {
         return projectSessionInteractionRpcFailure(error);
@@ -4595,14 +4591,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       actionsSettings: resolveActionsSettingsSnapshot(),
       surface,
       authority,
-      // This closure belongs to the captured Account, not the invoking model.
-      // Re-read after suspension; never retract an already-issued effect receipt.
-      assertDecisionAuthorityCurrent: voiceCanApproveRequests && authority === 'present_user'
-        ? () => {
-          if (readAccountSettingsSnapshot().voice.canApproveRequests !== true) {
-            throw new HappyError('present_user_required', false, { code: 'present_user_required' });
-          }
-        } : undefined,
       ...(actionCaller ? { actionCaller } : {}),
       ...(accountContext ? { managedMachineCreationEnabled: accountContext.settings.managedMachineCreationEnabled } : {}),
       ...((surface === 'ui' || surface === 'voice' || surface === 'plugin') && (credential === 'account' || credential === 'terminal')

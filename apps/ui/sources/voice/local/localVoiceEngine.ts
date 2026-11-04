@@ -1153,6 +1153,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
           voiceAgentSessions.sendInterruptingTextUpdate(nextSessionId, userText, opts),
         stop: (nextSessionId) => voiceAgentSessions.stop(nextSessionId),
       },
+      turnOrigin: 'synthetic',
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
       onTtsStopped: noteTtsStopped,

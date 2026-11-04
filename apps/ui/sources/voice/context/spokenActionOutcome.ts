@@ -37,7 +37,7 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   // Direct tools flatten the envelope; action_execute retains it. Neither
   // transport metadata nor a previous presentation belongs to owner output.
   const { ok: _ok, summary: _summary, ...body } = record(envelope.result) ?? envelope;
-  if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success || body.kind === 'read_back_and_confirm') {
+  if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success) {
     return t('approvals.status.open');
   }
   if (owner === 'settings.set') {

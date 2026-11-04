@@ -8,17 +8,9 @@ export const VOICE_ACTIONS_BLOCK = {
   endTag: `</${VOICE_ACTIONS_TAG}>`,
 } as const;
 
-/** Untrusted model transport binding; only the live host's pending operation can confirm it. */
-export const VoiceActionConfirmationBindingSchema = z.strictObject({
-  actionRequestId: z.string().check(z.trim(), z.minLength(1)),
-  inputDigest: z.string().check(z.trim(), z.minLength(1)),
-});
-export type VoiceActionConfirmationBinding = z.infer<typeof VoiceActionConfirmationBindingSchema>;
-
 export type VoiceAssistantAction = Readonly<{
   t: string;
   args: unknown;
-  confirmation?: VoiceActionConfirmationBinding;
 }>;
 
 type VoiceActionSchemaEntry = Readonly<{
@@ -68,7 +60,6 @@ function buildVoiceAssistantActionSchema(): z.ZodMiniType<VoiceAssistantAction> 
       z.object({
         t: z.literal(toolName),
         args: inputSchema,
-        confirmation: z.optional(VoiceActionConfirmationBindingSchema),
       }),
     ];
   });
@@ -172,20 +163,16 @@ function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | n
   const inputSchema = getVoiceActionSchemaByToolName().get(toolName);
   if (!inputSchema) return null;
 
-  const rawConfirmation = (rawAction as Readonly<Record<string, unknown>>).confirmation;
-  const confirmation = rawConfirmation === undefined ? undefined : VoiceActionConfirmationBindingSchema.safeParse(rawConfirmation);
-  if (confirmation && !confirmation.success) return null;
-  const envelope = confirmation?.success ? { confirmation: confirmation.data } : {};
   const rawArgs = (rawAction as { args?: unknown }).args;
   const direct = inputSchema.safeParse(rawArgs);
   if (direct.success) {
-    return { t: toolName, args: direct.data, ...envelope };
+    return { t: toolName, args: direct.data };
   }
 
   const coercedArgs = coerceVoiceActionValueForSchema(rawArgs, inputSchema);
   const coerced = inputSchema.safeParse(coercedArgs);
   if (!coerced.success) return null;
-  return { t: toolName, args: coerced.data, ...envelope };
+  return { t: toolName, args: coerced.data };
 }
 
 export function extractVoiceActionsFromAssistantText(

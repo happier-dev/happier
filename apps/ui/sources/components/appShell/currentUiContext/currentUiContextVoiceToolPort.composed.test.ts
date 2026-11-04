@@ -636,13 +636,13 @@ async function startSpokenConfirmation(serverId: string, adapterId: string, canA
 }
 
 describe('current UI context Voice tool port', () => {
-    it.each(['native', 'local', 'altered', 'command', 'tap', 'unavailable'] as const)('binds spoken confirmation to the prepared contributed inner effect (%s)', async runtimeShape => {
+    it.each(['native', 'command', 'tap', 'unavailable', 'synthetic', 'missing'] as const)('binds spoken confirmation to the prepared contributed inner effect (%s)', async runtimeShape => {
         const handler = vi.fn(async (value: unknown) => ({ applied: value }));
         const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['voice'], dangerLevel: 'writesRemote',
             confirmation: { title: 'Confirm client mutation', inputFields: [{ path: 'ticket', title: 'Ticket' }] } });
         const summary = 'Confirm client mutation\n\nTicket: original';
         await fixture.composition.reconcile([fixture.activation]);
-        const { getVoiceSessionSpokenActionConfirmation, resetVoiceSessionStoreForTests } = await startSpokenConfirmation(clientHomeId, runtimeShape, runtimeShape !== 'tap');
+        const { resetVoiceSessionStoreForTests } = await startSpokenConfirmation(clientHomeId, runtimeShape, runtimeShape !== 'tap');
         const command: CurrentUiContextResolvedCommand = { id: COMMAND_ID, command: { kind: 'executeAction', action: CLIENT_ACTION_ID, input: { ticket: 'original' } }, retirementSignal: new AbortController().signal };
         const port = createCurrentUiContextVoiceToolPort({
             reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => command, subscribe: () => () => {} },
@@ -653,22 +653,23 @@ describe('current UI context Voice tool port', () => {
             ? { status: 'unavailable' as const, code: 'host_text_playback_unavailable' }
             : { status: 'completed' as const });
         const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: clientHomeId, currentUiContext: port,
-            ...(['native', 'command', 'tap', 'unavailable'].includes(runtimeShape) ? { playHostText } : {}),
+            playHostText,
         });
         const controller = new AbortController();
         const tappedConfirmation = new Promise<'tap'>(resolve => { onVisibleVoiceConfirmation = () => resolve('tap'); });
         let pending!: Promise<string>;
-        const invoke = (ticket = 'original', confirmation?: import('@happier-dev/protocol/voice/actions').VoiceActionConfirmationBinding) =>
+        const invoke = (ticket = 'original') =>
             (runtimeShape === 'command' ? handlers.invokeCurrentUiCommand! : handlers.invokeAction!)(runtimeShape === 'command'
                 ? { commandId: COMMAND_ID } : { action: CLIENT_ACTION_ID, input: { ticket } },
-            { serverId: clientHomeId, effectId: confirmation ? 'person-answer-yes' : 'contributed-person-request', signal: controller.signal, ...(confirmation ? { confirmation } : {}) });
+            { serverId: clientHomeId, effectId: 'contributed-person-request', signal: controller.signal,
+                ...(runtimeShape === 'missing' ? {} : { turnOrigin: runtimeShape === 'synthetic' ? 'synthetic' as const : 'person' as const }) });
         await act(async () => { pending = invoke(); });
         try {
             const result = await Promise.race([pending.then(JSON.parse), tappedConfirmation]);
-            if (runtimeShape === 'tap' || runtimeShape === 'unavailable') {
+            if (runtimeShape === 'tap' || runtimeShape === 'unavailable' || runtimeShape === 'synthetic' || runtimeShape === 'missing') {
                 expect(result).toBe('tap');
                 expect(handler).not.toHaveBeenCalled();
-                if (runtimeShape === 'tap') expect(playHostText).not.toHaveBeenCalled();
+                if (runtimeShape !== 'unavailable') expect(playHostText).not.toHaveBeenCalled();
                 else expect(playHostText).toHaveBeenCalledWith(expect.objectContaining({ text: summary }));
                 await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
                 expect(JSON.parse(await pending)).toMatchObject({ ok: true, result: { applied: { ticket: 'original' } } });
@@ -680,31 +681,27 @@ describe('current UI context Voice tool port', () => {
                 expect(playHostText).toHaveBeenCalledWith(expect.objectContaining({ text: summary }));
                 expect(result).toMatchObject({ ok: true, result: { applied: { ticket: 'original' } } });
                 expect(handler).toHaveBeenCalledOnce();
-            } else {
-                expect(handler).not.toHaveBeenCalled();
-                const carrier = getVoiceSessionSpokenActionConfirmation()!;
-                const readBack = carrier.readPending();
-                expect(readBack?.operation.summary).toBe(summary);
-                expect(carrier.completeReadBack(readBack)).toBe(true);
-                const confirmation = (result as { result: { confirmation: import('@happier-dev/protocol/voice/actions').VoiceActionConfirmationBinding } }).result.confirmation;
-                const resumed = JSON.parse(await invoke(runtimeShape === 'altered' ? 'changed' : 'original', confirmation));
-                if (runtimeShape === 'altered') {
-                    expect(resumed).toMatchObject({ ok: false });
-                    expect(handler).not.toHaveBeenCalled();
-                } else {
-                    expect(resumed).toMatchObject({ ok: true, result: { applied: { ticket: 'original' } } });
-                    expect(handler).toHaveBeenCalledOnce();
-                }
             }
         } finally { onVisibleVoiceConfirmation = undefined; controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests(); await fixture.composition.unload(); }
     });
-    it.each(['native', 'local', 'retired', 'session'] as const)('binds spoken confirmation to the exact daemon target and occurrence (%s)', async runtimeShape => {
+    it.each(['native', 'retired', 'session'] as const)('binds spoken confirmation to the exact daemon target and occurrence (%s)', async runtimeShape => {
         const store = await startSpokenConfirmation(actionHomeId, runtimeShape);
         let projection = createDaemonActionProjection({ dangerLevel: 'writesRemote',
             ...(runtimeShape === 'session' ? { sessionTarget: { field: 'sessionId', cardinality: 'one' } as const } : {}) });
         if (runtimeShape === 'session') {
+            const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+            await loadSyncSingletonForTests();
             const { createSessionFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-            const session = createPlainSessionByIdResponseFixture(createSessionFixture({ id: 'voice-target' }));
+            const targetSession = createSessionFixture({ id: 'voice-target', serverId: actionHomeId });
+            const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+            const state = getStorage().getState();
+            getStorage().setState({
+                sessions: { ...state.sessions, [targetSession.id]: targetSession },
+                sessionListRowsByServerId: { ...state.sessionListRowsByServerId,
+                    [actionHomeId]: { ...state.sessionListRowsByServerId[actionHomeId],
+                        [targetSession.id]: buildSessionListRenderableFromSession(targetSession) } },
+            });
+            const session = createPlainSessionByIdResponseFixture(targetSession);
             for (const suffix of ['', '?accessProjectionVersion=1']) {
                 homes.answer(actionHomeId, `/v2/sessions/voice-target${suffix}`, { body: session });
             }
@@ -720,33 +717,25 @@ describe('current UI context Voice tool port', () => {
             reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
             readProjection: () => projection, readNavigationBinding: () => null,
         });
-        const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
-        const playHostText = vi.fn(async () => ({ status: 'completed' as const }));
-        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: actionHomeId, currentUiContext: port,
-            ...(['native', 'session'].includes(runtimeShape) ? { playHostText } : {}) });
+        const playHostText = vi.fn(async () => {
+            if (runtimeShape === 'retired') {
+                const key = `${ACTION_ID.pluginId}/${ACTION_ID.localId}`;
+                projection = { ...projection, actionsById: { [key]: { ...projection.actionsById[key]!, occurrenceId: 'replacement-occurrence' } } };
+            }
+            return { status: 'completed' as const };
+        });
         const controller = new AbortController();
-        const invoke = (confirmation?: import('@happier-dev/protocol/voice/actions').VoiceActionConfirmationBinding) => handlers.invokeAction!(
-            { action: ACTION_ID, input: operands }, { serverId: actionHomeId, effectId: confirmation ? 'person-answer-yes' : 'daemon-person-request', signal: controller.signal,
-                ...(confirmation ? { confirmation } : {}) });
+        const invoke = async () => JSON.stringify(await requireActionInvoker(port)({
+            action: ACTION_ID, input: operands, signal: controller.signal,
+            spokenActionRequest: { actionRequestId: 'daemon-person-request', turnOrigin: 'person', playHostText },
+        }));
         const effects = () => daemonReply.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
         const tapped = new Promise<'tap'>(resolve => { onVisibleVoiceConfirmation = () => resolve('tap'); });
         let pending!: Promise<string>;
         await act(async () => { pending = invoke(); });
         try {
-            let result = await Promise.race([pending.then(JSON.parse), tapped]);
+            const result = await Promise.race([pending.then(JSON.parse), tapped]);
             expect(result).not.toBe('tap');
-            if (runtimeShape !== 'native' && runtimeShape !== 'session') {
-                expect(effects()).toHaveLength(0);
-                const carrier = store.getVoiceSessionSpokenActionConfirmation()!;
-                const readBack = carrier.readPending();
-                expect(readBack?.operation.summary).toBe('Confirm ticket creation');
-                expect(carrier.completeReadBack(readBack)).toBe(true);
-                if (runtimeShape === 'retired') {
-                    const key = `${ACTION_ID.pluginId}/${ACTION_ID.localId}`;
-                    projection = { ...projection, actionsById: { [key]: { ...projection.actionsById[key]!, occurrenceId: 'replacement-occurrence' } } };
-                }
-                result = JSON.parse(await invoke((result as { result: { confirmation: import('@happier-dev/protocol/voice/actions').VoiceActionConfirmationBinding } }).result.confirmation));
-            }
             if (runtimeShape === 'retired') {
                 expect(result).toMatchObject({ ok: false });
                 expect(effects()).toHaveLength(0);

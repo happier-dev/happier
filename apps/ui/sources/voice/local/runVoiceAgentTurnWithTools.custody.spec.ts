@@ -3,6 +3,7 @@ import {
   getStorage, registerLocalVoiceEngineHarnessHooks, warmLocalVoiceEngineHarnessGraph,
   localVoicePendingEnqueue, sessionRpcWithServerScope, readLocalVoiceHttpRequests,
   localVoiceHomeId, acknowledgeLocalVoicePendingEnqueue, loadLocalVoiceEngineWithCompatState,
+  setLocalVoiceHttpResponder,
 } from './localVoiceEngine.testHarness';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
@@ -119,6 +120,49 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       currentToolSessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' },
       voiceAgentSessions, ...options });
   }
+
+  it.each([
+    { name: 'person direct write ON', turnOrigin: 'person', canApproveRequests: true, lookup: false, expected: 'executed' },
+    { name: 'person lookup then write ON', turnOrigin: 'person', canApproveRequests: true, lookup: true, expected: 'executed' },
+    { name: 'unsolicited follow-up turn ON', turnOrigin: 'synthetic', canApproveRequests: true, lookup: true, expected: 'approval' },
+    { name: 'person lookup then write OFF', turnOrigin: 'person', canApproveRequests: false, lookup: true, expected: 'approval' },
+  ] as const)('preserves approval authority for the whole turn: $name', async ({ turnOrigin, canApproveRequests, lookup, expected }) => {
+    await prepareSession();
+    const storage = await getStorage();
+    storage.__setState({ settings: { ...storage.getState().settings,
+      voice: { ...storage.getState().settings.voice, canApproveRequests } } });
+    const settings = storage.getState().settings;
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected', mode: 'listening', canStop: true });
+    let created!: () => void;
+    const approval = new Promise<'approval'>(resolve => { created = () => resolve('approval'); });
+    setLocalVoiceHttpResponder(async request => {
+      if (request.path === '/v2/account/settings' && request.method === 'GET') {
+        return Response.json({ version: 1, content: { t: 'plain', v: settings } });
+      }
+      if (request.path === '/v1/artifacts' && request.method === 'POST') created();
+      return undefined;
+    });
+    if (lookup) queueAction('read-before-write', { t: 'settings_get', args: { anchor: 'voiceConversations.minSpeechMs' } });
+    queueAction('origin-setting', { t: 'settings_set', args: { anchor: 'voiceConversations.minSpeechMs', value: 1100 } });
+    queueFinal();
+    const controller = new AbortController();
+    const pending = run('set minimum speech to 1100', { signal: controller.signal,
+      turnOrigin,
+      playHostText: async () => ({ status: 'completed' as const }) });
+    try {
+      const result = await Promise.race([approval, pending.then(() => 'executed' as const)]);
+      expect(result).toBe(expected);
+      if (expected === 'executed') {
+        const outcome = await pending;
+        expect(outcome.toolResultBatches[lookup ? 1 : 0]?.[0]?.result, JSON.stringify(outcome.toolResultBatches))
+          .toMatchObject({ ok: true, value: 1100 });
+      }
+    } finally {
+      controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests();
+    }
+  });
 
   it('reads Account settings from the bound Voice Home without a coding Session target', async () => {
     await prepareSession();

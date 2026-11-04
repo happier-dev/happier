@@ -14,15 +14,13 @@ function accountApproval() {
 }
 
 describe('target Action approval decision custody', () => {
-  it('retains the executed receipt after Voice delegation is revoked following committed approval', async () => {
+  it('retains the target executor receipt through decision settlement', async () => {
     const { approvalInputCustody: _liveOnly, ...replayable } = accountApproval();
     let stored = TargetActionApprovalRequestV1Schema.parse({ ...replayable,
       replayPlacement: { serverId: 'home', machineId: 'machine' } });
-    let delegationEnabled = true;
     const decide = createTargetActionApprovalDecision({
       read: async () => stored,
-      update: async ({ request, context }) => {
-        context?.assertDecisionAuthorityCurrent?.();
+      update: async ({ request }) => {
         const admission = admitTargetActionApprovalTransition(stored, request);
         if (!admission.ok) return admission;
         stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)));
@@ -35,7 +33,6 @@ describe('target Action approval decision custody', () => {
         const executing = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'executing' });
         const claimFailure = await persist(executing);
         if (claimFailure) return claimFailure;
-        delegationEnabled = false;
         const executed = TargetActionApprovalRequestV1Schema.parse({ ...executing, status: 'executed',
           execution: { executedAtMs: nextTimestamp(executing), ok: true, result: { written: true } } });
         return await persist(executed) ?? buildTargetActionApprovalDecisionResult(executed);
@@ -43,9 +40,6 @@ describe('target Action approval decision custody', () => {
     });
     expect(await decide({ artifactId: 'voice-receipt', decision: 'approve', context: {
       surface: 'voice', authority: 'present_user', runtimeAccountId: 'reviewer', actionCaller: { kind: 'host' },
-      assertDecisionAuthorityCurrent: () => {
-        if (!delegationEnabled) throw Object.assign(new Error('present_user_required'), { code: 'present_user_required' });
-      },
     } })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
     expect(stored).toMatchObject({ status: 'executed', decision: { kind: 'approve', decidedVia: 'voice' },
       execution: { ok: true, result: { written: true } } });

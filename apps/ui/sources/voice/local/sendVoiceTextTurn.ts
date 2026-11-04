@@ -61,6 +61,7 @@ export async function sendVoiceTextTurn(params: {
   sessionId: string;
   settings: any;
   userText: string;
+  turnOrigin?: import('@/voice/tools/executeSpokenAction').SpokenActionTurnOrigin;
   playbackController: VoicePlaybackControllerLike;
   voiceAgentSessions: VoiceAgentSessionsLike;
   signal?: AbortSignal;
@@ -433,6 +434,7 @@ export async function sendVoiceTextTurn(params: {
       const agentTurnResult = await runVoiceAgentTurnWithTools({
         sessionId,
         userText,
+        turnOrigin: params.turnOrigin,
         durableLocalId: params.durableDispatch!.localId,
         currentToolSessionAddress,
         ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),

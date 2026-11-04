@@ -6,6 +6,7 @@ import { Session } from "@/sync/domains/state/storageTypes";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import { Message } from "@happier-dev/session-core/messages";
 import { storage } from '@/sync/domains/state/storage';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { trimIdent } from "@/utils/strings/trimIdent";
@@ -348,7 +349,11 @@ function formatMessageWithPrefs(message: Message, prefs?: VoiceContextFormatterP
     } else if (message.kind === 'user-text') {
         const readable = prepareTranscriptMessageBody(message).text ?? '';
         const text = resolved.voiceShareFilePaths ? readable : redactVoicePathLikeString(readable);
-        lines.push(`User sent message: \n<text>${text}</text>`);
+        const author = message.accountActor
+            ? resolveAccountActorPresentation(message.accountActor, storage.getState().settingsScope)
+            : null;
+        const label = author && !author.isSelf ? `Message from ${author.name}:` : 'User sent message:';
+        lines.push(`${label} \n<text>${text}</text>`);
     } else if (message.kind === 'tool-call' && resolved.voiceShareToolNames) {
         const toolDescription = message.tool.description ? ` - ${message.tool.description}` : '';
         lines.push(`Coding assistant is using ${message.tool.name}${toolDescription}`);

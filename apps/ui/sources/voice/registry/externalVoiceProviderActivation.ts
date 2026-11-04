@@ -660,8 +660,7 @@ export function createExternalProtocol(
           // Mediated operations await resolution at their service admission.
           // Raw clients capture authority synchronously, before the leaf runs.
           if (credential && createInvocationRawCredentials) {
-            await awaitAccountVoiceCredentialResolution({ ...credential, signal, isCurrent: snapshot.isCurrent,
-              machineId: resolveVoiceExecutionMachineId() });
+            await awaitAccountVoiceCredentialResolution({ signal });
           }
           let attemptPolicy = attemptPreparationByAttemptId.get(prepareInput.attemptId)?.policy;
           if (declaration.execution?.kind !== 'experimental_agent_session_realtime' && !attemptPolicy) {

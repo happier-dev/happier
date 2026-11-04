@@ -35,8 +35,7 @@ import {
   isVoiceActionAvailableInState,
 } from './resolveDisabledVoiceActionIds';
 import { jsonError, jsonOk, serializeVoiceActionExecuteResult } from './voiceActionResult';
-import type { VoiceActionConfirmationBinding } from '@happier-dev/protocol/voice/actions';
-import { executeSpokenAction } from './executeSpokenAction';
+import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 
 export { serializeVoiceActionExecuteResult } from './voiceActionResult';
@@ -56,8 +55,8 @@ export type VoiceToolInvocationContext = Readonly<{
   callId?: string;
   /** Host-captured Home scope; never accepted from tool arguments. */
   serverId?: string | null;
-  /** Untrusted model binding; the live carrier, never this field, owns confirmation. */
-  confirmation?: VoiceActionConfirmationBinding;
+  /** Origin captured by the host turn runner; never accepted from tool arguments. */
+  turnOrigin?: SpokenActionTurnOrigin;
 }>;
 
 export type VoiceToolHandler = (parameters: unknown, context?: VoiceToolInvocationContext) => Promise<string>;
@@ -410,7 +409,7 @@ export function createVoiceToolHandlers(
           ? { actionRequestId: resolveVoiceActionRequestId(ctx)! }
           : {}),
         ...(ctx?.signal ? { signal: ctx.signal } : {}),
-      }, ctx?.confirmation, deps.playHostText);
+      }, ctx?.turnOrigin, deps.playHostText);
     } catch (error) {
       // An aborted invocation that throws supplied no completed disposition.
       // Present its cancellation as a tool result; unrelated failures still
@@ -572,7 +571,7 @@ export function createVoiceToolHandlers(
     const outcome = await currentUiContext.invokeCurrentUiCommand({
       commandId: commandInput.commandId,
       spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
-        confirmation: context?.confirmation, playHostText: deps.playHostText },
+        turnOrigin: context?.turnOrigin, playHostText: deps.playHostText },
       ...(context?.signal ? { signal: context.signal } : {}),
     });
     // The UI bridge intentionally returns only its canonical settlement. Do
@@ -603,7 +602,7 @@ export function createVoiceToolHandlers(
     const outcome = await currentUiContext.invokeAction({
       action: actionInput.action,
       spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
-        confirmation: context?.confirmation, playHostText: deps.playHostText },
+        turnOrigin: context?.turnOrigin, playHostText: deps.playHostText },
       ...(actionInput.input === undefined ? {} : { input: actionInput.input }),
       ...(context?.signal ? { signal: context.signal } : {}),
     });
@@ -660,14 +659,12 @@ export function createVoiceToolHandlers(
     if (!handler || !isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId)) {
       return JSON.stringify({ ok: false, errorCode: 'action_unavailable', error: 'action_unavailable' });
     }
-    // Reuse the same executor and Voice overrides. The model's binding is
-    // only a reference; the live carrier and shared factory own confirmation.
+    // Reuse the same executor and host-captured turn origin for Voice overrides.
     const isOverride = target.toolName === 'answerUserActionRequest'
       || isCurrentUiContextVoiceAction(target.spec.id as ActionId);
-    const invocationContext = target.confirmation ? { ...context, confirmation: target.confirmation } : context;
     const result: unknown = JSON.parse(isOverride
-      ? await handler(target.input, invocationContext)
-      : await execute(target.toolName, target.input, invocationContext, true));
+      ? await handler(target.input, context)
+      : await execute(target.toolName, target.input, context, true));
     const failure = asPlainObject(result);
     if (!isOverride && failure?.ok === true) return JSON.stringify(result);
     return JSON.stringify(failure?.ok === false

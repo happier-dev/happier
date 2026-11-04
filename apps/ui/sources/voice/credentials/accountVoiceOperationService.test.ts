@@ -492,6 +492,10 @@ describe('account Voice operation service', () => {
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (path === '/v1/account/entity-rows/connected-accounts/purposes') return Response.json({
+          status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes',
+            value: credentialFixture.settings.connectedPurposes ?? { v: 1, bindings: [] } } },
+        });
         if (path === '/v1/account/saved-secrets/resources/materials') return catalogBoundary.readMaterials();
         return Response.json({}, { status: 404 });
       },

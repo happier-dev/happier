@@ -202,9 +202,7 @@ await import('@/sync/syncEngine');
 await import('./defaultActionExecutor');
 
 describe('createDefaultActionExecutor approvals', () => {
-    it.each([
-        ['approve', 1], ['reject', 1], ['approve', 2], ['reject', 2],
-    ] as const)('revokes a suspended Voice %s before settlement at approval read %s', async (decision, heldRead) => {
+    it.each(['approve', 'reject'] as const)('keeps a suspended admitted Voice %s through its decision CAS', async decision => {
         const { artifactId } = await invitationApproval('account.name.set', false);
         homes.answer(homeId, '/v1/account/profile', { body: { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 10 } });
         let reached!: () => void;
@@ -212,9 +210,8 @@ describe('createDefaultActionExecutor approvals', () => {
         const readReached = new Promise<void>(resolve => { reached = resolve; });
         const readRelease = new Promise<void>(resolve => { release = resolve; });
         const path = '/v1/artifacts/' + artifactId;
-        let reads = 0;
         homes.answer(homeId, 'GET ' + path, { select: async () => {
-            if (++reads === heldRead) { reached(); await readRelease; }
+            reached(); await readRelease;
             const response = await homes.artifacts(homeId).handle(path, { method: 'GET' });
             if (!response) throw new Error('Missing approval boundary response');
             return { body: await response.json() };
@@ -224,25 +221,23 @@ describe('createDefaultActionExecutor approvals', () => {
             await Promise.race([readReached, pending.then(result => { throw new Error('No held read: ' + JSON.stringify(result)); })]);
             await setVoiceApprovalDelegation(false);
         } finally { release(); }
-        expect(await pending).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-        expect(persistedApproval(artifactId).status).toBe('open');
-        expect(homes.requestsFor(path).filter(request => request.input !== null)).toEqual([]);
-        expect(homes.requestsFor('/v1/account/profile').filter(request => request.input !== null)).toEqual([]);
+        expect(await pending).toMatchObject({ ok: true });
+        expect(persistedApproval(artifactId).status).toBe(decision === 'approve' ? 'executed' : 'rejected');
     });
 
-    it('revokes Voice cancellation of approved unclaimed work before its fresh CAS write', async () => {
-        const artifactId = 'voice-approved-cancel';
-        const approved = ApprovalRequestSchema.parse({ ...approvalRequest(), status: 'approved', updatedAtMs: 2,
-            decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', decidingAccountId: 'account-a' } });
+    it('keeps admitted Voice cancellation of approved unclaimed work through its decision CAS', async () => {
+        const { artifactId } = await invitationApproval('account.name.set', false);
+        const initial = persistedApproval(artifactId);
+        const approved = ApprovalRequestSchema.parse({ ...initial, status: 'approved', updatedAtMs: initial.updatedAtMs,
+            decision: { kind: 'approve', decidedAtMs: initial.updatedAtMs, authority: 'present_user', decidingAccountId: 'account-a' } });
         await seedApproval(artifactId, approved);
         let reached!: () => void;
         let release!: () => void;
         const readReached = new Promise<void>(resolve => { reached = resolve; });
         const readRelease = new Promise<void>(resolve => { release = resolve; });
         const path = '/v1/artifacts/' + artifactId;
-        let reads = 0;
         homes.answer(homeId, 'GET ' + path, { select: async () => {
-            if (++reads === 2) { reached(); await readRelease; }
+            reached(); await readRelease;
             const response = await homes.artifacts(homeId).handle(path, { method: 'GET' });
             if (!response) throw new Error('Missing approval boundary response');
             return { body: await response.json() };
@@ -257,9 +252,8 @@ describe('createDefaultActionExecutor approvals', () => {
             const result = await pending;
             const { storage } = await import('@/sync/domains/state/storage');
             expect(storage.getState().settings.voice.canApproveRequests).toBe(false);
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-            expect(persistedApproval(artifactId)).toEqual(approved);
-            expect(homes.requestsFor(path).filter(request => request.input !== null)).toEqual([]);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+            expect(persistedApproval(artifactId).status).toBe('canceled');
             expect(outgoing).toEqual([]);
         } finally {
             release();
@@ -267,14 +261,17 @@ describe('createDefaultActionExecutor approvals', () => {
         }
     });
 
-    it.each(['approve', 'reject'] as const)('revokes a prepared Voice %s before running its decision', async decision => {
+    it.each(['approve', 'reject'] as const)('keeps an admitted Voice %s when the preference changes before execution', async decision => {
         const { artifactId } = await invitationApproval('account.name.set', false);
+        homes.answer(homeId, '/v1/account/profile', { body: { name: 'Captain', firstName: 'Captain', lastName: null, timestamp: 10 } });
         const prepared = await executor.prepare('approval.request.decide', { artifactId, decision }, { surface: 'voice', serverId: homeId });
         expect(prepared.kind).toBe('ready');
         if (prepared.kind !== 'ready') throw new Error('Expected an admitted decision');
         await setVoiceApprovalDelegation(false);
-        expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-        expect(persistedApproval(artifactId).status).toBe('open');
+        expect(await prepared.invocation.run()).toMatchObject({ ok: true });
+        expect(persistedApproval(artifactId).status).toBe(decision === 'approve' ? 'executed' : 'rejected');
+        expect(await executor.execute('approval.request.decide', { artifactId, decision }, { surface: 'voice', serverId: homeId }))
+            .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     });
 
     it('retains a Voice approval receipt when delegation is revoked after its effect was issued', async () => {

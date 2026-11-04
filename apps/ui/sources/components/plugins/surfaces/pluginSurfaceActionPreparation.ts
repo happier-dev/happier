@@ -1,4 +1,3 @@
-import type { VoiceActionConfirmationBinding } from '@happier-dev/protocol/voice/actions';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -6,7 +5,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { executeSpokenAction } from '@/voice/tools/executeSpokenAction';
+import { executeSpokenAction, type SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { preparePluginActionConfirmation } from './pluginSurfaceFeedback';
 import { clientActionFailure, actionOutcomeUnknownFailure, type PluginSurfaceActionDispatchOutcome } from './actionFailure';
@@ -15,7 +14,7 @@ import type { DispatchPluginSurfaceActionInput, PluginSurfaceActionExecutorConte
 /** Host-local evidence from the existing Voice attempt; never a tool-authored authority. */
 export type PluginSurfaceSpokenActionRequest = Readonly<{
     actionRequestId?: string;
-    confirmation?: VoiceActionConfirmationBinding;
+    turnOrigin?: SpokenActionTurnOrigin;
     playHostText?: VoiceHostTextPlayback;
 }>;
 
@@ -81,7 +80,7 @@ export async function executePreparedPluginSurfaceAction(args: Readonly<{
         } };
     };
     const execute: FrontDoorActionExecute = Object.assign(async () => shared('action.invoke', wrapper, context), { confirmed, prepare });
-    const result = await executeSpokenAction(execute, 'action.invoke', exact, context, spoken.confirmation, spoken.playHostText);
+    const result = await executeSpokenAction(execute, 'action.invoke', exact, context, spoken.turnOrigin, spoken.playHostText);
     if (settledOutcome) return settledOutcome;
     if (!result.ok) return actionOutcomeUnknownFailure(result.errorCode, action, args.normalizedInput) ?? clientActionFailure(result.errorCode);
     const parsed = projectNativeJsonValueForTransport(result.result ?? null);
