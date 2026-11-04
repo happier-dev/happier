@@ -1358,4 +1358,24 @@ describe('workspace sync approval operands', () => {
       expect.objectContaining({ path: 'targetMachineId', reference: { kind: 'machine', id: 'machine-2' } }),
     ]));
   });
+  it('keeps raw launch environment and private connected references out of session.spawn_new observations and review', () => {
+    const creation = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      environmentVariables: { API_TOKEN: 'private-environment-secret' },
+      connectedServices: { v: 2, bindingsByServiceId: { 'happier.scm.forge.github/github-account': {
+        source: 'connected', selection: 'profile', profileId: 'private-connected-secret' } } } };
+    const input = creation;
+    const spec = getActionSpec('session.spawn_new');
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    const before = structuredClone(input);
+    for (const projected of [spec.projectObservationInput?.(input), spec.approvalPresentation?.projectInput?.(input)]) {
+      expect(projected).toBeDefined();
+      expect(JSON.stringify(projected)).not.toContain('private-environment-secret');
+      expect(JSON.stringify(projected)).not.toContain('private-connected-secret');
+      expect(projected)
+        .toMatchObject({ executionTarget: creation.executionTarget, agentTarget: creation.agentTarget });
+    }
+    expect(input).toEqual(before);
+  });
+
 });

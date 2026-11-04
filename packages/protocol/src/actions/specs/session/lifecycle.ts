@@ -1,3 +1,8 @@
+import { redactObservationInputPaths } from '../observationRedaction.js';
+
+/** Raw launch environment and private account selections never enter shared Action history. */
+export const projectSessionSpawnNewObservationInput = redactObservationInputPaths('environmentVariables', 'connectedServices');
+
 import { projectSessionSpawnNewActionInputV2 } from '../../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewResultV1Schema, SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '../../../sessions/creation/sessionSpawnNewResultV1.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
@@ -722,6 +727,8 @@ export const SESSION_SPAWN_ACTION_SPECS = Object.freeze([
     inputHints: SessionSpawnNewInputHints,
     cli: { commands: [], inputSchema: SessionSpawnNewTerminalInputSchema, wholeInputSchema: SessionSpawnNewTerminalInputSchema },
     outputSchema: SessionSpawnNewActionResultV1Schema,
+    projectObservationInput: projectSessionSpawnNewObservationInput,
+    approvalPresentation: { summary: () => null, projectInput: projectSessionSpawnNewObservationInput, inputSchema: SessionSpawnNewInputSchema },
     inputSchema: SessionSpawnNewInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
