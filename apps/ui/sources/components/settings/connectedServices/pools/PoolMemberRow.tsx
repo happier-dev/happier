@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -39,15 +38,15 @@ export type PoolMemberNote = Readonly<{ icon: 'info' | 'clock'; text: string }>;
 const LOADING_METERS = ['first', 'second'] as const;
 /**
  * Below this row width the meters move under the member's identity (the lab's phone twin) while the
- * switch and › stay beside the name. Compact rows offer the remaining actions by long press;
+ * switch stays beside the name. Compact rows offer the remaining actions by long press;
  * intentional Organize mode supplies the shared drag grip on phones.
  */
 const INLINE_USAGE_MIN_ROW_WIDTH_PX = PAGE_LIST_METRICS.rowStackBelowWidthPx;
 
 /**
- * A pool member (lab `csvc` PL, round 3): drag handle (priority), a radio that makes it the active
- * member, its name (Active), who it is (email · plan) and — beside it — its own limits on the one
- * meter; the on/off switch (`enabled`), ⋯ for the rest and › to the account. A switched-off member
+ * A pool member (lab `csvc` PL): drag handle (priority), its name (Active), who it is (email · plan) and
+ * — beside it — its own limits on the one meter; the on/off switch (`enabled`) and ⋯ for the rest (make
+ * active, move, remove). The row itself opens the account. A switched-off member
  * says it is not used, and one the pool turned off says why.
  */
 export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
@@ -81,6 +80,8 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
         setInlineUsage((current) => (current === next ? current : next));
     }, []);
 
+    // Beside the name the meter stacks (what is left over the bar, the reset under it) so the row keeps
+    // one line of controls (lab s2svc:pool); under the name, on a narrow row, it runs inline.
     const usage = props.usage.kind === 'meters' && props.usage.meters.length > 0 ? (
         <UsageMeterStack testID={`${props.testID}:meters`}>
             {props.usage.meters.map((meter) => (
@@ -93,6 +94,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                     estimated={meter.status === 'estimated'}
                     now={props.now}
                     size="card"
+                    layout={inlineUsage ? 'stacked' : 'inline'}
                 />
             ))}
         </UsageMeterStack>
@@ -108,37 +110,31 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
         </Text>
     ) : null;
 
-    const leading = (
-        <View style={styles.leading}>
-            {props.reorderHandle}
-            <Pressable
-                testID={`${props.testID}:active-radio`}
-                hitSlop={8}
-                disabled={props.onMakeActive === null}
-                onPress={() => props.onMakeActive?.()}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: props.active, disabled: props.onMakeActive === null }}
-                accessibilityLabel={t('connectedServicesPool.makeActiveA11y', { name: title })}
-            >
-                <Icon
-                    name={props.active ? 'radio-button' : 'circle'}
-                    size={20}
-                    weight={props.active ? 'fill' : 'regular'}
-                    color={props.active ? theme.colors.text.primary : theme.colors.text.tertiary}
-                />
-            </Pressable>
-        </View>
-    );
+    // Making a member active is an occasional decision, so it lives in ⋯ with the other rare actions; the
+    // Active pill beside the name says which member is. The row opens the account.
+    const actions = React.useMemo<ItemAction[]>(() => props.onMakeActive === null ? [...props.actions] : [
+        {
+            id: `${props.testID}:action:make-active`,
+            title: t('connectedServices.detail.groupActions.makeActive'),
+            icon: 'check-circle',
+            onPress: props.onMakeActive,
+        },
+        ...props.actions,
+    ], [props.actions, props.onMakeActive, props.testID]);
 
     const row = (
         <View testID={`${props.testID}:layout`} onLayout={onLayout}>
             <Item
+                // Item measures a trailing operation only while it sits inline and keeps a stacked one
+                // stacked; crossing this row's own breakpoint changes what trails (meters move under the
+                // name), so the row lays its controls out afresh rather than inheriting the wide verdict.
+                key={inlineUsage ? 'inline-usage' : 'usage-below'}
                 testID={props.testID}
                 dataSet={{ entityDragBody: 'true' }}
-                onLongPress={(Platform.OS !== 'web' || !inlineUsage) && props.actions.length > 0 ? openActions : undefined}
-                onContextMenu={!inlineUsage && props.actions.length > 0 ? (event) => { (event as { preventDefault?: () => void }).preventDefault?.(); setActionsOpen(true); } : undefined}
-                accessibilityActions={!inlineUsage ? props.actions.filter((action) => !action.disabled).map((action) => ({ name: action.id, label: action.title })) : undefined}
-                onAccessibilityAction={!inlineUsage ? (event) => props.actions.find((action) => action.id === event.nativeEvent.actionName)?.onPress?.() : undefined}
+                onLongPress={(Platform.OS !== 'web' || !inlineUsage) && actions.length > 0 ? openActions : undefined}
+                onContextMenu={!inlineUsage && actions.length > 0 ? (event) => { (event as { preventDefault?: () => void }).preventDefault?.(); setActionsOpen(true); } : undefined}
+                accessibilityActions={!inlineUsage ? actions.filter((action) => !action.disabled).map((action) => ({ name: action.id, label: action.title })) : undefined}
+                onAccessibilityAction={!inlineUsage ? (event) => actions.find((action) => action.id === event.nativeEvent.actionName)?.onPress?.() : undefined}
                 onKeyDown={!inlineUsage ? (event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault?.(); setActionsOpen(true); } } : undefined}
                 title={title}
                 titleAccessory={props.active ? (
@@ -148,11 +144,15 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                 subtitle={props.identityLabel ?? undefined}
                 subtitleAccessory={props.note ? (
                     <View testID={`${props.testID}:note`} style={styles.note}>
-                        <Icon name={props.note.icon} size={12} color={theme.colors.state.warning.foreground} />
+                        {/* A stale check or an automatic switch-off is a fact, not a call to act: neutral ink (amber means "needs you"). */}
+                        <Icon name={props.note.icon} size={12} color={theme.colors.text.secondary} />
                         <Text style={styles.noteText} numberOfLines={2}>{props.note.text}</Text>
                     </View>
                 ) : undefined}
-                leftElement={leading}
+                onPress={props.onOpen ?? undefined}
+                leftElement={props.reorderHandle}
+                // The handle is a control of its own, never inside the row's button.
+                leftElementOutsidePressable
                 bottomElement={!inlineUsage ? usage : undefined}
                 rightElement={(
                     <View style={styles.right}>
@@ -166,10 +166,10 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                                 accessibilityLabel={t('connectedServicesPool.memberOnA11y', { name: title })}
                                 compact
                             />
-                            {props.actions.length > 0 ? (
+                            {actions.length > 0 ? (
                                 <ItemRowActions
                                     title={title}
-                                    actions={[...props.actions]}
+                                    actions={actions}
                                     iconSize={18}
                                     compactThreshold={Number.POSITIVE_INFINITY}
                                     compactActionIds={[]}
@@ -177,16 +177,6 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                                     overflowOpen={actionsOpen}
                                     onOverflowOpenChange={setActionsOpen}
                                     renderOverflowTrigger={!inlineUsage ? () => null : undefined}
-                                />
-                            ) : null}
-                            {props.onOpen ? (
-                                <IconButton
-                                    testID={`${props.testID}:open`}
-                                    accessibilityLabel={t('connectedServicesPool.openA11y', { name: title })}
-                                    iconName="caret-right"
-                                    variant="plain"
-                                    iconSize={16}
-                                    onPress={props.onOpen}
                                 />
                             ) : null}
                         </View>
@@ -203,11 +193,6 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    leading: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
     right: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -216,7 +201,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     usage: {
-        width: 300,
+        width: 200,
         maxWidth: '100%',
         flexShrink: 1,
         minWidth: 0,
@@ -238,7 +223,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     noteText: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.text.secondary,
         flexShrink: 1,
     },
     quiet: {
