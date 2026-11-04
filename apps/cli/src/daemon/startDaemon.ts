@@ -179,7 +179,7 @@ import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerA
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
 import { prepareDaemonPluginRemoval } from './startup/prepareDaemonPluginRemoval';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -2056,7 +2056,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
             machineId: workerMachineId,
             accountId: externalActionAccountId,
             serverId: requesterRuntimeServerId,
-            serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl,
+            serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
             credentials,
             happyHomeDir: configuration.happyHomeDir,
             controller: pluginReloadController,
@@ -2071,7 +2071,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
         }
       : undefined;
     let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
-    const requesterRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
+    const readRequesterRuntimeServerHttpBaseUrl = captureServerHttpBaseUrl();
     const openRunAccountConnectionSource = managedPolicyHomeId && externalActionAccountId
       ? createDaemonAccountConnectionManagedConsumerOpen({
           homeId: managedPolicyHomeId, accountId: externalActionAccountId, machineId: () => machineId,
@@ -2129,7 +2129,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       trackedSessions: pidToTrackedSession,
       getCreateRuntime: () => createRequesterRuntime,
       recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onSessionReadRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
-        serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl,
+        serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
         signal,
         onSessionReadRefused,
         machineAdmissionBoundary: requesterMachineAdmissionBoundary(),
@@ -2148,7 +2148,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
             const result = await withTrackedSessionRpc({
               tracked, credentials, custodianAccountId: externalActionAccountId,
               serverId: requesterRuntimeServerId, machineId,
-              serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl,
+              serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
               ...(requester ? { requesterBootstrap: requester.bootstrap } : {}),
               isTrackedCurrent: () => !admissionDrain.isPublicationQuiescing()
                 && pidToTrackedSession.get(tracked.pid) === tracked,
@@ -2517,7 +2517,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
     const { withAccess: withGuardAccess, sendNotice: sendGuardSessionNotice } = createGuardSessionAccess({
       readAccess: () => ({ credentials, custodianAccountId: externalActionAccountId,
         retainedRecordSignal: homeTransportCancellation.signal,
-        serverId: requesterRuntimeServerId, machineId, serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl }),
+        serverId: requesterRuntimeServerId, machineId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl() }),
       resolveRequesterSessionRuntimeContext, releaseRequesterSessionRuntimeContext,
       isTrackedCurrent: tracked => !admissionDrain.isPublicationQuiescing() && pidToTrackedSession.get(tracked.pid) === tracked,
     });
@@ -2757,7 +2757,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
               || !requester.isCustodian && attribution.accountId !== requester.accountId))
               throw new Error('session_owner_unavailable');
             if (!context && !requester.isCustodian) throw new Error('session_owner_unavailable');
-            const written = await runWithServerHttpBaseUrl(context?.bootstrap.serverHttpBaseUrl ?? requesterRuntimeServerHttpBaseUrl,
+            const written = await runWithServerHttpBaseUrl(context?.bootstrap.serverHttpBaseUrl ?? readRequesterRuntimeServerHttpBaseUrl(),
               () => updateSessionMetadataForTarget({ credentials: context?.bootstrap.credentials ?? credentials,
                 idOrPrefix: request.sessionId, expectedSessionId: request.sessionId,
                 currentness: { signal, verifyCurrent: async () => !homeTransportCancellation.signal.aborted
@@ -3209,7 +3209,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     publicProfileRefreshHandle = runtimeBootstrap.publicProfileRefreshHandle;
     createRequesterRuntime = async (bootstrap, signal) => {
-      if (bootstrap.serverHttpBaseUrl !== requesterRuntimeServerHttpBaseUrl
+      if (bootstrap.serverHttpBaseUrl !== readRequesterRuntimeServerHttpBaseUrl()
         || !requesterMachineAdmissionBoundary(bootstrap.attribution).isHomeCurrent()) return null;
       bindRequesterSessionRuntimeMachineAdmissionCurrentness({
         bootstrap, boundary: requesterMachineAdmissionBoundary(bootstrap.attribution),
@@ -4031,7 +4031,7 @@ agentIsolation,
                       credentials: request.request.credentials, attribution: stamp,
                       // current() above proves this accepted Run's own Machine/Account binding.
                       machineAdmission: { actorAccountId: stamp.accountId, custodianAccountId: externalActionAccountId },
-                      boundary: { serverId: stamp.serverId, serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl, happyHomeDir: configuration.happyHomeDir },
+                      boundary: { serverId: stamp.serverId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(), happyHomeDir: configuration.happyHomeDir },
                       verifyMachineAdmissionCurrent: current,
                       ...(request.request.signal ? { signal: request.request.signal } : {}),
                     });
