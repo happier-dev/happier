@@ -643,7 +643,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     } else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['fresh', 'staged', 'retired', 'refresh-during-create', 'remote-missing-parents', 'remote-refusal', 'carrier-refusal', 'native-dial-refusal', 'pinned-9', 'native-failure'] as const)('creates a worker copy or returns an actionable native failure (%s)', async intent => {
+  it.each(['fresh', 'retire-created', 'staged', 'retired', 'refresh-during-create', 'remote-missing-parents', 'remote-refusal', 'carrier-refusal', 'native-dial-refusal', 'pinned-9', 'native-failure'] as const)('creates a worker copy or returns an actionable native failure (%s)', async intent => {
     // Observe only the file sink: controller, grant verification, carrier and
     // native codec remain composed through the registered create entry point.
     const carrierTrace = intent === 'native-dial-refusal' ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
@@ -691,7 +691,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
     rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
-    if (intent !== 'fresh' && intent !== 'remote-missing-parents' && intent !== 'remote-refusal' && intent !== 'carrier-refusal' && intent !== 'native-dial-refusal') {
+    if (intent !== 'fresh' && intent !== 'retire-created' && intent !== 'remote-missing-parents' && intent !== 'remote-refusal' && intent !== 'carrier-refusal' && intent !== 'native-dial-refusal') {
       const targetKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.targetRef.id };
       rows.push(ProjectAccountRowV1Schema.parse({ key: targetKey, revision: 0, content: cipher.seal({ key: targetKey,
         value: { ...fixture.targetRef, projectKey: fixture.sourceRef.id } }) }));
@@ -793,6 +793,26 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         sourceWorkspaceRefId: fixture.sourceRef.id, targetWorkspaceRefId: created.targetWorkspaceRefId },
     })]);
     expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+    if (intent === 'retire-created') {
+      await fixture.parent.workspaceSync.relationshipOwner.stop(created.relationshipId);
+      expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
+      const targetRow = rows.find(row => row.key.kind === 'workspace-ref' && row.key.id === created.targetWorkspaceRefId);
+      if (!targetRow) throw new Error('The created target row is missing');
+      rows[rows.indexOf(targetRow)] = ProjectAccountRowV1Schema.parse({ ...targetRow,
+        revision: targetRow.revision + 1, content: null });
+      await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+        readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+      await rm(fixture.targetPath, { recursive: true });
+      const replacement = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await create({ ...request,
+        operationId: 'replacement-worker-copy' }));
+      expect(replacement).toMatchObject({ created: true, status: { state: 'watching' } });
+      expect(replacement.relationshipId).not.toBe(created.relationshipId);
+      await expect(fixture.parentManagedWorkspaceSync.list()).resolves.toMatchObject([
+        { relationshipId: replacement.relationshipId },
+      ]);
+      expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+      return;
+    }
     if (intent === 'fresh') {
       const observe = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATION_OBSERVE);
       if (!observe) throw new Error('The production creation observation RPC is not registered');

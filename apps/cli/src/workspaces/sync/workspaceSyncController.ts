@@ -2580,6 +2580,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             code: 'relationship_definition_conflict',
           });
         }
+        // The enabled graph owns a committed link. Keeping its preparation
+        // marker would resurrect it after retirement and outlive its Refs.
+        if (saved?.enabled) {
+          this.transientDefinitions.delete(id);
+          continue;
+        }
         // The staged disabled row is restart intent. While the owning transaction
         // is live, its already-admitted runtime definition remains authoritative;
         // a cold controller has no transient marker and therefore keeps it paused.
@@ -2653,8 +2659,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           const current = this.definitions.get(relationship.relationshipId);
           if (current && areWorkspaceSyncRelationshipDefinitionsEqual(current, relationship)
             && this.fences.has(relationship.relationshipId)) {
-            await this.assertRelationshipOwnershipCurrent(relationship.relationshipId);
-            continue;
+            try {
+              await this.assertRelationshipOwnershipCurrent(relationship.relationshipId);
+              continue;
+            } catch (error) {
+              if (readErrorCode(error) !== 'workspace_root_ownership_lost') throw error;
+            }
           }
           const sourceHandles = await this.acquireSourceRoots(relationship);
           const acquiredHandles = await this.acquireRoots(relationship, sourceHandles);
