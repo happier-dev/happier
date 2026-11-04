@@ -109,7 +109,8 @@ describe('getActionRequiredServerFeatureId', () => {
     expect(getActionRequiredServerFeatureId('session.access.grant.set')).toBe('sharing.session');
     expect(getActionRequiredServerFeatureId('session.responsibility.set')).toBe('sharing.session');
     expect(getActionRequiredServerFeatureId('session.public_link.create')).toBe('sharing.public');
-    expect(getActionRequiredServerFeatureId('artifact.public_link.create')).toBe('sharing.public');
+    expect(getActionRequiredServerFeatureId('artifact.public_link.create', undefined, {})).toBe('sharing.public');
+    expect(getActionRequiredServerFeatureId('artifact.public_link.create', undefined, { audience: 'signed_in' })).toBeNull();
     expect(getActionRequiredServerFeatureId('artifact.public_link.join')).toBeNull();
     expect(getActionRequiredServerFeatureId('machines.pools.create')).toBe('machines.pools');
     for (const actionId of ['remote_hosts.list', 'remote_hosts.credential.change', 'remote_hosts.daemon.start']) {

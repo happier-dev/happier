@@ -126,7 +126,13 @@ export function getActionRequiredServerFeatureId(
     return 'browser.automation';
   }
   if (actionId === 'artifact.public_link.join') return null;
-  if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
+  if (actionId === 'artifact.public_link.create' || actionId === 'artifact.public_link.list' || actionId === 'artifact.public_link.revoke') {
+    // Catalogs expose the family because signed-in links need no public-viewer service.
+    // Effect admission supplies operands; omitted audience keeps anonymous behavior.
+    if (input === undefined || input !== null && typeof input === 'object' && Reflect.get(input, 'audience') === 'signed_in') return null;
+    return 'sharing.public';
+  }
+  if (actionId === 'artifact.public_link.audit') return 'sharing.public';
   if (workflowActionIds.includes(actionId)) return 'workflows';
   // Item Actions also serve transcript visuals; their operands decide layout
   // admission at execution. Only the layout-only Action is Board availability.
