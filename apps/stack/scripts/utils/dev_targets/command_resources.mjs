@@ -45,10 +45,11 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // alone cannot recalibrate the larger full-runtime workload.
   'runtime-build': { memoryKiB: 18874368, diskClass: 'runtime-build' },
   // General compilation also covers commit coherence across CLI + UI.
-  // 2026-11-01 d2917d8e58 process-tree peak: 26,817,104 KiB, rounded
-  // to 26 GiB without margin; smaller package-specific classes stay below.
-  // Evidence: .project/tmp/coherence-checker-admission-1101/multipackage-rss.json.
-  compilation: { memoryKiB: 26 * 1024 * 1024, diskClass: 'compilation' },
+  // 2026-11-04 admission holder 2355054: sampled tree RSS 38,992,620 KiB,
+  // rounded to 38 GiB without margin. Its recorded 26 GiB floor uniquely
+  // identifies this class; package-specific classes were not identified.
+  // Evidence: .project/tmp/compile-reservation-peaks-1104/holder-snapshot.json.
+  compilation: { memoryKiB: 38 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, diskClass: 'compilation' },
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, diskClass: 'compilation' },

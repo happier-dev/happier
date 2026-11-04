@@ -3167,6 +3167,8 @@ test('measured native workload reservations round the recorded peak without a bl
     // validation-floor-sizing-1104/measurements.json, loaded Linux workers.
     ['focused-validation', 779072],
     ['entry-loads', 2361852],
+    // 2026-11-04 admission holder tree RSS; compile-reservation-peaks-1104/holder-snapshot.json.
+    ['compilation', 38992620],
   ]) {
     await t.test(className, () => {
       const expectedKiB = Math.ceil(peakKiB / (1024 * 1024)) * 1024 * 1024;

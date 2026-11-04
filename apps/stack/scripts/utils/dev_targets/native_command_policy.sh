@@ -18,7 +18,7 @@ heavyweight_memory_floor_kib() {
     dependency-install) heavyweight_policy_floor='3145728' ;;
     package-dist) heavyweight_policy_floor='6291456' ;;
     runtime-build) heavyweight_policy_floor='18874368' ;;
-    compilation) heavyweight_policy_floor='27262976' ;;
+    compilation) heavyweight_policy_floor='39845888' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
     compilation-cli) heavyweight_policy_floor='15728640' ;;
     compilation-server) heavyweight_policy_floor='16777216' ;;
