@@ -5,6 +5,8 @@ import {
     type HappierPresenceCapsuleProps,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { CORE_CAPSULE_HOST, useCoreCapsuleColors } from '@/components/ui/status/capsuleHost';
@@ -141,5 +143,30 @@ export function BrowserPresenceCapsule(props: BrowserPresenceCapsuleProps): Reac
             host={CORE_CAPSULE_HOST}
             testID={props.testID}
         />
+    );
+}
+
+const footerStyles = StyleSheet.create((theme) => ({
+    footer: {
+        flexShrink: 0,
+        padding: theme.space.s12,
+        backgroundColor: theme.colors.surface.inset,
+    },
+}));
+
+/**
+ * The capsule in flow below the picture or page it narrates (the Computer viewer and the Browser
+ * pane). It reserves its own height there, so it never sits over the stream's input controls
+ * (Escape, the keyboard toggle) along the picture's bottom edge. Nobody acting draws no band.
+ */
+export function BrowserPresenceFooter(
+    props: Omit<BrowserPresenceCapsuleProps, 'placement'> & Readonly<{ frameTestID: string }>,
+): React.ReactElement | null {
+    const { frameTestID, ...capsule } = props;
+    if (capsule.presence.kind === 'idle') return null;
+    return (
+        <View style={footerStyles.footer} testID={frameTestID}>
+            <BrowserPresenceCapsule {...capsule} placement="inline" />
+        </View>
     );
 }

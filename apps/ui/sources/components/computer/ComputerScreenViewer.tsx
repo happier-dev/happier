@@ -11,7 +11,7 @@ import {
     type BrowserStreamedSurfaceRuntime,
 } from '@/components/browser/adapters/BrowserStreamedTarget';
 import { buildBrowserStreamSidebandControl } from '@/components/browser/adapters/browserStreamSidebandControl';
-import { BrowserPresenceCapsule, type BrowserPresenceAgent, type BrowserPresenceCapsuleProps } from '@/components/browser/copresence/BrowserPresenceCapsule';
+import { BrowserPresenceFooter, type BrowserPresenceAgent, type BrowserPresenceCapsuleProps } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgentCursor';
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
 import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
@@ -74,11 +74,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     stage: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    presenceFooter: {
-        flexShrink: 0,
-        padding: theme.space.s12,
         backgroundColor: theme.colors.surface.inset,
     },
     fill: {
@@ -566,14 +561,12 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
             {props.shared && props.chrome !== 'none' && !needsPermission ? (
                 // Reserve the capsule's own height below the picture and its input controls. A dock
                 // over the picture can cover Escape and the keyboard toggle when the picture fills it.
-                <View style={stylesheet.presenceFooter} testID={`${testID}-presence-frame`}>
-                    <BrowserPresenceCapsule
-                        testID={`${testID}-presence`}
-                        {...resolveComputerPresenceCapsule(props)}
-                        placement="inline"
-                        compact={props.compact}
-                    />
-                </View>
+                <BrowserPresenceFooter
+                    frameTestID={`${testID}-presence-frame`}
+                    testID={`${testID}-presence`}
+                    {...resolveComputerPresenceCapsule(props)}
+                    compact={props.compact}
+                />
             ) : null}
         </View>
         </GlassLivePictureBackdropContext.Provider>

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +15,7 @@ import { browserControlActionId } from '@/sync/domains/browser/actions/controlAc
 import { SessionViewerBodyPresentation, useOptionalSessionViewerController, type SessionViewerPresenceStore } from '@/components/sessions/viewer/SessionViewerController';
 import { SessionViewerControllerProvider } from '@/components/sessions/viewer/SessionViewerControllerProvider';
 
+import { BrowserPresenceCapsule } from './BrowserPresenceCapsule';
 import { BrowserShellPresence } from './BrowserShellPresence';
 
 const rpc = vi.hoisted(() => vi.fn());
@@ -107,6 +109,19 @@ describe('BrowserShellPresence daemon takeover', () => {
         expect(rpc).not.toHaveBeenCalled();
         await screen.update(<Tree presentation={null} />);
         expect(store?.get('browser')).toBeNull();
+    });
+    it('reserves its own footer below the page instead of floating over the streamed input controls', async () => {
+        const screen = await renderScreen(<Surface currentView={view('human', 5)} />);
+        // A dock over the page covers the stream's control bar (Escape, keyboard) along the page's
+        // bottom edge; the footer sits in flow under it, as the Computer viewer's does.
+        const frame = screen.findHostByTestId('p-frame');
+        expect(frame).not.toBeNull();
+        expect(StyleSheet.flatten(frame!.props.style)?.position ?? 'relative').not.toBe('absolute');
+        expect(screen.root.findByType(BrowserPresenceCapsule).props.placement).toBe('inline');
+        await screen.pressByTestIdAsync('p-hand-back');
+        // Nobody acting draws no empty band under the page.
+        await screen.update(<Surface currentView={{ ...view('human', 5), automationController: undefined }} />);
+        expect(screen.findHostByTestId('p-frame')).toBeNull();
     });
     it('does not take control or hand back when the existing Action policy refuses UI admission', async () => {
         rpc.mockReset();

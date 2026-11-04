@@ -22,7 +22,7 @@ import {
 } from '@/components/sessions/viewer/SessionViewerController';
 
 import { BrowserAgentCursor } from './BrowserAgentCursor';
-import { BrowserPresenceCapsule } from './BrowserPresenceCapsule';
+import { BrowserPresenceFooter } from './BrowserPresenceCapsule';
 
 /**
  * The session whose agent drives this browser. The leaf reads the session's agent (for its mark and
@@ -198,7 +198,8 @@ export function BrowserShellPresence(props: Readonly<{
                 />
             ) : null}
             {inViewer ? null : (
-                <BrowserPresenceCapsule
+                <BrowserPresenceFooter
+                    frameTestID={`${props.testID}-frame`}
                     testID={props.testID}
                     presence={presence}
                     agent={agent}
