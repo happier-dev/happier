@@ -3178,3 +3178,9 @@ test('measured native workload reservations round the recorded peak without a bl
     });
   }
 });
+
+test('entry-load preparation emits runtime outputs without a strict type verdict', () => {
+  const policy = resolveRemoteCommandPolicy(['node', 'apps/stack/scripts/perf/entry-load.mjs'], { cwd: '.' });
+  assert.equal(policy.preparationBuildMode, 'qa-runtime');
+  assert.equal(policy.heavyClass, 'entry-loads');
+});

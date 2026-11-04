@@ -146,10 +146,11 @@ function largestHeavyweightClass(...classes) {
 
 const COMMAND_RULES = [
   // Serial entry graphs have their own measured envelope. SDK preparation
-  // still retains the controller compilation guard.
+  // still retains the controller compilation guard. They prove modules load, so
+  // like test consumers they need runtime outputs, not a strict type verdict.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
     entryRepositoryPath: ['apps/stack/scripts/perf/entry-load.mjs'] },
-    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads' } },
+    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads', preparationBuildMode: 'qa-runtime' } },
 
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
