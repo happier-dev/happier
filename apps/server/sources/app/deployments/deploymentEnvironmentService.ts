@@ -8,7 +8,9 @@ import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
-import { resolveDeploymentEnvironmentAdmissionInTx, deploymentFailure, canDeployDeploymentEnvironment, type DeploymentSourceAdmission, type DeploymentAuthentication } from './deploymentAdmission';
+import { readProjectSourceCustodyInTx } from '@/app/projects/sources/projectSourceService';
+import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, deploymentFailure, canDeployDeploymentEnvironment, type DeploymentSourceAdmission, type DeploymentAuthentication } from './deploymentAdmission';
 
 export type DeploymentEnvironmentRow = NonNullable<Awaited<ReturnType<Tx['deploymentEnvironment']['findUnique']>>>;
 
@@ -32,6 +34,18 @@ export async function loadDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
 }
 
 /** Already installation-proved receipt readers consume the Source's Machine grant, independent of a custodian's Team membership. */
+export async function loadDeploymentEnvironmentForInstalledMachineInTx(tx: Tx, input: Readonly<{
+    serverId: string; environmentId: string; machineId: string; installationId: string;
+}>) {
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    const row = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
+    if (!row || row.deletedAt) return deploymentFailure('deployment_unavailable');
+    const custody = await readProjectSourceCustodyInTx(tx, row.projectSourceId);
+    if (!custody) return deploymentFailure('deployment_unavailable');
+    const denied = await admitDeploymentMachineInTx(tx, custody.owner, input.machineId,
+        row.buildMachineId === input.machineId ? 'build' : 'target', input.installationId);
+    return denied ?? { ok: true as const, row, ...custody };
+}
 
 export async function readDeploymentEnvironmentRequiredSecretUsesInTx(tx: Tx,
     row: Pick<DeploymentEnvironmentRow, 'id' | 'runtimeTargetLinkId' | 'buildMachineId' | 'referencedSavedSecretRevisions'>,
