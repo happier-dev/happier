@@ -20,6 +20,7 @@ export type ClaudeControlCommandRowShape =
 export type ClaudeControlCommandCompletionOwner = 'local_stdout' | 'external_lifecycle';
 
 const LOCAL_STDOUT_TERMINAL_COMMANDS = new Set([
+  '/clear',
   '/effort',
   '/model',
   '/status',
@@ -28,7 +29,8 @@ const LOCAL_STDOUT_TERMINAL_COMMANDS = new Set([
 /**
  * Classifies which existing lifecycle owner may terminalize a Claude local command.
  *
- * Settings/status commands are fully completed by their paired local-command stdout row.
+ * Settings/status commands and `/clear` are fully completed by their paired local-command stdout
+ * row; `/clear` makes no model request and fires no Stop hook, so nothing else would settle it.
  * Conversation-affecting commands (`/compact`, `/btw`, and unknown/future commands) remain on
  * their dedicated provider lifecycle owner; treating their acknowledgement stdout as turn
  * completion can race or double-settle real conversation/compaction work. Unknown commands are
@@ -51,6 +53,11 @@ const COMMAND_NAME_TAG = /<command-name>([^<]*)<\/command-name>/;
 const COMMAND_ARGS_TAG = /<command-args>([^<]*)<\/command-args>/;
 
 function firstMessageText(message: RawJSONLines): string | null {
+  // Claude also records local-command rows as `system`/`local_command` with top-level content.
+  if (message.type === 'system') {
+    const record = message as Record<string, unknown>;
+    return record.subtype === 'local_command' && typeof record.content === 'string' ? record.content : null;
+  }
   const envelope = (message as Record<string, unknown>).message;
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return null;
   const content = (envelope as Record<string, unknown>).content;
@@ -65,7 +72,7 @@ function firstMessageText(message: RawJSONLines): string | null {
 }
 
 export function readClaudeControlCommandRowShape(message: RawJSONLines): ClaudeControlCommandRowShape | null {
-  if (message.type !== 'user') return null;
+  if (message.type !== 'user' && message.type !== 'system') return null;
   const text = firstMessageText(message);
   if (text === null) return null;
   const trimmed = text.trim();
