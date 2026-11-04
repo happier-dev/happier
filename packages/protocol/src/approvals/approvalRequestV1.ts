@@ -853,3 +853,5 @@ export function requiresExactDaemonApprovalReplay(approval: ApprovalRequest): bo
 }
 
 export { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
+
+export { readLiveCliApprovalOriginScope, LIVE_CLI_APPROVAL_DECIDE_METHOD } from './liveCliOrigin.js';

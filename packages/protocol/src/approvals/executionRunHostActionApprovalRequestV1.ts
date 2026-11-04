@@ -2,6 +2,7 @@ import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 
 import {
   ApprovalDecisionV1Schema,
@@ -82,3 +83,16 @@ export const ExecutionRunHostActionApprovalRequestV1Schema = lazyZodSchema(() =>
 
 export type ExecutionRunHostActionApprovalRequestV1 = z.infer<typeof ExecutionRunHostActionApprovalRequestV1Schema>;
 export const StoredExecutionRunHostActionApprovalRequestV1Schema = createStoredReadSchema(ExecutionRunHostActionApprovalRequestV1Schema);
+
+/** The ordinary Action RPC returns this inner settlement, not an executor envelope. */
+export const ExecutionRunHostActionApprovalSettlementV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true),
+  status: z.enum(['approved', 'rejected', 'canceled']),
+}));
+
+/** Status and decision are observations; every other admitted field binds the live subject. */
+export function executionRunHostActionApprovalSubjectsEqual(left: ExecutionRunHostActionApprovalRequestV1, right: ExecutionRunHostActionApprovalRequestV1): boolean {
+  const { status: _leftStatus, updatedAtMs: _leftUpdated, decision: _leftDecision, ...leftSubject } = left;
+  const { status: _rightStatus, updatedAtMs: _rightUpdated, decision: _rightDecision, ...rightSubject } = right;
+  return sameStrictJsonValue(leftSubject, rightSubject);
+}
