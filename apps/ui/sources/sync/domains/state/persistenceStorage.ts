@@ -14,6 +14,11 @@ export function subscribePersistenceStorageCleared(listener: () => void): () => 
 
 export function clearPersistenceStorage(): void {
     getPersistenceStorage().clearAll();
+    publishPersistenceStorageCleared();
+}
+
+/** The adapter (including a native boundary reset) must be cleared before publishing this fact. */
+export function publishPersistenceStorageCleared(): void {
     for (const listener of clearedListeners) listener();
 }
 

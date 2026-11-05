@@ -88,6 +88,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
   }
 
   beforeEach(async () => {
+    await (await import('@/dev/testkit/cleanup/persistentUiState')).resetPersistentUiStateForTest();
     nativeAlertCalls.length = 0;
     network.resetRequests();
     clearDaemonMergedProjectionCacheForTests();

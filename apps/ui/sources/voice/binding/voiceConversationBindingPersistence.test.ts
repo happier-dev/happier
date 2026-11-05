@@ -15,6 +15,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
 const { RuntimeDescriptorV1Schema } = await import('@happier-dev/protocol/sessions/metadata/runtime-descriptor');
 const { AgentRuntimeFacetsV1Schema } = await import('@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1');
+const { resetPersistentUiStateForTest } = await import('@/dev/testkit/cleanup/persistentUiState');
 let serverId: string;
 const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
 
@@ -27,6 +28,7 @@ function runMetadata(runId: string, updatedAtMs: number) {
 afterEach(() => standardCleanup());
 
 beforeEach(async () => {
+  await resetPersistentUiStateForTest();
   const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
   onTestFinished(account.dispose);
   serverId = account.scope.serverId;
