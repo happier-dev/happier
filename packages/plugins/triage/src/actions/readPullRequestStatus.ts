@@ -14,7 +14,6 @@ import { sameConfiguredSourceAuthority } from '../corpus/configuration/configure
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageAccountCaller } from './callerSource.js';
 import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from './listEntries.js';
 import type { TriageReobserveEntryActionInputV1 } from './reobserveEntryProtocol.js';
 
@@ -43,7 +42,6 @@ export function createTriageReadPullRequestStatusActionHandler(): TriageDataActi
     TriageReobserveEntryActionInputV1, TriagePullRequestStatusResultV1
 > {
     return async (input, context) => {
-        if (!isTriageAccountCaller(context)) return { kind: 'unavailable', failure: { class: 'permission', code: 'invalidCaller' } };
         throwIfAborted(context.signal);
         const options = context.signal === undefined ? {} : { signal: context.signal };
         const observation = context.services.targetedContributions.observeForSelf(
@@ -66,7 +64,6 @@ export function createTriageReadPullRequestStatusActionHandler(): TriageDataActi
 /** Observe exact source authority and native dependencies without running the native read. */
 export function createTriageReadPullRequestStatusObserver(): PluginActionReadObserver<TriageReobserveEntryActionInputV1, TriageDataActionContext> {
     return async (input, invalidate, context) => {
-        if (!isTriageAccountCaller(context)) throw new PluginError({ code: 'denied', message: 'PR status source authority is unavailable.' });
         throwIfAborted(context.signal);
         let disposed = false;
         let native: Disposable | undefined;

@@ -23,7 +23,6 @@ import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
-import { isTriageAccountCaller } from './callerSource.js';
 import {
   indexTriageAdmittedSourcesV1,
   type TriageAdmittedSourceV1,
@@ -144,7 +143,6 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
   TriageReobserveEntryActionResultV1
 > {
   return async (input, context: TriageDataActionContext) => {
-    if (!isTriageAccountCaller(context)) return { kind: 'invalidCaller' };
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const result = await reobserveTriageEntry(input, {
       readConfiguredInstance: async (sourceInstanceId, options) => {

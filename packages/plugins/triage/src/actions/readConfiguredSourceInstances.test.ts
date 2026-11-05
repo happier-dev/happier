@@ -35,13 +35,12 @@ import {
 } from './readConfiguredSourceInstances.js';
 
 /**
- * The read half of caller-bound source administration.
+ * The read half of source administration.
  *
  * Three of the four `sources/administer-v1` arms name a `sourceInstanceId` the
  * caller must already hold, and nothing published one — so a source Settings
- * page could only ever ADD a source. These cases are about the one property
- * that makes publishing the read safe at all: a source sees exactly its own
- * configured instances, and never learns that another source's exists.
+ * page could only ever ADD a source. Explicit reads select an admitted source;
+ * source-less plugin reads keep their existing own-source default.
  */
 
 const FORGE = Object.freeze({ pluginId: 'happier.example.forge', localId: 'example-forge' });
@@ -193,7 +192,7 @@ describe('the caller-scoped configured-instance read', () => {
         )).toEqual({ kind: 'invalidCaller' });
     });
 
-    it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'api'] as const)('lets a host %s caller discover admitted configured sources without granting a plugin the same scope', async (surface) => {
+    it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'api'] as const)('lets a host %s caller discover sources and another plugin select an admitted source', async (surface) => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: TRACKER, seed: 2 })));
@@ -204,10 +203,23 @@ describe('the caller-scoped configured-instance read', () => {
         expect(result.instances.map((record) => record.configured.instance.source)).toEqual([FORGE, TRACKER]);
         const selected = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1, source: TRACKER });
         expect(await handler(selected, createContext({ collections, surface, caller: pluginCaller(FORGE.pluginId) })))
-            .toEqual({ kind: 'invalidCaller' });
+            .toEqual({ kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active',
+                configured: instanceRow({ source: TRACKER, seed: 2 }).configured }] });
         const filtered = await handler(selected, createContext({ collections, surface }));
         expect(filtered.kind === 'read' ? filtered.instances.map((record) => record.configured.instance.source) : filtered)
             .toEqual([TRACKER]);
+    });
+
+    it.each(['background', 'plugin'] as const)('lets a %s caller name an admitted source without host provenance', async (surface) => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const row = instanceRow({ source: TRACKER, seed: 2 });
+        control.sourceInstances.seed(toCorpusStoredValue(row));
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        const context = createContext({ collections, surface });
+        expect(await handler({ v: 1, source: TRACKER }, context)).toEqual({ kind: 'read', status: 'complete',
+            instances: [{ v: 1, lifecycle: 'active', configured: row.configured }] });
+        expect(await handler({ v: 1, source: { ...TRACKER, localId: 'not-admitted' } }, context))
+            .toEqual({ kind: 'invalidCaller' });
     });
 
     it('returns exactly the calling source instances and no others', async () => {

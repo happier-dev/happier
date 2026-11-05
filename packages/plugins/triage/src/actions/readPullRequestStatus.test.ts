@@ -118,7 +118,17 @@ describe('the mounted PR-status action', () => {
         expect(actual.requests).toEqual([{ operation: nativeOperation(), input: fixture.getInput }]);
         expect(actual.disposed).toBe(true);
     });
-    it.each([{ retired: true }, { otherSource: true }, { unsupported: true }, { foreignCaller: true }])('refuses unavailable or foreign authority without provider dispatch: %j', async (options) => {
+    it('lets another same-Account plugin read and observe the exact admitted PR status', async () => {
+        const actual = await boundary({ foreignCaller: true });
+        expect(actual.result).toEqual(status);
+        expect(actual.requests).toEqual([{ operation: nativeOperation(), input: fixture.getInput }]);
+        const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
+            entryRef: fixture.detailInput.observation.entryRef,
+            sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+        }, Object.assign(vi.fn(), { retire: vi.fn() }), actual.context);
+        await observation.dispose();
+    });
+    it.each([{ retired: true }, { otherSource: true }, { unsupported: true }])('refuses unavailable source authority without provider dispatch: %j', async (options) => {
         const actual = await boundary(options);
         expect(actual.result.kind).toBe('unavailable');
         expect(actual.requests).toEqual([]);

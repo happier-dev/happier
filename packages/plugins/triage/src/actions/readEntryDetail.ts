@@ -10,7 +10,7 @@ import {
 } from '../corpus/collections/ids.js';
 import { createTriageSourceSessionRelations, type TriageSourceSessionLinkV1 } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageAccountCaller, isTriageHostActionCaller, resolveTriageCallerSource } from './callerSource.js';
+import { resolveTriageCallerSources } from './callerSource.js';
 import type {
     TriageReadEntryDetailInputV1,
     TriageReadEntryDetailResultV1,
@@ -26,14 +26,11 @@ import type {
  * snapshot. External links read directly from Account data. Sources that declare
  * their own relation read supply it through the same source-neutral owner.
  *
- * It is caller-bound to this target's own surfaces and authenticated host Actions. The configured instance
- * carries the owning source's account binding and its source-private
- * configuration token, and the aggregate list Action deliberately withholds both
- * from its summaries; unrelated plugin callers remain refused. Host automated
- * callers must resolve a currently admitted source and declared kind first.
+ * Every Account reader resolves the named admitted source and declared kind.
+ * The configured instance must belong to that source; its binding and routing
+ * token carry no credential material.
  */
 
-const INVALID_CALLER: TriageReadEntryDetailResultV1 = Object.freeze({ kind: 'invalidCaller' });
 const UNAVAILABLE: TriageReadEntryDetailResultV1 = Object.freeze({ kind: 'unavailable' });
 
 /**
@@ -135,13 +132,10 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
     TriageReadEntryDetailResultV1
 > {
     return async (input, context: TriageDataActionContext) => {
-        if (!isTriageAccountCaller(context)) return INVALID_CALLER;
-        if (isTriageHostActionCaller(context)) {
-            const resolution = await resolveTriageCallerSource(context, { signal: context.signal }, input.entryRef.source);
-            if (resolution.kind !== 'source'
-                || !resolution.caller.contribution.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
-                return UNAVAILABLE;
-            }
+        const resolution = await resolveTriageCallerSources(context, { signal: context.signal }, input.entryRef.source);
+        if (resolution.kind !== 'sources'
+            || !resolution.callers[0]?.contribution.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
+            return UNAVAILABLE;
         }
         const { sourceInstances, sessionLinks } = bindCorpusCollections(
             requireTriageAccountStorage(context),

@@ -4,7 +4,6 @@ import type { TriageDataActionContext, TriageDataActionHandler } from './dataCon
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
-import { isTriageAccountCaller } from './callerSource.js';
 import type {
     TriageLinkEntryToSessionActionResultV1,
     TriageLinkEntryToSessionInputV1,
@@ -37,7 +36,6 @@ export function createTriageReadSourceSessionLinksActionHandler(): TriageDataAct
     TriageReadSourceSessionLinksInputV1, TriageReadSourceSessionLinksActionResultV1
 > {
     return async (input, context) => {
-        if (!isTriageAccountCaller(context)) return { kind: 'failed', links: [] };
         const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
         if ('entries' in input) return { kind: 'entries', entries: await relations.readEntries(input.entries) };
         return await relations.read(input);

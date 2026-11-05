@@ -42,9 +42,8 @@ import type { TriageAdmittedSourceV1 } from './listEntries.js';
  * The shell can select a row; without this read it holds nothing the strict
  * `TriageDetailSurfaceInputV1` will admit, because two of that value's three
  * members are Account Collection state a mounted surface cannot reach. These
- * cases are about the two ways that would go wrong quietly: handing over the
- * wrong connection's configuration, and letting any plugin ask for a source's
- * private one.
+ * cases preserve the exact source and connection correspondence for every
+ * same-Account reader, including other installed plugins.
  */
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.forge', localId: 'example-forge' });
@@ -177,7 +176,7 @@ describe('the entry detail read', () => {
         expect(await handler({ ...detailInput(INSTANCE_A), entryRef: { ...ENTRY_REF, kindId: 'undeclared' } },
             context)).toEqual({ kind: 'unavailable' });
         expect(await handler(detailInput(INSTANCE_A), { ...context, caller: caller(OTHER_SOURCE.pluginId) }))
-            .toEqual({ kind: 'invalidCaller' });
+            .toEqual(result);
     });
 
     it('reports when the bounded linked-Session page has more rows', async () => {
@@ -325,10 +324,8 @@ describe('the entry detail read', () => {
         const result = TriageReadEntryDetailResultV1Schema.parse(
             await createTriageReadEntryDetailActionHandler()(
                 detailInput(INSTANCE_A),
-                // No targeted-contribution service exists in this context. The
-                // exact mounted snapshot owns descriptor facts; this Action
-                // reads only Account state and must remain usable without a
-                // daemon.
+                // The portable Account context supplies admitted descriptors
+                // without requiring a daemon or Machine.
                 createContext({ collections }),
             ),
         );
@@ -339,17 +336,17 @@ describe('the entry detail read', () => {
         expect(Object.hasOwn(result, 'sourceDescriptor')).toBe(false);
     });
 
-    it('refuses a caller that is not this target', async () => {
+    it('lets another plugin read the exact source while refusing source and kind mismatches', async () => {
         const { collections } = await seedTwoConnections();
-
-        const result = await createTriageReadEntryDetailActionHandler()(
-            detailInput(INSTANCE_A),
-            createContext({ collections, callerPluginId: OTHER_SOURCE.pluginId }),
-        );
-
-        // The aggregate list Action deliberately withholds the account binding
-        // and the configuration token from its summaries. An exact-instance read
-        // any plugin could call would be the way around that decision.
-        expect(result).toEqual({ kind: 'invalidCaller' });
+        const handler = createTriageReadEntryDetailActionHandler();
+        const context = createContext({ collections, callerPluginId: OTHER_SOURCE.pluginId });
+        const input = detailInput(INSTANCE_A);
+        expect(await handler(input, context)).toMatchObject({ kind: 'read', instance: {
+            instance: { source: SOURCE, sourceInstanceId: INSTANCE_A },
+        } });
+        expect(await handler({ ...input, entryRef: { ...ENTRY_REF, source: OTHER_SOURCE } }, context))
+            .toEqual({ kind: 'unavailable' });
+        expect(await handler({ ...input, entryRef: { ...ENTRY_REF, kindId: 'undeclared' } }, context))
+            .toEqual({ kind: 'unavailable' });
     });
 });

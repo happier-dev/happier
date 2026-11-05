@@ -12,7 +12,7 @@ import { TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js'
 const fixture = createTriageSourceV1Fixture();
 
 describe('reobserveTriageEntry', () => {
-  it('publishes an authoritative source reread through the strict Action result contract', async () => {
+  it.each(['host', 'otherPlugin'] as const)('publishes an authoritative source reread through the strict Action result contract for %s', async (reader) => {
     const { collections, control } = createTestkitCorpusCollections();
     const source = fixture.detailInput.observation.entryRef.source;
     control.sourceInstances.seed(toCorpusStoredValue({
@@ -27,6 +27,7 @@ describe('reobserveTriageEntry', () => {
     // are the boundaries; qualification and Action result production stay real.
     const context = {
       surface: 'cli',
+      ...(reader === 'otherPlugin' ? { caller: { kind: 'plugin', pluginId: 'example.other-plugin' } } : {}),
       signal: new AbortController().signal,
       services: {
         storage: { account: { collection: (definition: { id: string }) => (

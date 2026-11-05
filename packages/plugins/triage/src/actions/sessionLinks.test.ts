@@ -318,7 +318,7 @@ describe('the session-link writer Action', () => {
         expect(sourceReads).toBe(1);
     });
 
-    it.each(['ui', 'voice', 'cli', 'agent', 'self'] as const)('returns healthy source links and explicit unavailable coverage to %s callers', async (caller) => {
+    it.each(['ui', 'voice', 'cli', 'agent', 'self', 'otherPlugin'] as const)('returns healthy source links and explicit unavailable coverage to %s callers', async (caller) => {
         const { collections, control } = createTestkitCorpusCollections();
         const configured = testkitConfiguredInstance();
         const unavailable = { ...configured,
@@ -334,8 +334,9 @@ describe('the session-link writer Action', () => {
         const base = createContext(collections);
         const snapshot = testkitReadOnlySourceSnapshot();
         let unavailableRead = false;
-        const context = { ...base, surface: caller === 'self' ? 'ui' : caller,
-            ...(caller === 'self' ? { caller: { kind: 'plugin', pluginId: 'happier.triage' } } : {}),
+        const context = { ...base, surface: caller === 'self' || caller === 'otherPlugin' ? 'ui' : caller,
+            ...(caller === 'self' || caller === 'otherPlugin' ? { caller: { kind: 'plugin',
+                pluginId: caller === 'self' ? 'happier.triage' : 'example.other-plugin' } } : {}),
             services: { ...base.services,
                 targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [
                     { ...snapshot.contributions[0], operations: { readSessionLinks: { role: 'readSessionLinks' } } },

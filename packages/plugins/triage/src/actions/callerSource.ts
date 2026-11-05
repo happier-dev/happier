@@ -1,6 +1,5 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
-import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
@@ -42,10 +41,6 @@ export function isTriageHostActionCaller(context: TriageCallerContext): boolean 
             || context.surface === 'mcp' || context.surface === 'cli' || context.surface === 'api');
 }
 
-export function isTriageAccountCaller(context: TriageCallerContext): boolean {
-    return isTriageSelfCaller(context) || isTriageHostActionCaller(context);
-}
-
 type TriageCallerSourcesResolutionV1 =
     | Readonly<{ kind: 'sources'; callers: readonly TriageCallerSourceV1[] }>
     | Readonly<{ kind: 'invalidCaller' }>
@@ -62,10 +57,10 @@ function callerSourcesFrom(
 ): readonly TriageCallerSourceV1[] | null {
     const caller = context.caller;
     const hostCaller = isTriageHostActionCaller(context);
-    if (!hostCaller && caller?.kind !== 'plugin') return null;
+    if (!requestedSource && !hostCaller && caller?.kind !== 'plugin') return null;
     const callerPluginId = caller?.kind === 'plugin' ? caller.pluginId : undefined;
-    const matches = hostCaller ? admitted : admitted.filter((entry) => entry.contributor.pluginId === callerPluginId);
-    if (!hostCaller && matches.length !== 1) return null;
+    const matches = requestedSource || hostCaller ? admitted : admitted.filter((entry) => entry.contributor.pluginId === callerPluginId);
+    if (!requestedSource && !hostCaller && matches.length !== 1) return null;
     const sources = matches.flatMap((contribution): TriageCallerSourceV1[] => {
         const declaredPurpose = contribution.descriptor?.purpose;
         if (typeof declaredPurpose !== 'string') return [];
@@ -106,24 +101,11 @@ export async function resolveTriageCallerSource(
     options?: PluginCancellationOptions,
     requestedSource?: PluginContributionIdentity,
 ): Promise<TriageCallerSourceResolutionV1> {
-    if (isTriageHostActionCaller(context) && requestedSource === undefined) return INVALID_CALLER;
-    const resolution = await resolveTriageCallerSources(context, options, requestedSource);
+    const hostCaller = isTriageHostActionCaller(context);
+    if (hostCaller && requestedSource === undefined) return INVALID_CALLER;
+    const resolution = await resolveTriageCallerSources(context, options, hostCaller ? requestedSource : undefined);
     if (resolution.kind !== 'sources') return { kind: resolution.kind };
     const caller = resolution.callers[0];
-    return caller && resolution.callers.length === 1 ? { kind: 'source', caller } : INVALID_CALLER;
-}
-
-/**
- * Whether the invocation came from this target's own mounted surfaces.
- *
- * The aggregate's own page reaches its Collections the only way a mounted
- * surface can — through an Action — so an Action that returns the private
- * configured payload has to separate "the target reading its own data" from
- * "a source plugin reading somebody else's". The aggregate list Action already
- * withholds the account binding and configuration token from its summaries;
- * this keeps the exact-instance read from becoming the way around that.
- */
-export function isTriageSelfCaller(context: TriageCallerContext): boolean {
-    const caller = context.caller;
-    return caller?.kind === 'plugin' && caller.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1;
+    return caller && resolution.callers.length === 1 && (hostCaller || !requestedSource || sameSource(caller.source, requestedSource))
+        ? { kind: 'source', caller } : INVALID_CALLER;
 }

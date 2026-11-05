@@ -1,7 +1,7 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import { TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
@@ -9,7 +9,7 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { qualifySourceObservation } from '../corpus/fold/qualify.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { isTriageAccountCaller } from './callerSource.js';
+import { isTriageHostActionCaller } from './callerSource.js';
 import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import type {
     TriageCreateTaskActionInputV1,
@@ -25,7 +25,8 @@ type TaskWriteRequest =
 /** Thin transport: the configured-instance and admitted source owners grant authority;
  * the source's named Action owns authorization, provider writes and settlement. */
 async function writeTask(request: TaskWriteRequest, context: TriageDataActionContext): Promise<TriageTaskWriteResultV1> {
-    if (!isTriageAccountCaller(context)) {
+    if (!isTriageHostActionCaller(context)
+        && (context.caller?.kind !== 'plugin' || context.caller.pluginId !== TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1)) {
         return { kind: 'failed', failure: { class: 'permission', code: 'invalidCaller' } };
     }
     throwIfAborted(context.signal);
