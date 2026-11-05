@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('AgentInputScrollableChipRow', () => {
-    it('does not reapply the mounted web offset when fade state rerenders the row', async () => {
+    it('restores the mounted web offset before deferred fade work without reapplying it on rerender', async () => {
         vi.resetModules();
         vi.clearAllMocks();
 
@@ -59,7 +59,7 @@ describe('AgentInputScrollableChipRow', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             const { AgentInputScrollableChipRow } = await import('./AgentInputScrollableChipRow');
-            const scrollOffsetRef = { current: 0 };
+            const scrollOffsetRef = { current: 64 };
             await act(async () => {
                 tree = renderer.create(
                     <AgentInputScrollableChipRow
@@ -71,19 +71,21 @@ describe('AgentInputScrollableChipRow', () => {
                     </AgentInputScrollableChipRow>,
                 );
             });
-            await flushFrames();
             if (!tree) throw new Error('Expected the scroll row to render');
+
+            expect(scrollNode.scrollLeft).toBe(64);
+            await flushFrames();
 
             const scrollView = tree.root.findByType('ScrollView' as never);
             await act(async () => {
                 scrollView.props.onWheel({ nativeEvent: { deltaX: 0, deltaY: 40 } });
             });
-            expect(scrollNode.scrollLeft).toBe(40);
-            expect(scrollOffsetRef.current).toBe(40);
+            expect(scrollNode.scrollLeft).toBe(104);
+            expect(scrollOffsetRef.current).toBe(104);
 
             await flushFrames();
-            expect(scrollNode.scrollLeft).toBe(40);
-            expect(scrollOffsetRef.current).toBe(40);
+            expect(scrollNode.scrollLeft).toBe(104);
+            expect(scrollOffsetRef.current).toBe(104);
         } finally {
             if (tree) {
                 act(() => tree?.unmount());

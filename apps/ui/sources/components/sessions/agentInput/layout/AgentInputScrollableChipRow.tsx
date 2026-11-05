@@ -35,6 +35,15 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
     const scrollRef = React.useRef<any>(null);
     const initialScrollOffsetRef = React.useRef(props.scrollOffsetRef?.current ?? 0);
 
+    const setScrollRef = React.useCallback((value: any) => {
+        scrollRef.current = value;
+        if (Platform.OS !== 'web' || !value) return;
+        const node = value.getScrollableNode?.() ?? value;
+        if (typeof node.scrollLeft === 'number') {
+            node.scrollLeft = initialScrollOffsetRef.current;
+        }
+    }, []);
+
     const getScrollNode = React.useCallback(() => {
         const raw = scrollRef.current;
         if (!raw) return null;
@@ -88,26 +97,6 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
         } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
         fades.onScroll(scrollEvent);
     }, [fades, getScrollNode, props.scrollOffsetRef]);
-
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-
-        const requestAnimationFrameSafe: (cb: () => void) => any =
-            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
-            ((cb: () => void) => setTimeout(cb, 0));
-        const cancelAnimationFrameSafe: (id: any) => void =
-            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
-            ((id: any) => clearTimeout(id));
-
-        const animationFrameId = requestAnimationFrameSafe(() => {
-            const node = getScrollNode() as any;
-            if (node && typeof node.scrollLeft === 'number') {
-                node.scrollLeft = initialScrollOffsetRef.current;
-            }
-        });
-
-        return () => cancelAnimationFrameSafe(animationFrameId);
-    }, [getScrollNode]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -185,7 +174,7 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
     return (
         <View style={props.containerStyle}>
             <ScrollViewWithWheel
-                ref={scrollRef}
+                ref={setScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 scrollEnabled
