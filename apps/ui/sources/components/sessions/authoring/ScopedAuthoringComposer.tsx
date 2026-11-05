@@ -122,6 +122,8 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
         editable?: boolean;
         placeholder: string;
         voiceAffordance?: React.ComponentProps<typeof AgentInput>['voiceAffordance'];
+        /** A narrow host card asks its chips to wrap when the person's setting is auto (a Workflow step). */
+        hostActionBarLayout?: React.ComponentProps<typeof AgentInput>['hostActionBarLayout'];
         /**
          * The accessible name of the actual text input, for a host that mounts
          * several composers (a workflow names each by its step). The input
@@ -437,6 +439,7 @@ export const ScopedAuthoringComposer = React.memo(React.forwardRef<
                     else props.onBlur?.();
                 }}
                 onComposerFocusRequestChange={(request) => { focusRequestRef.current = request; }}
+                {...(props.hostActionBarLayout === undefined ? {} : { hostActionBarLayout: props.hostActionBarLayout })}
                 onComposerActionBarLayoutChange={(layout) => {
                     actionBarLayoutRef.current = layout;
                     notifyComposerPresentationTargetChanged(composerRef);

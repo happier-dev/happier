@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
-import { View } from 'react-native';
+import { Platform, useWindowDimensions, View } from 'react-native';
+
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { resolveAgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
@@ -377,8 +380,10 @@ export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll
 export const ComposerActionBarPreview = React.memo(function ComposerActionBarPreview(props: Readonly<{
     layout: 'auto' | 'wrap' | 'scroll' | 'collapsed';
 }>) {
-    // Auto wraps on wide screens (where this page is usually read) and scrolls on phones.
-    return <SessionComposerSample layout={props.layout === 'auto' ? 'wrap' : props.layout} labels="all" />;
+    // Auto shows the flow it resolves to on this device, through the live composer's own rule.
+    const isMobileLayout = isMobileLayoutWidth(useWindowDimensions().width);
+    const layout = resolveAgentInputActionBarLayout({ configuredLayout: props.layout, platform: Platform.OS, isMobileLayout });
+    return <SessionComposerSample layout={layout} labels="all" />;
 });
 
 export const ComposerChipDensityPreview = React.memo(function ComposerChipDensityPreview(props: Readonly<{

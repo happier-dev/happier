@@ -115,6 +115,7 @@ export const WorkflowWaitBlockEditor = React.memo(function WorkflowWaitBlockEdit
             {props.slots?.occurrenceSelector ?? null}
             <View testID={`${rowPrefix}-prompt`} style={workflowEditorStyles.promptFrame}>
                 <ScopedAuthoringComposer
+                    hostActionBarLayout="wrap"
                     inputAccessibilityLabel={displayName}
                     custody={custody}
                     scope={props.composerScope}

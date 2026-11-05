@@ -100,6 +100,7 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
         // focuses; a label on this view would never be read.
         <View testID={props.testID}>
             <ScopedAuthoringComposer
+                hostActionBarLayout="wrap"
                 inputAccessibilityLabel={props.accessibilityLabel}
                 ref={ref}
                 custody={props.custody}

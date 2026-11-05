@@ -44,3 +44,24 @@ export function shouldShowSecondaryControlRow(
 export function shouldShowPathAndResumeRow(actionBarLayout: AgentInputActionBarLayout): boolean {
     return shouldShowSecondaryControlRow(actionBarLayout, true);
 }
+
+/**
+ * The chip rails' physical flow (P3 §3.4: flow only, never membership). An explicit choice wins. Auto reads as
+ * 0.2 did and as the owner asked (2026-10-30): one scrolling rail per row on the web and on phones, so a new
+ * session keeps two rails and a session one, however many chips it carries; wide native screens wrap.
+ */
+export function resolveAgentInputActionBarLayout(params: Readonly<{
+    configuredLayout: AgentInputActionBarLayout | 'auto' | null | undefined;
+    /**
+     * What the host's own width asks for when the person left the setting on auto: a composer inside a
+     * narrow card (a Workflow step) wraps its chips instead of clipping them on a scrolling rail.
+     */
+    hostLayout?: AgentInputActionBarLayout;
+    platform: string;
+    isMobileLayout: boolean;
+}>): AgentInputActionBarLayout {
+    if (params.configuredLayout === 'wrap' || params.configuredLayout === 'scroll') return params.configuredLayout;
+    if (params.hostLayout !== undefined) return params.hostLayout;
+    if (params.platform === 'web') return 'scroll';
+    return params.isMobileLayout ? 'scroll' : 'wrap';
+}

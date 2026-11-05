@@ -1,5 +1,8 @@
 import * as React from 'react';
-import { Pressable, useWindowDimensions, View } from 'react-native';
+import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
+
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { resolveAgentInputActionBarLayout, type AgentInputActionBarLayout } from '@/components/sessions/agentInput/layout/actionBarLogic';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -166,6 +169,8 @@ export const AgentInputDocumentPreview = React.memo(
         selection: AgentInputDocumentPreviewSelection | null,
         intent?: AgentInputControlIntent,
       ) => void;
+      /** The host's chip layout when the setting is auto; the live composer reads the same request. */
+      hostActionBarLayout?: AgentInputActionBarLayout;
       testID?: string;
     }>,
   ): React.ReactElement {
@@ -173,8 +178,14 @@ export const AgentInputDocumentPreview = React.memo(
     const tint = theme.colors.composer.chipTint;
     const chipDensity = useSetting('agentInputChipDensity');
     // The live row's own rhythm: a narrow window tightens the chip gap, and a scrolling bar never wraps.
-    const actionBarLayout = useSetting('agentInputActionBarLayout');
-    const narrow = useWindowDimensions().width < 420;
+    const windowWidth = useWindowDimensions().width;
+    const actionBarLayout = resolveAgentInputActionBarLayout({
+      configuredLayout: useSetting('agentInputActionBarLayout'),
+      ...(props.hostActionBarLayout === undefined ? {} : { hostLayout: props.hostActionBarLayout }),
+      platform: Platform.OS,
+      isMobileLayout: isMobileLayoutWidth(windowWidth),
+    });
+    const narrow = windowWidth < 420;
     const voiceEnabled = useFeatureEnabled('voice');
     const showLabels = chipDensity !== 'icons';
     const textStyle = React.useMemo(

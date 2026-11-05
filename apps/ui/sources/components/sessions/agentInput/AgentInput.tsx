@@ -136,6 +136,7 @@ import { resolveAgentInputFolderChipState, type AgentInputFolderChipState } from
 import {
     shouldShowSecondaryControlRow,
     type AgentInputActionBarLayout,
+    resolveAgentInputActionBarLayout,
 } from './layout/actionBarLogic';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
@@ -422,6 +423,8 @@ interface AgentInputProps {
     onComposerInputFlushRequestChange?: (request: (() => void) | null) => void;
     /** Scope-local observer for this mounted input's resolved action-bar layout. */
     onComposerActionBarLayoutChange?: (layout: AgentInputActionBarLayout) => void;
+    /** The host's request when the setting is auto (a narrow card asks for wrap); an explicit setting wins. */
+    hostActionBarLayout?: AgentInputActionBarLayout;
     sessionId?: string;
     /** Exact immutable Voice target for an existing Session; `null` fails that Session start closed. */
     sessionAddress?: SessionAddress | null;
@@ -1729,7 +1732,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return 'auto';
     }, [agentInputChipDensity]);
 
-    const effectiveActionBarLayout = agentInputActionBarLayout === 'scroll' ? 'scroll' : 'wrap';
+    const effectiveActionBarLayout = resolveAgentInputActionBarLayout({
+        configuredLayout: agentInputActionBarLayout,
+        ...(props.hostActionBarLayout === undefined ? {} : { hostLayout: props.hostActionBarLayout }),
+        platform: Platform.OS,
+        isMobileLayout: isMobileLayoutWidth(screenWidth),
+    });
 
     React.useEffect(() => {
         props.onComposerActionBarLayoutChange?.(effectiveActionBarLayout);
