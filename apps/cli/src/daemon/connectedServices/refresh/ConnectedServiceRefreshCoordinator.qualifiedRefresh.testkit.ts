@@ -38,6 +38,7 @@ const thirdRevision = 'csr_cdefghijklmnopqrstuvwx';
 const now = 1_000_000;
 
 export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
+  runAccountOperation?: ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['runAccountOperation'];
   controller?: PluginReloadController;
   happyHomeDir?: string;
   runtimeRegistry?: ConnectedServiceRuntimeRegistry;
@@ -231,6 +232,7 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
     };
   });
   const coordinator = new ConnectedServiceRefreshCoordinator({
+    runAccountOperation: input.runAccountOperation,
     api,
     credentials,
     machineIdProvider: () => 'machine-1',

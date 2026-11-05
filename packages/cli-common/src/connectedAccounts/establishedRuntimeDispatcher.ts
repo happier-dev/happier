@@ -63,10 +63,10 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
         if (phase === 'afterCallback' && input.operation.kind === 'materialize') {
             return await assertEstablishedAuthorityCurrent(input, lease, signal, 'publication');
         }
-        signal.throwIfAborted();
         // A successful refresh may already have consumed a single-use token.
-        // Its admitted replacement must survive registry retirement.
+        // Its admitted replacement must survive cancellation and registry retirement.
         if (phase === 'afterCallback' && input.operation.kind === 'refresh') return;
+        signal.throwIfAborted();
         if (!lease.isCurrent() || input.configurationRevocationSignal?.(input.context.configuration)?.aborted) {
             throw staleConnectedAccountProducerResult(input.operation.kind);
         }
@@ -103,14 +103,14 @@ async function invokeCurrentConnectedAccountCallback(
 
     function guardStagedCredentials(
         source: PluginConnectedAccountCredentialStore,
-        assertCurrent: () => Promise<void>,
+        assertCurrent: (() => Promise<void>) | undefined,
         registerRawForRedaction: (value: string) => void,
     ): PluginConnectedAccountCredentialStore {
         return Object.freeze({
             async get(key: string, options?: Readonly<{ signal?: AbortSignal }>) {
-                await assertCurrent();
-                const value = await source.get(key, options);
-                await assertCurrent();
+                await assertCurrent?.();
+                const value = await source.get(key, assertCurrent ? options : undefined);
+                await assertCurrent?.();
                 if (value !== null) registerRawForRedaction(value);
                 return value;
             },
@@ -119,15 +119,15 @@ async function invokeCurrentConnectedAccountCallback(
                 value: string,
                 options?: Readonly<{ signal?: AbortSignal }>,
             ) {
-                await assertCurrent();
-                await source.set(key, value, options);
-                await assertCurrent();
+                await assertCurrent?.();
+                await source.set(key, value, assertCurrent ? options : undefined);
+                await assertCurrent?.();
                 registerRawForRedaction(value);
             },
             async delete(key: string, options?: Readonly<{ signal?: AbortSignal }>) {
-                await assertCurrent();
-                await source.delete(key, options);
-                await assertCurrent();
+                await assertCurrent?.();
+                await source.delete(key, assertCurrent ? options : undefined);
+                await assertCurrent?.();
             },
         });
     }
@@ -201,7 +201,9 @@ async function invokeCurrentConnectedAccountCallback(
                             stagedCredentials: guardStagedCredentials(
                                 operation.stagedCredentials,
                                 operation.kind === 'refresh'
-                                    ? async () => { input.signal?.throwIfAborted(); }
+                                    // The provider may already have consumed a single-use token.
+                                    // Staging its replacement is settlement, not another admission.
+                                    ? undefined
                                     : assertCurrent,
                                 (value) => registerRawForRedaction(value),
                             ),

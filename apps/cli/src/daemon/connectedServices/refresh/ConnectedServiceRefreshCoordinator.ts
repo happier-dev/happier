@@ -763,7 +763,9 @@ export class ConnectedServiceRefreshCoordinator {
           mutateCredential: (input) => this.runCurrentAccountOperation(() => runtime.mutateCredential(input)),
           establishedRuntimeOwner: {
             invokeWithReceipt: (input) => this.runCurrentAccountOperation(
-              () => runtime.establishedRuntimeOwner.invokeWithReceipt(input), true,
+              // Invocation publication is qualified by the dispatcher. Preserve
+              // its completed receipt so an exchanged token can settle.
+              () => runtime.establishedRuntimeOwner.invokeWithReceipt(input), false,
             ),
           },
           ...(runtime.readGroup ? {

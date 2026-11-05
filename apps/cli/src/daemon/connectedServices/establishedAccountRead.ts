@@ -45,9 +45,9 @@ export function createEstablishedAccountReadScope(params: Readonly<{
   }
   async function runCurrentAccountRead<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     assertNotAborted(signal);
-    const result = await (params.runAccountOperation ? params.runAccountOperation(read, signal) : read());
-    assertNotAborted(signal);
-    return result;
+    // Admitted work may have consumed a rotating token. Its result must reach
+    // settlement; the next read and materialization disclosure check cancellation.
+    return await (params.runAccountOperation ? params.runAccountOperation(read, signal) : read());
   }
   function runIndependentAccountRead<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     // A reentrant public operation is a new admission, even when a plugin
