@@ -44,6 +44,7 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionRunnerRuntimeStatusFixture } from '@/dev/testkit/fixtures/sessionRunnerRuntimeFixtures';
+import { createSessionProviderBindingFingerprintV1, SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -719,6 +720,29 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       modelSelection: expect.objectContaining({ ref: {
         agentTargetKey: `agent:happier.agent.${agentId}/${agentId}`, providerConnectionId: null, modelId: 'gpt-6-luna',
       } }),
+    }));
+  });
+
+  it.each(['home', 'session'] as const)('preserves the configured Provider model ref from Voice settings through %s carrier creation', async entry => {
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    const chat = { agentTargetKey: 'agent:happier.agent.opencode/opencode',
+      providerConnectionId: 'pc_voice_gateway', modelId: 'openrouter/free' };
+    agent.agentSource = 'agent';
+    agent.agentId = 'opencode';
+    agent.chatModelSource = 'custom';
+    agent.chatModelId = chat.modelId;
+    agent.providerChat = { status: 'configured', chat, commit: { ...chat, modelId: 'commit-model' } };
+    state.sessions['root-session'] = { id: 'root-session', active: true, updatedAt: 1,
+      metadata: { machineId: 'machine-1', path: '/work', flavor: 'codex' } };
+    const { ensureVoiceConversationSessionForVoiceHome, ensureVoiceConversationSessionForSessionRoot } = await loadConversationSession();
+    const conversationSelection = { kind: 'new' as const, creationKey: `ui-session-attempt-provider-${entry}` };
+    await expect(entry === 'home'
+      ? ensureVoiceConversationSessionForVoiceHome(null, undefined, conversationSelection)
+      : ensureVoiceConversationSessionForSessionRoot({ sessionRootAddress: { serverId: homeId, sessionId: 'root-session' },
+        conversationSelection })).resolves.toBe('voice-home-session');
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
+      modelSelection: expect.objectContaining({ ref: chat }),
     }));
   });
 
@@ -2338,8 +2362,9 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
     sessionDetailResponse.mockClear();
   });
 
-  it.each(['native', 'team'])('inherits the coding root Agent, model and connected account instead of Account defaults (%s)', async source => {
+  it.each(['native', 'provider', 'team'])('inherits the coding root Agent, model and connected account instead of Account defaults (%s)', async source => {
     state.settings.voice.providers.local_conversation.config.agent.chatModelSource = 'session';
+    const providerConnectionId = source === 'provider' ? 'pc_root_gateway' : null;
     const connectedServices = { v: 2, bindingsByServiceId: {
       'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude-root-account' },
     } };
@@ -2351,7 +2376,7 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       sessionModelsV1: { v: 1, agentId: 'claude', updatedAt: 30, currentModelId: 'claude-haiku-4-5',
         availableModels: [{ id: 'claude-haiku-4-5', name: 'Haiku' }],
         activeSelectionV1: { v: source === 'team' ? 2 : 1, source: 'runtime_apply',
-          selection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-haiku-4-5' },
+          selection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId, modelId: 'claude-haiku-4-5' },
           runner: { pid: 123, processStartTimeMs: 1000 },
           ...(source === 'team' ? { teamCredentialModel: {
             kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'team-resource',
@@ -2361,6 +2386,37 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
         },
       },
     } };
+    if (source === 'provider') {
+      // Runtime metadata is an external boundary: the Session owner requires
+      // the retained Provider binding as well as the exact runner model fact.
+      const binding = SessionProviderBindingMetadataV1Schema.parse({
+        v: 1, connectionId: providerConnectionId, contributionKey: 'plugin.openrouter/openrouter',
+        connectionRevision: 1, model: { id: 'claude-haiku-4-5', name: 'Haiku' },
+        protocol: 'openai-responses', materialization: 'engineConfig', adapterBindingKey: 'openrouter',
+        compatibilityFingerprint: 'compatibility-v1', bindingSecurityFingerprint: 'pending',
+        displaySnapshot: { providerName: 'OpenRouter', connectionName: 'Work',
+          connectionRole: 'named', connectionDisplayNameMode: 'custom' },
+        runtimeBindingBasis: {
+          v: 1, deployment: { kind: 'external' }, agentTargetKey: 'agent:happier.agent.claude/claude',
+          connectionId: providerConnectionId, contributionKey: 'plugin.openrouter/openrouter',
+          endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://provider.example/v1',
+            protocol: 'openai-responses', publicHeaders: {} },
+          runtimeCredentialTransport: { id: 'runtime-bearer', protocols: ['openai-responses'], uses: ['runtime'],
+            destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+          prepared: { v: 1, materialization: 'engineConfig', adapterBindingKey: 'openrouter' }, adapterVersion: 1,
+          credentialAuthorization: { connectionSecurityFingerprint: 'connection-v1', grantFingerprint: 'grant-v1',
+            selectedSecretBindingId: 'binding-v1', selectedSecretRecordFingerprint: 'record-v1' },
+          agentSupport: { acceptsProtocols: ['openai-responses'], required: { streaming: true },
+            credentialSupport: { supportsNoAuth: false, apiKeyTransports: [{ protocol: 'openai-responses',
+              destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } }] },
+            authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['OPENAI_API_KEY'] },
+            materialization: 'engineConfig', applyPolicy: 'live', supportsFreeformModelIds: true },
+        },
+      });
+      state.sessions['root-session'].metadata.providerBindingV1 = {
+        ...binding, bindingSecurityFingerprint: createSessionProviderBindingFingerprintV1(binding),
+      };
+    }
     const { ensureVoiceConversationSessionForSessionRoot } = await loadConversationSession();
     if (source === 'team') {
       await expect(ensureVoiceConversationSessionForSessionRoot({
@@ -2374,7 +2430,8 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
     })).resolves.toBe('voice-root-session');
     expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      modelSelection: expect.objectContaining({ ref: expect.objectContaining({ modelId: 'claude-haiku-4-5', providerConnectionId: null }) }),
+      modelSelection: expect.objectContaining({ ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
+        modelId: 'claude-haiku-4-5', providerConnectionId } }),
       connectedServices,
     }));
   });

@@ -591,13 +591,15 @@ async function spawnVoiceConversationSession(params: Readonly<{
     params.signal?.throwIfAborted();
     // Explicit Session inheritance wins; otherwise Home and Session carriers
     // consume the same configured Voice choice as ordinary Voice Agent turns.
-    const configuredModelId = normalizeNonEmptyString(
-        readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent.chatModelId,
-    );
-    const modelSelection = params.modelSelection ?? (configuredModelId && configuredModelId !== 'default'
-        ? SessionModelSelectionV1Schema.parse({ v: 1, ref: {
-            agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: configuredModelId,
-        }, updatedAt: Date.now() }) : undefined);
+    const configuredAgent = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent;
+    const configuredModelId = normalizeNonEmptyString(configuredAgent.chatModelId);
+    const configuredModelRef = configuredAgent.providerChat?.status === 'configured'
+        ? configuredAgent.providerChat.chat
+        : configuredModelId && configuredModelId !== 'default'
+            ? { agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: configuredModelId }
+            : null;
+    const modelSelection = params.modelSelection ?? (configuredModelRef
+        ? SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() }) : undefined);
     const action = await executeSessionSpawnNewAction({
         creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
         executionTarget: {
