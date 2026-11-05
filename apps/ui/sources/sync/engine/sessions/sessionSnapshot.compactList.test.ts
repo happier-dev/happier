@@ -16,7 +16,50 @@ import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessio
 const initialState = storage.getState();
 afterEach(() => { vi.restoreAllMocks(); storage.setState(initialState, true); });
 
+it('keeps the last opened Session when background hydration fails without sending diagnostics to the error toast', async () => {
+    const serverId = 'background-failure-home';
+    let row = { id: 'background-failure', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        encryptionMode: 'plain' as const, metadataLayoutVersion: 0, metadataVersion: 1, agentStateVersion: 0,
+        metadata: JSON.stringify({ path: '/background-failure', host: 'home', name: 'Last opened Session' }),
+        agentState: null, dataEncryptionKey: null, share: null };
+    const errorToast = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const diagnostics = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const failure = new Error('Background scheduling failed');
+    const refresh = (background: boolean, fail = false) => fetchAndApplySessions({
+        serverId, credentials: { token: 'background-failure-account' },
+        accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(), encryption: null, sessionDataKeys: new Map(),
+        requiredHydrationSessionIds: background ? [] : [row.id], awaitSessionListHydration: !background,
+        sessionListEagerHydrationCount: 1,
+        // Scheduling is an OS boundary; keep snapshot parsing, hydration and publication real.
+        sessionListBackgroundHydrationYield: async () => { if (fail) throw failure; },
+        request: async path => path === '/v2/sessions/read-batch'
+            ? Response.json({ results: [{ sessionId: row.id, detail: { status: 200, body: { session: row } } }] })
+            : Response.json({ sessions: [createCompactSessionListRowFixture(row)] }),
+        getExistingSession: id => storage.getState().sessions[id],
+        getCurrentSessionListRenderable: id => storage.getState().sessionListRowsByServerId[serverId]?.[id],
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
+    });
+    await refresh(false);
+    const retained = storage.getState().sessions[row.id];
+    expect(retained?.metadata?.name).toBe('Last opened Session');
+    row = { ...row, seq: 2, updatedAt: 2, metadataVersion: 2,
+        metadata: JSON.stringify({ path: '/background-failure', host: 'home', name: 'Refreshed Session' }) };
+    await refresh(true, true);
+    await vi.waitFor(() => expect(errorToast.mock.calls.length + diagnostics.mock.calls.length).toBeGreaterThan(0));
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(diagnostics).toHaveBeenCalledWith(expect.stringContaining('sessionsSnapshot'), failure);
+    expect(storage.getState().sessions[row.id]?.metadata).toBe(retained?.metadata);
+    expect(storage.getState().sessions[row.id]?.metadataVersion).toBe(1);
+    // The existing explicit refresh can still recover and publish the new document.
+    await refresh(false);
+    expect(storage.getState().sessions[row.id]?.metadata?.name).toBe('Refreshed Session');
+});
+
 it.each(['e2ee', 'plain'] as const)('preserves an opened Agent-state document when newer metadata opens but %s Agent-state cannot open', async encryptionMode => {
+    const errorToast = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const diagnostics = vi.spyOn(console, 'info').mockImplementation(() => {});
     const serverId = 'partial-state-home';
     const id = 'partial-state';
     const secret = new Uint8Array(32).fill(51);
@@ -61,6 +104,8 @@ it.each(['e2ee', 'plain'] as const)('preserves an opened Agent-state document wh
     expect(getExistingSession(id)?.agentState).toBe(retainedState);
     expect(getExistingSession(id)?.agentStateVersion).toBe(1);
     expect(getCurrentSessionListRenderable(id)?.hasPendingPermissionRequests).toBe(true);
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(diagnostics).toHaveBeenCalledWith(expect.stringContaining('sessionsSnapshot'));
 });
 
 it('does not let an older failed display open lock a newer admitted display', async () => {

@@ -85,6 +85,7 @@ function createEncryptionHarness(
                 decryptMetadata: async (_version: number, value: string) => ({ decrypted: value }),
                 decryptMetadataPayload: async (_version: number, value: string) => ({ decrypted: value }),
                 decryptAgentState: async () => null,
+                decryptAgentStateResult: async () => ({ status: 'available' as const, value: null }),
             }
             : null
     ));

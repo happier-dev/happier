@@ -1,4 +1,5 @@
 import { normalizeSessionAccessProjection, readSessionAccessRole } from './normalizeSessionAccessProjection';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import {
     captureSessionListRetirementFence,
@@ -1294,7 +1295,7 @@ async function decryptSessionRow(
                 }
                 return session;
             } catch (error) {
-                console.error(`[sessionsSnapshot] Failed to decrypt session ${row.id}`, error);
+                console.info(`[sessionsSnapshot] Failed to decrypt session ${row.id}`, error);
                 return null;
             }
         },
@@ -1352,7 +1353,7 @@ function applyHydratedSessions(params: {
         phase: 'flush', batchSize: params.batchSize ?? currentSessions.length, flushDelayMs: params.flushDelayMs ?? 0 });
     const publishableSessions = currentSessions.flatMap(session => {
         if (session[SESSION_AGENT_STATE_OPEN_RESULT]?.status !== 'unavailable') return [session];
-        console.error(`[sessionsSnapshot] Agent state unavailable for ${session.id}`);
+        console.info(`[sessionsSnapshot] Agent state unavailable for ${session.id}`);
         const previous = params.getExistingSession?.(session.id);
         const admission = session[SESSION_LIST_DOCUMENT_ADMISSION];
         if (!previous || !admission || !sameDocumentAdmission(previous[SESSION_LIST_DOCUMENT_ADMISSION], admission)) return [];
@@ -2024,7 +2025,7 @@ export async function fetchAndApplySessions(params: {
                 : { ok: false as const, reason: 'crypto_unavailable' as const }
             : undefined;
         if (!shared.ok || (owner && !owner.ok)) {
-            console.warn(`[sessionsSnapshot] Display projection unavailable for ${row.id}: ${!shared.ok ? shared.reason : owner && !owner.ok ? owner.reason : 'invalid_envelope'}`);
+            console.info(`[sessionsSnapshot] Display projection unavailable for ${row.id}: ${!shared.ok ? shared.reason : owner && !owner.ok ? owner.reason : 'invalid_envelope'}`);
             continue;
         }
         const descriptor = documentAdmission(row, admissionScope);
@@ -2647,12 +2648,9 @@ export async function fetchAndApplySessions(params: {
                 rejectPendingRequiredHydration(error);
                 throw error;
             });
-            const logBackgroundHydrationError = (error: unknown): void => {
-                console.error('[sessionsSnapshot] Background hydration failed', error);
-            };
+            fireAndForget(hydrationPromise, { tag: 'sessionsSnapshot.backgroundHydration' });
 
             if (params.awaitSessionListHydration === true) {
-                void hydrationPromise.catch(logBackgroundHydrationError);
                 const hydratedSessions = await syncPerformanceTelemetry.measureAsync(
                     'sync.sessions.snapshot.requiredHydration.wait',
                     {
@@ -2676,8 +2674,6 @@ export async function fetchAndApplySessions(params: {
                         throw new Error(`Required session hydration failed for ${missingRequiredHydration.id}`);
                     }
                 }
-            } else {
-                void hydrationPromise.catch(logBackgroundHydrationError);
             }
         }
 
