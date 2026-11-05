@@ -75,6 +75,15 @@ describe('voiceTargetStore', () => {
     expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'session', sessionAddress: null } })).toEqual({ kind: 'session', sessionAddress: null });
     expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'global' }, scopeDefault: 'session', allowsGlobalStart: false })).toEqual({ kind: 'global' });
   });
+  it('uses native full-window focus without aliasing a colliding main-local Session or another Account', async () => {
+    const { resolveVoiceIdleTarget } = await import('./voiceTargetStore');
+    const facts = { intent: { kind: 'default' as const }, scopeDefault: 'session' as const, allowsGlobalStart: true,
+      focusedSessionAddress: { serverId: 'home-a', sessionId: 'same' }, lastFocusedSessionAddress: { serverId: 'home-a', sessionId: 'previous' },
+      focusedWindowSurface: { homeId: 'home-b', accountId: 'alice', sessionId: 'same' }, currentAccountId: 'alice' };
+    expect(resolveVoiceIdleTarget(facts)).toEqual({ kind: 'session', sessionAddress: { serverId: 'home-b', sessionId: 'same' } });
+    expect(resolveVoiceIdleTarget({ ...facts, focusedWindowSurface: { ...facts.focusedWindowSurface, accountId: 'bob' } }))
+      .toEqual({ kind: 'session', sessionAddress: null });
+  });
   it('stores primary, focused, and tracked targets by qualified address', async () => {
     vi.resetModules();
     const { useVoiceTargetStore } = await import('./voiceTargetStore');
