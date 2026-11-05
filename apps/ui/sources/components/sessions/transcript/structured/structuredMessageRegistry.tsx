@@ -1,5 +1,5 @@
 import React from 'react';
-import type { core } from 'zod/mini';
+import { z, type core } from 'zod/mini';
 import { t } from '@/text';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { FileReviewNoteV1Schema } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -54,6 +54,7 @@ export type StructuredMessageKind =
     | 'delegate_output.v1'
     | 'execution_run_completion.v1'
     | 'voice_agent_turn.v1'
+    | 'conversation_turn.v1'
     | 'session_synopsis.v1'
     | 'session_summary_shard.v1'
     | 'scm_diff_summary.v1';
@@ -246,6 +247,13 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
             const receipt = readScmDiffSummaryPublicationReceipt(payload, params.message.meta?.scmResultUpdate);
             return receipt ? projectScmResultReceiptFindText(receipt) : null;
         },
+    },
+    {
+        kind: 'conversation_turn.v1',
+        schema: z.strictObject({ v: z.literal(1) }),
+        // The origin annotates ordinary turn text; it never replaces the body with a card.
+        render: () => null,
+        projectFindText: () => null,
     },
     {
         kind: 'voice_agent_turn.v1',

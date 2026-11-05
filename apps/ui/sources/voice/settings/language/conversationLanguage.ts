@@ -1,5 +1,7 @@
-import { serviceLanguage, projectConversationLanguagePreference, updateConversationLanguagePreference } from '@happier-dev/protocol/voice/settings/conversationLanguage';
+import { serviceLanguage, type ConversationLanguagePreference } from '@happier-dev/protocol/voice/settings/conversationLanguage';
 export { projectConversationLanguagePreference, updateConversationLanguagePreference, type ConversationLanguagePreference } from '@happier-dev/protocol/voice/settings/conversationLanguage';
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
+import { findLanguageByCode } from '@/constants/Languages';
 import { type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
   parseLocalVoiceSttSettings,
@@ -15,6 +17,21 @@ import { getExternalVoiceProviderProjectionAuthority, getExternalVoiceProviderRe
 
 const languageRegistry = createDefaultVoiceProviderRegistry();
 type ServiceLanguage = NonNullable<VoiceProviderSettingsPresentation['language']>;
+
+/** Independent replies use the language picker; a coupled service owns its supported codes. */
+export function projectConversationLanguagePreferenceSelection(voice: VoiceSettings, preference: ConversationLanguagePreference): Readonly<{
+  value: string | null;
+  unavailableValue: string | null;
+}> {
+  const value = preference.kind === 'single_language'
+    ? resolveVoiceProviderLanguagePreference(voice.assistantLanguage, preference.supportedLanguageCodes)
+    : findLanguageByCode(voice.assistantLanguage)?.code ?? null;
+  return {
+    value,
+    unavailableValue: preference.kind === 'single_language' && voice.assistantLanguage !== null && value === null
+      ? voice.assistantLanguage : null,
+  };
+}
 
 /** Capture the selected contribution's existing activation/projection authority, not a generation. */
 export function captureConversationLanguagePreferenceOwner(providerId: string | null, registry: VoiceProviderRegistry): (current: VoiceSettings) => boolean {

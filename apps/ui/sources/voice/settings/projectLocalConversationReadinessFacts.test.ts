@@ -24,6 +24,7 @@ import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getRes
 import { projectVoiceProviderSettings } from '@/voice/registry/providerRegistry';
 import { resolveVoiceRoleReadiness } from '@/voice/registry/readiness';
 import { deriveVoiceSetupFacts } from './setup/voiceSetupFacts';
+import { resolveVoiceReadinessTone } from './pipeline/presentVoicePipeline';
 
 const registry = createDefaultVoiceProviderRegistry();
 const executionMachineId = 'machine-a';
@@ -101,7 +102,7 @@ function project(settings: Settings) {
     local,
     localInput,
     executionMachineId,
-    voiceAgentEnabled: true,
+    voiceAgentAvailability: 'available',
     rawCredentialAuthorizationByContribution: Object.fromEntries(([
       ['happier.voice.google/gemini-stt', { pluginId: 'happier.voice.google', localId: 'gemini-stt' }],
       ['happier.voice.google/google-cloud-tts', { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' }],
@@ -118,6 +119,32 @@ function project(settings: Settings) {
 
 describe('projectLocalConversationReadinessFacts credential readiness', () => {
   it.each([
+    { arm: 'policy_disabled', code: 'feature_policy_disabled', tone: 'needs_you', recovery: 'enable_voice_agent' },
+    { arm: 'server_disabled', code: 'server_feature_disabled', tone: 'waiting', recovery: 'switch_provider' },
+    { arm: 'checking', code: 'server_feature_unknown', tone: 'unknown', recovery: 'switch_provider' },
+    { arm: 'available', code: 'ready', tone: 'ready', recovery: 'none' },
+  ] as const)('preserves the $arm feature arm across the shared hub and Think pipeline', ({ arm, code, tone, recovery }) => {
+    const settings = createLocalSettings('device', 'device');
+    const config = readLocalConversationVoiceSettings(settings.voice);
+    const voice = writeLocalConversationVoiceSettings(settings.voice, {
+      ...config, conversationMode: 'agent', agent: { ...config.agent, agentSource: 'session' },
+    });
+    const facts = projectLocalConversationReadinessFacts({
+      registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
+      connectedPurposes: null, platform: 'web', local, localInput, executionMachineId,
+      voiceAgentAvailability: arm,
+    });
+    expect(facts.thinkReadiness).toMatchObject({ code, recoveryAction: recovery });
+    expect(resolveVoiceReadinessTone(facts.thinkReadiness)).toBe(tone);
+    const pipeline = buildVoiceConversationsPipeline({ voice, registry, serviceTitle: 'Local',
+      machine: { machineId: executionMachineId, machineLabel: 'Computer' }, readiness: null,
+      localSpeechReadiness: facts.speechReadiness, localThinkReadiness: facts.thinkReadiness });
+    expect(pipeline?.pipeline.steps[1]?.readiness).toEqual(facts.thinkReadiness);
+    // Dictation consumes the same speech facts; a Think policy never disables hearing.
+    expect(facts.speechReadiness.hear?.status).toBe('ready');
+  });
+
+  it.each([
     { name: 'missing Agent selection', agentId: ' ', enabled: true, selectionKind: 'resolved', code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
     { name: 'Voice Agent feature disabled', agentId: 'claude', enabled: false, selectionKind: 'resolved', code: 'server_feature_disabled', recoveryAction: 'switch_provider' },
     { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
@@ -133,7 +160,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
       connectedPurposes: { v: 1, bindings: [] }, platform: 'web', local, localInput,
       executionMachineId, executionMachineSelectionKind: scenario.selectionKind,
-      voiceAgentEnabled: scenario.enabled,
+      voiceAgentAvailability: scenario.enabled ? 'available' : 'server_disabled',
       voiceAgentRuntime: 'ready',
     });
     expect(facts).toMatchObject({ thinkReadiness: { code: scenario.code, recoveryAction: scenario.recoveryAction } });
@@ -155,7 +182,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     const facts = projectLocalConversationReadinessFacts({
       registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
       connectedPurposes: null, platform: 'web', local, localInput, executionMachineId,
-      voiceAgentEnabled: true, voiceAgentRuntime: runtime,
+      voiceAgentAvailability: 'available', voiceAgentRuntime: runtime,
     });
     expect(facts.thinkReadiness).toMatchObject({ code: `runtime_${runtime}`, recoveryAction: 'switch_provider' });
     expect(facts.runtime).toBe(runtime);
@@ -178,7 +205,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     const input = { ...localInput, daemon: { ...localInput.daemon, runtimeState: scenario.runtimeState } };
     const facts = projectLocalConversationReadinessFacts({
       registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
-      connectedPurposes: null, platform: 'web', executionMachineId, voiceAgentEnabled: true,
+      connectedPurposes: null, platform: 'web', executionMachineId, voiceAgentAvailability: 'available',
       localInput: input,
       local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: input }).local,
       // Follow session has no fixed Agent selection to resolve in the catalog.
@@ -218,7 +245,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(projectLocalConversationReadinessFacts({
       registry, voice: settings.voice, voiceSettingsV1: settings.voiceSettingsV1,
       secrets: settings.secrets, connectedPurposes: { v: 1, bindings: [] },
-      platform: 'web', executionMachineId, voiceAgentEnabled: true, localInput: unavailableInput,
+      platform: 'web', executionMachineId, voiceAgentAvailability: 'available', localInput: unavailableInput,
       local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: unavailableInput }).local,
     })).toMatchObject({
       runtime: 'missing', endpoint: 'ready', credential: 'ready',
@@ -240,7 +267,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       local,
       localInput,
       executionMachineId,
-      voiceAgentEnabled: false,
+      voiceAgentAvailability: 'server_disabled',
     })).toMatchObject({ serverFeature: 'ready', thinkReadiness: { status: 'ready' } });
 
     const current = readLocalConversationVoiceSettings(direct.voice);
@@ -258,7 +285,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       local,
       localInput,
       executionMachineId,
-      voiceAgentEnabled: false,
+      voiceAgentAvailability: 'server_disabled',
     }).serverFeature).toBe('missing');
   });
 
@@ -344,7 +371,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         local: relayDisabledLocal,
         localInput: relayDisabledInput,
         executionMachineId,
-        voiceAgentEnabled: true,
+        voiceAgentAvailability: 'available',
       })
     );
 
@@ -380,7 +407,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         }).local,
         localInput: input,
         executionMachineId: machineId,
-        voiceAgentEnabled: true,
+        voiceAgentAvailability: 'available',
       }).daemonRouteReadiness;
     };
 

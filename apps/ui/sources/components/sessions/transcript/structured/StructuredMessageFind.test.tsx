@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, createSessionMessagesFixture, createTestSessionTranscriptSource, createToolCallMessageFixture, renderScreen, wrapWithSessionTranscriptSource } from '@/dev/testkit';
 import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
 import { ReviewCommentsV1Schema } from '@happier-dev/protocol/messages/structured/reviewCommentsV1';
+import { normalizeRawMessage } from '@happier-dev/session-core/raw';
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
+import { resolveTranscriptMessageDisplayText } from '../messageDisplayText';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createTranscriptFindRowStore } from '../find/transcriptFindRowStore';
 import { TranscriptFindProvider } from '../find/TranscriptFindContext';
@@ -27,11 +30,25 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 installDisconnectedServerSocketBoundary();
+const { buildRealtimeConversationRawRecord } = await import('@/voice/transcript/VoiceTranscriptProjector');
 const { projectStructuredMessageFindText, renderStructuredMessage } = await import('./StructuredMessageBlock');
 const { findBuiltInStructuredMessageEntry } = await import('./descriptorRegistry');
 const { renderExecutionRunStructuredMeta } = await import('@/components/sessions/runs/renderExecutionRunStructuredMeta');
 
 describe('Structured transcript Find', () => {
+    it.each(['user', 'assistant'] as const)('keeps canonical realtime %s text and Voice markers without an unavailable card', role => {
+        const text = 'User said:\nHULLO PLEASE keep API and iOS';
+        const normalized = normalizeRawMessage('voice-turn', null, 100, buildRealtimeConversationRawRecord({
+            id: 'voice-turn', role, text,
+        }));
+        if (!normalized) throw new Error('Canonical Voice record must normalize');
+        const message = reducer(createReducer(), [normalized]).messages[0]!;
+        if (message.kind !== 'user-text' && message.kind !== 'agent-text') throw new Error('Voice turn must remain text');
+        expect.soft(resolveTranscriptMessageDisplayText(message)).toMatchObject({ text, isVoiceAgentTurn: true });
+        expect.soft(projectStructuredMessageFindText(message)).toBeNull();
+        expect.soft(renderStructuredMessage({ message, sessionId: 's1', interaction: { canSendMessages: false, canApprovePermissions: false }, onJumpToAnchor: undefined })).toBeNull();
+    });
+
     it.each(['readOnly', 'app', 'implicitApp'] as const)('names an unlabeled walkthrough recipient in the %s card and Find through the canonical Run title', async sourceKind => {
         const base = createToolCallMessageFixture();
         const run = createToolCallMessageFixture({ id: 'generator-tool', tool: { ...base.tool,

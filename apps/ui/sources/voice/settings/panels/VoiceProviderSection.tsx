@@ -43,6 +43,8 @@ import {
   captureActiveServerAccountScopeLifetime,
   type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { inspectVoiceProviderReadiness, projectVoiceRawSpeechReadinessTargets } from '@/voice/settings/voiceProviderReadinessInspection';
@@ -58,7 +60,7 @@ import { resolveVoiceServiceTitle } from '@/voice/registry/voiceProviderPresenta
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { VoicePipelineView } from '@/voice/settings/pipeline/VoicePipelineView';
 import { buildVoiceConversationsPipeline } from '@/voice/settings/pipeline/voicePipelineSteps';
-import { presentVoicePipeline } from '@/voice/settings/pipeline/presentVoicePipeline';
+import { presentVoicePipeline, resolveVoiceReadinessTone } from '@/voice/settings/pipeline/presentVoicePipeline';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import {
   resolveAccountVoiceCredentialSourceSelection,
@@ -351,7 +353,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const accountProfile = useProfile();
   const activeAccountScopeLifetime = captureActiveServerAccountScopeLifetime();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
-  const voiceAgentEnabled = useFeatureEnabled('voice.agent');
+  const voiceAgentAvailability = resolveFeatureAvailabilityArm(useFeatureDecision('voice.agent'));
   const [checkedReadiness, setCheckedReadiness] = React.useState<CheckedVoiceProviderReadinessState | null>(null);
   const checkedReadinessRevision = React.useRef(0);
   const currentReadinessCheckKeyRef = React.useRef<string | null>(null);
@@ -419,7 +421,7 @@ export function useVoiceConversationsReadinessModel(props: {
     localInput: props.localAvailability,
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
-    voiceAgentEnabled,
+    voiceAgentAvailability,
     voiceAgentRuntime: configuredAgentTarget === null
       ? 'unknown' : configuredAgentTarget.ok ? 'ready' : 'incompatible',
     rawCredentialAuthorizationByContribution:
@@ -1093,7 +1095,7 @@ export function useVoiceConversationsReadinessModel(props: {
         status: shown.selected ? selectedServiceStatus : ready
           ? { tone: 'ready', text: shown.detail ?? t('settingsVoice.pages.conversations.serviceReady') }
           : {
-              tone: 'needs_you',
+              tone: resolveVoiceReadinessTone(shown.readiness) ?? 'unknown',
               text: shown.short ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
               detail: shown.need ?? translateVoiceReadiness(shown.readiness.reasonKey, { service: resolveServiceTitle(serviceRows) }),
             },

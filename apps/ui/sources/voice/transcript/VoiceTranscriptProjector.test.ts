@@ -5,6 +5,7 @@ import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { resolveTranscriptMessageDisplayText } from '@/components/sessions/transcript/messageDisplayText';
 
 import { persistSessionTranscriptMessage, readStoredSessionMessages, type PersistedSessionTranscriptMessage } from "@happier-dev/session-core/messages";
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
@@ -37,6 +38,22 @@ function seedOrderedTranscript() {
 }
 
 describe('VoiceTranscriptProjector', () => {
+    it.each(['user', 'assistant'] as const)('retains Voice origin and provider casing for a synthetic %s STT conversation turn', role => {
+        const projector = createVoiceTranscriptProjector({ getState: storage.getState, nowMs: () => 100 });
+        const input = { conversationSessionId: 'carrier-s1', text: 'HULLO PLEASE keep API and iOS' };
+        const projected = role === 'user' ? projector.projectUserText(input) : projector.projectAssistantText(input);
+        expect(projected).not.toBeNull();
+        if (!projected) throw new Error('Voice turn must project');
+        expect(readConversationTurnOriginV1FromMessageMeta(projected.meta)).toMatchObject({
+            channel: 'realtime_conversation', modality: 'voice',
+        });
+        const received = reducer(createReducer(), [projected]).messages;
+        expect(received).toHaveLength(1);
+        const message = received[0]!;
+        if (message.kind !== 'user-text' && message.kind !== 'agent-text') throw new Error('Voice turn must remain text');
+        expect(resolveTranscriptMessageDisplayText(message)).toMatchObject({ text: input.text, isVoiceAgentTurn: true });
+    });
+
     it('delivers one acknowledged visible continuation through the real writer and two independent transcript consumers', async () => {
         const conversation = { serverId: 'home-a', sessionId: 'conversation' };
         const binding: VoiceSessionBinding = { adapterId: 'service', controlSessionId: 'control',

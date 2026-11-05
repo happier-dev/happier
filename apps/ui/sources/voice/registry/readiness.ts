@@ -14,6 +14,7 @@ import {
 } from './providerRegistry';
 
 export type VoiceReadinessFact = 'ready' | 'missing' | 'installing' | 'incompatible' | 'unknown';
+export type VoiceServerFeatureReadinessFact = VoiceReadinessFact | 'policy_disabled';
 export type VoiceCredentialReadinessFact = VoiceReadinessFact | 'approval_required';
 export type VoiceProviderCredentialSourceKind = 'none' | 'savedSecret' | 'connectedAccount';
 export type VoiceSettingsReadinessFact =
@@ -26,7 +27,7 @@ export type VoiceSettingsReadinessFact =
 
 export type VoiceRoleReadinessFacts = Readonly<{
   settings: VoiceSettingsReadinessFact;
-  serverFeature?: VoiceReadinessFact;
+  serverFeature?: VoiceServerFeatureReadinessFact;
   executionMachine?: VoiceReadinessFact;
   credential?: VoiceCredentialReadinessFact;
   /** Canonical endpoint-policy fact, including exact-origin + selected-machine-bound consent. */
@@ -41,7 +42,7 @@ export type VoiceRoleReadiness = Readonly<{
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';
   code: string;
   reasonKey: string;
-  recoveryAction: 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
+  recoveryAction: 'enable_voice_agent' | 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
 }>;
 
 export function projectHostedModeAvailabilityReadiness(input: Readonly<{
@@ -130,9 +131,12 @@ function projectRequirement(
   role: VoiceReadinessRole,
   providerId: string,
   requirement: VoiceReadinessRequirement,
-  fact: VoiceCredentialReadinessFact | undefined,
+  fact: VoiceCredentialReadinessFact | VoiceServerFeatureReadinessFact | undefined,
 ): VoiceRoleReadiness | null {
   if (fact === 'ready') return null;
+  if (requirement === 'server_feature' && fact === 'policy_disabled') {
+    return result(role, providerId, 'needs_setup', 'feature_policy_disabled', 'enable_voice_agent');
+  }
   if (requirement === 'credential' && fact === 'approval_required') {
     return result(role, providerId, 'needs_setup', 'credential_approval_required', 'review_credential_access');
   }
@@ -230,7 +234,7 @@ function resolveVoiceRoleReadinessInternal(
       input.role,
       input.providerId,
       requirement,
-      input.facts[FACT_FIELD_BY_REQUIREMENT[requirement]] as VoiceCredentialReadinessFact | undefined,
+      input.facts[FACT_FIELD_BY_REQUIREMENT[requirement]],
     );
     if (projected) return projected;
   }

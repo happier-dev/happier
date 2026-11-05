@@ -12,13 +12,12 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { LANGUAGES, getLanguageDisplayNameForCode } from '@/constants/Languages';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
-import { projectConversationLanguage, projectConversationLanguagePreference } from '@/voice/settings/language/conversationLanguage';
+import { projectConversationLanguage, projectConversationLanguagePreference, projectConversationLanguagePreferenceSelection } from '@/voice/settings/language/conversationLanguage';
 import { VOICE_CONVERSATIONS_SETTINGS, resolveVoiceConversationLanguageSetting } from '@/voice/settings/voiceSettingsDeclarations';
 import { updateVoiceConversationLanguagePreference } from '@/voice/settings/voiceSettingBinding';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
-import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 import { useVoiceSettingsSearchPrerequisite } from '@/voice/settings/VoiceSettingsSearchPrerequisite';
 
 function languageName(code: string): string {
@@ -65,11 +64,7 @@ export function VoiceConversationLanguageSection(props: Readonly<{
   const recognition = local?.recognition ?? null;
   const coupled = preference.kind === 'single_language' ? preference : null;
   const automatic = language.mode === 'service' && language.language?.kind === 'automatic_recognition';
-  const normalizedPreference = coupled
-    ? resolveVoiceProviderLanguagePreference(props.voice.assistantLanguage, coupled.supportedLanguageCodes)
-    : props.voice.assistantLanguage;
-  const unavailablePreference = coupled && props.voice.assistantLanguage !== null && normalizedPreference === null
-    ? props.voice.assistantLanguage : null;
+  const { value: normalizedPreference, unavailableValue: unavailablePreference } = projectConversationLanguagePreferenceSelection(props.voice, preference);
 
   return (
     <ItemGroup

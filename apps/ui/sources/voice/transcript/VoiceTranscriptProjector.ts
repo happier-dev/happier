@@ -64,8 +64,8 @@ function normalizeText(value: unknown): string | null {
     return normalizeNonEmptyString(typeof value === 'string' ? value : String(value ?? ''));
 }
 
-function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage['meta'] | undefined {
-    if (!turn) return undefined;
+function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage['meta'] {
+    if (!turn) return buildRealtimeConversationTurnMeta();
     const runId = normalizeNonEmptyString(turn.runId);
     const streamId = normalizeNonEmptyString(turn.streamId);
     const requestId = normalizeNonEmptyString(turn.requestId);
@@ -405,13 +405,9 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 isSidechain: false,
                 role: 'user',
                 content: { type: 'text', text },
-                ...(
-                    canonicalItem
-                        ? { meta: buildRealtimeConversationTurnMeta(params.source ?? undefined) }
-                        : buildVoiceTurnMeta(turn)
-                            ? { meta: buildVoiceTurnMeta(turn) }
-                            : {}
-                ),
+                meta: canonicalItem
+                    ? buildRealtimeConversationTurnMeta(params.source ?? undefined)
+                    : buildVoiceTurnMeta(turn),
             }
             : {
                 id,
@@ -420,15 +416,11 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 isSidechain: false,
                 role: 'agent',
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-                ...(
-                    canonicalItem
-                        ? { meta: buildRealtimeConversationTurnMeta(params.source ?? undefined) }
-                        : params.role === 'note'
-                        ? { meta: buildVoiceTranscriptNoteMeta(params.continuation ? { continuation: params.continuation } : undefined) }
-                        : buildVoiceTurnMeta(turn)
-                            ? { meta: buildVoiceTurnMeta(turn) }
-                            : {}
-                ),
+                meta: canonicalItem
+                    ? buildRealtimeConversationTurnMeta(params.source ?? undefined)
+                    : params.role === 'note'
+                        ? buildVoiceTranscriptNoteMeta(params.continuation ? { continuation: params.continuation } : undefined)
+                        : buildVoiceTurnMeta(turn),
         };
         if (params.continuation) {
             // No optimistic control note: the other device reacts only to its ordinary

@@ -18,6 +18,14 @@ const think = { roles: ['think'] as const, engine: { kind: 'agent' as const, tit
 const speak = { roles: ['speak'] as const, engine: { kind: 'speech' as const, title: 'Kokoro' }, placement: { kind: 'machine' as const, machineName: 'devbox' } };
 
 describe('presentVoicePipeline', () => {
+    it('uses the blocked tone for an incompatible or failed pack, including the aggregate', () => {
+        const fact = readiness('incompatible', 'model_incompatible', 'install_model');
+        const pipeline = projectVoiceSettingsPipeline({ mode: 'dictation', providerId: 'p', steps: [{ ...hear, readiness: fact }] });
+        const presented = presentVoicePipeline(pipeline, translate);
+        expect(presented.steps[0]?.readiness?.tone).toBe('blocked');
+        expect(presented.tone).toBe('blocked');
+    });
+
     it('names the one step that needs the person and the action that fixes it; healthy steps stay quiet', () => {
         const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
             { ...hear, readiness: readiness('ready', 'ready') },

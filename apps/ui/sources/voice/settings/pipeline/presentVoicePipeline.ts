@@ -67,6 +67,7 @@ export function resolveVoiceReadinessTone(readiness: VoiceRoleReadiness | null):
                 ? 'waiting'
                 : 'needs_you';
         case 'incompatible':
+            return readiness.code.startsWith('execution_machine_') ? 'waiting' : 'blocked';
         case 'needs_setup':
         default:
             return readiness.code.startsWith('execution_machine_') ? 'waiting' : 'needs_you';
@@ -147,7 +148,8 @@ export function presentVoicePipeline(
         && step.readiness.recoveryAction === serviceFact.recoveryAction) ? null : serviceFact;
     const needYou = steps.filter((step) => step.readiness?.tone === 'needs_you' || step.readiness?.tone === 'blocked').length;
     const overall = resolveVoiceReadinessTone(cardReadiness ?? pipeline.readiness);
-    const tone: VoiceReadinessTone = needYou > 0 ? 'needs_you' : overall ?? 'unknown';
+    const tone: VoiceReadinessTone = steps.some(step => step.readiness?.tone === 'blocked') || overall === 'blocked'
+        ? 'blocked' : needYou > 0 ? 'needs_you' : overall ?? 'unknown';
     const statusWord = serviceFact
         ? serviceFact.tone === 'needs_you' || serviceFact.tone === 'blocked'
             ? t('settingsVoice.pages.pipeline.needsYou')

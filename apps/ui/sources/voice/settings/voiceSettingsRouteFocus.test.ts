@@ -6,9 +6,16 @@ import {
   VOICE_SETTINGS_PROVIDER_FOCUS_TARGET,
   resolveVoiceSettingsRecoveryFocus,
   resolveVoiceSettingsRouteFocus,
+  resolveVoiceSettingsRecoveryTarget,
 } from './voiceSettingsRouteFocus';
 
 describe('voice settings route focus', () => {
+  it('opens the existing turn-on feature destination for a policy-disabled Voice agent', () => {
+    expect(resolveVoiceSettingsRecoveryTarget('enable_voice_agent')).toBe('/settings/features');
+    expect(resolveVoiceSettingsRecoveryTarget('install_model')).toEqual({
+      pathname: '/settings/voice/conversations', params: { focus: 'local' },
+    });
+  });
   it('keeps provider disclosure and context-sharing focus as separate destinations', () => {
     expect(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET).toMatchObject({
       pathname: '/settings/voice/conversations',

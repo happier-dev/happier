@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildTrustedHostSessionInputAdmissionV1, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { AgentTextMessage, UserTextMessage } from '@happier-dev/session-core/messages';
 import { resolveTranscriptMessageDisplayText } from './messageDisplayText';
 
@@ -10,6 +11,16 @@ const user = (overrides: Partial<UserTextMessage> = {}): UserTextMessage => ({
 });
 
 describe('resolveTranscriptMessageDisplayText', () => {
+    it('marks direct-session Voice input from its canonical admission provenance while keeping ordinary text unmarked', () => {
+        const text = 'HULLO PLEASE keep API and iOS';
+        for (const surface of ['voice', 'ui'] as const) {
+            const admission = buildTrustedHostSessionInputAdmissionV1(surface);
+            expect(resolveTranscriptMessageDisplayText(user({ text,
+                meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: admission.provenance },
+            }))).toMatchObject({ text, isVoiceAgentTurn: surface === 'voice' });
+        }
+    });
+
     it('shows readable markers to human readers, but retains tokens for the Markdown chip renderer', () => {
         const token = '[Auth](happier-ref:session:s1)';
         const message = user({

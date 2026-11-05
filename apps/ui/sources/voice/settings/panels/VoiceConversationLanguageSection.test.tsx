@@ -7,6 +7,7 @@ import { renderSettingsView } from '@/dev/testkit';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
 import { PLUGIN_MANIFEST as OPENAI_MANIFEST } from '../../../../../../packages/plugins/openai/src/manifest';
 import { PLUGIN_MANIFEST as ELEVENLABS_MANIFEST } from '../../../../../../packages/plugins/elevenlabs/src/manifest';
@@ -46,6 +47,24 @@ beforeEach(async () => {
 afterAll(() => { setPreferredLanguageFromSettings(initialLanguage); });
 
 describe('Contributed realtime conversation language controls', () => {
+  it.each(['en', 'retired-language'])('uses the default independent reply choice for unsupported stored %s', async (assistantLanguage) => {
+    const voice = voiceSettingsParse({ providerId: 'local_conversation', assistantLanguage });
+    const setVoice = vi.fn();
+    const screen = await renderSettingsView(<VoiceConversationLanguageSection voice={voice} setVoice={setVoice} registry={createDefaultVoiceProviderRegistry()} />);
+    const menu = screen.tree.root.findByType(DropdownMenu);
+    expect(menu.props.selectedId).toBe('same');
+    expect(menu.props.items.some((choice) => choice.id === menu.props.selectedId)).toBe(true);
+    expect(voice.assistantLanguage).toBe(assistantLanguage);
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
+  it('keeps a provider-supported base language selected without rewriting the stored preference', async () => {
+    const voice = voiceSettingsParse({ providerId: 'happier.voice.elevenlabs/realtime-elevenlabs', assistantLanguage: 'fr' });
+    const screen = await renderSettingsView(<VoiceConversationLanguageSection voice={voice} setVoice={vi.fn()} registry={registry} />);
+    expect(screen.tree.root.findByType(DropdownMenu).props.selectedId).toBe('fr');
+    expect(voice.assistantLanguage).toBe('fr');
+  });
+
   it('retains an unsupported stored language as unavailable instead of claiming the service default', async () => {
     const voice = voiceSettingsParse({ providerId: 'happier.voice.elevenlabs/realtime-elevenlabs', assistantLanguage: 'he-IL' });
     const screen = await renderSettingsView(<VoiceConversationLanguageSection voice={voice} setVoice={vi.fn()} registry={registry} />);
@@ -78,6 +97,7 @@ describe('Contributed realtime conversation language controls', () => {
     expect(recognition?.props.detail).toBe(t('settingsVoice.pages.conversations.iSpeakAutomatic'));
     expect(recognition?.props.onPress).toBeUndefined();
     expect(screen.tree.root.findByType(DropdownMenu).props.itemTrigger?.title).toBe(t('settingsVoice.pages.conversations.replyInTitle'));
+    expect(screen.tree.root.findByType(DropdownMenu).props.selectedId).toBe('de-DE');
   });
 
   it('does not advertise a mutable language for an unknown or opaque service', async () => {

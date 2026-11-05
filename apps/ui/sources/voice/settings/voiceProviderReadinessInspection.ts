@@ -3,6 +3,8 @@ import { VoiceRuntimePlatformSchema } from '@happier-dev/protocol/voice/realtime
 import { getDefaultModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import type { VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { Platform } from 'react-native';
 import type { SettingOperationContext } from '@/components/settings/catalog/settingDeclarations';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -140,8 +142,8 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
         && resolveLocalNeuralExecutionPolicy({ requestedExecution: stt.localNeural.execution, platformOs: platform }).preferredExecution === 'daemon';
     const requireTts = purpose === 'conversation' && localSelected && tts.provider === 'local_neural'
         && resolveLocalNeuralExecutionPolicy({ requestedExecution: tts.localNeural.execution, platformOs: platform }).preferredExecution === 'daemon';
-    const [hostedEnabled, voiceAgentEnabled, daemonFeatureEnabled, accountGroupsEnabled] = await Promise.all([
-        context.isFeatureEnabled?.('voice.happierVoice') ?? false, context.isFeatureEnabled?.('voice.agent') ?? false,
+    const [hostedEnabled, daemonFeatureEnabled, accountGroupsEnabled] = await Promise.all([
+        context.isFeatureEnabled?.('voice.happierVoice') ?? false,
         context.isFeatureEnabled?.('voice.daemonInference') ?? false, context.isFeatureEnabled?.('connectedServices.accountGroups') ?? false,
     ]);
     const state = storage.getState();
@@ -150,6 +152,9 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const serverId = scope?.serverId ?? appliedServer.serverId;
     const featureSnapshot = getCachedServerFeaturesSnapshot({ serverId });
     const serverFeatures = featureSnapshot?.status === 'ready' ? featureSnapshot.features : null;
+    const voiceAgentAvailability = resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
+        featureId: 'voice.agent', settings, snapshot: featureSnapshot ?? { status: 'loading' },
+    }));
     let models: readonly DaemonVoiceInferenceModelStatus[] = [];
     let modelError: Parameters<typeof resolveVoiceDaemonModelAvailabilityFromCatalogState>[0]['errorCode'] = null;
     if ((requireStt || requireTts) && machine.machineId && daemonFeatureEnabled && input.isCurrent()) {
@@ -221,7 +226,7 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,
-        executionMachineId: machine.machineId, executionMachineSelectionKind: machine.selectionKind, voiceAgentEnabled,
+        executionMachineId: machine.machineId, executionMachineSelectionKind: machine.selectionKind, voiceAgentAvailability,
         voiceAgentRuntime: agentTarget === null ? 'unknown' : agentTarget.ok ? 'ready' : 'incompatible', resolveSavedSecret,
         rawCredentialAuthorizationByContribution: Object.fromEntries((inspection.raw ?? []).map(target => [target.providerId, {
             contribution: target.contribution, machineId: machine.machineId, realm: 'daemon' as const, phase: 'speech' as const, status: target.status }])) });

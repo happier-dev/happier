@@ -25,10 +25,17 @@ export type VoiceSettingsRouteFocus = 'privacy' | 'provider' | 'execution_machin
 export function resolveVoiceSettingsRecoveryFocus(
   action: VoiceRoleReadiness['recoveryAction'],
 ): Exclude<VoiceSettingsRouteFocus, 'privacy'> | null {
-  if (action === 'none' || action === 'retry') return null;
+  if (action === 'none' || action === 'retry' || action === 'enable_voice_agent') return null;
   if (action === 'select_execution_machine') return 'execution_machine';
   if (action === 'install_model') return 'local';
   return 'provider';
+}
+
+/** The existing feature turn-on destination and section recovery share one route owner. */
+export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction']): Href | null {
+  if (action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
+  const focus = resolveVoiceSettingsRecoveryFocus(action);
+  return focus ? { pathname: SETTINGS_ROUTES.voiceConversations, params: { focus } } : null;
 }
 
 export function resolveVoiceSettingsRouteFocus(

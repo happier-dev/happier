@@ -1,3 +1,4 @@
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -11,6 +12,7 @@ import type {
   VoiceReadinessFact,
   VoiceRoleReadiness,
   VoiceSettingsReadinessFact,
+  VoiceServerFeatureReadinessFact,
 } from '@/voice/registry/readiness';
 import { resolveVoiceRoleReadiness } from '@/voice/registry/readiness';
 import { projectVoiceProviderSettings, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
@@ -83,7 +85,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   localInput: ResolveVoiceProviderAvailabilityInput['local'];
   executionMachineId: string | null | undefined;
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
-  voiceAgentEnabled: boolean;
+  voiceAgentAvailability: FeatureAvailabilityArm;
   /** Existing configured-Agent/catalog availability; never a speech runtime fact. */
   voiceAgentRuntime?: VoiceReadinessFact;
   rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
@@ -96,7 +98,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   resolveSavedSecret?: (ref: string) => SavedSecretReferenceResolution;
 }>): Readonly<{
   settings: VoiceSettingsReadinessFact;
-  serverFeature: VoiceReadinessFact;
+  serverFeature: VoiceServerFeatureReadinessFact;
   executionMachine: VoiceReadinessFact;
   runtime: VoiceReadinessFact;
   model: VoiceReadinessFact;
@@ -170,10 +172,12 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       ? 'unknown'
       : 'ready';
   const conversation = local.adapterId === 'local_conversation' ? local.config : null;
-  const serverFeature: VoiceReadinessFact = conversation?.conversationMode !== 'agent'
-    || input.voiceAgentEnabled
+  const serverFeature: VoiceServerFeatureReadinessFact = conversation?.conversationMode !== 'agent'
+    || input.voiceAgentAvailability === 'available'
     ? 'ready'
-    : 'missing';
+    : input.voiceAgentAvailability === 'policy_disabled' ? 'policy_disabled'
+      : input.voiceAgentAvailability === 'checking' || input.voiceAgentAvailability === 'unknown' ? 'unknown'
+        : 'missing';
   const adapterEntry = input.registry.get(local.adapterId);
   const adapterSettings = adapterEntry
     ? projectVoiceProviderSettings(adapterEntry, input.voice.providers[local.adapterId] ?? null)

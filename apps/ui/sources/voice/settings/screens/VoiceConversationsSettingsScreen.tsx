@@ -15,7 +15,7 @@ import { VoiceConversationLanguageSection } from '@/voice/settings/panels/VoiceC
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { VoiceAgentApprovalsSection, VoiceProviderSection } from '@/voice/settings/panels/VoiceProviderSection';
 import {
-  resolveVoiceSettingsRecoveryFocus,
+  resolveVoiceSettingsRecoveryTarget,
   resolveVoiceSettingsRouteFocus,
 } from '@/voice/settings/voiceSettingsRouteFocus';
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
@@ -43,9 +43,10 @@ export function VoiceConversationsSettingsScreen() {
     () => focusRegistry.registerItemLayout('local'),
     [focusRegistry.registerItemLayout],
   );
-  const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryFocus>[0]) => {
-    const focus = resolveVoiceSettingsRecoveryFocus(action);
-    if (focus) router.setParams({ focus });
+  const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryTarget>[0]) => {
+    const target = resolveVoiceSettingsRecoveryTarget(action);
+    if (typeof target === 'string') router.push(target);
+    else if (target) router.setParams(target.params ?? {});
   }, [router]);
   const [voice, setVoice] = useVoiceSettingsMutable();
   const {

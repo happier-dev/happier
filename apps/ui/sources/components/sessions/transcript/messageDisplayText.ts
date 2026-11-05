@@ -1,6 +1,8 @@
 import type { AgentTextMessage, UserTextMessage } from '@happier-dev/session-core/messages';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
+import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import {
     readUnsupportedContentMeta,
     resolveUnsupportedContentPresentation,
@@ -54,10 +56,14 @@ export function prepareTranscriptMessageBody(
     message: UserTextMessage | AgentTextMessage,
     options: Pick<TranscriptMessageDisplayOptions, 'hasAttachmentBlockToStrip' | 'preserveInlineReferences'> = {},
 ): Pick<TranscriptMessageDisplayText, 'text' | 'isVoiceAgentTurn'> {
-    const isVoiceAgentTurn = parseHappierMetaEnvelope(message.meta)?.kind === 'voice_agent_turn.v1';
+    const isLegacyVoiceAgentTurn = parseHappierMetaEnvelope(message.meta)?.kind === 'voice_agent_turn.v1';
+    const origin = readConversationTurnOriginV1FromMessageMeta(message.meta);
+    const isVoiceAgentTurn = isLegacyVoiceAgentTurn
+        || origin?.modality === 'voice'
+        || (message.kind === 'user-text' && readSessionMessageProvenance(message.meta, 'stored')?.kind === 'voice');
     let text: string | null;
     if (message.kind === 'user-text' && message.displayText !== undefined) text = message.displayText;
-    else if (isVoiceAgentTurn) text = normalizeVoiceAgentTurnTranscriptText(message.text);
+    else if (isLegacyVoiceAgentTurn) text = normalizeVoiceAgentTurnTranscriptText(message.text);
     else if (message.kind === 'user-text' && (options.hasAttachmentBlockToStrip ?? readTranscriptAttachmentsMeta(message.meta) !== null)) {
         text = stripLegacyAttachmentsBlock(message.text);
     } else text = message.text;
