@@ -17765,6 +17765,17 @@ settingsSession: {
         memory: "Память",
         unavailable: "Эта страница пока недоступна для этого checkout’а.",
     },
+    deployments: {
+        overview: "Обзор",
+        history: "История",
+        tabVariables: "Переменные",
+        tabDomains: "Домены",
+        tabPermissions: "Разрешения",
+        tabSettings: "Настройки",
+        review: {
+            environment: "Среда",
+        },
+    },
     identity: {
         savedNotOpen: 'Сохранённые, не открытые',
         addFolder: 'Папка на машине…',

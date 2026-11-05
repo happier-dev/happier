@@ -17726,6 +17726,17 @@ settingsSession: {
         memory: "メモリー",
         unavailable: "このチェックアウトではこのページはまだ利用できません。",
     },
+    deployments: {
+        overview: "概要",
+        history: "履歴",
+        tabVariables: "変数",
+        tabDomains: "ドメイン",
+        tabPermissions: "権限",
+        tabSettings: "設定",
+        review: {
+            environment: "環境",
+        },
+    },
     identity: {
         savedNotOpen: '保存済み・未オープン',
         addFolder: 'マシン上のフォルダ…',

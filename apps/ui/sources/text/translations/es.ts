@@ -17812,6 +17812,17 @@ settingsSession: {
         memory: "Memoria",
         unavailable: "Esta página aún no está disponible para este checkout.",
     },
+    deployments: {
+        overview: "Resumen",
+        history: "Historial",
+        tabVariables: "Variables",
+        tabDomains: "Dominios",
+        tabPermissions: "Permisos",
+        tabSettings: "Ajustes",
+        review: {
+            environment: "Entorno",
+        },
+    },
     identity: {
         savedNotOpen: 'Guardados, sin abrir',
         addFolder: 'Una carpeta en una máquina…',

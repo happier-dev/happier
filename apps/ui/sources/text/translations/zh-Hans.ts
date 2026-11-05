@@ -17428,6 +17428,17 @@ settingsSession: {
         memory: "记忆",
         unavailable: "此检出暂时无法使用此页面。",
     },
+    deployments: {
+        overview: "概览",
+        history: "历史",
+        tabVariables: "变量",
+        tabDomains: "域名",
+        tabPermissions: "权限",
+        tabSettings: "设置",
+        review: {
+            environment: "环境",
+        },
+    },
     identity: {
         savedNotOpen: '已保存，未打开',
         addFolder: '机器上的文件夹…',

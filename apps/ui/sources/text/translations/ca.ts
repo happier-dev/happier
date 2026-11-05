@@ -16616,6 +16616,17 @@ La meva pregunta: `,
             memory: "Memòria",
             unavailable: "Aquesta pàgina encara no està disponible per a aquest checkout.",
         },
+        deployments: {
+            overview: "Resum",
+            history: "Historial",
+            tabVariables: "Variables",
+            tabDomains: "Dominis",
+            tabPermissions: "Permisos",
+            tabSettings: "Configuració",
+            review: {
+                environment: "Entorn",
+            },
+        },
         identity: {
             savedNotOpen: 'Desats, no oberts',
             addFolder: 'Una carpeta en una màquina…',

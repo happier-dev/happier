@@ -21359,6 +21359,17 @@ const enProjects = {
       memory: "Memory",
       unavailable: "This page isn’t available for this checkout yet.",
   },
+  deployments: {
+      overview: "Overview",
+      history: "History",
+      tabVariables: "Variables",
+      tabDomains: "Domains",
+      tabPermissions: "Permissions",
+      tabSettings: "Settings",
+      review: {
+          environment: "Environment",
+      },
+  },
   identity: {
     savedNotOpen: 'Saved, not open',
     addFolder: 'A folder on a machine…',

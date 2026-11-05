@@ -17888,6 +17888,17 @@ settingsSession: {
             memory: "Gedächtnis",
             unavailable: "Diese Seite ist für diesen Checkout noch nicht verfügbar.",
         },
+        deployments: {
+            overview: "Übersicht",
+            history: "Verlauf",
+            tabVariables: "Variablen",
+            tabDomains: "Domains",
+            tabPermissions: "Berechtigungen",
+            tabSettings: "Einstellungen",
+            review: {
+                environment: "Umgebung",
+            },
+        },
         identity: {
             savedNotOpen: 'Gespeichert, nicht geöffnet',
             addFolder: 'Ein Ordner auf einem Rechner…',
