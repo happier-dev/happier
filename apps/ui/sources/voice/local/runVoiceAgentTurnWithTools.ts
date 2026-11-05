@@ -48,7 +48,6 @@ function resolveVoiceToolResultPrivacyPrefs(): VoiceToolResultPrivacyPrefs {
 
 type VoiceAgentSessionsLike = Readonly<{
   commitUserTranscript?: (sessionId: string, userText: string, localId: string) => Promise<void>;
-  stop?: (sessionId: string) => Promise<void>;
   sendTurn: (
     sessionId: string,
     userText: string,
@@ -58,7 +57,7 @@ type VoiceAgentSessionsLike = Readonly<{
 
 export type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
-export type LocalVoiceAgentTurnDisposition = 'completed' | 'tool_round_limit_reached';
+export type LocalVoiceAgentTurnDisposition = 'completed';
 
 function createAbortError() {
   return Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
@@ -155,7 +154,6 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>;
     turnIndex: number;
   }>) => void | Promise<void>;
-  maxToolRounds?: number;
 }>): Promise<
   Readonly<{
     disposition: LocalVoiceAgentTurnDisposition;
@@ -164,12 +162,6 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     totalActions: number;
   }>
 > {
-  const maxToolRoundsRaw = Number(params.maxToolRounds ?? 3);
-  const maxToolRounds =
-    Number.isFinite(maxToolRoundsRaw) && maxToolRoundsRaw > 0
-      ? Math.max(1, Math.min(8, Math.floor(maxToolRoundsRaw)))
-      : 3;
-
   throwIfAborted(params.signal);
 
   // Global Voice has no coding Session target, but its admitted conversation
@@ -326,14 +318,14 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   let spokenActionOutcome: string | null = null;
   let ownerPresentsOutcome = false;
 
-  for (let turnIndex = 0; turnIndex <= maxToolRounds; turnIndex += 1) {
+  for (let turnIndex = 0; ; turnIndex += 1) {
     throwIfAborted(params.signal);
 
     const response = await params.voiceAgentSessions.sendTurn(
       params.sessionId,
       nextPrompt,
       {
-        ...(params.onOutputEvent && turnIndex < maxToolRounds ? { onOutputEvent: async output => {
+        onOutputEvent: async output => {
           if (output.effects.some(effect => effect.kind === 'execute_side_effect'
             && readSpokenActionOutcomeOwner(effect.action.t, effect.action.args))) ownerPresentsOutcome = true;
           // Action-bearing prose precedes execution; follow-up prose can contradict
@@ -341,7 +333,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           await params.onOutputEvent?.(ownerPresentsOutcome ? { ...output,
             effects: output.effects.filter(effect => effect.kind !== 'speak' && effect.kind !== 'persist_final'),
           } : output);
-        } } : {}),
+        },
         ...(params.onPreparedInstructionsFor ? { onPreparedInstructionsFor: params.onPreparedInstructionsFor } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(turnIndex === 0
@@ -360,19 +352,6 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     throwIfAborted(params.signal);
 
     const actions = Array.isArray(response.actions) ? response.actions : [];
-    if (actions.length > 0 && turnIndex === maxToolRounds) {
-      if (!params.voiceAgentSessions.stop) {
-        throw new Error('voice_agent_session_retirement_required');
-      }
-      await params.voiceAgentSessions.stop(params.sessionId);
-      return {
-        disposition: 'tool_round_limit_reached',
-        assistantTurns,
-        toolResultBatches,
-        totalActions,
-      };
-    }
-
     totalActions += actions.length;
     if (actions.length === 0) {
       // Action-bearing text precedes execution and cannot confirm an outcome.
@@ -423,10 +402,4 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     nextPrompt = buildToolResultsFollowUpPrompt(toolResults, resolveVoiceToolResultPrivacyPrefs());
   }
 
-  return {
-    disposition: 'completed',
-    assistantTurns,
-    toolResultBatches,
-    totalActions,
-  };
 }

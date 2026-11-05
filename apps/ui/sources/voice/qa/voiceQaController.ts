@@ -446,9 +446,6 @@ export function createVoiceQaController(
                 : 'voice_turn_pending',
             );
           }
-          if (result.disposition === 'tool_round_limit_reached') {
-            deps.qaStore.getState().appendSystem('Local voice agent stopped at the tool round limit before its requested actions could run.');
-          }
           if (appendedAssistantTurn && shouldWatchAsyncTargetFollowUp) {
             void appendFollowUpAssistantTurn(15_000);
           }

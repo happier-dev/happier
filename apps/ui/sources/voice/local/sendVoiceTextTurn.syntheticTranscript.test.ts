@@ -627,20 +627,19 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     expectNoSyntheticTranscript();
   });
 
-  it('records a bounded-limit status without persisting or executing the terminal action-bearing response', async () => {
+  it('continues admitted tool work to its terminal answer without a guessed-limit status', async () => {
     const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
     const { voiceOutputStatusStore } = await import('@/voice/runtime/outputStatus/voiceOutputStatusStore');
     const { voiceTextTurnPendingPort } = await import('@/voice/binding/sendVoiceSessionComposerText');
-    turnReplies = index => ({ assistantText: index === 3 ? 'Done. I sent it again.' : 'Round ' + (index + 1),
-      actions: [{ t: 'sendSessionMessage', args: { message: 'hello-' + (index + 1) } }] });
+    turnReplies = index => index === 9
+      ? { assistantText: 'The requested messages were sent.', actions: [] }
+      : { assistantText: 'Round ' + (index + 1), actions: [{ t: 'sendSessionMessage', args: { message: 'hello-' + (index + 1) } }] };
 
     const admitted = await voiceTextTurnPendingPort.enqueuePendingMessage({
       conversationSessionId: 'carrier-s1', text: 'keep sending', localId: 'bounded-tool-input',
     });
     expect(admitted.externalHandoffClaimed).toBe(true);
-    // Exercise the canonical post-admission dispatch directly. The outer
-    // custody owner deliberately settles accepted input even when its later
-    // response fails; this keeps a bounded-loop failure observable here.
+    // Exercise the canonical post-admission dispatch and Pending custody.
     await sendVoiceTextTurn({
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       settings: buildAccountSettings(),
@@ -657,19 +656,12 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
       daemonMethods: retainedAgent.requests.map(request => request.method),
       admittedToolMessages: pendingRecords('s1').map(record => record.content),
       runtime: voiceConversationRuntimeMachine.getSnapshot(),
-    })).toBe(4);
-    expect(pendingRecords('s1').map(record => record.content)).toEqual([
-      { type: 'text', text: 'hello-1' }, { type: 'text', text: 'hello-2' }, { type: 'text', text: 'hello-3' },
-    ]);
+    })).toBe(10);
+    expect(pendingRecords('s1').map(record => record.content)).toEqual(
+      Array.from({ length: 9 }, (_, index) => ({ type: 'text', text: 'hello-' + (index + 1) })),
+    );
     expectNoSyntheticTranscript();
-    expect(voiceOutputStatusStore.readForSession(VOICE_AGENT_GLOBAL_SESSION_ID)).toMatchObject({
-      statusId: 'tool_round_limit_reached',
-      text: 'Tool round limit reached before the requested actions could run.',
-    });
-    voiceOutputStatusStore.clear({
-      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      turnId: 'local_voice_agent:tool_round_limit',
-    });
+    expect(voiceOutputStatusStore.readForSession(VOICE_AGENT_GLOBAL_SESSION_ID)).toBeNull();
   });
 
   it('does not send an implicit tool action to the active Home when the bound target is on another Home', async () => {

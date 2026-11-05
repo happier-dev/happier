@@ -431,7 +431,7 @@ export async function sendVoiceTextTurn(params: {
         });
       };
 
-      const agentTurnResult = await runVoiceAgentTurnWithTools({
+      await runVoiceAgentTurnWithTools({
         sessionId,
         userText,
         turnOrigin: params.turnOrigin,
@@ -484,21 +484,6 @@ export async function sendVoiceTextTurn(params: {
           appendSyntheticToolResultNotes(toolResults);
         },
       });
-      if (agentTurnResult.disposition === 'tool_round_limit_reached') {
-        const turnId = 'local_voice_agent:tool_round_limit';
-        voiceOutputStatusStore.show({
-          sessionId,
-          turnId,
-          statusId: 'tool_round_limit_reached',
-          text: 'Tool round limit reached before the requested actions could run.',
-        });
-        if (projectedConversationSessionId && uiOwnsTranscriptProjection) {
-          appendVoiceConversationNoteText({
-            conversationSessionId: projectedConversationSessionId,
-            text: 'Tool round limit reached before the requested actions could run.',
-          });
-        }
-      }
       return;
     } catch (error) {
       // Queue/remote cancellation after a playback fault cannot erase its cause.

@@ -56,7 +56,7 @@ async function answerTurnRpc(method: string, input: unknown): Promise<unknown> {
 }
 
 const readAction: VoiceAssistantAction = { t: 'listAgentBackends', args: {} };
-describe('runVoiceAgentTurnWithTools tool-round limit', () => {
+describe('runVoiceAgentTurnWithTools interruptible tool loop', () => {
   beforeEach(async () => {
     replies = []; turnIndex = 0; outputs.clear(); wireTurns.length = 0;
     daemon = await createRetainedVoiceAgentRpcBoundary({ handleOtherRpc: answerTurnRpc });
@@ -68,59 +68,45 @@ describe('runVoiceAgentTurnWithTools tool-round limit', () => {
     finally { activation = undefined; await home?.dispose(); home = undefined; }
   });
 
-  it('returns a bounded-limit disposition without publishing or dispatching the action-bearing ceiling response', async () => {
+  it('continues valid tool work beyond both retired round ceilings and publishes only the terminal answer', async () => {
     replies = [
-      { assistantText: 'I will check once.', actions: [readAction] },
-      { assistantText: 'Done. I also changed it.', actions: [readAction] },
+      ...Array.from({ length: 9 }, () => ({ assistantText: 'Checking.', actions: [readAction] })),
+      { assistantText: 'The checks completed.', actions: [] },
     ];
     const onAssistantTurn = vi.fn();
     const onToolResults = vi.fn();
     const onOutputEvent = vi.fn();
     const result = await runVoiceAgentTurnWithTools({
       sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, userText: 'check and change it',
-      durableLocalId: 'tool-round-limit-1', voiceAgentSessions, maxToolRounds: 1,
+      durableLocalId: 'tool-round-limit-1', voiceAgentSessions,
       onAssistantTurn, onToolResults, onOutputEvent,
     });
-    expect(result).toMatchObject({ disposition: 'tool_round_limit_reached',
-      assistantTurns: [], totalActions: 1 });
-    expect(result.toolResultBatches).toHaveLength(1);
+    expect(result).toMatchObject({ disposition: 'completed',
+      assistantTurns: ['The checks completed.'], totalActions: 9 });
+    expect(result.toolResultBatches).toHaveLength(9);
     expect(result.toolResultBatches[0]?.[0]).toMatchObject({ t: 'listAgentBackends', args: {} });
-    expect(daemon.readRetainedRun()).toBeNull();
-    expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
-    expect(onAssistantTurn).not.toHaveBeenCalled();
-    expect(onAssistantTurn).not.toHaveBeenCalledWith(expect.objectContaining({
-      assistantText: 'Done. I also changed it.',
-    }));
-    expect(onToolResults).toHaveBeenCalledTimes(1);
-    expect(onOutputEvent.mock.calls.map(([output]) => JSON.stringify(output)).join('\n')).not.toContain('Done. I also changed it.');
-    expect(wireTurns).toHaveLength(2);
-  });
-
-  it('retires the contaminated provider session before a subsequent user turn', async () => {
-    replies = [
-      { assistantText: 'I will check.', actions: [readAction] },
-      { assistantText: 'Done. I also changed it.', actions: [readAction] },
-      { assistantText: 'Fresh answer.', actions: [] },
-    ];
-    await runVoiceAgentTurnWithTools({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      userText: 'first turn', durableLocalId: 'tool-round-limit-3', voiceAgentSessions, maxToolRounds: 1 });
-    expect(daemon.readRetainedRun()).toBeNull();
-    expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
-    const ensureCountBeforeRestart = daemon.requests.filter(request =>
-      request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
-      || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1).length;
-    const followUp = await runVoiceAgentTurnWithTools({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-      userText: 'next turn', durableLocalId: 'tool-round-limit-4', voiceAgentSessions, maxToolRounds: 1 });
-    expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(1);
-    expect(daemon.requests.filter(request =>
-      request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
-      || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1)).toHaveLength(ensureCountBeforeRestart + 1);
     expect(daemon.readRetainedRun()).toMatchObject({ status: 'running' });
-    expect(wireTurns[2]?.message).not.toContain('Done. I also changed it.');
-    expect(followUp).toMatchObject({ disposition: 'completed', assistantTurns: ['Fresh answer.'] });
+    expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(true);
+    expect(onAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(onAssistantTurn).toHaveBeenCalledWith({ assistantText: 'The checks completed.', actions: [], turnIndex: 9 });
+    expect(onToolResults).toHaveBeenCalledTimes(9);
+    expect(onOutputEvent.mock.calls.map(([output]) => JSON.stringify(output)).join('\n')).toContain('The checks completed.');
+    expect(wireTurns).toHaveLength(10);
+    expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
   });
 
-  it('publishes an actionless terminal answer reached on the final allowed follow-up', async () => {
+  it('stops requesting follow-ups when speech or End aborts after a tool result', async () => {
+    replies = [{ assistantText: 'Checking.', actions: [readAction] }];
+    const controller = new AbortController();
+    await expect(runVoiceAgentTurnWithTools({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      userText: 'check until I interrupt', durableLocalId: 'interruptible-tool-loop', voiceAgentSessions,
+      signal: controller.signal, onToolResults: () => controller.abort(),
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(wireTurns).toHaveLength(1);
+    expect(replies).toEqual([]);
+  });
+
+  it('publishes an actionless terminal answer without retiring the conversation', async () => {
     replies = [
       { assistantText: 'I will check once.', actions: [readAction] },
       { assistantText: 'The check completed.', actions: [] },
@@ -128,7 +114,7 @@ describe('runVoiceAgentTurnWithTools tool-round limit', () => {
     const onAssistantTurn = vi.fn();
     const result = await runVoiceAgentTurnWithTools({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       userText: 'check it', durableLocalId: 'tool-round-limit-2', voiceAgentSessions,
-      maxToolRounds: 1, onAssistantTurn });
+      onAssistantTurn });
     expect(result.disposition).toBe('completed');
     expect(result.assistantTurns).toEqual(['The check completed.']);
     expect(onAssistantTurn).toHaveBeenLastCalledWith({
