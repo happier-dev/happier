@@ -1,3 +1,4 @@
+import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import Fastify, { type FastifyRequest } from "fastify";
 import {
     buildConnectedServiceCredentialRecord,
@@ -92,6 +93,37 @@ describe("qualified Connected Account V4 credential routes", () => {
     });
     afterAll(async () => {
         await harness.close();
+    });
+
+    it.each(['plain', 'e2ee'] as const)('reads and removes only the authenticated Account credential without Machines (%s)', async mode => {
+        const ownerId = accountId;
+        if (mode === 'e2ee') await db.account.update({ where: { id: ownerId },
+            data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        const sealing = { kind: 'credential' as const, payload: { v: 1, values: { token: 'synthetic-token' } },
+            randomBytes: (length: number) => new Uint8Array(length) };
+        const content = sealQualifiedConnectedAccountContentEnvelope(mode === 'plain'
+            ? { ...sealing, accountMode: 'plain' }
+            : { ...sealing, accountMode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(19) } });
+        const created = await mutateQualifiedConnectedServiceCredential({ accountId: ownerId, ref,
+            authenticationModeId: 'token', expectedCredentialRevision: null, content, metadata: { displayName: 'Stored identity', scopes: [] } });
+        if (created.status !== 'written') throw new Error('Expected stored credential');
+        expect(await db.machine.count({ where: { accountId: ownerId } })).toBe(0);
+        const app = createTestApp(); apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app); await app.ready();
+        const encoded = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, ref));
+        const readUrl = `/v4/connect/qualified/credential?ref=${encoded}`;
+        const deleteUrl = `${readUrl}&expectedCredentialRevision=${created.credentialRevision}&cleanupGroupReferences=false`;
+        const read = await app.inject({ method: 'GET', url: readUrl });
+        expect(read.statusCode).toBe(200);
+        expect(read.json().content).toEqual(content);
+        const stranger = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        accountId = stranger.id;
+        expect((await app.inject({ method: 'GET', url: readUrl })).statusCode).toBe(404);
+        expect((await app.inject({ method: 'DELETE', url: deleteUrl })).statusCode).toBe(404);
+        expect((await readQualifiedConnectedServiceCredential({ accountId: ownerId, ref })).status).toBe('resolved');
+        accountId = ownerId;
+        expect((await app.inject({ method: 'DELETE', url: deleteUrl })).json()).toEqual({ success: true });
+        expect((await readQualifiedConnectedServiceCredential({ accountId: ownerId, ref })).status).toBe('not_found');
     });
 
     it("registers the complete atomic V4 route family before capability advertisement", async () => {

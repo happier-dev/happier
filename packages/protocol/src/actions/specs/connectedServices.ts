@@ -128,7 +128,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     { path: 'providerLimitId', title: 'Provider limit', widget: 'text' },
     { path: 'hypothetical', title: 'Hypothetical strategy or time', widget: 'json' },
   ] } },
-  { ...common, id: 'connectedServices.accounts.revoke', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' }, executionPlacement: 'machine', sideEffectClass: 'danger', surfaces: { ...common.surfaces, voice: true }, title: 'Revoke connected account', description: 'Review and revoke the exact qualified account through its current daemon owner. Ordinary removal discloses retained resource dependencies; explicit emergency revocation keeps its existing semantics.', bindings: { mcpToolName: 'connected_services_accounts_revoke' }, inputSchema: inputs['connectedServices.accounts.revoke'], outputSchema: outputs['connectedServices.accounts.revoke'],
+  { ...common, id: 'connectedServices.accounts.revoke', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' }, executionPlacement: 'account', sideEffectClass: 'danger', surfaces: { ...common.surfaces, voice: true }, title: 'Revoke connected account', description: 'Remove the exact Account credential through its server owner, optionally asking a selected Machine to revoke it with the provider. Ordinary removal discloses retained resource dependencies; explicit emergency revocation keeps its existing semantics.', bindings: { mcpToolName: 'connected_services_accounts_revoke' }, inputSchema: inputs['connectedServices.accounts.revoke'], outputSchema: outputs['connectedServices.accounts.revoke'],
     confirmVerb: { key: 'files.reviewComments.durable.directWriteGrant.revoke', fallback: 'Revoke' }, irreversible: true,
     cli: { acceptsServerId: true, inputSchema: z.strictObject({ itemId: z.string().check(z.minLength(1)), machineId: z.string().check(z.minLength(1)) }),
       commands: [{ path: ['mcp', 'servers', 'sign-out'], positionals: ['itemId'], visibility: 'canonical' as const }],
@@ -137,7 +137,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     inputHints: { fields: [
     { path: 'account', title: 'Qualified account', widget: 'json', required: true },
     { path: 'expectedCredentialRevision', title: 'Presented credential revision', widget: 'text' },
-    { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+    { path: 'machineId', title: 'Machine id', widget: 'text' },
     { path: 'cleanupGroupReferences', title: 'Remove pool references', widget: 'boolean', required: true },
     { path: 'emergencyRevoke', title: 'Emergency local revocation', widget: 'boolean' },
     { path: 'managedResourceDispositions', title: 'Reviewed manual resource responsibility', widget: 'json' },

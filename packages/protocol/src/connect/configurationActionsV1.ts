@@ -72,7 +72,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   'connectedServices.billing.open': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().check(z.trim(), z.minLength(1)) }),
   'connectedServices.subscription.price.set': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), price: lazyZodSchema(() => z.nullable(z.omit(ProviderAccountSubscriptionMonthlyPriceV1Schema, { enteredAtMs: true }))) }),
   'connectedServices.accounts.rename': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), label: z.nullable(z.string()) }),
-  'connectedServices.accounts.revoke': lazyZodSchema(() => z.extend(z.omit(ConnectedAccountRevokeCommandV1Schema, { operation: true }), { machineId: z.string().check(z.trim(), z.minLength(1)) })),
+  'connectedServices.accounts.revoke': lazyZodSchema(() => z.extend(z.omit(ConnectedAccountRevokeCommandV1Schema, { operation: true }), { machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) })),
   'connectedServices.accounts.default.set': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), agentId: z.string().check(z.trim(), z.minLength(1)), makeDefault: z.boolean(), machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
   'connectedServices.accounts.purposeDefault.set': z.strictObject({
     agentId: z.string().check(z.trim(), z.minLength(1)), service: QualifiedConnectedAccountGroupRefSchema.shape.service,

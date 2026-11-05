@@ -1,4 +1,6 @@
 import { HappyError } from '@/utils/errors/errors';
+import { QualifiedConnectedAccountCredentialErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 export type ConnectedServiceApiErrorPayload = Readonly<{
     code: string;
@@ -9,6 +11,7 @@ export type ConnectedServiceApiErrorPayload = Readonly<{
     canTryAgain?: boolean;
     credentialRevision?: string | null;
     reason?: 'revision_mismatch' | 'refresh_lease_lost';
+    resources?: ManagedResourceDependencyV1[];
 }>;
 
 export class ConnectedServiceApiError extends HappyError {
@@ -17,6 +20,7 @@ export class ConnectedServiceApiError extends HappyError {
     readonly resetAtMs?: number;
     readonly credentialRevision?: string | null;
     readonly reason?: 'revision_mismatch' | 'refresh_lease_lost';
+    readonly resources?: ManagedResourceDependencyV1[];
 
     constructor(payload: ConnectedServiceApiErrorPayload) {
         super(payload.code, payload.canTryAgain === true, {
@@ -30,6 +34,7 @@ export class ConnectedServiceApiError extends HappyError {
         this.resetAtMs = payload.resetAtMs;
         this.credentialRevision = payload.credentialRevision;
         this.reason = payload.reason;
+        this.resources = payload.resources;
         Object.setPrototypeOf(this, ConnectedServiceApiError.prototype);
     }
 }
@@ -53,8 +58,11 @@ export function createConnectedServiceApiError(
     opts: Readonly<{ status?: number; fallbackCode: string }>,
 ): ConnectedServiceApiError {
     const record = json && typeof json === 'object' ? json as Record<string, unknown> : {};
+    const credentialError = QualifiedConnectedAccountCredentialErrorV4Schema.safeParse(json);
     return new ConnectedServiceApiError({
         code: readErrorCode(json) ?? opts.fallbackCode,
+        ...(credentialError.success && credentialError.data.error === 'managed_resources_review_required'
+            ? { resources: credentialError.data.resources } : {}),
         status: opts.status,
         generation: readNumberField(record, 'generation'),
         runtimeStateRevision: record.runtimeStateRevision === null
@@ -86,18 +94,7 @@ export async function readConnectedServiceApiError(
     fallbackCode = 'connected_service_request_failed',
 ): Promise<ConnectedServiceApiError> {
     const json = await response.json().catch(() => null);
-    const record = json && typeof json === 'object' ? json as Record<string, unknown> : {};
-    const code = readErrorCode(json) ?? fallbackCode;
-    return new ConnectedServiceApiError({
-        code,
-        status: response.status,
-        generation: readNumberField(record, 'generation'),
-        runtimeStateRevision: record.runtimeStateRevision === null
-            ? null
-            : readNumberField(record, 'runtimeStateRevision'),
-        resetAtMs: readNumberField(record, 'resetAtMs'),
-        canTryAgain: isRetryableConnectedServiceStatus(response.status),
-    });
+    return createConnectedServiceApiError(json, { status: response.status, fallbackCode });
 }
 
 export async function throwConnectedServiceApiError(response: Response): Promise<never> {

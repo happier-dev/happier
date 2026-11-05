@@ -1020,6 +1020,17 @@ Managed subscription-backed routing is experimental and explicit. Upstream polic
 
 This product-risk posture is not a legal-compliance determination. It does not authorize request cloaking, prompt replacement for client impersonation, identity confusion, tracking-identity disguise, or other enforcement-evasion behavior. Managed gateways remain fail closed, and their security, privacy, credential-handling, platform, and correctness gates still apply.
 
+### Stored credential details and removal (development only)
+
+In unreleased 0.3, Credentials account details use the same Account-owned stored
+profile as the list, including client-decrypted E2EE metadata. Missing live plugin
+discovery leaves live information unavailable; it does not hide stored identity or
+Remove account. Removal needs no online Machine: the shared revoke Action uses the
+existing authenticated Account credential DELETE with the displayed revision and
+the existing pool-reference and managed-resource review. If no Machine is selected,
+the Account record is removed and the UI says remote sign-out could not be
+confirmed. An explicitly selected Machine retains provider-side revocation.
+
 ### Team credential resources (development only)
 
 Current 0.3 development source contains the protocol, server routes, and UI foundations for

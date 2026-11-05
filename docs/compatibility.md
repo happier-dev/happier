@@ -2,6 +2,15 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+Unreleased 0.3 `connectedServices.accounts.revoke` makes its existing `machineId`
+operand optional and uses Account execution placement. Omission removes Account
+custody through the existing V4 credential DELETE, preserving revision admission,
+dependency review and the existing `remoteNotAttempted` result. A supplied Machine
+retains the native provider-revocation path. Matching development Action owners
+are required for omission; older owners refuse the missing Machine. The request
+envelope remains closed. No persisted format, route, error code, ABI or epoch is
+added.
+
 ## Local Services observation lifetime (unreleased 0.3)
 
 The existing closed inventory-watch request accepts optional `observationOnly`.

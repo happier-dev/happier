@@ -5,6 +5,7 @@ import { buildAgentDefaultChoices } from './agentDefaultChoices.js';
 import { accountSettingsParse } from '../account/settings/accountSettings.js';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountsV4.js';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
+import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceAuthGroupPolicyV1Schema } from './connectedServiceSchemas.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
@@ -573,6 +574,32 @@ describe('connected-service configuration Action owner', () => {
                 .resolves.toMatchObject({ ok: false, errorCode: 'connected_account_daemon_response_invalid' });
         }
     });
+    it('removes Account custody without a Machine and preserves the revision and metadata cleanup', async () => {
+        const account = { service, accountId: 'default' };
+        const effects: string[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {}, async mutatePurposeBindings() {}, async resolveAgent() { return null; },
+            async resetQuota() { throw new Error('unexpected_reset'); },
+            async request(request) {
+                expect(request.method).toBe('DELETE');
+                const url = new URL(request.path, 'https://home.test');
+                expect(url.pathname).toBe('/v4/connect/qualified/credential');
+                expect(parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema,
+                    url.searchParams.get('ref')!)).toEqual(account);
+                expect(url.searchParams.get('expectedCredentialRevision')).toBe('csr_abcdefghijklmnopqrstuv');
+                expect(url.searchParams.get('cleanupGroupReferences')).toBe('false');
+                effects.push('deleted');
+                return { success: true };
+            },
+            async prepareConnectedMetadataCleanup() { effects.push('prepared'); },
+            async cleanupConnectedMetadata() { effects.push('cleaned'); },
+        };
+        const result = await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.revoke', {
+            account, cleanupGroupReferences: false, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+        });
+        expect(result).toEqual({ status: 'revoked', account, remoteStatus: 'remoteNotAttempted', metadataCleanup: { status: 'complete' } });
+        expect(effects).toEqual(['prepared', 'deleted', 'cleaned']);
+    });
     it('captures legacy metadata before revocation and keeps the definite effect when metadata cleanup fails', async () => {
         const account = { service, accountId: 'default' };
         const effects: string[] = [];
@@ -683,7 +710,7 @@ describe('connected-service configuration Action owner', () => {
         if (!parsedId.success) return;
         const actionId = parsedId.data;
         const spec = getActionSpec(actionId);
-        expect(spec.executionPlacement).toBe('machine');
+        expect(spec.executionPlacement).toBe('account');
         expect(spec.surfaces.voice).toBe(true);
         expect(spec.surfaces.api).toBe(true);
         expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);

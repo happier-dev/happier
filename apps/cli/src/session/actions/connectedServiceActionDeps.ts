@@ -35,7 +35,7 @@ import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAcc
 
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 
-import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountRefSchema, QualifiedConnectedAccountCredentialErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
@@ -239,7 +239,10 @@ export function createCliConnectedServiceAction(params: Readonly<{
         if (response.status < 200 || response.status >= 300) {
           const code = response.data && typeof response.data === 'object' && 'error' in response.data && typeof response.data.error === 'string'
             ? response.data.error : [404, 405, 501].includes(response.status) ? 'unsupported' : 'connected_service_operation_failed';
-          throw Object.assign(new Error(code), { code });
+          const credentialError = QualifiedConnectedAccountCredentialErrorV4Schema.safeParse(response.data);
+          throw Object.assign(new Error(code), { code,
+            ...(credentialError.success && credentialError.data.error === 'managed_resources_review_required'
+              ? { resources: credentialError.data.resources } : {}) });
         }
         return response.data;
       },

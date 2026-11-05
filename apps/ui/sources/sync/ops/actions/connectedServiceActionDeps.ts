@@ -104,7 +104,7 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     const result: unknown = await response.json();
                     // Only the exact executor's validated, content-free effect
                     // receipt survives retirement; reads and member replies do not.
-                    const definiteDelete = expectedEffect === 'qualified-connected-group-delete'
+                    const definiteDelete = expectedEffect === 'qualified-connected-group-delete' || expectedEffect === 'qualified-connected-credential-delete'
                         ? QualifiedConnectedAccountSuccessV4Schema.parse(result) : null;
                     const definiteCredentialCreate = expectedEffect === 'qualified-connected-credential-create'
                         ? QualifiedConnectedAccountCredentialMutationSuccessV4Schema.safeParse(result) : null;

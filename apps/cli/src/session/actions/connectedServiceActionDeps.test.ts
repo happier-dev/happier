@@ -258,6 +258,23 @@ describe('native connected-service Action adapter', () => {
     } finally { await server.close(); }
   });
 
+  it('preserves Account credential removal review over HTTP without contacting a Machine', async () => {
+    const account = { service: { pluginId: 'example.accounts', localId: 'work' }, accountId: 'stored-account' };
+    const server = Fastify();
+    server.delete('/v4/connect/qualified/credential', async (_request, reply) =>
+      reply.code(409).send({ error: 'managed_resources_review_required', resources: [] }));
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    const action = createCliConnectedServiceAction({ credentials: { token: 'bodyless-requester', encryption: null },
+      serverHttpBaseUrl: home, resolveHeaders: () => ({ Authorization: 'Bearer bodyless-requester' }),
+      callMachineAction: async () => { throw new Error('Account removal must not contact a Machine'); } });
+    try {
+      expect(await action({ actionId: 'connectedServices.accounts.revoke',
+        input: { account, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv', cleanupGroupReferences: false },
+        context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } }))
+        .toEqual({ status: 'removalReviewRequired', account, resources: [] });
+    } finally { await server.close(); }
+  });
+
   it.each(['member', 'pool'] as const)('sends a bodyless %s DELETE through the real JSON HTTP parser', async kind => {
     const group = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'bodyless-pool' };
     const row = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: group, incarnation: 'bodyless-row',

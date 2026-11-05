@@ -2,12 +2,12 @@ import { removeAgentConnectedAccountDefaultsForDeletedTarget, resolveAgentConnec
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 import { writeAgentDefaultChoice, type AgentDefaultChoiceAgent } from './agentDefaultChoices.js';
-import { sameQualifiedConnectedAccountRef } from './qualifiedConnectedAccountPersistence.js';
+import { sameQualifiedConnectedAccountRef, QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import type { ConnectedMetadataCleanupV1 } from './connectedMetadataCatalogV1.js';
 import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef, QualifiedConnectedDisclosureSubject } from './connectedAccountPresentationRowsV1.js';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from './qualifiedConnectedAccountGroupRequestsV4.js';
-import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
+import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
 import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand } from './connectedAccountDaemonRpcV1.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
@@ -77,7 +77,7 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   }>): Promise<'applied' | 'conflict' | 'unavailable' | 'outcome_unknown' | 'invalid'>;
   /** Authenticated transport for the invocation's exact Home. */
   request(input: Readonly<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
-    expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' }>): Promise<unknown>;
+    expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' | 'qualified-connected-credential-delete' }>): Promise<unknown>;
   /** One acknowledged catalog CAS, atomically retiring any changed predecessor default carriers. */
   mutatePurposeBindings(mutate: ConnectedAccountPurposeMutationIntentV1): Promise<void>;
   resolveAgent(agentId: string, machineId?: string): Promise<AgentDefaultChoiceAgent | null>;
@@ -132,7 +132,7 @@ async function cleanupDeletedSubject(host: ConnectedServiceConfigurationActionHo
   return pending ? { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } : { status: 'complete' };
 }
 
-/** Read only the incumbent public profile; never invoke the revoke writer here. */
+/** Capture the incumbent revision for approval; never invoke the revoke writer here. */
 export async function prepareConnectedServiceRevokeInputV1(
   host: ConnectedServiceConfigurationActionHostV1,
   input: unknown,
@@ -140,6 +140,15 @@ export async function prepareConnectedServiceRevokeInputV1(
   host.assertCurrent();
   const args = inputs['connectedServices.accounts.revoke'].parse(input);
   if (args.emergencyRevoke || args.expectedCredentialRevision !== undefined) return args;
+  if (!args.machineId) {
+    if (!host.readAccountCredential) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' } as const;
+    const credential = await host.readAccountCredential(args.account);
+    host.assertCurrent();
+    if (!credential || credential.revisionSemantics !== 'revisioned') {
+      return { ok: false, errorCode: 'connected_account_control_unavailable', error: 'connected_account_control_unavailable' } as const;
+    }
+    return inputs['connectedServices.accounts.revoke'].parse({ ...args, expectedCredentialRevision: credential.credentialRevision });
+  }
   if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' } as const;
   const admission = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand(args.machineId, {
     operation: 'describeService', service: args.account.service, requiredOperation: 'credential_delete',
@@ -446,11 +455,38 @@ export async function executeConnectedServiceConfigurationActionV1(
     }
     case 'connectedServices.accounts.revoke': {
       const { machineId, ...command } = inputs[actionId].parse(input);
-      if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      if (machineId && !host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       const subject = { kind: 'account' as const, account: command.account };
       const prepared = await prepareMetadataCleanup(host, subject);
       host.assertCurrent();
-      const result = ConnectedAccountRevokeResponseV1Schema.parse(await host.controlCommand(machineId, { operation: 'revokeAccount', ...command }));
+      let result: ReturnType<typeof ConnectedAccountRevokeResponseV1Schema.parse>;
+      if (machineId && host.controlCommand) {
+        result = ConnectedAccountRevokeResponseV1Schema.parse(await host.controlCommand(machineId, { operation: 'revokeAccount', ...command }));
+      } else {
+        const incumbent = command.expectedCredentialRevision === undefined ? await host.readAccountCredential?.(command.account) : null;
+        host.assertCurrent();
+        const { account: ref, ...fields } = command;
+        const deletion = QualifiedConnectedAccountCredentialDeleteV4Schema.parse({ ...fields,
+          ref, expectedCredentialRevision: command.expectedCredentialRevision ?? incumbent?.credentialRevision });
+        const query = new URLSearchParams({ ref: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, deletion.ref),
+          expectedCredentialRevision: deletion.expectedCredentialRevision, cleanupGroupReferences: String(deletion.cleanupGroupReferences) });
+        if (deletion.emergencyRevoke !== undefined) query.set('emergencyRevoke', String(deletion.emergencyRevoke));
+        if (deletion.managedResourceDispositions !== undefined) query.set('managedResourceDispositions',
+          encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountCredentialDeleteV4Schema.shape.managedResourceDispositions, deletion.managedResourceDispositions));
+        try {
+          QualifiedConnectedAccountSuccessV4Schema.parse(await host.request({ method: 'DELETE',
+            path: `/v4/connect/qualified/credential?${query.toString()}`, expectedEffect: 'qualified-connected-credential-delete' }));
+        } catch (error) {
+          const review = error && typeof error === 'object' && 'code' in error && error.code === 'managed_resources_review_required'
+            && 'resources' in error ? ConnectedAccountRevokeResponseV1Schema.safeParse({ status: 'removalReviewRequired', account: command.account, resources: error.resources }) : null;
+          if (review?.success) {
+            host.assertCurrent();
+            return review.data;
+          }
+          throw error;
+        }
+        result = { status: 'revoked', account: command.account, remoteStatus: 'remoteNotAttempted' };
+      }
       if ('account' in result && !sameQualifiedConnectedAccountRef(result.account, command.account)) {
         return { ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer', error: 'qualified_connected_accounts_inconsistent_peer' };
       }
