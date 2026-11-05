@@ -56,11 +56,29 @@ type AccountEncryptionInvalidationEvent = AccountEncryptionInvalidation & Readon
 }>;
 const accountEncryptionModeCacheInvalidationListeners = new Set<(invalidation: AccountEncryptionInvalidationEvent) => void>();
 let accountEncryptionModeCacheRevision = 0;
+// Only revision projections for observed Homes: no mode, credential or authority
+// is retained here. Publication scopes these alongside the existing listeners.
+const accountEncryptionModeHomeRevisions = new Map<string, {
+    home: AccountEncryptionHomeBinding;
+    revision: number;
+}>();
+
 
 function readAccountEncryptionHomeBinding(serverId?: string | null): AccountEncryptionHomeBinding | null {
     const profile = getServerProfileById(serverId ?? '');
     if (!profile) return null;
     return { profileId: profile.id, portableIdentity: resolvePortableServerIdentityForRoutingId(serverId) };
+}
+
+function accountEncryptionInvalidationAffectsHome(
+    home: AccountEncryptionHomeBinding | null,
+    eventHome: AccountEncryptionHomeBinding | null,
+): boolean {
+    if (!home || !eventHome || home.profileId === eventHome.profileId) return true;
+    if (home.portableIdentity && eventHome.portableIdentity) return home.portableIdentity === eventHome.portableIdentity;
+    // Established legacy profile ids distinguish Homes without portable ids;
+    // a partially learned identity remains incomparable and fails closed.
+    return Boolean(home.portableIdentity || eventHome.portableIdentity);
 }
 
 function normalizeAccountEncryptionMode(raw: unknown): AccountEncryptionMode {
@@ -96,9 +114,20 @@ export function invalidateAccountEncryptionModeCache(options: AccountEncryptionI
 }
 
 function publishAccountEncryptionInvalidation(options: AccountEncryptionInvalidation, source?: object): void {
-    accountEncryptionModeReads.reset();
     accountEncryptionModeCacheRevision += 1;
     const event: AccountEncryptionInvalidationEvent = { ...options, home: readAccountEncryptionHomeBinding(options.serverId), source };
+    if (event.home) accountEncryptionModeReads.invalidate(event.home.profileId);
+    else accountEncryptionModeReads.reset();
+    for (const projection of accountEncryptionModeHomeRevisions.values()) {
+        if (accountEncryptionInvalidationAffectsHome(projection.home, event.home)) {
+            projection.revision = accountEncryptionModeCacheRevision;
+        }
+    }
+    if (!event.home) {
+        // An unscoped reset already withdraws every projection; discard retired
+        // profile ids along with it rather than retaining their history.
+        accountEncryptionModeHomeRevisions.clear();
+    }
     for (const listener of [...accountEncryptionModeCacheInvalidationListeners]) {
         try {
             listener(event);
@@ -130,8 +159,7 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
     const home = readAccountEncryptionHomeBinding(options.serverId);
     const invalidate = (event: AccountEncryptionInvalidationEvent) => {
         if (event.source === observation || event.reason === 'scope-reset') return;
-        if (home && event.home && home.profileId !== event.home.profileId
-            && (!home.portableIdentity || !event.home.portableIdentity || home.portableIdentity !== event.home.portableIdentity)) return;
+        if (!accountEncryptionInvalidationAffectsHome(home, event.home)) return;
         observation.invalidate();
     };
     accountEncryptionModeCacheInvalidationListeners.add(invalidate);
@@ -190,7 +218,15 @@ export function invalidateAccountEncryptionModeCacheForChanges(
 }
 
 /** Owner-local revision for consumers that must withdraw stale disclosures. */
-export function getAccountEncryptionModeCacheRevision(): number {
+export function getAccountEncryptionModeCacheRevision(serverId?: string | null): number {
+    if (serverId == null) return accountEncryptionModeCacheRevision;
+    const home = readAccountEncryptionHomeBinding(serverId);
+    if (!home) return accountEncryptionModeCacheRevision;
+    const previous = accountEncryptionModeHomeRevisions.get(home.profileId);
+    if (previous && previous.home.portableIdentity === home.portableIdentity) return previous.revision;
+    // A first reader or a learned/replaced Home identity starts at the current
+    // producer revision. Subsequent equal reads are constant-time and stable.
+    accountEncryptionModeHomeRevisions.set(home.profileId, { home, revision: accountEncryptionModeCacheRevision });
     return accountEncryptionModeCacheRevision;
 }
 
@@ -202,15 +238,7 @@ export function captureAccountEncryptionCurrentness(serverId?: string | null, on
     const home = readAccountEncryptionHomeBinding(serverId);
     let current = true;
     const invalidate = (event: AccountEncryptionInvalidationEvent): void => {
-        if (home && event.home && home.profileId !== event.home.profileId) {
-            if (home.portableIdentity && event.home.portableIdentity) {
-                if (home.portableIdentity !== event.home.portableIdentity) return;
-            } else if (!home.portableIdentity && !event.home.portableIdentity) {
-                // The canonical routing scope owner uses established profile
-                // ids for legacy Homes without a portable identity.
-                return;
-            }
-        }
+        if (!accountEncryptionInvalidationAffectsHome(home, event.home)) return;
         if (event.reason === 'transport-withdrawal') {
             onTransportWithdrawal?.();
             return;
@@ -235,11 +263,15 @@ export function captureAccountEncryptionCurrentness(serverId?: string | null, on
  * owner instead of retaining another settled value channel.
  */
 export function subscribeAccountEncryptionModeCacheInvalidation(
-    listener: () => void,
+    listener: (invalidation: AccountEncryptionInvalidationEvent) => void,
+    serverId?: string | null,
 ): () => void {
-    accountEncryptionModeCacheInvalidationListeners.add(listener);
+    const scopedListener = serverId == null ? listener : (event: AccountEncryptionInvalidationEvent) => {
+        if (accountEncryptionInvalidationAffectsHome(readAccountEncryptionHomeBinding(serverId), event.home)) listener(event);
+    };
+    accountEncryptionModeCacheInvalidationListeners.add(scopedListener);
     return () => {
-        accountEncryptionModeCacheInvalidationListeners.delete(listener);
+        accountEncryptionModeCacheInvalidationListeners.delete(scopedListener);
     };
 }
 
@@ -481,40 +513,48 @@ export async function fetchAccountEncryptionMode(
     return await readSharedAccountEncryptionMode(credentials, run);
 }
 
-/** Preserve the incumbent mounted-readiness retry owner for fresh and observed reads alike. */
-async function readSharedAccountEncryptionMode(
-    credentials: AuthCredentials,
-    run: () => Promise<AccountEncryptionModeResult>,
-): Promise<AccountEncryptionModeResult> {
-    const cacheKey = getAccountEncryptionModeScopeKey(credentials);
-    const revision = accountEncryptionModeCacheRevision;
-    // A shared mode read is readiness, not a finite user operation. Transient
-    // outages must recover without another mount/event; retirement stops retry
-    // before it can send captured credentials to a successor Home or Account.
-    const assertCurrent = (): void => {
-        if (revision !== accountEncryptionModeCacheRevision
-            || cacheKey !== getAccountEncryptionModeScopeKey(credentials)) {
+/** One readiness retry owner for focused and exact-Home mounted Account reads. */
+export async function readAccountEncryptionModeReadiness<T extends AccountEncryptionMode | AccountEncryptionModeResult>(
+    run: () => Promise<T>,
+    isCurrent: () => boolean,
+): Promise<T> {
+    const assertCurrent = () => {
+        if (!isCurrent()) {
             throw new HappyError('Account encryption mode read retired', false, {
                 kind: 'config', code: 'account-encryption-mode-read-retired',
             });
         }
     };
-
-    return await accountEncryptionModeReads.run(cacheKey, async () => {
-        const value = await backoffForever(async () => {
-            assertCurrent();
-            try {
-                return await run();
-            } catch (error) {
-                // HTTP may settle retirement before another retry enters this
-                // owner. Keep the Account-mode retirement contract in either case.
-                assertCurrent();
-                throw error;
-            }
-        });
+    const value = await backoffForever(async () => {
         assertCurrent();
-        return value;
+        try {
+            return await run();
+        } catch (error) {
+            assertCurrent();
+            throw error;
+        }
     });
+    assertCurrent();
+    return value;
+}
+
+/** Preserve the incumbent mounted-readiness retry owner for fresh and observed reads alike. */
+async function readSharedAccountEncryptionMode(
+    credentials: AuthCredentials,
+    run: () => Promise<AccountEncryptionModeResult>,
+): Promise<AccountEncryptionModeResult> {
+    const target = getActiveServerSnapshot();
+    const cacheKey = getAccountEncryptionModeScopeKey(credentials, target);
+    const revision = getAccountEncryptionModeCacheRevision(target.serverId);
+    const home = readAccountEncryptionHomeBinding(target.serverId);
+    // A shared mode read is readiness, not a finite user operation. Transient
+    // outages must recover without another mount/event; retirement stops retry
+    // before it can send captured credentials to a successor Home or Account.
+    const isCurrent = () => revision === getAccountEncryptionModeCacheRevision(target.serverId)
+        && cacheKey === getAccountEncryptionModeScopeKey(credentials);
+    return await accountEncryptionModeReads.run(`${cacheKey}\u0000${revision}`,
+        () => readAccountEncryptionModeReadiness(run, isCurrent),
+        { scope: home?.profileId ?? target.serverId });
 }
 
 /**

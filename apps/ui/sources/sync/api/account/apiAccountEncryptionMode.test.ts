@@ -351,6 +351,62 @@ describe('apiAccountEncryptionMode', () => {
     subscription();
   });
 
+  it('publishes scoped revisions only to the affected Home and keeps unknown withdrawals conservative', async () => {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+    const homeA = getActiveServerSnapshot().serverId;
+    const homeB = (await upsertServerProfile({ serverUrl: 'https://mode-revision-other.test' })).id;
+    const { getAccountEncryptionModeCacheRevision: revision, invalidateAccountEncryptionModeCache: invalidate,
+      subscribeAccountEncryptionModeCacheInvalidation: subscribe } = accountEncryptionMode;
+    const settledA = revision(homeA);
+    let notificationsA = 0;
+    let notificationsB = 0;
+    const stopA = subscribe(() => { notificationsA += 1; }, homeA);
+    const stopB = subscribe(() => { notificationsB += 1; }, homeB);
+    try {
+      for (let index = 0; index < 20; index += 1) invalidate({ serverId: homeB, reason: 'transport-withdrawal' });
+      expect(revision(homeA)).toBe(settledA);
+      expect(notificationsA).toBe(0);
+      expect(notificationsB).toBe(20);
+      invalidate({ serverId: homeA });
+      expect(notificationsA).toBe(1);
+      expect(revision(homeA)).toBeGreaterThan(settledA);
+      const changedA = revision(homeA);
+      invalidate();
+      expect(notificationsA).toBe(2);
+      expect(notificationsB).toBe(21);
+      expect(revision(homeA)).toBeGreaterThan(changedA);
+    } finally { stopA(); stopB(); }
+  });
+
+  it('withdraws socket identity with the same conservative Home matching as disclosure revisions', async () => {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { upsertServerProfile, setServerProfileIdentityForUrl, getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+    const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    await setServerProfileIdentityForUrl('https://api.example.test', 'srv_mode-observed-home');
+    const homeA = getActiveServerSnapshot().serverId;
+    const homeB = (await upsertServerProfile({ serverUrl: 'https://mode-unidentified-home.test' })).id;
+    expect(getServerProfileById(homeA)?.serverIdentityId).toBe('srv_mode-observed-home');
+    expect(getServerProfileById(homeB)?.serverIdentityId ?? null).toBeNull();
+    let physicalReads = 0;
+    const observation = accountEncryptionMode.createSocketAccountEncryptionObservation({
+      credentials: { token: createAccountTokenForTests('mode-account') }, serverId: homeA,
+      endpointUrl: 'https://api.example.test', runtimeOrigin: 'https://api.example.test', homeCarrierEndpointId: null,
+      isCurrent: () => true,
+      // The HTTP boundary supplies the real currentness fixture; observation,
+      // invalidation routing and identity projection remain real.
+      request: async () => Response.json(createPlainAccountEncryptionCurrentnessFixture({ updatedAt: ++physicalReads })),
+    });
+    try {
+      observation.connected();
+      await expect(observation.binding.read()).resolves.toMatchObject({ updatedAt: 1 });
+      accountEncryptionMode.invalidateAccountEncryptionModeCache({ serverId: homeB });
+      await expect(observation.binding.read()).resolves.toMatchObject({ updatedAt: 2 });
+      expect(physicalReads).toBe(2);
+    } finally { observation.dispose(); }
+  });
+
   it('rejects a stale in-flight account mode GET after an update instead of disclosing or caching it', async () => {
     vi.doUnmock('@/sync/domains/server/serverRuntime');
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
