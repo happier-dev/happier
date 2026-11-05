@@ -1,30 +1,25 @@
 import * as React from 'react';
 
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { startRuntimeActiveGatedInterval } from '@/utils/runtime/isRuntimeActive';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /**
- * Screen-scoped SCM auto-refresh: keeps a session's status badge reasonably
- * up-to-date without noisy polling.
- *
- * Each refresh is a round trip to the daemon that makes the *machine* run git,
- * so it runs only while the runtime is active. `startRuntimeActiveGatedInterval`
- * — the same lifecycle owner the shared clocks use — also delivers one catch-up
- * refresh the moment the app returns to the foreground with the cadence overdue,
- * so a returning user never reads a badge that went stale in the background.
+ * Visible demand for the repository's shared external-editor fallback.
+ * The SCM owner combines composer, Git and Review demand into one adaptive poll.
  */
 export function useScmSessionAutoRefresh(params: Readonly<{
     sessionId: string | null | undefined;
     serverId?: string | null;
     intervalMs: number;
+    stepIntervalMs?: number;
+    maxIntervalMs?: number;
+    enabled?: boolean;
 }>): void {
-    const { sessionId, serverId, intervalMs } = params;
+    const { sessionId, serverId, intervalMs, stepIntervalMs, maxIntervalMs, enabled = true } = params;
+    const presented = useLayoutPresentationActive();
 
     React.useEffect(() => {
-        if (!sessionId) return undefined;
-        scmStatusSync.invalidateFromAutoRefresh(sessionId, ...(serverId == null ? [] : [serverId]));
-        return startRuntimeActiveGatedInterval(() => {
-            scmStatusSync.invalidateFromAutoRefresh(sessionId, ...(serverId == null ? [] : [serverId]));
-        }, intervalMs);
-    }, [intervalMs, serverId, sessionId]);
+        if (!sessionId || !enabled || !presented) return undefined;
+        return scmStatusSync.retainAutoRefresh({ sessionId, serverId, intervalMs, stepIntervalMs, maxIntervalMs });
+    }, [enabled, presented, intervalMs, stepIntervalMs, maxIntervalMs, serverId, sessionId]);
 }

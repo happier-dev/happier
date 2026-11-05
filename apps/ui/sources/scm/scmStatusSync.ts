@@ -17,16 +17,20 @@ import {
     collectStaleProjectKeysAfterReassign,
     getRepoScopeSessionIds,
     moveProjectStateKey,
+    readScmSessionContext,
     type ScmStatusSyncStateMaps,
 } from './statusSync/projectState';
 import { reportScmStatusSyncError } from './statusSync/errorReporting';
 import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
-import { collectChangedPaths } from './sync/snapshotDiff';
+import { collectChangedPaths, areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from './sync/snapshotDiff';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
+
+import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { ScmAutoRefresh, type ScmAutoRefreshDemand } from './refresh/scmAutoRefresh';
 
 type InvalidationSource = 'unknown' | 'mutation';
 
@@ -44,14 +48,40 @@ function readScmAutoRefreshProjectMinIntervalMs(): number {
 }
 
 export class ScmStatusSync {
+    private autoRefresh = new ScmAutoRefresh((demand) => {
+        // Resolve/hydrate a newly visible Session through the existing repository owner before grouping demand.
+        this.getSync(demand.sessionId, demand.serverId);
+        const state = storage.getState();
+        const scope = resolveWorkspaceTargetForSessionFromState(state, demand.serverId
+            ? { sessionId: demand.sessionId, serverId: demand.serverId } : demand.sessionId);
+        const projectKey = this.getProjectKeyForSession(demand.sessionId, demand.serverId);
+        if (!projectKey) return null;
+        const snapshot = state.getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
+        const key = scope ? tryBuildWorkspaceCacheKey({ ...scope, rootPath: snapshot?.repo.rootPath ?? scope.rootPath }) : null;
+        return { key: key ?? projectKey, read: async () => {
+            const currentKey = this.getProjectKeyForSession(demand.sessionId, demand.serverId);
+            if (currentKey && !this.projectAutoRefreshSuspended.has(currentKey)) {
+                // A visible refresh joins a read already in flight (e.g. the list upgrade a pane's
+                // mount admitted) instead of queueing a second full read behind it.
+                const sync = this.getSync(demand.sessionId, demand.serverId);
+                sync.invalidateCoalesced();
+                await sync.awaitQueue();
+            }
+            return storage.getState().getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
+        } };
+    });
+
+    retainAutoRefresh(demand: ScmAutoRefreshDemand): () => void {
+        // Apply the incumbent repository work budget once, when visible polling demand is admitted.
+        const intervalMs = demand.intervalMs > 0
+            ? Math.max(demand.intervalMs, readScmAutoRefreshProjectMinIntervalMs()) : demand.intervalMs;
+        return this.autoRefresh.retain({ ...demand, intervalMs });
+    }
+
     // Map project keys to sync instances
     private projectSyncMap = new Map<string, InvalidateSync>();
     // Map session IDs to project keys for cleanup
     private sessionToProjectKey = new Map<string, string>();
-    // Legacy/compat state maps for project key reassignment helpers.
-    // These are intentionally kept even though SCM polling is now driven by screen-level intervals.
-    private projectPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    private projectFastPollUntil = new Map<string, number>();
     // Projects that should skip automatic refresh attempts until a user-initiated refresh occurs.
     private projectAutoRefreshSuspended = new Set<string>();
     // Last automatic refresh lease per project. Prevents multiple mounted views from hammering full snapshots.
@@ -70,9 +100,7 @@ export class ScmStatusSync {
     private get stateMaps(): ScmStatusSyncStateMaps {
         return {
             projectSyncMap: this.projectSyncMap,
-            projectPollTimers: this.projectPollTimers,
             projectPollingSuspended: this.projectAutoRefreshSuspended,
-            projectFastPollUntil: this.projectFastPollUntil,
             projectSnapshotSignature: this.projectSnapshotSignature,
             projectLastSnapshot: this.projectLastSnapshot,
             projectLastInvalidatedBySession: this.projectLastInvalidatedBySession,
@@ -104,13 +132,13 @@ export class ScmStatusSync {
         sessionId: string,
         serverId: string,
         source: InvalidationSource,
+        projectKey: string,
     ): Promise<void> {
         const state = storage.getState();
         const scope = resolveWorkspaceTargetForSessionFromState(state, { sessionId, serverId });
         if (!scope) return;
         // Exact refreshes must not populate the legacy active-Home project cache. Two Homes can
         // legitimately expose the same machine/root tuple while carrying different repositories.
-        const projectKey = `${serverId}:${scope.machineId}:${scope.rootPath}`;
         if (source === 'unknown' && this.projectAutoRefreshSuspended.has(projectKey)) return;
         try {
             const previousSnapshot = state.getWorkspaceScmSnapshot(scope);
@@ -125,15 +153,23 @@ export class ScmStatusSync {
                 state.pruneWorkspaceScmCommitSelectionPaths(scope, new Set());
                 return;
             }
-            state.publishSessionProjectScmSnapshots([{
-                sessionId,
-                serverId,
-                snapshot,
-                status: snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null,
-            }]);
+            const snapshotChanged = !areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previousSnapshot, snapshot);
+            if (snapshotChanged) {
+                const sessionIds = snapshot.repo.isRepo && snapshot.repo.rootPath
+                    ? getRepoScopeSessionIds(sessionId, snapshot.repo.rootPath, serverId) : [sessionId];
+                const status = snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null;
+                state.publishSessionProjectScmSnapshots(sessionIds.map((sessionId) => ({
+                    sessionId,
+                    serverId,
+                    snapshot,
+                    status,
+                })));
+            } else if (state.getSessionProjectScmSnapshotError(sessionId, serverId)) {
+                state.updateSessionProjectScmSnapshotError(sessionId, null, serverId);
+            }
             const signature = buildSnapshotSignature(snapshot);
             const signatureChanged = signature !== this.projectSnapshotSignature.get(projectKey);
-            this.projectLastSnapshot.set(projectKey, snapshot);
+            if (snapshotChanged) this.projectLastSnapshot.set(projectKey, snapshot);
             this.projectSnapshotSignature.set(projectKey, signature);
             if (signatureChanged) {
                 await clearSearchCacheForProject(this.getProjectSessions(projectKey));
@@ -167,34 +203,27 @@ export class ScmStatusSync {
     private getCachedSnapshotForSessionProject(
         sessionId: string,
         projectKey: string,
+        serverId?: string | null,
     ): { projectKey: string; snapshot: ScmWorkingSnapshot } | null {
         const directSnapshot = this.projectLastSnapshot.get(projectKey);
         if (directSnapshot) {
             return { projectKey, snapshot: directSnapshot };
         }
 
-        const state = storage.getState();
-        const sessionWorkspaceContext = readSessionWorkspaceContext(state, sessionId);
-        const sessionPath = sessionWorkspaceContext.workspacePath;
-        const scopeId =
-            sessionWorkspaceContext.projectMachineId
-            ?? resolveProjectMachineScopeId(
-                state.sessions[sessionId]
-                    ? readSessionOwnerMetadataView(state.sessions[sessionId]!) ?? {}
-                    : {},
-            );
+        const context = readScmSessionContext(sessionId, serverId);
+        const sessionPath = context.workspacePath;
+        const scopeId = context.machineId;
         if (!sessionPath || !scopeId || scopeId === 'unknown') {
             return null;
         }
-        const session = state.sessions[sessionId];
-        const homeDir = (session ? readSessionOwnerMetadataView(session)?.homeDir : undefined)
-            ?? state.machines?.[scopeId]?.metadata?.homeDir;
+        const homeDir = context.homeDir;
+        const prefix = serverId ? `${serverId}:${scopeId}:` : `${scopeId}:`;
 
         for (const [candidateProjectKey, candidateSnapshot] of this.projectLastSnapshot.entries()) {
             if (!candidateSnapshot?.repo.isRepo) continue;
             const repoRoot = candidateSnapshot.repo.rootPath;
             if (!repoRoot) continue;
-            if (!candidateProjectKey.startsWith(`${scopeId}:`)) continue;
+            if (!candidateProjectKey.startsWith(prefix)) continue;
             if (!isSessionPathWithinRepoRoot(sessionPath, repoRoot, homeDir)) continue;
             return { projectKey: candidateProjectKey, snapshot: candidateSnapshot };
         }
@@ -206,19 +235,22 @@ export class ScmStatusSync {
         state: ReturnType<typeof storage.getState>,
         sessionId: string,
         snapshot: ScmWorkingSnapshot,
+        serverId?: string | null,
     ): void {
-        this.publishSnapshotToSessions(state, [sessionId], snapshot);
+        this.publishSnapshotToSessions(state, [sessionId], snapshot, serverId);
     }
 
     private publishSnapshotToSessions(
         state: ReturnType<typeof storage.getState>,
         sessionIds: readonly string[],
         snapshot: ScmWorkingSnapshot,
+        serverId?: string | null,
     ): void {
         if (sessionIds.length === 0) return;
         const status = snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null;
         state.publishSessionProjectScmSnapshots(sessionIds.map((sessionId) => ({
             sessionId,
+            ...(serverId ? { serverId } : {}),
             snapshot,
             status,
         })));
@@ -227,10 +259,11 @@ export class ScmStatusSync {
     private hydrateSessionFromCachedProjectSnapshot(
         sessionId: string,
         snapshot: ScmWorkingSnapshot,
+        serverId?: string | null,
     ): void {
         const state = storage.getState();
-        if (state.getSessionProjectScmSnapshot(sessionId)) return;
-        this.publishSnapshotToSession(state, sessionId, snapshot);
+        if (state.getSessionProjectScmSnapshot(sessionId, serverId)) return;
+        this.publishSnapshotToSession(state, sessionId, snapshot, serverId);
     }
 
     /**
@@ -294,31 +327,35 @@ export class ScmStatusSync {
             return new InvalidateSync(async () => {});
         }
 
-        const cachedProjectSnapshot = exactServerId
-            ? null
-            : this.getCachedSnapshotForSessionProject(sessionId, projectKey);
+        const cachedProjectSnapshot = this.getCachedSnapshotForSessionProject(sessionId, projectKey, exactServerId);
         if (cachedProjectSnapshot) {
             projectKey = cachedProjectSnapshot.projectKey;
         }
 
         // Map session to project key
+        const previousProjectKey = this.sessionToProjectKey.get(sessionSyncKey);
         this.sessionToProjectKey.set(sessionSyncKey, projectKey);
+        if (previousProjectKey && previousProjectKey !== projectKey
+            && !Array.from(this.sessionToProjectKey.values()).includes(previousProjectKey)) this.cleanupProjectState(previousProjectKey);
         if (cachedProjectSnapshot) {
-            this.hydrateSessionFromCachedProjectSnapshot(sessionId, cachedProjectSnapshot.snapshot);
+            this.hydrateSessionFromCachedProjectSnapshot(sessionId, cachedProjectSnapshot.snapshot, exactServerId);
         }
 
         let sync = this.projectSyncMap.get(projectKey);
         if (!sync) {
             let createdSync!: InvalidateSync;
             createdSync = new InvalidateSync(() => {
+                const currentProjectKey = this.getProjectKeyForSync(createdSync) ?? projectKey;
                 if (exactServerId) {
+                    const currentSessionId = this.getAnySessionForProject(currentProjectKey, exactServerId);
+                    if (!currentSessionId) return Promise.resolve();
                     return this.refreshExactSession(
-                        sessionId,
+                        currentSessionId,
                         exactServerId,
-                        this.projectLastInvalidationSource.get(projectKey) ?? 'unknown',
+                        this.projectLastInvalidationSource.get(currentProjectKey) ?? 'unknown',
+                        currentProjectKey,
                     );
                 }
-                const currentProjectKey = this.getProjectKeyForSync(createdSync) ?? projectKey;
                 return this.fetchScmStatusForProject(currentProjectKey);
             });
             sync = createdSync;
@@ -495,8 +532,6 @@ export class ScmStatusSync {
             this.projectSyncMap.delete(projectKey);
         }
 
-        this.projectPollTimers.delete(projectKey);
-        this.projectFastPollUntil.delete(projectKey);
         this.projectAutoRefreshSuspended.delete(projectKey);
         this.projectLastAutoRefreshAt.delete(projectKey);
         this.projectSnapshotSignature.delete(projectKey);
@@ -506,11 +541,10 @@ export class ScmStatusSync {
         this.projectLastInvalidatedBySessionAt.delete(projectKey);
     }
 
-    private getAnySessionForProject(projectKey: string): string | null {
-        const state = storage.getState();
-        for (const [sessionId, key] of this.sessionToProjectKey.entries()) {
-            if (key !== projectKey) continue;
-            if (readSessionWorkspaceContext(state, sessionId).workspacePath) {
+    private getAnySessionForProject(projectKey: string, serverId?: string): string | null {
+        for (const { sessionId, serverId: home } of this.getProjectSessions(projectKey)) {
+            if ((home ?? undefined) !== serverId) continue;
+            if (readScmSessionContext(sessionId, serverId).workspacePath) {
                 return sessionId;
             }
         }
@@ -592,10 +626,11 @@ export class ScmStatusSync {
             const signature = buildSnapshotSignature(snapshot);
             const previousSignature = this.projectSnapshotSignature.get(activeProjectKey);
             const signatureChanged = signature !== previousSignature;
-            const scopedSessionIdsMissingSnapshot = signatureChanged
+            const snapshotChanged = !areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previousSnapshot, snapshot);
+            const scopedSessionIdsMissingSnapshot = snapshotChanged
                 ? []
                 : scopeSessionIds.filter((scopedSessionId) => state.getSessionProjectScmSnapshot(scopedSessionId) == null);
-            const publishSessionIds = signatureChanged ? scopeSessionIds : scopedSessionIdsMissingSnapshot;
+            const publishSessionIds = snapshotChanged ? scopeSessionIds : scopedSessionIdsMissingSnapshot;
 
             if (signatureChanged) {
                 this.projectSnapshotSignature.set(activeProjectKey, signature);
@@ -634,8 +669,8 @@ export class ScmStatusSync {
                 this.projectLastInvalidatedBySessionAt.delete(activeProjectKey);
             }
 
+            if (snapshotChanged) this.projectLastSnapshot.set(activeProjectKey, snapshot);
             if (signatureChanged) {
-                this.projectLastSnapshot.set(activeProjectKey, snapshot);
                 await clearSearchCacheForProject(this.getProjectSessions(activeProjectKey));
             }
         } catch (error) {

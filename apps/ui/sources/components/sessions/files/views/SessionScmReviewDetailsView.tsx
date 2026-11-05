@@ -71,8 +71,7 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import { useScmDiffCacheLimits } from '@/scm/diffCache/useScmDiffCacheLimits';
-import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
-import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
+import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import {
   NotSourceControlRepositoryState,
@@ -343,14 +342,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       [maxIntervalMs],
     );
 
-    const snapshotSignature = React.useMemo(() => {
-      if (!effectiveSnapshot) return null;
-      return buildSnapshotSignature(effectiveSnapshot);
-    }, [effectiveSnapshot]);
-    const getSnapshotSignature = React.useCallback(
-      () => snapshotSignature,
-      [snapshotSignature],
-    );
     const {
       latestTurnId,
       latestTurnChangeSet,
@@ -373,22 +364,15 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       },
     );
 
-    useScmAdaptivePolling({
+    useScmSessionAutoRefresh({
+      sessionId: props.sessionId,
+      serverId: props.serverId,
       enabled:
         props.active !== false &&
-        Boolean(props.sessionId) &&
-        effectiveSnapshot?.repo.isRepo === true,
-      baseIntervalMs,
+        Boolean(props.sessionId),
+      intervalMs: baseIntervalMs,
       stepIntervalMs: baseIntervalMs,
       maxIntervalMs,
-      activityToken: diffRefreshToken,
-      getSignature: getSnapshotSignature,
-      invalidateAndAwait: React.useCallback(async () => {
-        await scmStatusSync.invalidateFromAutoRefreshAndAwait(
-          props.sessionId,
-          props.serverId,
-        );
-      }, [props.serverId, props.sessionId]),
     });
 
     const scrollFades = useScrollEdgeFades({
@@ -524,12 +508,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       },
       [openFile],
     );
-
-    // Ensure the SCM snapshot is warm so large reviews can load diffs even if the user
-    // opened the review tab before visiting Source control.
-    React.useEffect(() => {
-      scmStatusSync.invalidateFromAutoRefresh(props.sessionId, props.serverId);
-    }, [props.serverId, props.sessionId]);
 
     const refreshAfterMutation = React.useCallback(async () => {
       await scmStatusSync.invalidateFromMutationAndAwait(

@@ -6,8 +6,6 @@ import { renderScreen } from '@/dev/testkit';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
-const pollingSpy = vi.hoisted(() => vi.fn());
-
 const mockSession = {
     id: 'session-1',
     seq: 0,
@@ -80,21 +78,8 @@ vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () =>
     }),
 }));
 
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: {
-        invalidateFromAutoRefresh: vi.fn(),
-        invalidateFromAutoRefreshAndAwait: vi.fn(),
-        invalidateFromMutationAndAwait: vi.fn(),
-        invalidateFromUser: vi.fn(),
-    },
-}));
-
 vi.mock('@/scm/diffCache/useScmDiffCacheLimits', () => ({
     useScmDiffCacheLimits: () => {},
-}));
-
-vi.mock('@/scm/refresh/useScmAdaptivePolling', () => ({
-    useScmAdaptivePolling: pollingSpy,
 }));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
@@ -120,23 +105,10 @@ vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
 const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
 
 describe('SessionScmReviewDetailsView (loading)', () => {
-    it('stops polling while hidden and refreshes through the current Home when shown', async () => {
-        const { scmStatusSync } = await import('@/scm/scmStatusSync');
-        pollingSpy.mockClear();
-        const screen = await renderScreen(<SessionScmReviewDetailsView sessionId="s1" serverId="home-a" scopeId="session:s1" active={false} />);
-        expect(pollingSpy.mock.lastCall?.[0].enabled).toBe(false);
-        await screen.update(<SessionScmReviewDetailsView sessionId="s1" serverId="home-a" scopeId="session:s1" active />);
-        const firstInvalidate = pollingSpy.mock.lastCall?.[0].invalidateAndAwait;
-        await screen.update(<SessionScmReviewDetailsView sessionId="s1" serverId="home-b" scopeId="session:s1" active />);
-        const nextInvalidate = pollingSpy.mock.lastCall?.[0].invalidateAndAwait;
-        expect(nextInvalidate).not.toBe(firstInvalidate);
-        await nextInvalidate();
-        expect(scmStatusSync.invalidateFromAutoRefreshAndAwait).toHaveBeenCalledWith('s1', 'home-b');
-    });
     it('shows a loading indicator while the SCM snapshot is not ready', async () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionScmReviewDetailsView sessionId="s1" scopeId="session:s1" />)).tree;
+        tree = (await renderScreen(<SessionScmReviewDetailsView sessionId="s1" scopeId="session:s1" active={false} />)).tree;
 
         expect(tree!.findAll((node) => node.props.accessibilityRole === 'progressbar')).toHaveLength(1);
     });

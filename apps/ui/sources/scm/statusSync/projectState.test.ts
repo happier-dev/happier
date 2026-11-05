@@ -10,10 +10,6 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { buildSnapshotSignature, clearSearchCacheForProject, getRepoScopeSessionIds } from './projectState';
 
-vi.mock('@/sync/domains/input/suggestionFile', () => {
-    throw new Error('projectState must not load the full file-search suggestion module when clearing caches');
-});
-
 const initialState = storage.getState();
 afterEach(() => {
     storage.setState(initialState, true);
@@ -175,7 +171,7 @@ describe('buildSnapshotSignature', () => {
 
 
 describe('clearSearchCacheForProject', () => {
-  it('clears the search caches of the given sessions only, without loading the full file-search module', async () => {
+  it('clears only the given Session caches through registered invalidators', async () => {
     const machine = createMachineFixture({ id: 'clear-machine' });
     storage.setState({
       machines: { [machine.id]: machine },

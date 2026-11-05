@@ -24,8 +24,7 @@ import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessi
 import { createScmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
-import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
+import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
@@ -208,12 +207,6 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         return Math.max(0, raw);
     }, [autoRefreshIntervalSetting]);
     const baseIntervalMs = React.useMemo(() => Math.max(0, Math.min(10_000, maxIntervalMs)), [maxIntervalMs]);
-    const snapshotSignature = React.useMemo(() => {
-        if (!effectiveScmSnapshot) return null;
-        return buildSnapshotSignature(effectiveScmSnapshot);
-    }, [effectiveScmSnapshot]);
-    const getSnapshotSignature = React.useCallback(() => snapshotSignature, [snapshotSignature]);
-
     const {
         historyIdentity: commitHistoryInitKey,
         historyEntries,
@@ -230,26 +223,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const refreshScmData = React.useCallback(async () => {
         await scmStatusSync.invalidateFromUserAndAwait(props.sessionId, props.serverId);
     }, [props.sessionId, props.serverId]);
-    const refreshScmDataFromAutoRefresh = React.useCallback(async () => {
-        await scmStatusSync.invalidateFromAutoRefreshAndAwait(props.sessionId, props.serverId);
-    }, [props.sessionId, props.serverId]);
-
-    const initialRefreshKey = JSON.stringify([props.serverId, props.sessionId, sessionPath]);
-    const didInitialRefreshKeyRef = React.useRef<string | null>(null);
     const didInitCommitHistoryKeyRef = React.useRef<string | null>(null);
-    React.useEffect(() => {
-        if (didInitialRefreshKeyRef.current === initialRefreshKey) return;
-        didInitialRefreshKeyRef.current = initialRefreshKey;
-        void refreshScmDataFromAutoRefresh();
-    }, [initialRefreshKey, refreshScmDataFromAutoRefresh]);
-
-    useScmAdaptivePolling({
+    useScmSessionAutoRefresh({
+        sessionId: props.sessionId,
+        serverId: props.serverId,
         enabled: Boolean(props.sessionId) && Boolean(sessionPath),
-        baseIntervalMs,
+        intervalMs: baseIntervalMs,
         stepIntervalMs: baseIntervalMs,
         maxIntervalMs,
-        getSignature: getSnapshotSignature,
-        invalidateAndAwait: refreshScmDataFromAutoRefresh,
     });
 
     const {
