@@ -161,18 +161,14 @@ export function createConnectedServiceContinuationMessageDispatcher(
               ? buildUsageLimitIssueFingerprint(session.lastRuntimeIssue) : null;
             // The latest turn projection covers consumed messages too; queued-input
             // admission alone cannot protect a newer running/completed/failed turn.
-            // The accepted failure identity survives scheduler re-arming. Its lifecycle
-            // epoch is not a fence for a later failed turn, even before that re-arm.
+            // Provider observers may enrich the same rejection with another occurrence
+            // timestamp or reset boundary. Fingerprint bytes are diagnostic evidence,
+            // not a shared failure identity: fence newer failures by recovery arming.
             const supersededRecovery = session.archivedAt != null
               || Boolean(activeTurnId && session.latestTurnId && activeTurnId !== session.latestTurnId)
-              || (session.latestTurnStatus === 'failed' && (recovery.runtimeIssueFingerprint
-                ? projectedFailureFingerprint !== null && projectedFailureFingerprint !== recovery.runtimeIssueFingerprint
-                : typeof failedAtMs === 'number' && Number.isFinite(recovery.armedAtMs) && failedAtMs > recovery.armedAtMs));
-            if (!supersededRecovery && session.latestTurnStatus === 'failed' && recovery.runtimeIssueFingerprint
-              && projectedFailureFingerprint === recovery.runtimeIssueFingerprint) return true;
-            // Older reports carry no exact issue identity. Keep their existing admission
-            // rule; it cannot establish which failure preceded a daemon restart.
-            if (!supersededRecovery && session.latestTurnStatus === 'failed' && !recovery.runtimeIssueFingerprint
+              || (session.latestTurnStatus === 'failed' && typeof failedAtMs === 'number'
+                && Number.isFinite(recovery.armedAtMs) && failedAtMs > recovery.armedAtMs);
+            if (!supersededRecovery && session.latestTurnStatus === 'failed'
               && typeof failedAtMs === 'number' && Number.isFinite(recovery.armedAtMs)) {
               return true;
             }

@@ -84,6 +84,26 @@ function fixture(overrides: Partial<RawSessionRecord> = {}) {
 }
 
 describe('continueSessionAfterUsageLimitReset', () => {
+  it('admits the failed usage-limit projection enriched by another observer before recovery arming', async () => {
+    const occurredAt = 1_793_871_333_659;
+    const firstIssue: SessionRuntimeIssueV1 = { ...issue, providerTurnId: undefined, occurredAt,
+      usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
+    const projectedIssue: SessionRuntimeIssueV1 = { ...firstIssue, occurredAt: occurredAt + 45,
+      usageLimit: { ...firstIssue.usageLimit!, resetAtMs: 1_794_285_600_000 } };
+    fixture({ latestTurnId: 'failed-turn', latestTurnStatusObservedAt: occurredAt + 45,
+      lastRuntimeIssue: projectedIssue });
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+
+    await expect(dispatcher.enqueueInterruptedOriginContinuation({
+      sessionId, attemptId: 'successful-switch', interruptedOriginId: 'accepted-failure',
+      interruption: 'provider_failed_turn', resumePromptMode: 'standard', recoveryKind: 'usage_limit',
+      runtimeAuthRecovery: { armedAtMs: 1_793_871_335_690,
+        runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(firstIssue),
+        isCurrent: () => true, readActiveTurnId: () => null },
+    })).resolves.toMatchObject({ status: 'enqueued' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['independent_recoveries', 'recipient_bridge'], ['replacement', 'recipient_bridge'],
     ['independent_recoveries', 'recovery_owner'], ['replacement', 'recovery_owner'],
@@ -272,7 +292,8 @@ describe('continueSessionAfterUsageLimitReset', () => {
 
   it.each([
     ['codex', 'plan', 'stopped_turn'], ['codex', 'capacity', 'stopped_turn'],
-    ['claude', 'usage_limit', 'stopped_turn'], ['codex', 'plan', 'newer_work'],
+    ['claude', 'usage_limit', 'stopped_turn'], ['claude', 'usage_limit', 'enriched_issue'],
+    ['codex', 'plan', 'newer_work'],
     ['codex', 'plan', 'completed'], ['codex', 'plan', 'cancelled'],
     ['codex', 'plan', 'not_failed'], ['codex', 'plan', 'archived'],
     ['codex', 'plan', 'unknown_quota'], ['codex', 'plan', 'exhausted_quota'],
@@ -298,6 +319,10 @@ describe('continueSessionAfterUsageLimitReset', () => {
       : { kind: 'usage_limit', serviceId, groupId: 'pool', profileId: 'A', groupGeneration: 1,
           credentialRevision: revision, resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' };
     expect(classification.kind).toBe(kind);
+    if (projection === 'enriched_issue') classification = { ...classification,
+      runtimeIssueFingerprint: buildUsageLimitIssueFingerprint({ ...issue, providerTurnId: undefined, occurredAt: 55,
+        usageLimit: { ...issue.usageLimit!, resetAtMs: null } }),
+    };
     if (agentId === 'codex') expect(classification.limitCategory).toBe(kind === 'capacity' ? 'capacity' : 'plan_invalid');
     if (projection === 'predecessor') classification = { ...classification, credentialRevision: null };
     // The old member's reset must not defer checking the already-adopted member.
@@ -357,6 +382,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
         continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials, interruptedOriginId: value.interruptedOriginId,
           resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn',
           ...(intent ? { runtimeAuthRecovery: { armedAtMs: intent.armedAtMs,
+            runtimeIssueFingerprint: intent.classification.runtimeIssueFingerprint,
             isCurrent: () => scheduler.readForSession(sessionId).some(current => current.attemptId === value.interruptedOriginId
               && ['waiting', 'checking', 'resumed_awaiting_proof'].includes(current.status)), readActiveTurnId: () => tracked.activeTurnId ?? null } } : {}),
         }),
@@ -381,13 +407,15 @@ describe('continueSessionAfterUsageLimitReset', () => {
       expect(await coordinator.switchBeforeTurn({ sessionId, serviceId, groupId: 'pool', reason: 'soft_threshold', observedProfileId: 'A' }))
         .toMatchObject({ status: 'switched', activeProfileId: 'B', generation: 2 });
       expect(input.rawSession.latestTurnStatus).toBe('in_progress');
-      tracked.activeTurnId = projection === 'newer_work' ? 'new-consumed-user-turn' : 'interrupted-turn';
+      tracked.activeTurnId = projection === 'enriched_issue' ? undefined
+        : projection === 'newer_work' ? 'new-consumed-user-turn' : 'interrupted-turn';
       transport.fetchSessionById.mockResolvedValue({ ...input.rawSession,
         latestTurnStatus: projection === 'not_failed' ? 'in_progress'
           : projection === 'completed' || projection === 'cancelled' ? projection : 'failed',
         latestTurnStatusObservedAt: projection === 'completed' || projection === 'cancelled' ? now + 1 : 100,
         archivedAt: projection === 'archived' ? now : null,
-        lastRuntimeIssue: projection === 'completed' || projection === 'cancelled' || projection === 'not_failed' ? null : issue });
+        lastRuntimeIssue: projection === 'completed' || projection === 'cancelled' || projection === 'not_failed' ? null
+          : projection === 'enriched_issue' ? { ...issue, providerTurnId: undefined } : issue });
       if (projection === 'unknown_quota' || projection === 'exhausted_quota') {
         state = { ...state, memberStatesByProfileId: new Map([['B', projection === 'unknown_quota' ? {} : {
           quotaSnapshot: { capturedAtMs: now, effectiveRemainingPercent: 0,
@@ -686,11 +714,12 @@ describe('continueSessionAfterUsageLimitReset', () => {
     { status: 'failed', armedAtMs: 110, failureAt: 100 },
     { status: 'failed', armedAtMs: 200, failureAt: 100 },
     { status: 'failed', armedAtMs: 110, failureAt: 150 },
+    { status: 'failed', armedAtMs: 150, failureAt: 150 },
     { status: 'failed', armedAtMs: 200, failureAt: 150 },
     { status: 'failed', armedAtMs: 200, failureAt: null },
     { status: 'completed', armedAtMs: 110, failureAt: null },
     { status: 'completed', armedAtMs: 200, failureAt: null },
-  ] as const)('keeps failure identity across re-arming ($status/$armedAtMs/$failureAt)', async ({ status, armedAtMs, failureAt }) => {
+  ] as const)('admits only failed projections at or before recovery arming ($status/$armedAtMs/$failureAt)', async ({ status, armedAtMs, failureAt }) => {
     fixture({ latestTurnId: 'projected-turn', latestTurnStatus: status, latestTurnStatusObservedAt: 160,
       lastRuntimeIssue: failureAt === null ? null : { ...issue, occurredAt: failureAt } });
     const classification: ConnectedServiceRuntimeFailureClassification = {
@@ -711,7 +740,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
     try {
       await scheduler.beginClassifiedFailure({ sessionId, classification, switchesThisTurn: 0 });
       await scheduler.wake({ sessionId, reason: 'manual' });
-      const sameFailure = status === 'failed' && failureAt === issue.occurredAt;
+      const sameFailure = status === 'failed' && (failureAt ?? 160) <= armedAtMs;
       const terminalReason = status === 'failed' && failureAt !== null
         ? 'connected_service_continuation_failure_superseded' : 'connected_service_continuation_turn_projection_unavailable';
       expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledTimes(sameFailure ? 1 : 0);

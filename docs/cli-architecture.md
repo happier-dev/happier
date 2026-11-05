@@ -2012,11 +2012,14 @@ daemon is replaced. The selected target and durable interrupted recovery determi
 that identity; quota reset receipts and snapshots only establish eligibility.
 A later independent recovery can continue at the same account and generation.
 Recovery continuations also recheck the current failed-turn
-projection and live turn at message admission. Reports carrying an exact runtime
-issue fingerprint must still match that failure; re-arming the scheduler does
-not authorize a later failed turn. Older reports without that identity retain
-the arming-time check, which cannot establish the original failure across a
-restart. A superseded live turn or archived session settles the old recovery
+projection and live turn at message admission. A failed projection whose issue
+occurred at or before recovery arming is eligible; a failure after arming is
+superseded. When the issue is absent, the turn-status observation supplies that
+boundary. Provider observers can describe one rejection with different timestamps
+and reset details, so report and projection fingerprints are diagnostic evidence,
+not a byte-equality admission requirement. The arming-time check cannot establish
+the original failure across a restart or re-arming. A superseded live turn or
+archived session settles the old recovery
 terminally instead of waiting for provider proof after suppressing admission.
 Failure reporting does not wait for its durable projection.
 An unresolved projection is retryable while the live turn matches the projected
