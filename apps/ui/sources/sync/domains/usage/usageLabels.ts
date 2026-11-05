@@ -1,6 +1,7 @@
-import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol';
+import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
+import { isUnattributedUsageAgentId } from '@happier-dev/protocol/usage/usageFormatting';
 
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -71,7 +72,7 @@ export function usageAgentTitle(agentId: string, fallback?: string): string {
     const providedTitle = display && display.toLowerCase() !== agentId.toLowerCase()
         && display.toLowerCase() !== formatUsageDimensionLabel('source', agentId).toLowerCase() ? display : undefined;
     // The scalar-report bridge records 'legacy' because its Agent was not recorded.
-    if (!agentId || agentId === 'unknown' || agentId === 'legacy') return providedTitle || t('usage.board.page.unattributed');
+    if (isUnattributedUsageAgentId(agentId)) return t('usage.board.page.unattributed');
     try {
         const entry = readAgentEntry(agentId);
         if (entry.title && (entry.catalogAgentId !== null || entry.identity !== null)) return entry.title;

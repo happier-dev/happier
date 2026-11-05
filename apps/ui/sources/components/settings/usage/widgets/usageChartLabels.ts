@@ -5,6 +5,7 @@ import type {
 import { resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { t } from '@/text';
+import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { usageChartClock, usageChartDateLabels, usageChartPercent, usageChartValuesLabels, usageChartWeekdays } from './usageChartHost';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
@@ -68,12 +69,12 @@ export function usageSkyLabels(input: Readonly<{
 }
 
 export function usageOrbitLabels(): UsageOrbitLabels {
-  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: t('usage.board.charts.unknownAgent') };
+  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: usageAgentTitle('') };
 }
 
 /** `activeDays` is the period's active-day total when known; Agent days then read "12 of 40". */
 export function usageCrewLabels(activeDays: number | null): UsageCrewLabels {
-  return { percent: usageChartPercent, unknownAgent: t('usage.board.charts.unknownAgent'),
+  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''),
     days: (days) => activeDays === null ? t('usage.board.charts.daysCount', { count: days }) : t('usage.board.charts.daysOf', { count: days, total: activeDays }) };
 }
 
@@ -118,7 +119,7 @@ export function usageRingsLabels(query: Pick<UsageQuery, 'timeZoneOffsetMinutes'
 }
 
 export function usageMoonsLabels(): UsageMoonsLabels {
-  return { percent: usageChartPercent, unknownAgent: t('usage.board.charts.unknownAgent'),
+  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''),
     days: (count, total) => t('usage.board.charts.daysOf', { count, total }),
     caption: (daysShared) => daysShared ? t('usage.board.charts.moonsCaptionDays') : t('usage.board.charts.moonsCaption'),
     values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), shareColumn: t('usage.board.charts.shareColumn'),
