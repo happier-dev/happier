@@ -81,12 +81,13 @@ function ownerIngress(sessionId?: string): RpcHandlerContext {
 
 /** Re-enter the real Machine authorizer for a new RPC; only Home's reply is substituted. */
 function createMachineTerminalRpcIngress(handlers: ReadonlyMap<string, RpcHandler>, verifyMachineAdmission: () => Promise<boolean>,
-  logger?: (message: string, data?: unknown) => void) {
+  logger?: (message: string, data?: unknown) => void,
+  authorizationSource?: Parameters<typeof authorizeMachineRpcRequest>[2]) {
   const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain',
     ...(logger ? { logger } : {}),
     authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
       resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'installation',
-      resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission }) });
+      resolveHomeServerIdentityId: async () => 'stable-home', verifyMachineAdmission }, authorizationSource) });
   for (const [method, handler] of handlers) rpc.registerHandler(method, handler);
   return rpc;
 }
@@ -171,6 +172,69 @@ class FakeInteractivePtyProvider implements PtyProvider {
 }
 
 describe('registerMachineTerminalRpcHandlers', () => {
+  it('withdraws every requester shell without waiting for the first process to exit, leaving other people untouched', async () => {
+    const { registerMachineAccessLossReceiver } = await import('@/daemon/externalActions/registerMachineAccessLossReceiver');
+    const { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } = await import('@happier-dev/protocol/socketRpc');
+    const provider = new FakeInteractivePtyProvider();
+    const stopped: number[] = [];
+    let releaseStop!: () => void;
+    const stopping = new Promise<void>(resolve => { releaseStop = resolve; });
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider,
+      config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux',
+      // Process termination can be slow. Only this OS boundary is held; RPC
+      // authorization, withdrawal selection and PTY lifecycle remain real.
+      stopProcessTree: async ({ pid }) => {
+        if (pid === undefined) throw new Error('Fixture terminal has no process ID');
+        stopped.push(pid);
+        await stopping;
+        provider.spawned.find(entry => entry.pty.pid === pid)!.pty.exit(0);
+      } });
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { sessionManager: manager, env: {}, serverId: 'home' },
+    });
+    registerMachineAccessLossReceiver({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+      serverId: 'home', machineId: 'machine', resolveInstallationId: () => 'installation',
+      cleanupRequesterMachineTerminals: input => registration.cleanupRequesterMachineTerminals({ ...input, serverId: 'home' }),
+    });
+    const rpc = createMachineTerminalRpcIngress(handlers, async () => {
+      throw new Error('Authenticated Home withdrawal must not recheck admission');
+    }, undefined, 'authenticated_home_socket');
+    const withdraw = (subjectAccountId: string) => rpc.handleRequest({
+      method: `machine:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`,
+      authorization: MACHINE_ACCESS_LOSS_SERVER_ORIGIN, machineAdmission: ownerIngress().machineAdmission,
+      params: { v: 1, subjectAccountId },
+    });
+    const opened: string[] = [];
+    let loss: ReturnType<typeof withdraw> | undefined;
+    try {
+      for (const [index, requesterAccountId] of ['alice', 'alice', 'bob', 'owner'].entries()) {
+        const terminal = await manager.ensure({ terminalKey: `withdrawal-${index}`, cwd: tmpdir(),
+          custody: { kind: 'machine', serverId: 'home', requesterAccountId, machineId: 'machine',
+            installationId: 'installation', rootPath: tmpdir() } });
+        if (!terminal.ok) throw new Error('Fixture terminal did not open');
+        opened.push(terminal.terminalId);
+      }
+      expect(await withdraw('unrelated')).toEqual({ kind: 'settled' });
+      expect(stopped).toEqual([]);
+      loss = withdraw('alice');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(stopped, 'both Alice shells receive stop before either process exit settles')
+        .toEqual(provider.spawned.slice(0, 2).map(entry => entry.pty.pid));
+      releaseStop();
+      expect(await loss).toEqual({ kind: 'settled' });
+      expect(manager.list().map(terminal => terminal.terminalId)).toEqual(opened.slice(2));
+      for (const terminalId of opened.slice(2)) {
+        expect(await manager.input({ terminalId, data: 'still usable\n' })).toEqual({ ok: true });
+      }
+    } finally {
+      releaseStop();
+      await loss;
+      registration.dispose();
+    }
+  });
+
   it.skipIf(process.platform !== 'linux')('opens a Use member own-Project Shell with the bound member OS identity', async () => {
     const h = await finiteHarness({ observeInteractiveStop: true });
     const context: RpcHandlerContext = { ...h.ingress,

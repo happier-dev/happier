@@ -932,21 +932,26 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       // attribution is not inferred from cwd, key spelling or caller payload.
       const terminals = sessionManager?.list() ?? [];
       let incomplete = terminals.some(terminal => !sessionManager?.getCustody(terminal.terminalId));
-      for (const terminal of terminals) {
+      // Start every selected stop and viewer retirement before waiting for any
+      // process exit; one slow shell cannot prolong the requester's other shells.
+      await Promise.all(terminals.map(async terminal => {
         const custody = sessionManager?.getCustody(terminal.terminalId);
         if (!custody || custody.serverId !== input.serverId || custody.requesterAccountId !== input.requesterAccountId
-          || custody.machineId !== input.machineId || custody.installationId !== input.installationId) continue;
-        if (input.remainingRole === 'use' && custody.kind !== 'machine') continue;
+          || custody.machineId !== input.machineId || custody.installationId !== input.installationId) return;
+        if (input.remainingRole === 'use' && custody.kind !== 'machine') return;
         // Admitted finite work finishes naturally; its output view does not
         // promote presentation cleanup into task cancellation.
-        if (sessionManager?.isFiniteHeld(terminal.terminalId)) continue;
+        if (sessionManager?.isFiniteHeld(terminal.terminalId)) return;
         try {
-          if (input.signal.aborted || !input.isCurrentInstallation()) return { kind: 'incomplete' };
-          if (sessionManager?.getCustody(terminal.terminalId) !== custody) return { kind: 'incomplete' };
+          if (input.signal.aborted || !input.isCurrentInstallation()
+            || sessionManager?.getCustody(terminal.terminalId) !== custody) {
+            incomplete = true;
+            return;
+          }
           const settled = await settleTerminalClose(terminal.terminalId);
           if (!settled.ok) incomplete = true;
         } catch { incomplete = true; }
-      }
+      }));
       return { kind: incomplete ? 'incomplete' : 'settled' };
     },
     dispose: () => {
