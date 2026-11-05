@@ -35,6 +35,16 @@ describe('resolveSessionRowTitleColorRole', () => {
         expect(resolveSessionRowTitleColorRole({ mode: 'activityAndAttention', selected: false, isSessionActive: false, status: quiet, titleTone: 'quiet' })).toBe('secondary');
     });
 
+    it('never lets a stopped or offline row hide that it is unread', () => {
+        const stopped = { ...quiet, state: 'stopped' } as const;
+        const offline = { ...quiet, state: 'disconnected', bucket: 'offline' } as const;
+        for (const status of [stopped, offline]) {
+            for (const mode of ['activityAndAttention', 'attentionOnly', 'allActive'] as const) {
+                expect(resolveSessionRowTitleColorRole({ mode, selected: false, isSessionActive: false, status, titleTone: 'quiet', unread: true })).toBe('primary');
+            }
+        }
+    });
+
     it('keeps every Bot name in primary ink in the roster, whatever its activity or availability', () => {
         const offline = { ...quiet, state: 'disconnected', bucket: 'offline' } as const;
         for (const status of [quiet, offline]) {

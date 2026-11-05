@@ -1525,6 +1525,7 @@ const SessionItemContent = React.memo(
             status: workStatus,
             titleTone: rowPresentation.titleTone,
             roster: actionMenuSurface === 'botsRoster',
+            unread: rowHasUnreadAttention,
         });
         const sessionTitleColor = sessionRowTitleInk(theme.colors, sessionTitleColorRole);
         const renderTagChipRow = (placement: 'below' | 'inline') => (
@@ -1694,7 +1695,7 @@ const SessionItemContent = React.memo(
                                 density={collectionRowDensity}
                                 touchCompact={touchCompactRow}
                                 textScale={typeof uiFontScale === 'number' ? uiFontScale : undefined}
-                                emphasis={selected || rowSelection.isSelected ? 'semiBold' : shouldEmphasizeTitle ? 'medium' : undefined}
+                                emphasis={selected || rowSelection.isSelected || rowHasUnreadAttention ? 'semiBold' : shouldEmphasizeTitle ? 'medium' : undefined}
                                 color={sessionTitleColor}
                             >
                                 {sessionNameResolved}

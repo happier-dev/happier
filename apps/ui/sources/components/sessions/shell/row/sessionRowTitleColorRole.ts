@@ -16,9 +16,12 @@ export function resolveSessionRowTitleColorRole(input: Readonly<{
     titleTone: SessionRowTitleTone;
     /** The Bots roster names who is there: a Bot's name is its identity, so activity never greys it. */
     roster?: boolean;
+    /** Unread is viewer state the Work status can outrank (offline, stopped), and news must stay findable on those rows. */
+    unread?: boolean;
 }>): SessionRowTitleColorRole {
     if (input.roster) return 'primary';
     if (input.selected) return 'primary';
+    if (input.unread) return 'primary';
     // Calm rows (ruling 2026-11-01): a stopped Session, or one whose Machine is offline, recedes to tertiary ink.
     if (input.status.bucket === 'offline' || input.status.state === 'stopped') return 'tertiary';
     if (input.mode === 'allActive') {
