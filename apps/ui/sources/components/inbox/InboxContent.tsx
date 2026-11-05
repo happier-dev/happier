@@ -14,6 +14,11 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
+import { VirtualizedList, type VirtualizedListRef } from '@/components/ui/lists/virtualized';
+import type { FloatingOverlayScrollProps } from '@/components/ui/overlays/FloatingOverlay';
+import { PopoverScrollSourceProvider } from '@/components/ui/popover/PopoverScrollSource';
+
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -149,7 +154,7 @@ type WorkRowSource = Readonly<{ item: InboxWorkItem; automationServerId: string 
  * its answer card, a run its Review, an approval its card; items no work owner draws (stored notices,
  * Discussion messages) take the same Work row. The popover shows Needs you and one line to Updates.
  */
-export const InboxContent = React.memo(function InboxContent(props: Readonly<{
+type InboxContentProps = Readonly<{
     model: InboxModel;
     onBeforeNavigate?: () => void;
     /** Popover only: opens the full Inbox from its Updates line. */
@@ -163,7 +168,9 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
      * without it (phones, the popover) a row opens its item's own page.
      */
     onSelectItem?: (focus: InboxItemFocus) => void;
-}>) {
+}>;
+
+function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     const router = useRouter();
     const { theme } = useUnistyles();
     const { model } = props;
@@ -354,8 +361,53 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
     const loading = model.isLoading && !model.hasPrimaryAttention;
     const typeCount = (count: number) => <Text style={styles.count}>{count}</Text>;
 
-    return (
-        <View testID="inbox.content" style={styles.container}>
+    const segments = React.useMemo(() => buildInboxRowSegments(view === 'needs_you'
+        ? needsYouSections.map((section) => ({ key: `type:${section.type}`, items: section.items }))
+        : daySections.map((section) => ({ key: `day:${section.key}`, items: section.items })), segmentSize),
+    [daySections, needsYouSections, segmentSize, view]);
+    const renderSegment = (segment: InboxRowSegment) => {
+        const sectionIndex = segment.sectionIndex;
+        const virtualizedSegment = segment.first && segment.last ? undefined : { first: segment.first, last: segment.last };
+        const rows = segment.items.map((item, index) => renderRow(item, segment.start + index, segment.total));
+        if (view === 'needs_you') {
+            const section = needsYouSections[sectionIndex]!;
+            return (
+                <InboxSection
+                    key={segment.key}
+                    testID={segment.first ? `inbox.type.${section.type}` : `inbox.type.${section.type}:${segment.start}`}
+                    title={segment.first ? t(`inbox.work.types.${section.type}`) : undefined}
+                    surface={sectionSurface}
+                    spacingBefore={segment.first && sectionIndex > 0 ? 'separated' : undefined}
+                    leading={page && segment.first ? (
+                        <Icon name={section.icon} size={16}
+                            color={section.attention ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />
+                    ) : undefined}
+                    meta={page && segment.first ? typeCount(section.items.length) : undefined}
+                    virtualizedSegment={virtualizedSegment}
+                >
+                    {rows}
+                </InboxSection>
+            );
+        }
+        const section = daySections[sectionIndex]!;
+        return (
+            <InboxSection
+                key={segment.key}
+                testID={segment.first ? `inbox.day.${section.key}` : `inbox.day.${section.key}:${segment.start}`}
+                title={segment.first ? section.title : undefined}
+                surface={sectionSurface}
+                spacingBefore={segment.first && sectionIndex > 0 ? 'separated' : undefined}
+                rightAccessory={segment.first && sectionIndex === 0 && view === 'updates' && model.sessionPresentation.markAllReadTargets.length > 0
+                    ? markAllReadAction : undefined}
+                virtualizedSegment={virtualizedSegment}
+            >
+                {rows}
+            </InboxSection>
+        );
+    };
+
+    const before = (
+        <>
             {model.artifactSource.phase === 'failed' || model.artifactSource.phase === 'partial' ? (
                 <View style={page ? styles.freshnessPage : styles.freshnessFlat}>
                     {model.hasPrimaryAttention ? (
@@ -406,23 +458,14 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
                         </View>
                     ) : null}
 
-                    {needsYouSections.map((section, index) => (
-                        <InboxSection
-                            key={section.type}
-                            testID={`inbox.type.${section.type}`}
-                            title={t(`inbox.work.types.${section.type}`)}
-                            surface={sectionSurface}
-                            spacingBefore={index > 0 ? 'separated' : undefined}
-                            leading={page ? (
-                                <Icon name={section.icon} size={16}
-                                    color={section.attention ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />
-                            ) : undefined}
-                            meta={page ? typeCount(section.items.length) : undefined}
-                        >
-                            {section.items.map((item, rowIndex) => renderRow(item, rowIndex, section.items.length))}
-                        </InboxSection>
-                    ))}
-
+                </>
+            ) : null}
+        </>
+    );
+    const after = (
+        <>
+            {view === 'needs_you' ? (
+                <>
                     {operations.length > 0 ? (
                         <InboxSection testID="inbox.section.operations" title={t('inbox.actionOperations.sections.needsAttention')}
                             surface={sectionSurface} spacingBefore={needsYouSections.length > 0 ? 'separated' : undefined}>
@@ -472,20 +515,6 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
                 </>
             ) : (
                 <>
-                    {daySections.map((section, index) => (
-                        <InboxSection
-                            key={section.key}
-                            testID={`inbox.day.${section.key}`}
-                            title={section.title}
-                            surface={sectionSurface}
-                            spacingBefore={index > 0 ? 'separated' : undefined}
-                            rightAccessory={index === 0 && view === 'updates' && model.sessionPresentation.markAllReadTargets.length > 0
-                                ? markAllReadAction : undefined}
-                        >
-                            {section.items.map((item, rowIndex) => renderRow(item, rowIndex, section.items.length))}
-                        </InboxSection>
-                    ))}
-
                     {view === 'updates' && notices.machines.length > 0 ? (
                         <InboxSection testID="inbox.section.machines" title={t('settings.machines')}
                             surface={sectionSurface} spacingBefore={daySections.length > 0 ? 'separated' : undefined}>
@@ -537,14 +566,147 @@ export const InboxContent = React.memo(function InboxContent(props: Readonly<{
                         : null}
                 </>
             )}
+        </>
+    );
+    return { before, after, segments, renderSegment, focusedRouteKey };
+}
+
+type InboxRowSegment = Readonly<{
+    key: string;
+    sectionIndex: number;
+    items: readonly InboxItem[];
+    /** The first row's index in its section, and the section's row count (dividers, selection). */
+    start: number;
+    total: number;
+    first: boolean;
+    last: boolean;
+}>;
+
+/**
+ * A long section's sheet cut into runs, so a windowed host mounts only the runs near its viewport
+ * (`ItemGroup virtualizedSegment`). A host that draws everything passes no limit: one run per section.
+ */
+function buildInboxRowSegments(sections: ReadonlyArray<Readonly<{ key: string; items: readonly InboxItem[] }>>, segmentSize: number): readonly InboxRowSegment[] {
+    return sections.flatMap((section, sectionIndex) => {
+        const segments: InboxRowSegment[] = [];
+        for (let start = 0; start < section.items.length; start += segmentSize) {
+            segments.push({ key: `${section.key}:${start}`, sectionIndex, items: section.items.slice(start, start + segmentSize),
+                start, total: section.items.length, first: start === 0, last: start + segmentSize >= section.items.length });
+        }
+        return segments;
+    });
+}
+
+/** The row whose item is open beside the list, by its route key; `null` when none is open. */
+function readFocusedSegmentIndex(segments: readonly InboxRowSegment[], focusedRouteKey: string | null): number {
+    if (focusedRouteKey === null) return -1;
+    return segments.findIndex((segment) => segment.items.some((item) => createInboxItemRoute(item.focus).params.item === focusedRouteKey));
+}
+
+// Moving the selection by keyboard keeps its row in view; `nearest` leaves the list where it is when
+// the row is already visible, and an instant move is right for a repeated key press.
+function scrollFocusedRowIntoView(root: ParentNode | null | undefined): boolean {
+    const row = root?.querySelector?.('[aria-current="page"]') as { scrollIntoView?: (options: { block: 'nearest' }) => void } | null | undefined;
+    if (!row?.scrollIntoView) return false;
+    row.scrollIntoView({ block: 'nearest' });
+    return true;
+}
+
+/**
+ * The non-scrolling Inbox body for a host that already owns its scroll container.
+ * Each host owns exactly one scroll container and supplies a callback that closes transient chrome
+ * before any navigation begins.
+ *
+ * It draws the canonical item model (`model.items`, F4) in three views (lab P4): Needs you grouped by
+ * type, Updates newest first by day, and Mentions. Rows keep their owners: a session's request keeps
+ * its answer card, a run its Review, an approval its card; items no work owner draws (stored notices,
+ * Discussion messages) take the same Work row. The popover shows Needs you and one line to Updates.
+ */
+export const InboxContent = React.memo(function InboxContent(props: InboxContentProps) {
+    const parts = useInboxContentParts(props, Number.POSITIVE_INFINITY);
+    const contentRef = React.useRef<View>(null);
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || parts.focusedRouteKey === null) return;
+        scrollFocusedRowIntoView(contentRef.current as unknown as ParentNode | null);
+    }, [parts.focusedRouteKey]);
+    return (
+        <View ref={contentRef} testID="inbox.content" style={styles.container}>
+            {parts.before}
+            {parts.segments.map(parts.renderSegment)}
+            {parts.after}
         </View>
     );
 });
+
+/** Rows per windowed run: a few rows' height, so a run mounts with the viewport, not with the section. */
+const INBOX_SEGMENT_ROWS = 8;
+
+/**
+ * The shared windowed Inbox: page chrome uses VirtualizedItemList; a popover keeps its floating
+ * presentation and supplies its existing scroll geometry and edge-cue handlers to VirtualizedList.
+ * Headers and footers stay in that one scroll viewport; only nearby runs of rows mount.
+ */
+export const InboxContentList = React.memo(function InboxContentList(props: InboxContentProps & Readonly<{
+    testID: string;
+    header: React.ReactNode;
+    pageColumn?: React.ComponentProps<typeof VirtualizedItemList>['pageColumn'];
+    scrollProps?: FloatingOverlayScrollProps;
+}>) {
+    const parts = useInboxContentParts(props, INBOX_SEGMENT_ROWS);
+    const listRef = React.useRef<VirtualizedListRef | null>(null);
+    const { segments, focusedRouteKey } = parts;
+    const scrollSourceRef = React.useRef({
+        getScrollableNode: () => listRef.current?.getScrollableNode?.(),
+    });
+    const onPopoverLoad = React.useCallback(() => {
+        // Legend's web viewport reports content geometry on scroll, not onContentSizeChange.
+        // Seed the floating surface's existing edge cues when its first window has laid out.
+        if (Platform.OS !== 'web') return;
+        const node = listRef.current?.getScrollableNode?.();
+        if (node && typeof node === 'object' && 'scrollWidth' in node && 'scrollHeight' in node
+            && typeof node.scrollWidth === 'number' && typeof node.scrollHeight === 'number') {
+            props.scrollProps?.onContentSizeChange?.(node.scrollWidth, node.scrollHeight);
+        }
+    }, [props.scrollProps]);
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || focusedRouteKey === null) return;
+        const list = listRef.current;
+        if (scrollFocusedRowIntoView(list?.getScrollableNode?.() as ParentNode | null | undefined)) return;
+        // The row is outside the mounted window: bring its run in first.
+        const index = readFocusedSegmentIndex(segments, focusedRouteKey);
+        if (index >= 0) void list?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+    }, [focusedRouteKey, segments]);
+    const renderItem = React.useCallback(({ item }: Readonly<{ item: InboxRowSegment }>) => parts.renderSegment(item),
+        // Rows read the whole Inbox model; a mounted run redraws when this host does, as the full page did.
+        [parts.renderSegment]);
+    const listProps = {
+        testID: props.testID,
+        data: segments,
+        keyExtractor: segmentKey,
+        renderItem,
+        extraData: parts.renderSegment,
+        ListHeaderComponent: <>{props.header}{parts.before}</>,
+        ListFooterComponent: <View style={styles.listFooter}>{parts.after}</View>,
+        estimatedItemSize: INBOX_SEGMENT_ROWS * 64,
+        recycleItems: true,
+    };
+    if (props.presentation === 'popover') {
+        return <PopoverScrollSourceProvider scrollSourceRef={scrollSourceRef}>
+            <VirtualizedList<InboxRowSegment> {...listProps} {...props.scrollProps} ref={listRef} onLoad={onPopoverLoad} />
+        </PopoverScrollSourceProvider>;
+    }
+    return <VirtualizedItemList<InboxRowSegment> {...listProps} ref={listRef} pageColumn={props.pageColumn} />;
+});
+
+const segmentKey = (segment: InboxRowSegment) => segment.key;
 
 const styles = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
         flexGrow: 1,
+        paddingBottom: theme.space.s16,
+    },
+    listFooter: {
         paddingBottom: theme.space.s16,
     },
     emptyContainer: {

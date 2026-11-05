@@ -23,6 +23,8 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
     /** Flat surface only: whether a section is rendered above this one. */
     spacingBefore?: 'following' | 'separated';
     surface?: 'flat' | 'page';
+    /** Page surface only: one windowed run of a long section's sheet (`ItemGroup virtualizedSegment`). */
+    virtualizedSegment?: Readonly<{ first: boolean; last: boolean }>;
     children: React.ReactNode;
 }>) {
     if (props.surface === 'page') {
@@ -37,6 +39,7 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
                     action={props.rightAccessory}
                     titleLeading={props.leading}
                     titleAccessory={props.meta}
+                    virtualizedSegment={props.virtualizedSegment}
                 >
                     {props.children}
                 </ItemGroup>

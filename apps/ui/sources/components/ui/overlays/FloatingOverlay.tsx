@@ -8,6 +8,7 @@ import {
     type NativeScrollEvent,
     type NativeSyntheticEvent,
     type ScrollView,
+    type ScrollViewProps,
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
@@ -114,8 +115,14 @@ export type FloatingOverlayArrow =
             size?: number;
         }>;
 
+/** A recycler can own the scroll viewport while the floating surface keeps its chrome and edge cues. */
+export type FloatingOverlayScrollProps = Pick<ScrollViewProps,
+    'style' | 'keyboardShouldPersistTaps' | 'showsVerticalScrollIndicator' | 'scrollEventThrottle'
+    | 'onLayout' | 'onContentSizeChange' | 'onScroll' | 'onMomentumScrollEnd'>;
+
 interface FloatingOverlayProps {
     children: React.ReactNode;
+    renderScrollContent?: (scroll: FloatingOverlayScrollProps) => React.ReactNode;
     /** Fixed menu chrome; only the results between these slots scroll. */
     header?: React.ReactNode;
     footer?: React.ReactNode;
@@ -249,33 +256,33 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         if (typeof scrollViewRef === 'function') scrollViewRef(node);
         else if (scrollViewRef) (scrollViewRef as React.MutableRefObject<ScrollView | null>).current = node;
     }, [scrollViewRef]);
-    const content = scrollEnabled ? (
-        <PopoverScrollSourceProvider scrollSourceRef={scrollerRef}>
-        <Animated.ScrollView
-            ref={setScroller}
-            style={[{ maxHeight, flexShrink: 1 }, scrollViewStyle]}
-            keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-            showsVerticalScrollIndicator={showScrollIndicator}
-            scrollEventThrottle={32}
-            onLayout={(event) => {
+    const scrollProps: FloatingOverlayScrollProps = {
+            style: [{ maxHeight, flexShrink: 1 }, scrollViewStyle],
+            keyboardShouldPersistTaps,
+            showsVerticalScrollIndicator: showScrollIndicator,
+            scrollEventThrottle: 32,
+            onLayout: (event) => {
                 if (fadeCfg || indicatorCfg) fades.onViewportLayout(event);
                 onScrollViewLayout?.(event);
-            }}
-            onContentSizeChange={(width, height) => {
+            },
+            onContentSizeChange: (width, height) => {
                 if (fadeCfg || indicatorCfg) fades.onContentSizeChange(width, height);
                 onScrollViewContentSizeChange?.(width, height);
-            }}
-            onScroll={(event) => {
+            },
+            onScroll: (event) => {
                 if (fadeCfg || indicatorCfg) fades.onScroll(event);
                 onScrollViewScroll?.(event);
-            }}
-            onMomentumScrollEnd={(event) => {
+            },
+            onMomentumScrollEnd: (event) => {
                 if (fadeCfg || indicatorCfg) fades.onMomentumScrollEnd(event);
                 onScrollViewScroll?.(event);
-            }}
-        >
-            {children}
-        </Animated.ScrollView>
+            },
+    };
+    const content = scrollEnabled ? (
+        <PopoverScrollSourceProvider scrollSourceRef={scrollerRef}>
+            {props.renderScrollContent ? props.renderScrollContent(scrollProps) : (
+                <Animated.ScrollView {...scrollProps} ref={setScroller}>{children}</Animated.ScrollView>
+            )}
         </PopoverScrollSourceProvider>
     ) : (
         <Animated.View style={[{ maxHeight }, scrollViewStyle]}>

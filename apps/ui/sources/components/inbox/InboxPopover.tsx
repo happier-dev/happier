@@ -6,7 +6,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { InboxContent } from './InboxContent';
+import { InboxContentList } from './InboxContent';
+import type { FloatingOverlayScrollProps } from '@/components/ui/overlays/FloatingOverlay';
 import { countInbox } from './inboxCounts';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
@@ -19,6 +20,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 export const InboxPopoverContent = React.memo(function InboxPopoverContent(props: Readonly<{
     close: () => void;
     onOpenInbox: () => void;
+    scrollProps?: FloatingOverlayScrollProps;
 }>) {
     return (
         <InboxModelBoundary>
@@ -30,6 +32,7 @@ export const InboxPopoverContent = React.memo(function InboxPopoverContent(props
 const OpenInboxPopoverContent = React.memo(function OpenInboxPopoverContent(props: Readonly<{
     close: () => void;
     onOpenInbox: () => void;
+    scrollProps?: FloatingOverlayScrollProps;
 }>) {
     const { theme } = useUnistyles();
     const model = useInboxModel();
@@ -38,7 +41,8 @@ const OpenInboxPopoverContent = React.memo(function OpenInboxPopoverContent(prop
     // The number the rail badge that opened this shows: everything in the Inbox.
     const inboxCount = countInbox(model);
     return (
-        <>
+        <InboxContentList model={model} onBeforeNavigate={close} onOpenInbox={openInbox} presentation="popover"
+            testID="inbox.popover.list" scrollProps={props.scrollProps} header={
             <View style={styles.header}>
                 <Text accessibilityRole="header" style={styles.title}>{t('tabs.inbox')}</Text>
                 {inboxCount > 0 ? <Text testID="inbox.popover.count" style={styles.count}>{String(inboxCount)}</Text> : null}
@@ -48,8 +52,7 @@ const OpenInboxPopoverContent = React.memo(function OpenInboxPopoverContent(prop
                     <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
                 </Pressable>
             </View>
-            <InboxContent model={model} onBeforeNavigate={close} onOpenInbox={openInbox} presentation="popover" />
-        </>
+        } />
     );
 });
 

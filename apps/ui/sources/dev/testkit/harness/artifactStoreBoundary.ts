@@ -9,6 +9,7 @@ import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { Buffer } from 'buffer';
 
 import type { Artifact, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { ArtifactsDomain } from '@/sync/store/domains/artifacts';
 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
@@ -17,6 +18,15 @@ import { ChangesResponseSchema, CurrentCursorResponseSchema, CursorGoneErrorSche
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1, ApprovalArtifactQueryHintsV1Schema,
     type ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+
+/** Replace a test's admitted snapshot through the real writers, including all derived selection facts. */
+export function seedAdmittedArtifactRows(artifacts: readonly DecryptedArtifact[], store: Readonly<{
+    getState(): Pick<ArtifactsDomain, 'artifacts' | 'deleteArtifact' | 'applyArtifacts'>;
+}>): void {
+    const state = store.getState();
+    for (const id of Object.keys(state.artifacts)) state.deleteArtifact(id);
+    state.applyArtifacts([...artifacts]);
+}
 
 type StoredArtifactFixture = Artifact & Partial<ApprovalArtifactQueryHintsV1>;
 

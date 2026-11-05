@@ -283,7 +283,7 @@ const AppRailInbox = React.memo(function AppRailInbox(props: Readonly<{
     const { entry, onOpenPage } = props;
     const openPage = React.useCallback(() => onOpenPage(entry), [entry, onOpenPage]);
     const renderContent = React.useCallback((content: SidebarFooterPopoverContentProps) => (
-        <InboxPopoverContent close={content.close} onOpenInbox={openPage} />
+        <InboxPopoverContent close={content.close} onOpenInbox={openPage} scrollProps={content.scrollProps} />
     ), [openPage]);
     const renderIcon = React.useCallback((open: boolean) => <AppRailIcon name={entry.icon} active={open} />, [entry.icon]);
     return (
@@ -298,6 +298,7 @@ const AppRailInbox = React.memo(function AppRailInbox(props: Readonly<{
                 interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
                 iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
                 popoverWidthPx={INBOX_POPOVER_WIDTH_PX}
+                contentOwnsScroll
                 renderContent={renderContent}
                 renderIcon={renderIcon}
             />

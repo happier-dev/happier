@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { FloatingOverlay, type FloatingOverlayScrollProps } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { useHoverPreviewPopover } from '@/components/ui/popover/useHoverPreviewPopover';
 import { readPressFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
@@ -21,6 +21,7 @@ const POPOVER_MAX_HEIGHT_PX = 520;
 export type SidebarFooterPopoverContentProps = Readonly<{
     close: () => void;
     maxHeight: number;
+    scrollProps?: FloatingOverlayScrollProps;
 }>;
 
 export type SidebarFooterPopoverTrigger = (state: Readonly<{ onPress: (event?: unknown) => void; open: boolean; right?: React.ReactNode }>) => React.ReactNode;
@@ -49,6 +50,8 @@ export function SidebarFooterPopoverButton(props: Readonly<{
     /** The popover's tallest height when its content is a long roster (the Machines popover); the window still bounds it. */
     popoverMaxHeightPx?: number;
     renderContent: (content: SidebarFooterPopoverContentProps) => React.ReactNode;
+    /** The content uses a recycler as the floating surface's single scroll viewport. */
+    contentOwnsScroll?: boolean;
     /** The same control may be a full menu row when its rail slot moves into More. */
     renderTrigger?: SidebarFooterPopoverTrigger;
     /**
@@ -135,8 +138,11 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                                 surfaceChrome="theme"
                                 keyboardShouldPersistTaps="always"
                                 containerStyle={{ width: Math.min(maxWidth, popoverWidthPx) }}
+                                renderScrollContent={props.contentOwnsScroll ? (scrollProps) => props.renderContent({
+                                    close, maxHeight: Math.min(maxHeight, popoverMaxHeightPx), scrollProps,
+                                }) : undefined}
                             >
-                                {props.renderContent({
+                                {props.contentOwnsScroll ? null : props.renderContent({
                                     close,
                                     maxHeight: Math.min(maxHeight, popoverMaxHeightPx),
                                 })}
