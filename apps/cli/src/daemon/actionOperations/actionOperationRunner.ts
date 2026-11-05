@@ -104,7 +104,7 @@ function isUnconfirmedOwnedOutcome(actionId: string, result: ActionExecuteResult
   if (actionId === 'daemon.filesystem.upload' || actionId === 'daemon.filesystem.download' || actionId === 'daemon.filesystem.copy') {
     return !result.ok && result.errorCode === 'indeterminate';
   }
-  return (isFiniteProjectCommand(actionId) || actionId === 'projects.service.relocate' || actionId === 'localServices.launcher.start' || actionId === 'machines.environment.apply') && !result.ok
+  return (isFiniteProjectCommand(actionId) || actionId === 'projects.service.relocate' || actionId === 'localServices.launcher.start' || actionId === 'deployments.publish' || actionId === 'machines.environment.apply') && !result.ok
     && (result.errorCode === 'outcome_uncertain' || result.errorCode === 'stop_unconfirmed');
 }
 

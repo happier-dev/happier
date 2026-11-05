@@ -649,3 +649,8 @@ validation refusals carry an optional `diagnostic` with the failed step, a known
 top-level field (or `$input`) and a closed rule code. The Home projects these
 facts from its validator; hosts retain them without exposing submitted values,
 unknown property names or validator messages.
+
+Publish keeps its Action operation nonterminal with `outcome_uncertain` (or
+`stop_unconfirmed` after an observation abort) when its Workflow Run's terminal
+outcome cannot be observed. Recovery retains the Run ID, Publish operation and
+observed child operations; cancelling or recovering work targets that existing Run.

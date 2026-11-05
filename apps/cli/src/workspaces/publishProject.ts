@@ -1,5 +1,6 @@
 import { DeploymentPublishInputV1Schema, DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema, type DeploymentPublishPrepareInputV1, type DeploymentPublishPrepareResultV1, type DeploymentTemplateV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPublishInputV1, type DeploymentPublishResultV1, type WorkflowActionExecuteArgs, deriveWorkflowReplacementId } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
@@ -134,11 +135,20 @@ export function createPublishProjectActionDeps(host: Readonly<{
       acceptance.accept(result);
       // Keep the real Action operation attached to the Run's pushed terminal
       // observation, rather than completing on mere child admission.
-      const observed = await host.waitForRun(request);
-      const waitFailure = ActionExecuteFailureSchema.safeParse(observed);
-      const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
       const childOperationRefs: Extract<DeploymentPublishResultV1, { kind: 'partial' }>['childOperationRefs'] = [];
       const recovery = { operationRef: result.operationRef, childOperationRefs };
+      const uncertain = (cause?: ActionExecuteFailure): ActionExecuteFailure => ({
+        ok: false, errorCode: context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain',
+        error: 'Publish is still owned by its Workflow Run. Its outcome could not be observed; cancel that Run before retrying.',
+        details: { ...recovery, runId, ...(cause ? { observationFailure: cause } : {}) },
+        ...(cause?.failureCause ? { failureCause: cause.failureCause } : {}),
+      });
+      let observed: unknown;
+      try { observed = await host.waitForRun(request); }
+      catch (error) { observed = { ok: false, ...normalizeActionExecutorThrownError(error, 'workflow.run.wait') }; }
+      const waitFailure = ActionExecuteFailureSchema.safeParse(observed);
+      const settled = WorkflowActionOutputSchemasV1['workflow.run.wait'].safeParse(observed);
+      const terminal = settled.success && settled.data.observation === 'terminal';
       const readPage = async (input: PublishWorkflowInvocationRead) => {
         const result = await host.readInvocations(request, input);
         const refused = ActionExecuteFailureSchema.safeParse(result);
@@ -161,7 +171,8 @@ export function createPublishProjectActionDeps(host: Readonly<{
           do {
             const page = await readPage({ runId, parentRecordIds: rootIds, includeContent: true,
               ...(cursor ? { cursor } : {}) });
-            if (!page.invocationDetails) return { ...failure('outcome_unknown'), details: recovery };
+            if (!page.invocationDetails) return terminal
+              ? { ...failure('outcome_unknown'), details: recovery } : uncertain(failure('outcome_unknown'));
             for (const { progress } of page.invocationDetails) {
               if (progress.execution?.kind !== 'action') continue;
               for (const { serverId, machineId, operationId } of progress.execution.awaitedOperations ?? []) {
@@ -174,12 +185,13 @@ export function createPublishProjectActionDeps(host: Readonly<{
           } while (cursor);
         }
       } catch (error) {
-        const errorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-          ? error.code : 'outcome_unknown';
-        return { ...failure(errorCode), details: recovery };
+        const cause = { ok: false as const, ...normalizeActionExecutorThrownError(error, 'workflow.run.invocations.list') };
+        return terminal ? { ...cause, details: recovery } : uncertain(cause);
       }
-      if (waitFailure.success) return { ...waitFailure.data, details: recovery };
-      if (!settled.success || settled.data.observation !== 'terminal') return { ...failure('outcome_unknown'), details: recovery };
+      if (waitFailure.success) return uncertain(waitFailure.data);
+      if (!settled.success) return uncertain({ ok: false,
+        ...normalizeActionExecutorThrownError(settled.error, 'workflow.run.wait') });
+      if (settled.data.observation !== 'terminal') return uncertain();
       if (settled.data.run.state !== 'succeeded') {
         const errorCode = settled.data.run.state === 'cancelled' ? 'cancelled' : 'deployment_child_failed';
         context.operationOwnerUpdate?.update({ outcome: { ...failure(errorCode), details: recovery } });
