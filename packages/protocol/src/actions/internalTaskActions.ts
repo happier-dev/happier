@@ -1,11 +1,12 @@
+import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
+export { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { TodoCreateInputV1Schema, TodoItemPatchV1Schema, TodoItemV1Schema, TodoStateV1Schema } from '../todos/todoSessionLinkV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { TodoLabelColorV1Schema, TodoLabelColorTokenV1Schema } from '../todos/todoLabelColoursV1.js';
 
-export const INTERNAL_TASK_ACTION_IDS = ['tasks.internal.list', 'tasks.internal.create', 'tasks.internal.edit', 'tasks.internal.transition',
-  'tasks.internal.labels.setColor', 'tasks.internal.labels.clearColor'] as const;
+
 export type InternalTaskActionId = typeof INTERNAL_TASK_ACTION_IDS[number];
 export const InternalTaskScopeSchema = lazyZodSchema(() => z.strictObject({ serverId: z.string().check(z.minLength(1)), accountId: z.string().check(z.minLength(1)) }));
 export const InternalTaskSnapshotSchema = lazyZodSchema(() => z.extend(TodoItemV1Schema, { state: TodoStateV1Schema,

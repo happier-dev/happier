@@ -1,4 +1,4 @@
-import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActions.js';
+import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 export const BROWSER_EXTENSION_MUTATION_ACTION_IDS = [
   'browser.extensions.install', 'browser.extensions.update', 'browser.extensions.enable', 'browser.extensions.disable', 'browser.extensions.remove',
 ] as const;
