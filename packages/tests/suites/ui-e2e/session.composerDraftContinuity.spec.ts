@@ -526,9 +526,26 @@ test.describe('ui e2e: session composer draft continuity', () => {
             address: { kind: 'newSession', draftId: draftA.draftId },
         });
 
+        await waitForDraftMutation(page, () => selectPermissionMode(page, 'yolo'));
+        const controlsToggle = page.getByTestId('agent-input-controls-toggle');
+        const permissionChip = page.getByTestId('agent-input-permission-chip');
+        await expect(controlsToggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(permissionChip).toBeVisible();
+        const permissionLabel = await permissionChip.innerText();
+        await controlsToggle.click();
+        await expect(controlsToggle).toHaveAttribute('aria-expanded', 'false');
+        await expect(permissionChip).toHaveCount(0);
+        await expect(draftA.composer).toHaveValue(draftAText);
+        await expect(page.getByTestId('new-session-composer-send')).toBeVisible();
+        await controlsToggle.click();
+        await expect(permissionChip).toHaveText(permissionLabel);
+        await controlsToggle.click();
+
         await page.reload({ waitUntil: 'domcontentloaded' });
         await expect(page).toHaveURL(new RegExp(`[?&]draftId=${draftA.draftId}(?:&|$)`), { timeout: 60_000 });
         await expect(visibleNewSessionComposer(page)).toHaveValue(draftAText, { timeout: 60_000 });
+        await expect(controlsToggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(permissionChip).toHaveText(permissionLabel);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
         const rowA = page.getByTestId(`session-draft-row:new-session:${draftA.draftId}`);

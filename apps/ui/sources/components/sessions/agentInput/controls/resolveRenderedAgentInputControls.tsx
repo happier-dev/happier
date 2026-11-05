@@ -10,9 +10,11 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     coreControlNodesById: ControlNodesById;
     extraControlNodesById: ControlNodesById;
     extraChips: readonly React.ReactNode[];
+    hasHideableActionMenuSections: boolean;
 }>): Readonly<{
     chips: readonly React.ReactNode[];
     secondaryLeadingControls: readonly React.ReactNode[];
+    hasHideableControls: boolean;
 }> {
     const controlNodesById: ControlNodesById = {
         ...params.coreControlNodesById,
@@ -45,5 +47,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     return {
         chips,
         secondaryLeadingControls,
+        hasHideableControls: controlIds.some((id) => id !== 'stop' && (id !== 'actionMenu' || params.hasHideableActionMenuSections))
+            || (params.layout !== 'collapsed' && params.extraChips.length > 0),
     };
 }

@@ -6924,6 +6924,9 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        controls: "Управление",
+        showControls: "Показать элементы управления вводом",
+        hideControls: "Скрыть элементы управления вводом",
         sendOptions: {
             title: "Варианты отправки",
             queue: "В очередь",

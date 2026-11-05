@@ -5867,6 +5867,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        controls: "控制項",
+        showControls: "顯示輸入控制項",
+        hideControls: "隱藏輸入控制項",
         sendOptions: {
             title: "傳送選項",
             queue: "加入佇列",

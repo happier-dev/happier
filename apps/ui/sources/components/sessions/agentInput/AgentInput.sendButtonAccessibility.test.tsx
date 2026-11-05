@@ -25,6 +25,8 @@ const useActiveSuggestionsMock = vi.hoisted(() => vi.fn(() => [[], -1, () => {},
  * "sentence does not interpolate" branch and the mark can only be trailing. One
  * test needs a sentence that really names the Agent to exercise the other side.
  */
+const actionBarLayoutState = vi.hoisted(() => ({ value: 'wrap' as 'wrap' | 'collapsed' }));
+
 const translateOverride = vi.hoisted(() => ({
     fn: null as null | ((key: string, params?: Record<string, unknown>) => string),
 }));
@@ -79,7 +81,7 @@ installAgentInputCommonModuleMocks({
             useSetting: (key: string) => {
                 if (key === 'profiles') return [];
                 if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
+                if (key === 'agentInputActionBarLayout') return actionBarLayoutState.value;
                 if (key === 'agentInputChipDensity') return 'labels';
                 if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
                 return null;
@@ -341,6 +343,7 @@ describe('AgentInput (send button accessibility)', () => {
 
     afterEach(() => {
         translateOverride.fn = null;
+        actionBarLayoutState.value = 'wrap';
         featureEnabledState.voice = true;
         vi.clearAllMocks();
     });
@@ -842,6 +845,86 @@ describe('AgentInput (send button accessibility)', () => {
         featureEnabledState.voice = true;
     });
 
+    it('keeps send and stop available with a draft while controls are hidden', async () => {
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+        const onAbort = vi.fn();
+        const onSend = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="draft" placeholder="Type" onChangeText={() => {}}
+            onSend={onSend} onAbort={onAbort} showAbortButton
+            agentType="codex" onAgentClick={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalledTimes(1);
+        await screen.update(<AgentInput
+            sessionId="session-1" value="draft" placeholder="Type" onChangeText={() => {}}
+            onSend={onSend} onAbort={onAbort} showAbortButton isSending
+            agentType="codex" onAgentClick={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('agent-input-controls-toggle')?.props.accessibilityState?.expanded).toBe(false);
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityState?.disabled).toBe(true);
+        await screen.update(<AgentInput
+            sessionId="session-1" value="draft" placeholder="Type" onChangeText={() => {}}
+            onSend={onSend} onAbort={onAbort} showAbortButton
+            agentType="codex" onAgentClick={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('agent-input-controls-toggle')?.props.accessibilityState?.expanded).toBe(false);
+        await screen.pressByTestIdAsync('agent-input-abort');
+        expect(onAbort).toHaveBeenCalledTimes(1);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        await screen.unmount();
+        featureEnabledState.voice = true;
+    });
+
+    it('omits the disclosure for a stop-only composer', async () => {
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="" placeholder="Type" onChangeText={() => {}}
+            onSend={() => {}} onAbort={() => {}} showAbortButton
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('agent-input-controls-toggle')).toBeNull();
+        await screen.unmount();
+        featureEnabledState.voice = true;
+    });
+
+    it('preserves condensed ACTIONS and excludes stop-only ACTIONS from disclosure', async () => {
+        actionBarLayoutState.value = 'collapsed';
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+        const stopOnly = await renderScreen(<AgentInput
+            sessionId="session-1" value="" placeholder="Type" onChangeText={() => {}}
+            onSend={() => {}} onAbort={() => {}} showAbortButton
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(stopOnly.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+        expect(stopOnly.findByTestId('agent-input-controls-toggle')).toBeNull();
+        await stopOnly.unmount();
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="draft" placeholder="Type" onChangeText={() => {}}
+            onSend={() => {}} onAbort={() => {}} showAbortButton agentType="codex" onAgentClick={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeNull();
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findByTestId('agent-input-action-menu-button')).toBeTruthy();
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('runs abort from the empty composer stop button', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
@@ -856,9 +939,14 @@ describe('AgentInput (send button accessibility)', () => {
                     onSend={onSend}
                     onAbort={onAbort}
                     showAbortButton={true}
+                    agentType="codex"
+                    onAgentClick={() => {}}
                     autocompleteKinds={[]}
                     autocompleteSuggestions={async () => []}
                 />);
+
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findByTestId('agent-input-controls-toggle')?.props.accessibilityState?.expanded).toBe(false);
 
         const send = screen.findByTestId('session-composer-send');
         expect(send).toBeTruthy();

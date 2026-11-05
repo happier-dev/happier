@@ -7272,6 +7272,9 @@ export const it: TranslationStructure = {
   },
 
   agentInput: {
+      controls: "Controlli",
+      showControls: "Mostra controlli di composizione",
+      hideControls: "Nascondi controlli di composizione",
       sendOptions: {
           title: "Opzioni di invio",
           queue: "Accoda",

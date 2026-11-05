@@ -38,6 +38,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     permissionChipLabel: string | null;
     onPermissionPress: () => void;
     hasActionMenuPopoverSections: boolean;
+    hasHideableActionMenuSections: boolean;
     actionMenuAnchorRef: React.RefObject<View | null>;
     onActionMenuPress: () => void;
     actionBarIsCollapsed: boolean;
@@ -85,6 +86,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
+    hasHideableControls: boolean;
     extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
 }> {
     return React.useMemo(() => {
@@ -178,11 +180,13 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             coreControlNodesById,
             extraControlNodesById: extraControlNodesById.extraControlNodesById,
             extraChips: extraControlNodesById.extraChips,
+            hasHideableActionMenuSections: params.hasHideableActionMenuSections,
         });
 
         return {
             controlNodes: renderedControls.chips,
             secondaryLeadingControls: renderedControls.secondaryLeadingControls,
+            hasHideableControls: renderedControls.hasHideableControls,
             extraChipAnchorRefsByKey: extraControlNodesById.extraChipAnchorRefsByKey as Readonly<Record<string, React.RefObject<View | null>>>,
         };
     }, [
@@ -202,6 +206,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.envVarsChipAnchorRef,
         params.envVarsCount,
         params.hasActionMenuPopoverSections,
+        params.hasHideableActionMenuSections,
         params.hasAgentSelection,
         params.hasEnvVars,
         params.hasProfile,

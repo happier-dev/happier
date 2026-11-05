@@ -398,6 +398,35 @@ describe('AgentInput (action menu popover props)', () => {
         expect(popoverProps?.portal?.matchAnchorWidth).toBe(false);
     });
 
+    it('closes the action menu when controls collapse', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+            agentType="codex" onAgentClick={() => {}} onMachineClick={() => {}} machineName="Builder"
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        await screen.pressByTestIdAsync('agent-input-action-menu-button');
+        expect(getCapturedActionMenuActions().length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(false);
+    });
+
+    it('closes the permission selection overlay when controls collapse', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(<AgentInput
+            value="draft" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+            onPermissionModeChange={() => {}} autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        const baseline = screen.findAllByType('Popover').length;
+        await screen.pressByTestIdAsync('agent-input-permission-chip');
+        expect(screen.findAllByType('Popover')).toHaveLength(baseline + 1);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllByType('Popover')).toHaveLength(baseline);
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllByType('Popover')).toHaveLength(baseline);
+    });
+
     it('closes the permission popover after selecting a mode', async () => {
         captured.last = null;
         capturedPermissionPicker.last = null;

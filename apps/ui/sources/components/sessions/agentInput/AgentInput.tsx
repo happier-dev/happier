@@ -173,6 +173,7 @@ import {
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { createAbortActionButton } from './definitions/createAbortActionButton';
 import type { StyleProp } from 'react-native';
 
 /**
@@ -925,6 +926,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+    },
+    controlsToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: Platform.OS === 'web' ? 32 : 48,
+        minWidth: Platform.OS === 'web' ? 32 : 48,
+        paddingHorizontal: 6,
+        gap: 2,
     },
     actionButtonsRowWithBelow: {
         // Match the vertical rhythm of wrapped chip rows on native.
@@ -2332,6 +2342,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
     } = useAgentInputSelectionAnchors();
     const [showActionMenu, setShowActionMenu] = React.useState(false);
+    const [controlsExpanded, setControlsExpanded] = React.useState(true);
     const statusBadgeAnchorRef = React.useRef<any>(null);
     const [uncontrolledActiveStatusBadgeKey, setUncontrolledActiveStatusBadgeKey] = React.useState<string | null>(null);
     const activeStatusBadgeKey = props.activeStatusBadgeKey !== undefined
@@ -2679,6 +2690,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const {
         controlNodes: renderedActionControlNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
+        hasHideableControls,
         extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
         layout: effectiveActionBarLayout,
@@ -2699,6 +2711,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         permissionChipLabel,
         onPermissionPress: handlePermissionPress,
         hasActionMenuPopoverSections,
+        hasHideableActionMenuSections: actionMenuActions.some((action) => action.id !== 'stop'),
         actionMenuAnchorRef,
         onActionMenuPress: handleActionMenuPress,
         actionBarIsCollapsed,
@@ -3053,6 +3066,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         </>
     );
 
+    const toggleControls = () => {
+        if (controlsExpanded) {
+            closeActionMenu();
+            resetSelectionOverlays();
+        }
+        setControlsExpanded(!controlsExpanded);
+    };
+
     const renderActionRows = () => (
         <View style={styles.actionButtonsContainer}>
             <View
@@ -3063,9 +3084,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             >{[
                 <View
                     key="row1"
-                    style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
+                    style={[styles.actionButtonsRow, controlsExpanded && showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
                 >
-                    {actionBarShouldScroll ? (
+                    {!controlsExpanded ? <View style={styles.actionButtonsLeftScroll} /> : actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
                             containerStyle={styles.actionButtonsLeftScroll}
                             contentStyle={styles.actionButtonsLeftScrollContent}
@@ -3081,6 +3102,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {renderedActionControlNodes as any}
                         </View>
                     )}
+                    {hasHideableControls ? (
+                        <Pressable
+                            testID="agent-input-controls-toggle"
+                            accessibilityRole="button"
+                            accessibilityLabel={t(controlsExpanded ? 'agentInput.hideControls' : 'agentInput.showControls')}
+                            accessibilityState={{ expanded: controlsExpanded }}
+                            onPress={toggleControls}
+                            style={styles.controlsToggle}
+                        >
+                            <Text style={styles.actionChipText}>{t('agentInput.controls')}</Text>
+                            <Icon name={controlsExpanded ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.composer.chipTint} />
+                        </Pressable>
+                    ) : null}
+                    {!controlsExpanded && canStopFromComposer && (hasSendableContent || props.armedContinuationTarget != null)
+                        ? createAbortActionButton({
+                            shakerRef,
+                            isAborting,
+                            tint: theme.colors.composer.chipTint,
+                            buttonStyle: styles.actionButton,
+                            buttonPressedStyle: styles.actionButtonPressed,
+                            onPress: handleStopFromComposer,
+                        })
+                        : null}
                     <AgentInputSubmitButton
                         testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                         sessionId={props.sessionId}
@@ -3099,7 +3143,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         onStop={handleAbortPress}
                     />
                 </View>,
-                showSecondaryControlsRow ? (
+                controlsExpanded && showSecondaryControlsRow ? (
                     actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
                             key="row2"

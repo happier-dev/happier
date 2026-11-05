@@ -436,4 +436,55 @@ describe('AgentInput (action bar scroll layout)', () => {
 
         act(() => tree!.unmount());
     });
+
+    it('hides and restores the control rows without hiding the composer or submit', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: false, showRight: false });
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const { tree } = await renderScreen(<AgentInput
+            value="draft"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={onSend}
+            onAgentClick={() => {}}
+            agentType="codex"
+            onPathClick={() => {}}
+            currentPath="/tmp"
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        const toggle = tree.root.findByProps({ testID: 'agent-input-controls-toggle' });
+        expect(toggle.props.accessibilityState.expanded).toBe(true);
+        expect(getActionBarScrollViews(tree)).toHaveLength(2);
+        act(() => toggle.props.onPress());
+        expect(toggle.props.accessibilityState.expanded).toBe(false);
+        expect(getActionBarScrollViews(tree)).toHaveLength(0);
+        expect(tree.root.findByType('MultiTextInput' as never).props.value).toBe('draft');
+        expect(tree.root.findAllByProps({ testID: 'new-session-composer-send' }).length).toBeGreaterThan(0);
+        await tree.pressByTestIdAsync('new-session-composer-send');
+        expect(onSend).toHaveBeenCalledTimes(1);
+        act(() => toggle.props.onPress());
+        expect(toggle.props.accessibilityState.expanded).toBe(true);
+        expect(getActionBarScrollViews(tree)).toHaveLength(2);
+        act(() => tree.unmount());
+    });
+
+    it('omits the disclosure when no controls are available', async () => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: false, showRight: false });
+        const { AgentInput } = await import('./AgentInput');
+        const { tree } = await renderScreen(<AgentInput value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}} autocompleteKinds={[]} autocompleteSuggestions={async () => []} />);
+        expect(tree.root.findAllByProps({ testID: 'agent-input-controls-toggle' })).toHaveLength(0);
+        act(() => tree.unmount());
+    });
+
 });
