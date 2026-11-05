@@ -128,6 +128,7 @@ export function createCliSessionLifecycleActionDeps(
         machineId,
         method: RPC_METHODS.SESSION_FORK,
         context,
+        authority: context?.authority,
         effectActionId: 'session.fork',
         authorization: { kind: 'session.write', sessionId: transport.sessionId },
         request: {
