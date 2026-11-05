@@ -94,7 +94,7 @@ export const MachineConfigurationReceipt = React.memo(
                 {model.onRename ? (
                   <IconButton
                     testID={`${props.testID}:rename`}
-                    iconName="pencil"
+                    iconName="pencil-simple"
                     accessibilityLabel={t('managedMachines.receipt.rename')}
                     variant="plain"
                       onPress={model.onRename}
@@ -180,7 +180,7 @@ export const MachineConfigurationReceipt = React.memo(
             </View>
             </RoundButtonSizeScope>
             {model.secondaryNote ? (
-              <Text testID={`${props.testID}:secondary-note`} style={styles.footnote}>
+              <Text testID={`${props.testID}:secondary-note`} style={styles.secondaryNote}>
                 {model.secondaryNote}
               </Text>
             ) : null}
@@ -400,6 +400,13 @@ const styles = StyleSheet.create((theme) => ({
     ...meta,
     color: theme.colors.text.tertiary,
     textAlign: 'center',
+    marginTop: theme.space.s10,
+  },
+  // Sits under left-aligned actions, so it starts on their edge; a primary's footnote centres under its full width.
+  secondaryNote: {
+    ...Typography.default(),
+    ...meta,
+    color: theme.colors.text.tertiary,
     marginTop: theme.space.s10,
   },
   secondary: {

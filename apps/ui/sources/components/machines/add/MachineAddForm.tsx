@@ -237,10 +237,11 @@ function MachineAddPane(props: Readonly<{
     const { startWatching } = flow;
     const runsCommand = path?.runs === 'command';
     const [showTerminal, setShowTerminal] = React.useState(false);
-    // A command's machine can only announce itself: shown means watching.
+    // A command's machine can only announce itself: shown means watching. An SSH form shows no command until it can run one.
+    const commandShown = runsCommand && (pathId !== 'ssh' || flow.ssh.ready);
     React.useEffect(() => {
-        if (runsCommand && flow.watch.status === 'idle') startWatching();
-    }, [flow.watch.status, runsCommand, startWatching]);
+        if (commandShown && flow.watch.status === 'idle') startWatching();
+    }, [flow.watch.status, commandShown, startWatching]);
 
     if (flow.arrived) {
         const arrived = flow.arrived;
@@ -258,6 +259,7 @@ function MachineAddPane(props: Readonly<{
     }
     if (!path) return null;
 
+    // The pairing panel already says it is waiting; a second line only belongs beside the terminal command.
     const watching = flow.watch.status === 'watching' ? (
         <>
             {flow.watch.notSeeing ? (
@@ -267,12 +269,12 @@ function MachineAddPane(props: Readonly<{
                     homeName={flow.homeName}
                 />
             ) : null}
-            <MachineWatchLine
+            {pathId === 'anotherComputer' && !showTerminal ? null : <MachineWatchLine
                 testID={`${testID}.watch`}
                 subject={pathId === 'thisComputer' ? t('addFlows.subjectThisComputer') : pathId === 'ssh' ? (flow.ssh.draft.host.trim() || t('addFlows.subjectAnotherComputer')) : t('addFlows.subjectAnotherComputer')}
                 homeName={flow.homeName}
                 startedAtMs={flow.watch.startedAtMs}
-            />
+            />}
         </>
     ) : null;
 
@@ -439,7 +441,7 @@ function MachineAddPane(props: Readonly<{
                                     detectedLabel={t('addFlows.detectedOs')}
                                 />
                             ) : null}
-                            {watching}
+                            {commandShown ? watching : null}
                         </>
                     ) : (
                         <>

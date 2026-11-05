@@ -41,6 +41,28 @@ describe('Add machine Connect and Create entry', () => {
         await screen.unmount();
     });
 
+    it('watches for an SSH machine only once its command is on screen, and says one waiting line for a pairing link', async () => {
+        const target = await harness.addHome({ name: 'Build', serverUrl: 'https://watch-line.example', serverIdentityId: 'srv_watch_line', accountId: 'owner' });
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><MachineAddDraftScreen /></InjectedAuthProvider>);
+        await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.path:ssh').length).toBeGreaterThan(0));
+        const watchLines = () => screen.tree.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith('.watch'));
+        // An empty SSH form has no command to run yet, so nothing can be on its way.
+        await act(async () => screen.pressByTestId('settings.machines.draft.form.path:ssh'));
+        await flushHookEffects({ cycles: 5 });
+        expect(readMachineAddFlowDraft().startedAtMs).toBeNull();
+        expect(watchLines()).toHaveLength(0);
+        // The pairing panel carries its own waiting line; arrival is still watched behind it.
+        await act(async () => screen.pressByTestId('settings.machines.draft.form.path:anotherComputer'));
+        await flushHookEffects({ cycles: 5 });
+        expect(readMachineAddFlowDraft().startedAtMs).not.toBeNull();
+        expect(watchLines()).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('groups the ways in as Connect | Create on a phone, with the connection paths under Connect', async () => {
         // Dimensions is the window authority; useWindowDimensions and the presentation readers follow it.
         vi.spyOn((await import('react-native')).Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });

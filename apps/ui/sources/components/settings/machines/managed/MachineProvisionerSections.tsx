@@ -134,7 +134,7 @@ function ProvisionerGroup(
           // Four local cards across leave no room for a kind badge (lab note); cloud cards name theirs.
           ...(card.location === 'cloud' && card.kind ? { badge: card.kind } : {}),
         }))}
-        onPress={(id) => byId.get(id)?.action.onPress()}
+        onPress={(id) => { const action = byId.get(id)?.action; if (action && !action.disabled) action.onPress(); }}
         renderOptionFooter={({ option }) => {
           const card = byId.get(option.id);
           return card ? (
@@ -166,16 +166,18 @@ function ProvisionerFooter(
         )}
         {card.status.label ? <Text style={styles.status}>{card.status.label}</Text> : null}
       </View>
-      <RoundButton
-        testID={`${props.testID}.action`}
-        size="small"
-        // Ready provisioners open their configurator; a repair step stays quiet beside it.
-        display={card.action.kind === 'choose' ? 'secondary' : 'inverted'}
-        title={card.action.label}
-        accessibilityLabel={`${card.action.label}, ${card.title}`}
-        disabled={card.action.disabled}
-        onPress={card.action.onPress}
-      />
+      {/* No step to take means no button: the status, or the catalog's one line with its Retry, says why. */}
+      {card.action.disabled ? null : (
+        <RoundButton
+          testID={`${props.testID}.action`}
+          size="small"
+          // Ready provisioners open their configurator; a repair step stays quiet beside it.
+          display={card.action.kind === 'choose' ? 'secondary' : 'inverted'}
+          title={card.action.label}
+          accessibilityLabel={`${card.action.label}, ${card.title}`}
+          onPress={card.action.onPress}
+        />
+      )}
     </View>
   );
 }
