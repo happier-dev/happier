@@ -303,6 +303,13 @@ export async function machineScmCommitUndoLast(
     return await callMachineScm<ScmCommitUndoLastResponse, ScmCommitUndoLastRequest>(machineId, RPC_METHODS.SCM_COMMIT_UNDO_LAST, request, options);
 }
 
+function parseScmReadResponse<T extends { success: boolean }>(
+    response: T | ScmRpcFailure,
+    schema: Readonly<{ parse: (value: unknown) => T }>,
+): T | ScmRpcFailure {
+    return response.success === false ? response : schema.parse(response);
+}
+
 export async function machineScmLogList(
     machineId: string,
     request: ScmLogListRequest,
@@ -314,7 +321,7 @@ export async function machineScmLogList(
         request,
         options,
     );
-    return ScmLogListResponseSchema.parse(response);
+    return parseScmReadResponse(response, ScmLogListResponseSchema);
 }
 
 export async function machineScmHistoryEntries(
@@ -322,9 +329,9 @@ export async function machineScmHistoryEntries(
     request: ScmHistoryEntriesRequest,
     options?: MachineScmCallOptions,
 ): Promise<ScmHistoryEntriesResponse | ScmRpcFailure> {
-    return ScmHistoryEntriesResponseSchema.parse(await callMachineScm<ScmHistoryEntriesResponse, ScmHistoryEntriesRequest>(
+    return parseScmReadResponse(await callMachineScm<ScmHistoryEntriesResponse, ScmHistoryEntriesRequest>(
         machineId, RPC_METHODS.SCM_HISTORY_ENTRIES, request, options,
-    ));
+    ), ScmHistoryEntriesResponseSchema);
 }
 
 export async function machineScmCommitBackout(

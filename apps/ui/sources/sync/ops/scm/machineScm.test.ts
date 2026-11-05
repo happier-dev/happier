@@ -265,6 +265,33 @@ describe('machineScm', () => {
         }));
     });
 
+    it.each([RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE])(
+        'preserves %s refusals through strict SCM read facades without retrying', async (code) => {
+            const { machineScmHistoryEntries, machineScmLogList } = await import('./machineScm');
+            const reads = [
+                () => machineScmHistoryEntries('machine-1', { cwd: '/repo', folder: '', paths: ['file.ts'] }),
+                () => machineScmLogList('machine-1', { cwd: '/repo', limit: 20 }),
+            ];
+            for (const read of reads) {
+                // The scoped RPC boundary rejects a reserved-code ACK; also exercise
+                // Action refusal ACKs, which carry their code in a resolved envelope.
+                for (const rejectedAck of [true, false]) {
+                    machineRpcWithServerScopeMock.mockReset();
+                    if (rejectedAck) {
+                        machineRpcWithServerScopeMock.mockRejectedValue(Object.assign(new Error('Read refused'), { rpcErrorCode: code }));
+                    } else {
+                        machineRpcWithServerScopeMock.mockResolvedValue({ ok: false, errorCode: code, error: 'Read refused' });
+                    }
+                    const result = await read();
+                    expect(result).toMatchObject({ success: false, actionErrorCode: code,
+                        errorCode: rejectedAck ? SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE : SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED });
+                    if (rejectedAck) expect(result).toHaveProperty('diagnosticDetail', 'Error: Read refused');
+                    expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+                }
+            }
+        },
+    );
+
     it('parses scm.log.list through the canonical closed response schema', async () => {
         setScmSettings({ settings: {} });
         machineRpcWithServerScopeMock.mockResolvedValue({
