@@ -128,7 +128,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
     },
     transcriptToolCallsGroupShowBackground: {
         schema: z.boolean(),
-        default: true,
+        default: false,
         description: 'When Tool calls are grouped and rendered in feed mode, show a group background behind the Tool calls',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
