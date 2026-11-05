@@ -24,7 +24,7 @@ import {
     type UsageTrendPoint,
 } from './usageAnalytics';
 import type { UsageDataPoint } from './apiUsage';
-import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
+import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 const baseState: UsageFilterState = {
     period: '7days',
@@ -47,6 +47,36 @@ describe('exact model-mix amounts', () => {
 });
 
 describe('buildUsageAnalyticsViewModel', () => {
+    it('derives only requested sections from an admitted response and reuses them on later reads', () => {
+        const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
+        const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
+        const admitted = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            totals: { eventCount: 1, tokens, cost },
+            series: [{ bucketStartMs: 1_700_000_000_000, bucketEndMs: 1_700_086_400_000, eventCount: 1, tokens, cost }],
+            modelTimeline: [{ bucketStartMs: 1_700_000_000_000, bucketEndMs: 1_700_086_400_000,
+                leaders: [{ key: 'model-a', label: 'Model A', eventCount: 1, tokens, cost }] }],
+        });
+        let timelineReads = 0;
+        const source: UsageAnalyticsQueryResponse = {
+            ...admitted,
+            get modelTimeline() {
+                timelineReads += 1;
+                return admitted.modelTimeline;
+            },
+        };
+        const view = buildUsageAnalyticsViewModel(source, baseState);
+        expect(timelineReads).toBe(0);
+        // A daily/breakdown body needs the series, not any model timeline projection.
+        void view.trend;
+        void view.breakdowns;
+        expect(timelineReads).toBe(0);
+        expect(view.modelMix.buckets).toHaveLength(1);
+        expect(timelineReads).toBe(1);
+        expect(view.modelMix).toBe(view.modelMix);
+        expect(view.modelTimeline).toBe(view.modelTimeline);
+        expect(timelineReads).toBe(1);
+    });
+
     it.each([
         { bucketStarts: ['2026-07-06T01:00:00Z', '2026-07-06T02:00:00Z'], dates: ['2026-07-06'], expected: 1 },
         { bucketStarts: ['2026-06-01T00:00:00Z', '2026-07-01T00:00:00Z'], dates: ['2026-07-04', '2026-07-05', '2026-07-06'], expected: 3 },

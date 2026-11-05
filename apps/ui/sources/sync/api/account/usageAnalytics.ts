@@ -11,9 +11,10 @@ import type {
     UsageAnalyticsBreakdowns,
     UsageAnalyticsQueryResponse,
     UsageAnalyticsSeriesBucket,
-    UsageAnalyticsTotals as ProtocolUsageAnalyticsTotals,
+    UsageAnalyticsTotals as ProtocolUsageAnalyticsTotals} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type {
     UsageCostMode as ProtocolUsageCostMode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/usageCostFacts';
 
 import type { UsageDataPoint, UsageTotals } from './apiUsage';
 import { calculateTotals, getRecordTotal } from './apiUsage';
@@ -594,7 +595,7 @@ function resolveLegacyDayStreaks(days: ReturnType<typeof buildLegacyCalendarDays
         referenceMs: nowMs, timeZoneOffsetMinutes, coverage: 'partial' });
 }
 
-function resolveResponseDayStreaks(response: UsageAnalyticsQueryResponse, timeZoneOffsetMinutes: number) {
+export function resolveResponseDayStreaks(response: UsageAnalyticsQueryResponse, timeZoneOffsetMinutes: number) {
     const summary = resolveUsageDayStreaks({ days: response.activity?.calendarDays, referenceMs: Date.now(),
         timeZoneOffsetMinutes, range: response.coverage?.range, coverage: response.coverage?.status });
     return { ...summary, activeDays: summary.activeDays ?? response.insights?.activeDays ?? null,
@@ -1622,59 +1623,87 @@ function resolveLegacyContextExtent(
     return extent;
 }
 
+function memoizeViewSection<T>(build: () => T): () => T {
+    let cached: { value: T } | undefined;
+    return () => {
+        cached ??= { value: build() };
+        return cached.value;
+    };
+}
+
 export function buildUsageAnalyticsViewModel(
     source: UsageAnalyticsSource,
     filters: UsageFilterState,
     timeZoneOffsetMinutes = 0,
 ): UsageAnalyticsViewModel {
     if (isUsageAnalyticsQueryResponse(source)) {
-        const costPresentation = resolveResponseCostPresentation(source, filters.costMode);
-        const activity = buildActivityFromResponse(source);
-        const leaders = buildLeadersFromResponse(source);
-        const insights = buildInsightsFromResponse(source, timeZoneOffsetMinutes);
-        const categoryTokens = source.tokenCategories ?? resolveUsageTokenCategories(source.totals.tokens, null);
-        const displayTotals = { ...source.totals, tokens: categoryTokens ?? {
-            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: source.totals.tokens.total,
-        } };
-        const overview = buildTotalsFromResponse(source.totals, insights.activeDays, filters.costMode);
-        const categoryOverview = buildTotalsFromResponse(displayTotals, insights.activeDays, filters.costMode);
-        const availableCostModes = resolveAvailableCostModes(source.totals.cost);
-        const trend = buildTrendFromResponse(source.series, filters.costMode);
-        const modelTimeline = buildTimelineFromResponse(source.modelTimeline, costPresentation);
-        const engineTimeline = buildTimelineFromResponse(source.engineTimeline, costPresentation, 'backendMode');
+        // Each admitted response has one view per presentation in the body kit. Derive only
+        // the sections a body reads; dependent sections share these same results.
+        const costPresentation = memoizeViewSection(() => resolveResponseCostPresentation(source, filters.costMode));
+        const activity = memoizeViewSection(() => buildActivityFromResponse(source));
+        const insights = memoizeViewSection(() => buildInsightsFromResponse(source, timeZoneOffsetMinutes));
+        const leaders = memoizeViewSection(() => buildLeadersFromResponse(source));
+        const overview = memoizeViewSection(() => buildTotalsFromResponse(source.totals, insights().activeDays, filters.costMode));
+        const categoryOverview = memoizeViewSection(() => {
+            const categoryTokens = source.tokenCategories ?? resolveUsageTokenCategories(source.totals.tokens, null);
+            const displayTotals = { ...source.totals, tokens: categoryTokens ?? {
+                input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: source.totals.tokens.total,
+            } };
+            return buildTotalsFromResponse(displayTotals, insights().activeDays, filters.costMode);
+        });
+        const trend = memoizeViewSection(() => buildTrendFromResponse(source.series, filters.costMode));
+        const modelTimeline = memoizeViewSection(() => buildTimelineFromResponse(source.modelTimeline, costPresentation()));
+        const engineTimeline = memoizeViewSection(() => buildTimelineFromResponse(source.engineTimeline, costPresentation(), 'backendMode'));
+        const pageCost = memoizeViewSection(() => projectUsagePageCost(source, filters.costMode));
+        const hero = memoizeViewSection(() => buildUsageHeroViewModel(overview(), insights(), costPresentation()));
+        const heroTrend = memoizeViewSection(() => buildUsageHeroTrend(trend()));
+        const hourRhythm = memoizeViewSection(() => buildUsageHourRhythm(activity()));
+        const punchCard = memoizeViewSection(() => buildUsagePunchCard(activity()));
+        const composition = memoizeViewSection(() => buildUsageComposition(categoryOverview()));
+        const modelMix = memoizeViewSection(() => buildUsageModelMix(modelTimeline()));
+        const engineMix = memoizeViewSection(() => buildUsageModelMix(engineTimeline()));
+        const agentMix = memoizeViewSection(() => buildUsageModelMix(buildUsageAgentTimeline(engineTimeline())));
+        const leaderTrends = memoizeViewSection(() => ({
+            models: buildUsageLeaderTrends(modelTimeline()),
+            engines: buildUsageLeaderTrends(engineTimeline()),
+            agents: buildUsageAgentTrends(engineTimeline()),
+        }));
+        const efficiency = memoizeViewSection(() => buildUsageEfficiency(categoryOverview(), costPresentation()));
+        const cacheSavings = memoizeViewSection(() => buildUsageCacheSavings(overview(), source.insights?.cacheSavingsUsd));
+        const context = memoizeViewSection(() => buildUsageContextViewModel(
+            categoryOverview(),
+            source.totals.context?.usedTokens ?? null,
+            source.totals.context?.windowTokens ?? null,
+        ));
+        const breakdowns = memoizeViewSection(() => buildBreakdownsFromResponse(
+            source.breakdowns, source.totals, filters.costMode, trend(), timeZoneOffsetMinutes,
+        ));
+        const availableCostModes = memoizeViewSection(() => resolveAvailableCostModes(source.totals.cost));
         return {
-            pageCost: projectUsagePageCost(source, filters.costMode),
+            get pageCost() { return pageCost(); },
             timeZoneOffsetMinutes,
-            overview,
-            hero: buildUsageHeroViewModel(overview, insights, costPresentation),
-            heroTrend: buildUsageHeroTrend(trend),
-            hourRhythm: buildUsageHourRhythm(activity),
-            punchCard: buildUsagePunchCard(activity),
-            composition: buildUsageComposition(categoryOverview),
-            modelMix: buildUsageModelMix(modelTimeline),
-            engineMix: buildUsageModelMix(engineTimeline),
-            agentMix: buildUsageModelMix(buildUsageAgentTimeline(engineTimeline)),
-            leaderTrends: {
-                models: buildUsageLeaderTrends(modelTimeline),
-                engines: buildUsageLeaderTrends(engineTimeline),
-                agents: buildUsageAgentTrends(engineTimeline),
-            },
-            efficiency: buildUsageEfficiency(categoryOverview, costPresentation),
-            cacheSavings: buildUsageCacheSavings(overview, source.insights?.cacheSavingsUsd),
-            context: buildUsageContextViewModel(
-                categoryOverview,
-                source.totals.context?.usedTokens ?? null,
-                source.totals.context?.windowTokens ?? null,
-            ),
-            trend,
-            breakdowns: buildBreakdownsFromResponse(source.breakdowns, source.totals, filters.costMode, trend, timeZoneOffsetMinutes),
-            insights,
-            activity,
-            leaders,
-            modelTimeline,
-            engineTimeline,
-            availableCostModes,
-            costPresentation,
+            get overview() { return overview(); },
+            get hero() { return hero(); },
+            get heroTrend() { return heroTrend(); },
+            get hourRhythm() { return hourRhythm(); },
+            get punchCard() { return punchCard(); },
+            get composition() { return composition(); },
+            get modelMix() { return modelMix(); },
+            get engineMix() { return engineMix(); },
+            get agentMix() { return agentMix(); },
+            get leaderTrends() { return leaderTrends(); },
+            get efficiency() { return efficiency(); },
+            get cacheSavings() { return cacheSavings(); },
+            get context() { return context(); },
+            get trend() { return trend(); },
+            get breakdowns() { return breakdowns(); },
+            get insights() { return insights(); },
+            get activity() { return activity(); },
+            get leaders() { return leaders(); },
+            get modelTimeline() { return modelTimeline(); },
+            get engineTimeline() { return engineTimeline(); },
+            get availableCostModes() { return availableCostModes(); },
+            get costPresentation() { return costPresentation(); },
             filteredUsageCount: source.totals.eventCount,
             focus: filters.focus,
         };
