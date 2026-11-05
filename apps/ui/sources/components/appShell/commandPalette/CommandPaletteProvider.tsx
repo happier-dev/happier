@@ -7,7 +7,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { Modal } from '@/modal';
 import { COMMAND_SURFACE_WEB_PLACEMENT } from '@/modal/components/card/commandSurfaceCard';
-import { UniversalSearchModal, type UniversalSearchModalProps } from '@/components/appShell/search/UniversalSearchModal';
+import type { UniversalSearchModalProps } from '@/components/appShell/search/UniversalSearchModal';
 import {
     UniversalSearchRuntimeProvider,
     resolveUniversalSearchInvocationScope,
@@ -20,7 +20,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { PETS_SETTINGS } from '@/components/settings/pets/petsSettings';
 import { requestCodexPetRefresh } from '@/components/settings/pets/petSettingsCommandEvents';
@@ -326,8 +328,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             labelHandlers,
         ],
     );
-    const actionExecutor = useMemo(
-        () => createDefaultActionExecutor({
+    const actionExecutor = useMemo(() => ({
+        execute: createFrontDoorActionExecute(undefined, {
             resolveServerIdForSessionId: (sessionId) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
             openSession: (sessionId, options) => {
                 router.push(buildScopedSessionRouteHref({
@@ -336,8 +338,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 }) as any);
             },
         }),
-        [router],
-    );
+    }), [router]);
     const openDesktopWindow = React.useCallback(async (input: import('@happier-dev/protocol/actions/actionSpecs').DesktopWindowsOpenInput) => {
         const result = await actionExecutor.execute('desktop.windows.open', input, { surface: 'ui' });
         return result.ok;
@@ -479,6 +480,23 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         symbols?: UniversalSearchOpenOptions['symbols'];
     }> | null>(null);
     const [paletteOpen, setPaletteOpen] = React.useState(false);
+    const pendingPaletteOpen = React.useRef<object | null>(null);
+    const pendingPaletteFocus = React.useRef<ReturnType<typeof readDocumentFocusReturnTarget>>(null);
+    // Only a pending open holds Escape; an idle palette must not sit above every page's own keys.
+    const [palettePending, setPalettePending] = React.useState(false);
+    React.useEffect(() => () => { pendingPaletteOpen.current = null; }, []);
+    useEscapeLayer({
+        enabled: Platform.OS === 'web' && palettePending,
+        priority: ESCAPE_LAYER_PRIORITIES.commandPalette,
+        allowEditableTarget: true,
+        focusReturnRef: pendingPaletteFocus,
+        onEscape: () => {
+            if (!pendingPaletteOpen.current) return false;
+            pendingPaletteOpen.current = null;
+            setPalettePending(false);
+            return true;
+        },
+    });
     const refreshOpenPaletteCommands = React.useCallback(() => {
         const openModal = openUniversalSearchModalRef.current;
         if (!openModal) return;
@@ -545,38 +563,56 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             } as never);
             return;
         }
-        if (openUniversalSearchModalRef.current) return;
-        let modalId = '';
-        const clearOpenPalette = () => {
-            if (openUniversalSearchModalRef.current?.id === modalId) {
-                openUniversalSearchModalRef.current = null;
-                setPaletteOpen(false);
-            }
-        };
-        modalId = Modal.show({
-            component: UniversalSearchModal,
-            webPlacement: COMMAND_SURFACE_WEB_PLACEMENT,
-            onRequestClose: clearOpenPalette,
-            onHostUnmount: clearOpenPalette,
-            props: {
-                commands: buildCommands(invocationScope.sessionId, invocationScope, symbols),
-                openWorkspaceFile,
+        if (openUniversalSearchModalRef.current || pendingPaletteOpen.current) return;
+        const pending = {};
+        pendingPaletteOpen.current = pending;
+        setPalettePending(true);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const focusReturnRef = { current: typeof document === 'undefined' ? null : readDocumentFocusReturnTarget(document) };
+        pendingPaletteFocus.current = focusReturnRef.current;
+        const opening = (async () => {
+            const { UniversalSearchModal } = await import('@/components/appShell/search/UniversalSearchModal');
+            if (pendingPaletteOpen.current !== pending || (lifetime && !lifetime.isCurrent())) return;
+            let modalId = '';
+            const clearOpenPalette = () => {
+                if (openUniversalSearchModalRef.current?.id === modalId) {
+                    openUniversalSearchModalRef.current = null;
+                    setPaletteOpen(false);
+                }
+            };
+            modalId = Modal.show({
+                component: UniversalSearchModal,
+                focusReturnRef,
+                webPlacement: COMMAND_SURFACE_WEB_PLACEMENT,
+                onRequestClose: clearOpenPalette,
+                onHostUnmount: clearOpenPalette,
+                props: {
+                    commands: actionCommandBuilder.current(invocationScope.sessionId, invocationScope, symbols),
+                    openWorkspaceFile,
+                    ...(symbols ? { symbols } : {}),
+                    ...(initialQuery ? { initialQuery } : {}),
+                    ...(options?.source ? { initialSource: options.source } : {}),
+                    ...(options?.replace ? { initialReplace: true } : {}),
+                    ...(invocationScope.sessionId ? { activeSessionId: invocationScope.sessionId } : {}),
+                    initialScope: invocationScope,
+                    ...(options?.terminals ? { terminalJump: options.terminals } : {}),
+                },
+            });
+            openUniversalSearchModalRef.current = {
+                id: modalId,
+                activeSessionId: invocationScope.sessionId,
+                scope: invocationScope,
                 ...(symbols ? { symbols } : {}),
-                ...(initialQuery ? { initialQuery } : {}),
-                ...(options?.source ? { initialSource: options.source } : {}),
-                ...(options?.replace ? { initialReplace: true } : {}),
-                ...(invocationScope.sessionId ? { activeSessionId: invocationScope.sessionId } : {}),
-                initialScope: invocationScope,
-                ...(options?.terminals ? { terminalJump: options.terminals } : {}),
-            },
+            };
+            setPaletteOpen(true);
+        })().finally(() => {
+            if (pendingPaletteOpen.current === pending) {
+                pendingPaletteOpen.current = null;
+                setPalettePending(false);
+            }
         });
-        openUniversalSearchModalRef.current = {
-            id: modalId,
-            activeSessionId: invocationScope.sessionId,
-            scope: invocationScope,
-            ...(symbols ? { symbols } : {}),
-        };
-        setPaletteOpen(true);
+        fireAndForget(opening, { tag: 'CommandPaletteProvider.open' });
+        return opening;
     }, [activeSessionId, buildCommands, openWorkspaceFile, router, universalSearchRouteActive]);
 
     const universalSearchRuntime = useMemo<UniversalSearchRuntime>(() => ({

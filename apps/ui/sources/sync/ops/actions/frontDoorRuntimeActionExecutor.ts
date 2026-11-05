@@ -3,7 +3,8 @@ import type { ActionId, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { HappyError } from '@/utils/errors/errors';
 
-import { createDefaultActionExecutor, type UiActionExecutorContext } from './defaultActionExecutor';
+import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
   Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare' | 'executeConfirmed'>>;
@@ -47,12 +48,19 @@ export function createFrontDoorActionExecute(
   // Lazily resolve the default executor on first dispatch so that mounting a surface (which often
   // renders nothing) never eagerly builds the full executor dependency graph.
   let resolved: ActionExecutorLike | null = executor ?? null;
-  const resolve = (): ActionExecutorLike => resolved ?? (resolved = createDefaultActionExecutor(options));
+  const resolve = async (): Promise<ActionExecutorLike> => {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    return resolved ?? (resolved = createDefaultActionExecutor(options));
+  };
   const execute: ActionExecutorLike['execute'] = async (actionId, input, context) => {
-    // Static module resolution works in both native bundles and ESM hosts.
-    // Construction stays deferred; cyclic consumers only retain this function
-    // while evaluating their modules and dispatch after initialization.
-    const target = resolve();
+    // Unscoped actions belong to the Account that received the intent, including
+    // while its first executable chunk loads. Addressed callers retain their own
+    // explicit Account/currentness context at the default executor boundary.
+    const lifetime = !resolved && !context?.serverId ? captureActiveServerAccountScopeLifetime() : null;
+    const target = resolved ?? await resolve();
+    if (lifetime && !lifetime.isCurrent()) return {
+      ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
+    };
     return target.execute(actionId, input, context);
   };
   return Object.assign(execute, {
@@ -63,13 +71,22 @@ export function createFrontDoorActionExecute(
       let confirmedInput: unknown;
       try { confirmedInput = projectNativeJsonValueForTransport(input); }
       catch { return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' }; }
-      const target = resolve();
+      const lifetime = !resolved && !context?.serverId ? captureActiveServerAccountScopeLifetime() : null;
+      const target = resolved ?? await resolve();
+      if (lifetime && !lifetime.isCurrent()) return {
+        ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
+      };
       if (!target.executeConfirmed) throw new Error('The injected Action executor does not implement confirmed dispatch');
       return target.executeConfirmed(actionId, confirmedInput, context);
     },
 
     prepare: async (...args: Parameters<ReturnType<typeof createDefaultActionExecutor>['prepare']>) => {
-      const target = resolve();
+      const context = args[2];
+      const lifetime = !resolved && !context?.serverId ? captureActiveServerAccountScopeLifetime() : null;
+      const target = resolved ?? await resolve();
+      if (lifetime && !lifetime.isCurrent()) return { kind: 'settled' as const, result: {
+        ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
+      } };
       return target.prepare ? target.prepare(...args) : {
         kind: 'settled' as const,
         result: { ok: false as const, errorCode: 'action_prepare_unavailable', error: 'action_prepare_unavailable' },

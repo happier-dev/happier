@@ -24,6 +24,10 @@ const testState = vi.hoisted(() => ({
 
 const buildCommandPaletteCommandsSpy = vi.hoisted(() => vi.fn());
 
+// Keep runner transformation outside the operation deadline; lazy graph coverage
+// separately proves that the production provider does not import this at startup.
+await import('@/components/appShell/search/UniversalSearchModal');
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'web' } });
@@ -156,7 +160,7 @@ describe('CommandPaletteProvider lazy command building', () => {
 
         expect(buildCommandPaletteCommandsSpy).not.toHaveBeenCalled();
 
-        testState.keyboardHandlers?.['commandPalette.open']?.();
+        await act(async () => { await testState.keyboardHandlers?.['commandPalette.open']?.(); });
 
         expect(buildCommandPaletteCommandsSpy).toHaveBeenCalledTimes(1);
         expect(Modal.show).toHaveBeenCalledTimes(1);
@@ -212,8 +216,11 @@ describe('CommandPaletteProvider lazy command building', () => {
 
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
 
-        testState.keyboardHandlers?.['commandPalette.open']?.();
-        testState.keyboardHandlers?.['commandPalette.open']?.();
+        await act(async () => {
+            const opening = testState.keyboardHandlers?.['commandPalette.open']?.();
+            testState.keyboardHandlers?.['commandPalette.open']?.();
+            await opening;
+        });
 
         expect(Modal.show).toHaveBeenCalledTimes(1);
     });
@@ -232,7 +239,7 @@ describe('CommandPaletteProvider lazy command building', () => {
             },
         };
 
-        testState.keyboardHandlers?.['commandPalette.open']?.();
+        await act(async () => { await testState.keyboardHandlers?.['commandPalette.open']?.(); });
 
         const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as { commands?: Array<{ id: string }> } | undefined;
         expect(showProps?.commands?.some((command) => command.id === 'session-session-late')).toBe(true);
@@ -259,7 +266,7 @@ describe('CommandPaletteProvider lazy command building', () => {
             <CommandPaletteProvider><ExplicitScopeOpener /></CommandPaletteProvider>,
         );
         buildCommandPaletteCommandsSpy.mockClear();
-        screen.findByType('ExplicitScopeOpener')?.props.onPress();
+        await act(async () => { await screen.findByType('ExplicitScopeOpener')?.props.onPress(); });
 
         expect(buildCommandPaletteCommandsSpy).toHaveBeenCalledWith(expect.objectContaining({
             activeSessionId: 'requested-session',
@@ -273,7 +280,7 @@ describe('CommandPaletteProvider lazy command building', () => {
         const screen = await renderScreen(element());
 
         await act(async () => {
-            testState.keyboardHandlers?.['commandPalette.open']?.();
+            await testState.keyboardHandlers?.['commandPalette.open']?.();
         });
         vi.mocked(Modal.update).mockClear();
 
@@ -294,7 +301,7 @@ describe('CommandPaletteProvider lazy command building', () => {
 
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
 
-        testState.keyboardHandlers?.['commandPalette.open']?.();
+        await act(async () => { await testState.keyboardHandlers?.['commandPalette.open']?.(); });
 
         const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as {
             commands?: Array<{ id: string; action: () => void | Promise<void> }>;

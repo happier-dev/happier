@@ -42,6 +42,10 @@ const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storage');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+// Amortize the runner's cold TypeScript transformation outside operation deadlines,
+// as the former static import did. The owner graph test independently proves that
+// this body is absent from startup; these journeys exercise its real lazy opening.
+await import('@/components/appShell/search/UniversalSearchModal');
 const [{ WorkspaceProvider }, { AppPaneProvider }, { resolveCompactAppDestinations },
     { useUniversalSearchRuntime }, { invokeWorkspaceAction }, { recordRecentWorkspaceFile },
     { tryBuildWorkspaceCacheKey }] = await Promise.all([
@@ -129,6 +133,17 @@ it('reopens Search through the app-shell shortcut after its route-modal host ret
         await act(async () => root.render(render(false)));
         // A route becomes focused after the app-shell provider is registered.
         await act(async () => root.render(render(true)));
+        // Escape must cancel the first open even before its body import settles.
+        // Two key presses, as a person makes them: the pending open claims Escape from the first press's
+        // commit. Synchronous acts commit that press without letting the body import settle.
+        act(() => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', altKey: true, bubbles: true, cancelable: true }));
+        });
+        act(() => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true }));
+        });
+        await act(async () => {});
+        expect(palette()).toBeNull();
         await open();
         await vi.waitFor(() => expect(palette()).not.toBeNull());
         // This is the route scope's actual active=false transition, not a mocked

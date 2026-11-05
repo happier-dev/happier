@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -94,12 +95,10 @@ vi.mock('@/components/settings/pets/petSettingsCommandEvents', () => ({
     requestCodexPetRefresh: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alertAsync: vi.fn(async () => {}),
-        show: vi.fn(),
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/keyboard', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/keyboard')>();
@@ -143,6 +142,9 @@ vi.mock('./buildCommandPaletteCommands', async (importOriginal) => {
     };
 });
 
+// Runner transformation is not a user operation; the owner graph test covers cold imports.
+await import('@/components/appShell/search/UniversalSearchModal');
+
 describe('CommandPaletteProvider pet commands', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -160,7 +162,7 @@ describe('CommandPaletteProvider pet commands', () => {
 
     it('wakes and tucks the Dev activity overlay companion through the pet-specific overlay override', async () => {
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
-        captured.keyboardHandlers?.['commandPalette.open']?.();
+        await act(async () => { await captured.keyboardHandlers?.['commandPalette.open']?.(); });
 
         captured.petControls?.wake();
         captured.petControls?.tuck();

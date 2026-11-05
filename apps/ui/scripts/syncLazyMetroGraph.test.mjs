@@ -50,7 +50,7 @@ globalThis.mathResult = loadKaTeX().then(markdownKatex => ({ katex, markdownKate
     }
 });
 
-test('language lookup and tokenization defer the highlighter runtime and themes', async () => {
+test('language lookup and tokenization defer the highlighter runtime, grammars and themes', async () => {
     const cache = mkdtempSync(path.join(tmpdir(), 'happier-language-lookup-'));
     let server;
     try {
@@ -65,7 +65,7 @@ test('language lookup and tokenization defer the highlighter runtime and themes'
         server = new Server(config, { watch: false });
         for (const entry of [
             'sources/components/ui/code/highlighting/resolveShikiLanguageId.ts',
-            'sources/components/ui/code/highlighting/shiki/shikiTokenize.web.ts',
+            'sources/components/ui/code/highlighting/shiki/shikiTokenize.ts',
         ]) {
             const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
                 entryFile: path.join(uiRoot, entry), platform: 'web', dev: true, minify: false, lazy: true,
@@ -75,8 +75,8 @@ test('language lookup and tokenization defer the highlighter runtime and themes'
             console.log(JSON.stringify({ entry, modules: paths.length, bytes: Buffer.byteLength(result.code) }));
             assert.deepEqual(paths.filter(file => /\/node_modules\/(?:@shikijs\/(?:themes|core|engine-[^/]+)\/|shiki\/dist\/(?:themes|bundle-full)\.mjs$)/.test(file)), [],
                 'the highlighter runtime must load only when tokenization is requested');
-            assert.equal(paths.some(file => file.endsWith('/shiki/dist/langs.mjs')), true,
-                'use the package-owned complete language and alias inventory');
+            assert.deepEqual(paths.filter(file => /\/node_modules\/(?:@shikijs\/langs\/|shiki\/dist\/langs\.mjs$)/.test(file)), [],
+                'synchronous language recognition must carry ids only, without grammar import edges');
         }
     } finally {
         if (server) await server.end();

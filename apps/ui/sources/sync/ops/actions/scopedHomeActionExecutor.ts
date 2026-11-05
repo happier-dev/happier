@@ -4,7 +4,7 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 
-import { createDefaultActionExecutor } from './defaultActionExecutor';
+import type { createDefaultActionExecutor } from './defaultActionExecutor';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 
 /**
@@ -36,16 +36,16 @@ export function scopedHomeActionExecutor(
         homeDomainAction: createHomeDomainActionExecutorForScope(scope, undefined, homeDomainReadCurrentness),
         ...ordinaryOptions,
     };
-    const ordinary = createFrontDoorActionExecute(createDefaultActionExecutor(executorOptions));
+    const ordinary = createFrontDoorActionExecute(undefined, executorOptions);
     const forInvocation = (actionId: Parameters<typeof ordinary>[0], context: Parameters<typeof ordinary>[2]) => {
         // Only host-owned page controls lend their ephemeral page-follow values
         // and mount signal. Settings Ask must retain that exact invocation,
         // including when a native surface supplies this shared scoped executor.
         if (context?.surface === 'ui' && context.authority === 'present_user'
             && context.actionCaller?.kind === 'host' && context.widgetAreaContext && context.signal) {
-            return createFrontDoorActionExecute(createDefaultActionExecutor({ ...executorOptions,
+            return createFrontDoorActionExecute(undefined, { ...executorOptions,
                 hostActionApprovalLifetime: { actionId, signal: context.signal, surface: 'ui' },
-            }));
+            });
         }
         return ordinary;
     };

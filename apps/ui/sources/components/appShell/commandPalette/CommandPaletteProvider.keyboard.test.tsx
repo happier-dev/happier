@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -90,12 +91,10 @@ vi.mock('@/components/settings/pets/petSettingsCommandEvents', () => ({
     requestCodexPetRefresh: vi.fn(),
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        alertAsync: vi.fn(async () => {}),
-        show: testState.modalShow,
-    },
-}));
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { show: testState.modalShow } }).module;
+});
 
 vi.mock('@/keyboard', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/keyboard')>();
@@ -119,6 +118,9 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
     resolvePreferredServerIdForSessionId: () => null,
 }));
+
+// Runner transformation is not a user operation; the owner graph test covers cold imports.
+await import('@/components/appShell/search/UniversalSearchModal');
 
 describe('CommandPaletteProvider keyboard shortcuts', () => {
     beforeEach(() => {
@@ -160,10 +162,19 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         });
     });
 
+    it('claims no Escape layer while no open is pending, so a page below it keeps its own keys', async () => {
+        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        // The module registry is reset per test: read the stack the provider registered into.
+        const { ESCAPE_LAYER_PRIORITIES, getMaxEscapeKeyBlockerPriority } = await import('@/keyboard/escape');
+        await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+        // The Inbox moves its selection only while nothing above a pane holds Escape (useInboxItemNavigation).
+        expect(getMaxEscapeKeyBlockerPriority()).toBeLessThanOrEqual(ESCAPE_LAYER_PRIORITIES.pane);
+    });
+
     it('opens the same Search surface in text-in-files scope through its keyboard command', async () => {
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
-        testState.keyboardHandlers?.['search.textInFiles']?.();
+        await act(async () => { await testState.keyboardHandlers?.['search.textInFiles']?.(); });
         expect(testState.modalShow).toHaveBeenCalledWith(expect.objectContaining({
             props: expect.objectContaining({ initialSource: 'fileContent' }),
         }));
@@ -185,7 +196,7 @@ describe('CommandPaletteProvider keyboard shortcuts', () => {
         const screen = await renderScreen(
             <CommandPaletteProvider><OpenSearch /></CommandPaletteProvider>,
         );
-        screen.findByType('OpenSearch')?.props.onPress();
+        await act(async () => { await screen.findByType('OpenSearch')?.props.onPress(); });
 
         expect(testState.keyboardHandlers?.['commandPalette.open']).toBeUndefined();
         expect(testState.modalShow).toHaveBeenCalledWith(expect.objectContaining({

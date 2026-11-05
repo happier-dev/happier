@@ -118,6 +118,9 @@ vi.mock('./buildCommandPaletteCommands', async () => {
     };
 });
 
+// Runner transformation is not a user operation; the owner graph test covers cold imports.
+await import('@/components/appShell/search/UniversalSearchModal');
+
 describe('CommandPaletteProvider subscription locality', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -157,7 +160,7 @@ describe('CommandPaletteProvider subscription locality', () => {
 
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
         await act(async () => {
-            testState.keyboardHandlers?.['commandPalette.open']?.();
+            await testState.keyboardHandlers?.['commandPalette.open']?.();
         });
         await act(async () => {
             testState.store!.setState({
