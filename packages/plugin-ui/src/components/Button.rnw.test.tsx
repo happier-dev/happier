@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { HappierSectionActionStackedContext } from '../presentation/layout/PageSection.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { Button, IconButton } from './Button.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
@@ -691,9 +691,9 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
   it('puts a plain button on the text edge of a section whose action sits on its own line without changing its box', () => {
     const plain = (stacked: boolean) => {
       const mount = mountSurface(
-        <HappierSectionActionStackedContext.Provider value={stacked}>
+        <HappierTextActionEdgeContext.Provider value={stacked ? 'start' : null}>
           <Button variant="plain" title="Start a conversation" onPress={() => {}} />
-        </HappierSectionActionStackedContext.Provider>,
+        </HappierTextActionEdgeContext.Provider>,
       );
       const style = getComputedStyle(findButton(mount.container));
       const edge = { left: style.left, marginLeft: style.marginLeft };
@@ -706,5 +706,24 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     // the label and flipped the section header between inline and stacked.
     expect(plain(true).left).toMatch(/^-\d/);
     expect(plain(true).marginLeft).not.toMatch(/^-/);
+  });
+
+  it("puts a plain button that ends a row on that row's trailing edge, keeping its box and hit area", () => {
+    const mount = mountSurface(
+      <HappierTextActionEdgeContext.Provider value="end">
+        <Button variant="plain" title="Select" onPress={() => {}} />
+      </HappierTextActionEdgeContext.Provider>,
+    );
+    const ended = getComputedStyle(findButton(mount.container));
+    mount.unmount();
+    const free = mountSurface(<Button variant="plain" title="Select" onPress={() => {}} />);
+    const resting = getComputedStyle(findButton(free.container));
+    free.unmount();
+    // Its label meets the trailing edge: the trailing inset moves to the leading side, so the box (the hit area)
+    // keeps its width and never moves past the edge, where it would scroll the row sideways.
+    expect(ended.paddingRight).toBe('0px');
+    expect(parseFloat(ended.paddingLeft) + parseFloat(ended.paddingRight))
+      .toBe(parseFloat(resting.paddingLeft) + parseFloat(resting.paddingRight));
+    expect(ended.left).not.toMatch(/^\d*[1-9]/);
   });
 });

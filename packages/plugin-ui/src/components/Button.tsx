@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { HappierSurfaceGradientLayer } from '../presentation/layout/SurfaceGradientLayer.js';
-import { HappierSectionActionStackedContext } from '../presentation/layout/PageSection.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 
 import { useOptionalHappierUiAccessibility, useOptionalHappierUiPalette } from '../environment/context.js';
 import { HappierPressable, type HappierPressableStyleState } from '../presentation/interaction/Pressable.js';
@@ -188,7 +188,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
   const material = useHappierButtonMaterial(theme);
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion ?? false;
   const palette = useOptionalHappierUiPalette(theme);
-  const underSectionText = useContext(HappierSectionActionStackedContext);
+  const textEdge = useContext(HappierTextActionEdgeContext);
   const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled, focused: false, ...material });
   const style = (state: HappierPressableStyleState): HappierPortableStyle => {
     const chrome = resolveHappierButtonChrome({
@@ -201,12 +201,17 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
       // instead of overflowing the card or the pane edge.
       flexShrink: 1,
       maxWidth: '100%',
-      // A button with no resting fill, on its own line under a section's text, puts its label on that
-      // text's edge; its hover and press fill reach into the gutter by the padding it gave up. The offset is
-      // visual only (not a negative margin): the section measures this button's box to choose between inline
-      // and stacked, and a margin-narrowed box wrapped the label and made the section flip between the two.
-      ...(underSectionText && variant === 'plain' && typeof chrome.style.paddingHorizontal === 'number'
+      // A button with no resting fill on a text edge puts its label on that edge, keeping its box (the hit area)
+      // the same size. On its own line under a section's text the box moves into the leading gutter by the padding
+      // it gave up; the offset is visual only (not a negative margin): the section measures this button's box to
+      // choose between inline and stacked, and a margin-narrowed box wrapped the label and made the section flip
+      // between the two. Ending a row (Select at the end of a phone's search row) the box stays where it is and
+      // its padding moves to the leading side: a box moved past the trailing edge would scroll its row sideways.
+      ...(textEdge === 'start' && variant === 'plain' && typeof chrome.style.paddingHorizontal === 'number'
         ? { position: 'relative', left: -(chrome.style.paddingHorizontal + (typeof chrome.style.borderWidth === 'number' ? chrome.style.borderWidth : 0)) }
+        : {}),
+      ...(textEdge === 'end' && variant === 'plain' && typeof chrome.style.paddingHorizontal === 'number'
+        ? { paddingLeft: chrome.style.paddingHorizontal * 2, paddingRight: 0 }
         : {}),
       opacity: state.disabled && !state.busy ? chrome.disabledOpacity : 1,
       // The shared press vocabulary: a discrete control scales under the finger

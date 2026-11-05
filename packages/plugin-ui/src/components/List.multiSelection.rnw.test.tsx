@@ -179,7 +179,7 @@ async function pressRow(
 
 async function chooseRow(container: HTMLElement, label: string): Promise<void> {
   const control = container.querySelector('[data-testid="happier-list-selection-mode"]');
-  await pressRow(container, label, { shiftKey: !control?.textContent?.includes('Done selecting') });
+  await pressRow(container, label, { shiftKey: control?.textContent !== 'Done' });
 }
 
 async function pressKey(

@@ -184,10 +184,11 @@ const searchTokenStyle = {
 const keyCapStyle = { borderWidth: 1, alignItems: 'center' } as const;
 
 /**
- * The control that enters and leaves multi-selection: a touch-sized plain button ("Select" / "Done selecting").
+ * The control that enters and leaves multi-selection: a touch-sized plain button ("Select" / "Done"). It ends a
+ * phone's search row, so its words stay short.
  * Every row's own menu and Space also enter selection; this is the visible way in on touch. On a hover-capable
  * pointer, modifier-click, Space and the row menu already select, so the list draws no "Select" there, only
- * "Done selecting" while a selection is open. `null` when the list cannot select.
+ * "Done" while a selection is open. `null` when the list cannot select.
  */
 export function useListSelectionModeControl(store: ListMultiSelectionStore | null, selectable: boolean): ReactNode {
   const snapshot = useListMultiSelectionStoreSnapshot(store);
@@ -197,7 +198,7 @@ export function useListSelectionModeControl(store: ListMultiSelectionStore | nul
   if (!snapshot.isSelectionMode && precisePointer) return null;
   return (
     <Button title={snapshot.isSelectionMode
-      ? translate('happier.plugin-ui.list.finishSelection', 'Done selecting')
+      ? translate('happier.plugin-ui.list.finishSelection', 'Done')
       : translate('happier.plugin-ui.list.selectItems', 'Select')}
       variant="plain" testID="happier-list-selection-mode"
       onPress={() => { if (snapshot.isSelectionMode) store.exit(); else store.enter(); }} />

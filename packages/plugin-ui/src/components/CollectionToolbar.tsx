@@ -19,6 +19,7 @@ import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
 import { Menu, SheetMenu, type MenuGroup, type MenuItem, type MenuRadioGroup } from './Overlay.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 import { Status } from './Status.js';
 import type { TextTone } from './Text.js';
 
@@ -306,6 +307,12 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
   const said =
     freshness == null || freshness.tone === 'muted' ? null : freshness;
   const head = slots?.title != null || search !== null;
+  // Select is an action on the list, as Filters and ⋯ are: it ends the search row, where the search gives way to it,
+  // and never shares the lens row, whose segmented lens and switch leave it no room on a phone (it wrapped mid-word).
+  const selection = measured('selection', slots?.selection, compactSelectionStyle);
+  // Ending the search row, its words stand on the toolbar's trailing edge, as the switch below ends on it.
+  const trailingSelection = selection === null ? null
+    : <HappierTextActionEdgeContext.Provider value="end">{selection}</HappierTextActionEdgeContext.Provider>;
   return (
     <Stack gap="small" testID={props.testID} onLayout={(event) => fit?.width(event.nativeEvent.layout.width)}>
       {head ? (
@@ -313,12 +320,14 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
           {measured('title', slots?.title)}
           {search}
           {buttons}
+          {trailingSelection}
         </Row>
       ) : null}
       <Row gap="small" align="center">
-        <Row gap="small" align="center" style={compactLeadStyle}>
+        {/* A transient accessory wraps under the lens instead of covering it. */}
+        <Row gap="small" wrap align="center" style={compactLeadStyle}>
           {measured('lens', props.lens, compactLensStyle)}
-          {measured('selection', slots?.selection)}
+          {head ? null : selection}
           {measured('accessory', props.accessory)}
         </Row>
         <View style={compactFreshnessStyle}>
@@ -416,6 +425,8 @@ const leadStyle: HappierPortableStyle = {
 // pane): freshness, Refresh, the switch and Run on stay where the eye finds them, never stranded on the left.
 const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
+/** A control's words never break inside the folded toolbar; search gives way. */
+const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
 const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** The sheet's quiet Clear and its one primary end the footer together. */
 const sheetFooterStyle: HappierPortableStyle = { flexGrow: 1 };

@@ -38,6 +38,8 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         // A template: the public `FreshnessLine` puts its time into `{time}`, keeping each locale's order.
         'happier.plugin-ui.state.asOf': t('surfaceState.asOf', { time: '{time}' }),
         'happier.plugin-ui.list.moreActions': t('ui.pluginUi.moreActions'),
+        // The list's way out of multi-selection: the app's own "Done".
+        'happier.plugin-ui.list.finishSelection': t('common.done'),
         'happier.plugin-ui.resize.label': t('ui.resizableDockedPane.resizeA11y'),
         'happier.plugin-ui.resize.hint': t('ui.resizableDockedPane.resizeHint'),
         // Translation functions interpolate this numeric parameter verbatim; the component fills the template.

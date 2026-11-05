@@ -595,6 +595,24 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it("on a phone places Select beside the search's round buttons, never squeezed between the lens and the view switch", () => {
+    const store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const view = mount({ search, header: toolbarHeader([]), renderPopover: openPopover, selection: { multiple: { store } } });
+    view.measure(390);
+    const mode = view.query('happier-list-selection-mode')!;
+    expect(mode).not.toBeNull();
+    // The lens row holds the lens and the arrangement switch only; Select joins Filters and ⋯ in the search row, so
+    // the row that holds Select also holds the search, and that row is not the whole two-row toolbar.
+    const toolbar = view.query('toolbar')!;
+    let row: HTMLElement | null = mode.parentElement;
+    while (row !== null && !row.contains(view.query('search'))) row = row.parentElement;
+    expect(row).not.toBeNull();
+    expect(row).not.toBe(toolbar);
+    expect(toolbar.contains(row)).toBe(true);
+    expect(row!.contains(view.query('lens'))).toBe(false);
+    view.unmount();
+  });
+
   it('resizes the split geometry while preserving its open detail and composition', () => {
     const motion = createManualMotion();
     const commit = vi.fn();
@@ -4804,7 +4822,7 @@ describe("the search in the caller's header row", () => {
       expect(store.getSnapshot().isSelectionMode).toBe(true);
       expect([...store.getSnapshot().selectedKeys]).toEqual(['a']);
       expect(view.query('happier-list-selection-mode')?.textContent).toContain(
-        'Done selecting',
+        'Done',
       );
       expect(view.openChanges).toEqual([]);
       await act(async () => {
@@ -4826,7 +4844,7 @@ describe("the search in the caller's header row", () => {
       expect(store.getSnapshot().isSelectionMode).toBe(true);
       expect([...store.getSnapshot().selectedKeys]).toEqual(['b']);
       expect(view.query('happier-list-selection-mode')?.textContent).toContain(
-        'Done selecting',
+        'Done',
       );
       expect(view.openChanges).toEqual([]);
       await act(async () => {

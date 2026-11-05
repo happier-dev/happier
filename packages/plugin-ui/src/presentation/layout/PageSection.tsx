@@ -21,6 +21,7 @@ import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from './pageText.js';
 import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from './Surface.js';
 import type { HappierSurfaceGradient } from './material.js';
 import { HappierBodyEdgeContext } from './columnEdge.js';
+import { HappierTextActionEdgeContext } from '../interaction/textActionEdge.js';
 import { happierRaisedEdgeStyle, type HappierRaisedEdge } from './raisedEdge.js';
 
 /**
@@ -125,12 +126,6 @@ function renderSectionText(
 /** Between a section's text and its action. */
 const SECTION_ACTION_GAP_PX = 12;
 
-/**
- * True while a section's action sits on its own line beneath the text (a narrow page). A button with
- * no resting fill (`plain`) reads it to put its label on the section's text edge instead of insetting
- * the label by its own padding.
- */
-export const HappierSectionActionStackedContext = createContext(false);
 
 /**
  * A page section's heading: a sentence-case title with its description above
@@ -209,7 +204,7 @@ export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
           // title's line whatever the description below; its own box may reach past that line.
           style={stacked || !hasTitle ? null : { height: HAPPIER_PAGE_TEXT.sectionTitle.lineHeight, justifyContent: 'center' }}
         >
-          <HappierSectionActionStackedContext.Provider value={stacked}>{props.action}</HappierSectionActionStackedContext.Provider>
+          <HappierTextActionEdgeContext.Provider value={stacked ? 'start' : null}>{props.action}</HappierTextActionEdgeContext.Provider>
         </View>
       ) : null}
     </View>
