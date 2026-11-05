@@ -109,7 +109,9 @@ export function projectAccountFollowRuleReceiverCounts(listed: AccountFollowRule
     if (listed?.status !== 'listed') return null;
     const counts = new Map<string, number>();
     for (const row of listed.rows) {
-        if (parseSessionFollowRulePhysicalKeyV1(row.physicalKey) === null) return null;
+        // An unaddressable row cannot establish rule membership. Keep the
+        // admitted rules usable rather than withdrawing the entire census.
+        if (parseSessionFollowRulePhysicalKeyV1(row.physicalKey) === null) continue;
         if (row.envelope?.receiver.kind === 'session') {
             const id = row.envelope.receiver.sessionId;
             counts.set(id, (counts.get(id) ?? 0) + 1);

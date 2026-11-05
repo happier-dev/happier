@@ -5,7 +5,8 @@ import {
 } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { log } from '@/utils/logging/log';
-import { mapPendingActivationAuthorization, readPendingActivationTargetInTx, type PendingActivationTarget } from './pendingActivationAuthorization';
+import { mapPendingActivationAuthorization, readPendingActivationTargetInTx, readPendingActivationTargetsInTx, type PendingActivationTarget } from './pendingActivationAuthorization';
+import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionAccess';
 import type { ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { readPendingManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
@@ -22,22 +23,35 @@ export async function loadPendingActivationPublication(sessionId: string) {
 }
 
 export async function loadPendingActivationPublicationInTx(tx: Tx, sessionId: string) {
-    const row = await tx.session.findUnique({
-        where: { id: sessionId },
-        select: {
-            lastActiveAt: true,
-            pendingActivationRequestId: true,
-            pendingActivationRequestedAt: true,
-            pendingActivationStatus: true,
-            pendingActivationFailureCode: true,
-            pendingActivationManagedTarget: true,
-        },
-    });
-    if (!row) return null;
-    const authorization = mapPendingActivationAuthorization(row);
-    if (authorization?.status !== 'waiting') return authorization ?? null;
-    const target = await readPendingActivationTargetInTx(tx, sessionId);
-    return { ...authorization, ...(target?.machinePublication ? { admittedTarget: target.machinePublication.target } : {}) };
+    return (await loadPendingActivationPublicationsInTx(tx, [sessionId])).get(sessionId) ?? null;
+}
+
+export async function loadPendingActivationPublicationsInTx(tx: Tx, sessionIds: readonly string[]) {
+    const result = new Map<string, NonNullable<ReturnType<typeof mapPendingActivationAuthorization>> & { admittedTarget?: NonNullable<PendingActivationTarget['machinePublication']>['target'] }>();
+    const ids = [...new Set(sessionIds)];
+    for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+        const rows = await tx.session.findMany({
+            where: { id: { in: ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
+            select: {
+                id: true,
+                lastActiveAt: true,
+                pendingActivationRequestId: true,
+                pendingActivationRequestedAt: true,
+                pendingActivationStatus: true,
+                pendingActivationFailureCode: true,
+                pendingActivationManagedTarget: true,
+            },
+        });
+        const targets = await readPendingActivationTargetsInTx(tx, rows.filter(row => mapPendingActivationAuthorization(row)?.status === 'waiting').map(row => row.id));
+        for (const row of rows) {
+            const authorization = mapPendingActivationAuthorization(row);
+            if (!authorization) continue;
+            const target = targets.get(row.id);
+            result.set(row.id, { ...authorization, ...(authorization.status === 'waiting' && target?.machinePublication
+                ? { admittedTarget: target.machinePublication.target } : {}) });
+        }
+    }
+    return result;
 }
 
 export async function emitPendingChanged(params: {

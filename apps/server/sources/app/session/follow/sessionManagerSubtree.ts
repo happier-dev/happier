@@ -25,6 +25,8 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
     rootSessionId: string;
     authentication: SessionAccessAuthentication;
     collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
+    /** Exact document demand walks only these Sessions' manager ancestry. */
+    sessionIds?: readonly string[];
     /** Only list and list-document demand owners request a read of this runtime's own tree. */
     allowSessionRuntimeManagedSubtreeRead?: true;
 }>): Promise<string[]> {
@@ -52,24 +54,49 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
     });
     if (!root || (root.accountId !== input.accountId && !isSessionTranscriptShareable(root))) return [];
 
+    const selected = input.sessionIds === undefined ? undefined : new Set(input.sessionIds);
     const reachable = new Set([root.id]);
-    let frontier = [root.id];
+    let frontier = selected ? [...selected].filter(id => id !== root.id) : [root.id];
+    const visited = new Set([root.id, ...frontier]);
+    const children = new Map<string, string[]>();
     while (frontier.length > 0) {
         const edges = await tx.sessionFollowEdge.findMany({
-            where: { relation: 'manager', destinationSessionId: { in: frontier } },
-            select: { sourceSessionId: true },
+            where: { relation: 'manager', ...(selected
+                ? { sourceSessionId: { in: frontier } }
+                : { destinationSessionId: { in: frontier } }) },
+            select: { sourceSessionId: true, destinationSessionId: true },
         });
         frontier = [];
         for (const edge of edges.filter(hasSessionFollowSessionSource)) {
-            if (reachable.has(edge.sourceSessionId)) continue;
-            reachable.add(edge.sourceSessionId);
-            frontier.push(edge.sourceSessionId);
+            const next = selected ? edge.destinationSessionId : edge.sourceSessionId;
+            if (selected) {
+                const siblings = children.get(edge.destinationSessionId) ?? [];
+                siblings.push(edge.sourceSessionId);
+                children.set(edge.destinationSessionId, siblings);
+            } else {
+                reachable.add(edge.sourceSessionId);
+            }
+            if (visited.has(next)) continue;
+            visited.add(next);
+            frontier.push(next);
+        }
+    }
+    if (selected) {
+        // Ancestry can cross unreadable intermediates, just like full listing.
+        // Only paths ending at the admitted root establish membership.
+        const pending = [root.id];
+        while (pending.length) {
+            for (const id of children.get(pending.pop()!) ?? []) {
+                if (reachable.has(id)) continue;
+                reachable.add(id);
+                pending.push(id);
+            }
         }
     }
     // Traverse unreadable intermediates without returning their identity. The
     // canonical access owner also restricts Runner credentials to current_session.
     const rows = await tx.session.findMany({
-        where: { AND: [access.where, { id: { in: [...reachable] } }] },
+        where: { AND: [access.where, { id: { in: selected ? [...selected].filter(id => reachable.has(id)) : [...reachable] } }] },
         select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
     });
     return rows.filter((row) => row.accountId === input.accountId || isSessionTranscriptShareable(row))

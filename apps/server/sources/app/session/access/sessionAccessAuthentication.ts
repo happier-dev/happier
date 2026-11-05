@@ -3,7 +3,6 @@ import type { ApiTokenGrantV1, CallerInputConstraintsV1 } from "@happier-dev/pro
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import {
-    qualifyTeamAuthenticationInTx,
     qualifyTeamAuthenticationsInTx,
     type TeamAuthenticationQualificationV1,
 } from "@/app/auth/entry/qualifyTeamAuthentication";
@@ -126,10 +125,20 @@ export async function qualifySessionTeamAuthenticationInTx(
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<TeamAuthenticationQualificationV1> {
+    const qualifications = await qualifySessionTeamAuthenticationsInTx(tx, { ...input, teams: [input.team] });
+    return qualifications.get(input.team.id) ?? { status: 'unavailable' };
+}
+
+/** One credential's current qualifications for transaction-loaded Session grant rows. */
+export async function qualifySessionTeamAuthenticationsInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    teams: readonly Readonly<{ id: string; authenticationPolicy: unknown }>[];
+    authentication: SessionAccessAuthentication;
+}>): Promise<ReadonlyMap<string, TeamAuthenticationQualificationV1>> {
     const authentication = input.authentication;
-    return qualifyTeamAuthenticationInTx(tx, {
+    return qualifyTeamAuthenticationsInTx(tx, {
         env: authentication.env,
-        team: input.team,
+        teams: input.teams,
         accountId: input.accountId,
         verifiedCredentialEvidence: authentication.authenticationEvidence,
         operationContext: { kind: authentication.authority },
@@ -166,12 +175,10 @@ export async function resolveQualifiedSessionTeamIdsInTx(
     // A batch of more than one presents no evidence by the invariant above, and
     // evidence is the only way an Account reaches this decision, so the Account
     // named here is the exact one whenever it matters.
-    const qualifications = await qualifyTeamAuthenticationsInTx(tx, {
-        env: authentication.env,
+    const qualifications = await qualifySessionTeamAuthenticationsInTx(tx, {
         teams: input.teams,
         accountId: accountIds[0],
-        verifiedCredentialEvidence: authentication.authenticationEvidence,
-        operationContext: { kind: authentication.authority },
+        authentication,
     });
     for (const [teamId, qualification] of qualifications) {
         if (qualification.status === "satisfied") qualified.add(teamId);

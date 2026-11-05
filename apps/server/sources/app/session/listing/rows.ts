@@ -33,6 +33,7 @@ import {
     type SessionPersonalDiscussionFacts,
 } from "@/app/session/personal/discussionFacts";
 import { createSessionPersonalProjectionSelect, projectSessionViewer } from "@/app/session/personal/projection";
+import type { SessionRuleReadStates } from "@/app/session/personal/readState";
 import type { AccountRecipientEnvelopeReadinessReadScope } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import {
     projectEffectiveSessionAccess,
@@ -360,6 +361,7 @@ type SessionRowMappingParams = Readonly<{
      */
     discussionFacts?: ReadonlyMap<string, SessionPersonalDiscussionFacts>;
     latestFailureSequences?: ReadonlyMap<string, number>;
+    ruleReadStates?: ReadonlyMap<string, SessionRuleReadStates>;
     hasOtherNamedCollaborator?: boolean;
     effectiveAccess?: EffectiveSessionAccess;
     recipientReadiness?: AccountRecipientEnvelopeReadinessReadScope;
@@ -460,6 +462,7 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
         : projectSessionViewer({
             row,
             latestFailureSeq: params.latestFailureSequences?.get(row.id) ?? null,
+            ruleReadStates: params.ruleReadStates?.get(row.id),
             viewerAccountId: userId,
             recipientReadiness: params.recipientReadiness,
             discussion: params.discussionFacts?.get(row.id) ?? QUIET_SESSION_PERSONAL_DISCUSSION_FACTS,
@@ -557,6 +560,7 @@ export function mapV2SessionOwnerRow(
     ownerAccountMode?: SessionMetadataOwnerAccountMode,
     discussionFacts?: ReadonlyMap<string, SessionPersonalDiscussionFacts>,
     latestFailureSequences?: ReadonlyMap<string, number>,
+    ruleReadStates?: ReadonlyMap<string, SessionRuleReadStates>,
 ): V2SessionRecord {
     const {
         rollbackEligibleTurnStarts: _rollbackEligibleTurnStarts,
@@ -567,6 +571,7 @@ export function mapV2SessionOwnerRow(
         ownerAccountMode,
         discussionFacts,
         latestFailureSequences,
+        ruleReadStates,
     });
     return session;
 }

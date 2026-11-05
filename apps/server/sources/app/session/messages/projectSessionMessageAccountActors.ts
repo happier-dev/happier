@@ -4,6 +4,7 @@ import {
 } from "@/app/account/profile/accountDisplayProfile";
 import { warn } from "@/utils/logging/log";
 import { inTx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { SessionMessageAccountActorV1Schema, deriveSessionMessageAuthorAccountIdV1, type SessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 
 /**
@@ -54,10 +55,14 @@ export async function projectAuthenticatedAccountActorsById(
     const uniqueAccountIds = [...new Set(validAccountIds.filter((id): id is string => id !== null))];
     if (uniqueAccountIds.length === 0) return validAccountIds.map(() => null);
 
-    const accounts = await reader.account.findMany({
-        where: { id: { in: uniqueAccountIds } },
-        select: ACCOUNT_DISPLAY_PROFILE_SELECT,
-    });
+    const accounts: Awaited<ReturnType<AccountDisplayProfileReader['account']['findMany']>>[number][] = [];
+    // SQLite's unbounded findMany also binds its LIMIT/OFFSET transport values.
+    for (const ids of portableQueryChunks({ values: uniqueAccountIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+        accounts.push(...await reader.account.findMany({
+            where: { id: { in: [...ids] } },
+            select: ACCOUNT_DISPLAY_PROFILE_SELECT,
+        }));
+    }
     const profilesByAccountId = new Map(
         accounts.map((account) => [account.id, projectAccountDisplayProfileV1(account)] as const),
     );

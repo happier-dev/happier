@@ -36,6 +36,7 @@ import { registerSessionPatchRoute } from './registerSessionPatchRoute';
 import { registerSessionCreateOrLoadRoute } from './registerSessionCreateOrLoadRoute';
 import { createMaterializedEphemeralRunnerFixture } from '@/app/ephemeralRunner/materializedRunner.testkit';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
+import { sessionReadBatchCostContract } from './sessionReadBatchCost.testkit';
 
 // The actual read owners are sufficient; Session deletion and mutation registrars
 // are not part of this transport's HTTP/authentication contract.
@@ -55,6 +56,8 @@ describe('Session id-batched reads (SQLite integration)', () => {
         } });
     }, 120_000);
     afterAll(async () => { await harness?.close(); vi.unstubAllEnvs(); });
+
+    sessionReadBatchCostContract('sqlite');
 
     it('atomically creates pre-encrypted display before the server allocates its Session id', async () => {
         const sessionKey = new Uint8Array(32).fill(8);

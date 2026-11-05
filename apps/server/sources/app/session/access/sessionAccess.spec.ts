@@ -103,8 +103,13 @@ describe("Session effective capability projection", () => {
         const invocationConstraints = { models: null, permissionModes: ["default" as const] };
         const direct = readSessionAccessAuthenticationFromRequest({ authAuthority: "account_automation", apiTokenPrincipal: principal });
         const effect = readSessionAccessAuthenticationFromRequest({ authAuthority: "account_automation", apiTokenPrincipal: principal,
-            externalActionExecutionAuthorized: true, externalActionInputConstraints: invocationConstraints });
+            externalActionExecutionAuthorized: true, externalActionSessionAccessAdmitted: true, externalActionInputConstraints: invocationConstraints });
         expect(direct.apiTokenGrant).toEqual(principal.grant);
+        const unadmitted = readSessionAccessAuthenticationFromRequest({ authAuthority: "account_automation", apiTokenPrincipal: principal,
+            externalActionExecutionAuthorized: true, externalActionInputConstraints: invocationConstraints });
+        expect(unadmitted.apiTokenGrant).toEqual(principal.grant);
+        expect(await resolveSessionAccessForOperation({} as Tx, { accountId: "owner", sessionId: "session",
+            authentication: unadmitted, row: session(), capability: "submitAgentInput" })).toEqual({ status: "unavailable" });
         expect(effect).not.toHaveProperty("apiTokenGrant");
         expect(effect.callerInputConstraints).toEqual({ models: null, permissionModes: ["default"] });
         expect(await resolveSessionAccessForOperation({} as Tx, { accountId: "owner", sessionId: "session",

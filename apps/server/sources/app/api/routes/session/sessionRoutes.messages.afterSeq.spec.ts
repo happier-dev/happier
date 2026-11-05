@@ -54,10 +54,6 @@ describe("sessionRoutes v1 messages pagination", () => {
             expect(page.messages.map(message => message.id)).toEqual(["message-7"]);
             expect(page).toMatchObject({ hasMore: false, nextBeforeSeq: null, nextAfterSeq: null });
             expect(acquiredRows).toBe(1);
-            expect(sessionMessageFindMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: expect.objectContaining({ id: "message-7", sessionId: "s1", messageRole: "agent",
-                    session: expect.objectContaining({ AND: expect.any(Array) }) }),
-            }));
         } finally { await app.close(); }
     });
 
@@ -77,7 +73,7 @@ describe("sessionRoutes v1 messages pagination", () => {
         },
     );
 
-    it('states exact admitted references or null on authenticated publication HTTP pages', async () => {
+    it.each([false, true])('retains admitted references on transcript HTTP pages (explicit publication: %s)', async explicitPublication => {
         const surfaceItemReference = { v: 1, references: [{ v: 1, itemId: 'visual', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
             sourceAddress: { serverId: 'home', sessionId: 's1' } }] };
         sessionMessageFindMany.mockResolvedValue([
@@ -93,14 +89,15 @@ describe("sessionRoutes v1 messages pagination", () => {
         await app.ready();
         try {
             const response = await app.inject({ method: 'GET',
-                url: '/v1/sessions/s1/messages?scope=main&projection=externalShareableV1',
+                url: `/v1/sessions/s1/messages?scope=main${explicitPublication ? '&projection=externalShareableV1' : ''}`,
                 headers: { 'x-test-user-id': 'u1' } });
             expect(response.statusCode).toBe(200);
             const page = SessionMessagesPageV1Schema.parse(response.json());
             expect(page.messages).toEqual(expect.arrayContaining([
                 expect.objectContaining({ id: 'm1', surfaceItemReference }),
-                expect.objectContaining({ id: 'm2', surfaceItemReference: null }),
+                expect.objectContaining({ id: 'm2', ...(explicitPublication ? { surfaceItemReference: null } : {}) }),
             ]));
+            if (!explicitPublication) expect(page.messages.find(row => row.id === 'm2')).not.toHaveProperty('surfaceItemReference');
             expect(sessionMessageFindMany).toHaveBeenCalledWith(expect.objectContaining({
                 select: expect.objectContaining({ surfaceItemReference: true }),
             }));

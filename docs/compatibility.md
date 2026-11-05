@@ -5279,3 +5279,13 @@ without exposing the omitted identity. These tokens bind the actor, Home, owner
 scope and target selection and require the updated target-list reader. Existing
 raw admitted-row cursors and requests without cursors remain valid. Environment
 cursor bindings and persistence formats do not change.
+
+## Session read batches (unreleased 0.3)
+
+The development server reads each requested
+kind as a set in one admission snapshot, using the existing portable SQL chunks.
+The access owner decides each Session independently; only allowed ids reach the
+content queries. Message batches retain each Session's existing first-page size,
+lookahead and cursor, and share envelope/actor projection with scalar reads.
+No wire or persisted shape changes. This source contract does not establish
+loaded cold Plans/Coach latency; that requires a recount on the loaded server.

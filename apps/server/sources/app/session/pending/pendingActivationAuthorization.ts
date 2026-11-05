@@ -12,10 +12,10 @@ import { getActivePrismaRuntime } from '@/storage/db';
 import { readManagedPendingActivationHoldReasonInTx, resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
 import { projectManagedMachine } from '@/app/machines/managed/managedRows';
 import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
-import { isCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
+import { isCurrentSessionInputMachineTargetInTx, areCurrentSessionInputMachineTargetsInTx } from '@/app/session/messages/sessionInputAdmission';
 import { readPendingSessionInputAdmission } from './pendingInputAdmission';
 export { readPendingOwnerInputAdmission } from './pendingInputAdmission';
-import type { EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
+import { SESSION_ACCESS_SESSION_BATCH_SIZE, type EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import { PendingActivationFailureCodeV1Schema, PendingActivationFailureDetailsV1Schema,
     type PendingActivationFailureDetailsV1, type PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PendingMessageRowRaw } from './mapPendingMessageRow';
@@ -284,21 +284,44 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
 
 /** Reconnect and lossy hints read one exact retained receipt, never enumerate candidate keys. */
 export async function readPendingActivationTargetInTx(tx: Tx, sessionId: string): Promise<PendingActivationTarget | undefined> {
-    const session = await tx.session.findUnique({ where: { id: sessionId }, select: { ...AUTHORIZATION_SELECT, archivedAt: true } });
-    if (!session || session.archivedAt !== null || session.pendingActivationStatus !== 'waiting'
-        || !session.pendingActivationRequestId || !session.pendingActivationRequestedAt) return undefined;
-    const row = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
-        sessionId, localId: session.pendingActivationRequestId }, targetExecutionRunId: null },
-        select: { status: true, messageRole: true, deliveryState: true, providerAction: true,
-            authorAccountId: true, inputAdmissionReceipt: true } });
-    const receipt = row && readPendingSessionInputAdmission({ sessionId, accountId: session.accountId, pending: row });
-    if (!row || row.status !== 'queued' || row.messageRole !== 'user' || row.deliveryState !== null || row.providerAction !== null
-        || !receipt || !receipt.admittedTarget
-        || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.admittedTarget)) return undefined;
-    const machine = await tx.machine.findUniqueOrThrow({ where: { id: receipt.admittedTarget.machineId }, select: { accountId: true } });
-    return { accountId: session.accountId, requestId: session.pendingActivationRequestId,
-        machinePublication: { target: receipt.admittedTarget, custodianAccountId: machine.accountId,
-            requestedAt: session.pendingActivationRequestedAt.getTime() } };
+    return (await readPendingActivationTargetsInTx(tx, [sessionId])).get(sessionId);
+}
+
+/** Exact retained receipts and installation currentness, read as a set in the caller's snapshot. */
+export async function readPendingActivationTargetsInTx(tx: Tx, sessionIds: readonly string[]): Promise<ReadonlyMap<string, PendingActivationTarget>> {
+    const result = new Map<string, PendingActivationTarget>();
+    const ids = [...new Set(sessionIds)];
+    for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+        const sessions = await tx.session.findMany({ where: { id: { in: ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
+            select: { ...AUTHORIZATION_SELECT, id: true, archivedAt: true } });
+        const waiting = sessions.filter(session => session.archivedAt === null && session.pendingActivationStatus === 'waiting'
+            && session.pendingActivationRequestId && session.pendingActivationRequestedAt);
+        if (!waiting.length) continue;
+        const pending = await tx.sessionPendingMessage.findMany({ where: { targetExecutionRunId: null,
+            OR: waiting.map(session => ({ sessionId: session.id, localId: session.pendingActivationRequestId! })) },
+            select: { sessionId: true, localId: true, status: true, messageRole: true, deliveryState: true, providerAction: true,
+                authorAccountId: true, inputAdmissionReceipt: true } });
+        const bySession = new Map(pending.map(row => [row.sessionId, row]));
+        const candidates = waiting.flatMap(session => {
+            const row = bySession.get(session.id);
+            const receipt = row && row.localId === session.pendingActivationRequestId
+                ? readPendingSessionInputAdmission({ sessionId: session.id, accountId: session.accountId, pending: row }) : undefined;
+            return row?.status === 'queued' && row.messageRole === 'user' && row.deliveryState === null && row.providerAction === null && receipt?.admittedTarget
+                ? [{ session, target: receipt.admittedTarget }] : [];
+        });
+        const current = await areCurrentSessionInputMachineTargetsInTx(tx, candidates.map(row => row.target));
+        const admitted = candidates.filter((_row, index) => current[index]);
+        if (!admitted.length) continue;
+        const machines = await tx.machine.findMany({ where: { id: { in: [...new Set(admitted.map(row => row.target.machineId))] } }, select: { id: true, accountId: true } });
+        const custodians = new Map(machines.map(row => [row.id, row.accountId]));
+        for (const { session, target } of admitted) {
+            const custodianAccountId = custodians.get(target.machineId);
+            if (!custodianAccountId) throw new Error('Current pending activation Machine missing');
+            result.set(session.id, { accountId: session.accountId, requestId: session.pendingActivationRequestId!,
+                machinePublication: { target, custodianAccountId, requestedAt: session.pendingActivationRequestedAt!.getTime() } });
+        }
+    }
+    return result;
 }
 
 export async function reconcilePendingActivationAuthorizationForRemovedRequestInTx(params: Readonly<{

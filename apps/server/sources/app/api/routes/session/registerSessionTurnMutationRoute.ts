@@ -1,83 +1,15 @@
-import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import { SessionTurnMutationReceiptV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { z } from "zod/mini";
-
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
-import { readCurrentSessionAccessForOperation } from "@/app/session/access/sessionAccess";
-import {
-    isExternalShareableSessionTurnVisible,
-    isSessionTranscriptShareable,
-    loadSessionTranscriptPublication,
-    resolveSessionTranscriptNonOwnerRecencyMs,
-} from "@/app/session/sessionTranscriptPublicationPolicy";
-import {
-    parseStoredSessionTurns,
-    type SessionTurnStoredRow,
-} from "@/app/session/turns/parseSessionTurnState";
 import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
 import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
-import { inReadSnapshot } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
+import { readSessionTurns } from './readSessionTurns';
+export { readSessionTurns } from './readSessionTurns';
 
-
-/** Shared single/batch read; admission, publication and storage policy stay at this owner. */
-export async function readSessionTurns(input: Readonly<{ userId: string; sessionId: string; authentication: SessionAccessAuthentication }>): Promise<
-    | { status: 200; body: z.infer<typeof SessionTurnsProjectionV1Schema> }
-    | { status: 404; body: { error: 'Session not found' } }
-> {
-    const { userId, sessionId, authentication } = input;
-    const { session, rows, publication, currentlyAccessible } = await inReadSnapshot(async (tx) => {
-        const currentParticipantWhere = { AND: [{ id: sessionId }, await buildSessionAccessWhere({ tx, accountId: userId, capability: 'readTranscript', mode: 'effective_access_v1', authentication })] };
-        const rows = await tx.sessionTurn.findMany({
-            where: {
-                sessionId,
-                session: currentParticipantWhere,
-            },
-            orderBy: [{ updatedAt: "asc" }, { createdAt: "asc" }],
-        }) as SessionTurnStoredRow[];
-        const session = await tx.session.findFirst({
-            where: currentParticipantWhere,
-            select: {
-                latestTurnId: true,
-                updatedAt: true,
-            },
-        });
-        const publication = await loadSessionTranscriptPublication(tx, sessionId);
-        return {
-            session,
-            rows,
-            publication,
-            currentlyAccessible: session !== null,
-        };
-    });
-    if (!session || !currentlyAccessible || (await readCurrentSessionAccessForOperation({
-        accountId: userId, sessionId, authentication, capability: "readTranscript",
-    })).status !== "allowed") {
-        return { status: 404, body: { error: "Session not found" } };
-    }
-
-    const visibleRows = rows.filter((row) =>
-        isExternalShareableSessionTurnVisible({ row, publication }));
-    const turns = parseStoredSessionTurns(visibleRows);
-    const visibleTurnIds = new Set(turns.map((turn) => turn.turnId));
-    const updatedAt = isSessionTranscriptShareable(publication)
-        ? resolveSessionTranscriptNonOwnerRecencyMs(publication, session.updatedAt)
-        : 0;
-
-    return { status: 200, body: {
-        v: 1 as const,
-        sessionId,
-        ...(session.latestTurnId && visibleTurnIds.has(session.latestTurnId)
-            ? { latestTurnId: session.latestTurnId }
-            : {}),
-        updatedAt,
-        turns,
-    } };
-}
 export function registerSessionTurnMutationRoute(app: Fastify) {
     app.post("/v1/sessions/:sessionId/turns/mutations", {
         preHandler: app.authenticate,

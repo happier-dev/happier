@@ -6,8 +6,10 @@ import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } f
 import { buildSessionReadableAccountWhereInTx } from "./sessionAccessWhere";
 import type { SessionCollectiveAccessSnapshot } from "./sessionAccessWhere";
 import { verifyCurrentMaterializedRunnerPrincipalInTx } from "@/app/ephemeralRunner/materializedRunnerPrincipalCurrentness";
+import { mayInjectSessionContextInTx } from './sessionContextInjection';
 import {
     qualifySessionTeamAuthenticationInTx,
+    qualifySessionTeamAuthenticationsInTx,
     resolveQualifiedSessionTeamIdsInTx,
     type SessionAccessAuthentication,
 } from "./sessionAccessAuthentication";
@@ -285,6 +287,15 @@ export async function resolveSessionAccessForOperation(
         row?: SessionAccessProjectionRow;
     }>,
 ): Promise<SessionAccessOperationDecision> {
+    return resolveSessionAccessForOperationWithTeamQualifications(reader, input);
+}
+
+/** Batch callers carry same-snapshot qualification facts; every access decision stays here. */
+async function resolveSessionAccessForOperationWithTeamQualifications(
+    reader: Tx,
+    input: Parameters<typeof resolveSessionAccessForOperation>[1],
+    teamQualifications?: Awaited<ReturnType<typeof qualifySessionTeamAuthenticationsInTx>>,
+): Promise<SessionAccessOperationDecision> {
     const grant = input.authentication.apiTokenGrant;
     const exactTokenAction = grant && input.apiTokenAction;
     if (grant && exactTokenAction && !evaluateApiTokenGrantV1({
@@ -292,7 +303,7 @@ export async function resolveSessionAccessForOperation(
         target: { kind: "session", sessionId: input.sessionId },
         targetMachineId: exactTokenAction.targetMachineId,
     }).ok) return { status: "unavailable" };
-    const admitAccess = (resolved: EffectiveSessionAccess): SessionAccessOperationDecision => {
+    const admitAccess = async (resolved: EffectiveSessionAccess): Promise<SessionAccessOperationDecision> => {
         let access = resolved;
         if (input.authentication.apiTokenGrant) {
             const ceiling = new Set<string>(resolveApiTokenSessionCapabilityCeilingV1(input.authentication.apiTokenGrant));
@@ -304,9 +315,19 @@ export async function resolveSessionAccessForOperation(
         }
         // Exact Action admission still requires the underlying Account/share
         // capability; the capped projection continues to describe the UI surface.
-        return input.capability === undefined || (exactTokenAction ? resolved : access).capabilities[input.capability]
-            ? { status: "allowed", access }
-            : { status: "unavailable" };
+        if (input.capability !== undefined && !(exactTokenAction ? resolved : access).capabilities[input.capability]) {
+            return { status: 'unavailable' };
+        }
+        const destinationSessionId = input.authentication.contentDisclosureSessionId;
+        if (input.capability === 'readTranscript' && destinationSessionId && destinationSessionId !== input.sessionId) {
+            // Read admission, including the post-snapshot fence, observes the
+            // complete current destination audience. Pairwise projections do
+            // not request a content capability and therefore do not recurse.
+            const disclosure = await mayInjectSessionContextInTx(reader, { configuringAccountId: input.accountId,
+                sourceSessionId: input.sessionId, destinationSessionId, authentication: input.authentication });
+            if (!disclosure.ok) return { status: 'unavailable' };
+        }
+        return { status: 'allowed', access };
     };
     const runtimePrincipal = input.authentication.sessionRuntimePrincipal;
     if (
@@ -358,6 +379,7 @@ export async function resolveSessionAccessForOperation(
     let sawCollectiveEntitlement = false;
     const qualificationByTeamId = new Map<string, Awaited<ReturnType<typeof qualifySessionTeamAuthenticationInTx>>>();
     const qualifyTeam = async (team: Readonly<{ id: string; authenticationPolicy: unknown }>) => {
+        if (teamQualifications) return teamQualifications.get(team.id) ?? { status: 'unavailable' as const };
         const existing = qualificationByTeamId.get(team.id);
         if (existing) return existing;
         const qualification = await qualifySessionTeamAuthenticationInTx(reader, {
@@ -458,6 +480,23 @@ export async function resolveEffectiveSessionAccess(reader: Tx, input: { account
         authentication: input.authentication,
     });
     return decision.status === "allowed" ? decision.access : null;
+}
+
+/** Same-snapshot row decisions share Team qualification, never access policy or a later admission fence. */
+export async function resolveSessionAccessForRowsInTx(reader: Tx, input: Omit<Parameters<typeof resolveSessionAccessForOperation>[1], 'sessionId' | 'row'>,
+    rows: readonly SessionAccessProjectionRow[],
+): Promise<ReadonlyMap<string, SessionAccessOperationDecision>> {
+    const teams = input.authentication.sessionRuntimePrincipal || input.accessMode === 'legacy_owner_or_direct' ? [] : rows
+        .filter(row => row.accountId !== input.accountId && isSessionTranscriptShareable(row))
+        .flatMap(row => [
+            ...row.teamGrants.map(grant => ({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy })),
+            ...row.groupGrants.map(grant => ({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy })),
+        ]);
+    const teamQualifications = await qualifySessionTeamAuthenticationsInTx(reader, { ...input, teams });
+    const result = new Map<string, SessionAccessOperationDecision>();
+    for (const row of rows) result.set(row.id,
+        await resolveSessionAccessForOperationWithTeamQualifications(reader, { ...input, sessionId: row.id, row }, teamQualifications));
+    return result;
 }
 
 /** Batch row loading for one actor; every decision remains the exact operation resolver. */

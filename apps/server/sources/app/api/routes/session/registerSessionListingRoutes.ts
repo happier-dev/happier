@@ -8,13 +8,13 @@ import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT } from '@h
 import { V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
+import { readSessionObservationCursorInTx } from '@/app/session/access/readObservation';
 import { type Fastify } from "../../types";
 import {
     createV2SessionListRowSelect,
     createV2SessionListLegacyRowSelect,
     mapV2SessionListRow,
-    type V2SessionListRowCompat,
 } from "@/app/session/listing/rows";
 import { readSessionListOtherNamedCollaboratorFacts, readSessionListViewerDiscussionFacts } from "@/app/session/listing/page";
 import {
@@ -23,13 +23,17 @@ import {
 } from "@/app/session/listing/page";
 import { listSessionsForAccount, SessionListInvalidCursorError } from "@/app/session/listing/service";
 import { loadSessionLatestFailureSequencesInTx } from "@/app/session/personal/projection";
+import { loadSessionRuleReadStatesInTx } from "@/app/session/personal/readState";
+import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from "@/app/session/follow/accountFollowRuleService";
 import { createV2SessionListServerTiming } from "@/app/session/listing/timing";
 import { registerSessionFilteredListingRoute } from "./registerSessionFilteredListingRoute";
+import { parseProjectedSessionByIdResponse } from './sessionRecordResponse';
 import {
     createSessionMetadataListRepresentabilityWhere,
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
-    readSessionMetadataOwnerAccountMode,
+    deriveSessionMetadataOwnerAccountMode,
+    sessionMetadataOwnerAccountCurrentnessSelect,
     requiresSessionMetadataOwnerAccountMode,
     listSessionMetadataPrivacyUpgradeIdsInTx,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
@@ -37,17 +41,16 @@ import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
     readAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { resolveSessionAccessForOperation, projectSessionEffectiveAccessV1 } from "@/app/session/access/sessionAccess";
-import { readmitSessionRowsWithAdmissionInTx } from "@/app/session/access/sessionReadAdmission";
+import { resolveSessionAccessForRowsInTx, SESSION_ACCESS_SESSION_BATCH_SIZE, type SessionAccessOperationDecision } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
-import { loadPendingActivationPublicationInTx } from '@/app/session/pending/publishPendingMutation';
+import { loadPendingActivationPublicationsInTx } from '@/app/session/pending/publishPendingMutation';
+import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
+import { projectSessionManagerForRowsInTx } from "@/app/session/awareness/sessionManagerProjection";
+import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
+import { readAcceptedSessionTeamCredentialProviderModelBindingsInTx } from '@/app/teams/credentials/sessionBinding';
 import { readSessionManagedSubtreeSessionIdsInTx, projectSessionRuntimeManagedSubtreeAccess } from '@/app/session/follow/sessionManagerSubtree';
 import { SessionRuntimeManagedSubtreeSnapshotRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
-import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
-import { projectSessionManagerForRowsInTx, readmitCapturedSessionManagerReferencesInTx, type SessionManagerContribution } from "@/app/session/awareness/sessionManagerProjection";
-import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
-import { readAcceptedSessionTeamCredentialProviderModelBindingInTx } from '@/app/teams/credentials/sessionBinding';
 
 const SESSION_METADATA_PRIVACY_UPGRADE_REQUIRED_RESPONSE_SCHEMA = z.strictObject({
     error: z.literal("Session metadata privacy upgrade required"),
@@ -77,193 +80,181 @@ const V2_SESSION_LIST_QUERYSTRING_SCHEMA = z.optional(z.object({
     includeActive: OPTIONAL_BOOLEAN_QUERY_PARAM_SCHEMA,
 }).check(z.refine((value) => !(value.cursor && value.attentionCursor), { message: "cursor and attentionCursor cannot be combined" })));
 
-async function findV2SessionByIdRowInTx(tx: Tx, params: Readonly<{
+async function findV2SessionDetailRowsInTx(tx: Tx, params: Readonly<{
     userId: string;
-    sessionId: string;
-    authentication: SessionAccessAuthentication;
+    sessionIds: readonly string[];
     accessProjectionVersion?: number;
 }>) {
-    const readCurrentRow = () => tx.session.findUnique({
-        where: { id: params.sessionId },
-        select: createV2SessionListRowSelect(params),
+    const current = createV2SessionListRowSelect(params);
+    const legacy = createV2SessionListLegacyRowSelect(params);
+    const readCurrentRows = () => tx.session.findMany({
+        where: { id: { in: [...params.sessionIds] } },
+        select: { ...current, account: { select: { ...current.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } },
     });
+    const readLegacyRows = () => tx.session.findMany({
+        where: { id: { in: [...params.sessionIds] } },
+        select: { ...legacy, account: { select: { ...legacy.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } },
+    });
+    type Row = Awaited<ReturnType<typeof readCurrentRows>>[number] | Awaited<ReturnType<typeof readLegacyRows>>[number];
     // Only the released adapter permits migration-skew fallback. Current detail
     // must load its complete projection, including the canonical access facts.
-    const row = params.accessProjectionVersion === 1
-        ? await readCurrentRow()
-        : await runWithSessionListProjectionFallback<V2SessionListRowCompat | null>(
-            readCurrentRow,
-            () => tx.session.findUnique({
-                where: { id: params.sessionId },
-                select: createV2SessionListLegacyRowSelect(params),
-            }),
-        );
-    if (!row) return { admission: { status: "unavailable" as const }, row: null };
-    // Both projections admit the row already loaded in this snapshot. The
-    // resolver retains credential qualification and runtime-principal checks;
-    // readSessionDetail still performs its separate fresh final admission.
-    const admission = await resolveSessionAccessForOperation(tx, {
-        accountId: params.userId,
-        sessionId: params.sessionId,
-        authentication: params.authentication,
-        accessMode: params.accessProjectionVersion === 1 ? "effective_access_v1" : "legacy_owner_or_direct",
-        row,
-    });
-    return admission.status === "allowed" ? { admission, row } : { admission, row: null };
+    return params.accessProjectionVersion === 1 ? readCurrentRows()
+        : runWithSessionListProjectionFallback<Row[]>(readCurrentRows, readLegacyRows);
 }
 
-
-/** Shared single/batch read; admission, publication and storage policy stay at this owner. */
-export async function readSessionDetail(input: Readonly<{ userId: string; sessionId: string; authentication: SessionAccessAuthentication; accessProjectionVersion?: number; storedContentCompatibility: AccountStoredContentCompatibilityEvaluation; underSessionId?: string }>): Promise<
+type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAccessAuthentication; accessProjectionVersion?: number; storedContentCompatibility: AccountStoredContentCompatibilityEvaluation;
+    /** The batch owner adds these from one request-local rule snapshot after detail admission. */
+    includePrivateRuleProjection?: boolean;
+}>;
+export type SessionDetailResponse =
     | { status: 200; body: z.infer<typeof V2SessionByIdResponseSchema> }
     | { status: 403; body: { error: 'team_authentication_required' } }
     | { status: 404; body: { error: 'Session not found' } }
     | { status: 409; body: ReturnType<typeof createSessionMetadataPrivacyUpgradeRequiredResponse> }
     | { status: 426; body: z.infer<typeof OperationUpdateRequiredV1Schema> | z.infer<typeof AnyClientUpgradeRequiredV1Schema> }
-    | { status: 503; body: { error: 'team_authentication_unavailable' } }
-> {
-    const { userId, sessionId, authentication } = input;
+    | { status: 503; body: { error: 'team_authentication_unavailable' } };
 
-    if (
-        input.accessProjectionVersion !== undefined
-        && input.accessProjectionVersion !== 1
-    ) {
-        return { status: 426, body: {
-            kind: "update_required",
-            operation: "session.detail",
-            component: "client",
-            reason: "access_projection_version_unsupported",
-        } };
+type SessionDetailCapture =
+    | { kind: 'found'; session: z.infer<typeof V2SessionByIdResponseSchema>['session']; observationCursor?: number }
+    | { kind: 'response'; response: SessionDetailResponse }
+    | { kind: 'error'; error: unknown };
+
+function sessionDetailDenial(status: Exclude<SessionAccessOperationDecision['status'], 'allowed'>): SessionDetailResponse {
+    if (status === 'authentication_required') return { status: 403, body: { error: 'team_authentication_required' } };
+    if (status === 'authentication_unavailable') return { status: 503, body: { error: 'team_authentication_unavailable' } };
+    return { status: 404, body: { error: 'Session not found' } };
+}
+
+function sessionDetailFailure(error: unknown): SessionDetailCapture {
+    return isSessionMetadataPrivacyUpgradeRequiredError(error)
+        ? { kind: 'response', response: { status: 409, body: createSessionMetadataPrivacyUpgradeRequiredResponse() } }
+        : { kind: 'error', error };
+}
+
+/** One canonical detail owner: fact families are loaded per transport batch, never per Session. */
+export async function readSessionDetails(input: SessionDetailInput & Readonly<{ sessionIds: readonly string[]; underSessionId?: string }>):
+    Promise<ReadonlyMap<string, PromiseSettledResult<SessionDetailResponse>>> {
+    const results = new Map<string, PromiseSettledResult<SessionDetailResponse>>();
+    const ids = [...new Set(input.sessionIds)];
+    if (ids.length === 0) return results;
+    if (input.accessProjectionVersion !== undefined && input.accessProjectionVersion !== 1) {
+        for (const id of ids) results.set(id, { status: 'fulfilled', value: { status: 426, body: {
+            kind: 'update_required', operation: 'session.detail', component: 'client', reason: 'access_projection_version_unsupported',
+        } } });
+        return results;
     }
-
+    const { userId, authentication } = input;
+    const accessMode = input.accessProjectionVersion === 1 ? 'effective_access_v1' : 'legacy_owner_or_direct';
+    const admissionInput = { accountId: userId, authentication, accessMode } as const;
     const runtimeManagedSubtree = input.underSessionId !== undefined && authentication.sessionRuntimePrincipal !== undefined;
-    const { sessionRuntimePrincipal: _principal, ...accountAuthentication } = authentication;
     const viewAccess = (sessionId: string) => projectSessionRuntimeManagedSubtreeAccess({ accountId: userId, sessionId });
     // The graph/access owner supplies the corpus, including current runtime proof.
     // This never changes the exact-detail authority of a runtime credential.
     const readManagedIds = async (tx: Tx) => input.underSessionId === undefined ? null : new Set(
         await readSessionManagedSubtreeSessionIdsInTx(tx, { accountId: userId, rootSessionId: input.underSessionId,
-            authentication, ...(runtimeManagedSubtree ? { allowSessionRuntimeManagedSubtreeRead: true as const } : {}) }));
-
-    const supportsCurrentStoredContent = input.storedContentCompatibility.supportsCurrentProtocol;
-    let contributions: readonly SessionManagerContribution[] = [];
-    const result = await readSnapshotWithCurrentAdmission(async (tx) => {
-        const managedIds = await readManagedIds(tx);
-        if (managedIds && !managedIds.has(sessionId)) return { kind: "unavailable" } as const;
-        const { admission, row: session } = await findV2SessionByIdRowInTx(tx, {
-            userId,
-            sessionId,
-            authentication: runtimeManagedSubtree ? accountAuthentication : authentication,
-            accessProjectionVersion: input.accessProjectionVersion,
-        });
-        if (admission.status !== "allowed") return { kind: admission.status } as const;
-        if (!session) return { kind: "unavailable" } as const;
-        if (
-            session.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
-            && !supportsCurrentStoredContent
-        ) {
-            return { kind: "client_update_required" } as const;
-        }
-        try {
-            // The access owner has already verified this exact runtime
-            // principal. Do not load or project its hosting Account's
-            // private Follow/read/attention/authorship state.
+            authentication, sessionIds: ids, ...(runtimeManagedSubtree ? { allowSessionRuntimeManagedSubtreeRead: true as const } : {}) }));
+    try {
+        await captureReadSnapshot(async tx => {
+            const observationCursor = await readSessionObservationCursorInTx(tx, userId, authentication);
+            const managedIds = await readManagedIds(tx);
             const verifiedSessionRuntimePrincipal = authentication.sessionRuntimePrincipal !== undefined;
-            const ownerAccountMode = requiresSessionMetadataOwnerAccountMode({ session })
-                ? await readSessionMetadataOwnerAccountMode(tx, session.accountId)
-                : undefined;
-            const mappedSessionBase = mapV2SessionListRow({
-                row: session,
-                userId,
-                ownerAccountMode,
-                ...(verifiedSessionRuntimePrincipal
-                    ? {}
-                    : { discussionFacts: await readSessionListViewerDiscussionFacts([session], userId, tx),
-                        latestFailureSequences: await loadSessionLatestFailureSequencesInTx(tx, [session]) }),
-                hasOtherNamedCollaborator: runtimeManagedSubtree ? undefined : (await readSessionListOtherNamedCollaboratorFacts([session], userId, tx)).get(session.id),
-                effectiveAccess: runtimeManagedSubtree ? viewAccess(sessionId) : admission.access,
-                verifiedSessionRuntimePrincipal,
-            });
-            const [mappedSession] = runtimeManagedSubtree ? [mappedSessionBase] : await projectSessionManagerForRowsInTx(tx, {
-                accountId: userId,
-                authentication,
-                sessions: [mappedSessionBase],
-                accessMode: input.accessProjectionVersion === 1
-                    ? "effective_access_v1" : "legacy_owner_or_direct",
-                nowMs: Date.now(),
-                captureContributions: rows => { contributions = rows; },
-            });
-            if (runtimeManagedSubtree || admission.access.level !== "owner") {
-                return {
-                    kind: "found",
-                    payload: V2SessionByIdResponseSchema.parse({ session: runtimeManagedSubtree
-                        ? SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(mappedSession) : mappedSession }),
-                } as const;
+            const ruleRows = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? null
+                : await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: userId, authentication });
+            // Portable SQL chunks share this request's admitted snapshot and corpus.
+            for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+                const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+                let captured: Map<string, SessionDetailCapture>;
+                try {
+                    captured = await (async (): Promise<Map<string, SessionDetailCapture>> => {
+                        const result = new Map<string, SessionDetailCapture>();
+                        const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
+                            sessionIds: managedIds ? batch.filter(id => managedIds.has(id)) : batch });
+                        const admissions = runtimeManagedSubtree
+                            ? new Map<string, SessionAccessOperationDecision>(rows.map(row => [row.id, { status: 'allowed', access: viewAccess(row.id) }]))
+                            : await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
+                        const candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
+                            && (session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1 || input.storedContentCompatibility.supportsCurrentProtocol));
+                        for (const id of batch) {
+                            const admission = admissions.get(id);
+                            result.set(id, { kind: 'response', response: !admission || admission.status !== 'allowed'
+                                ? sessionDetailDenial(admission?.status ?? 'unavailable')
+                                : { status: 426, body: input.storedContentCompatibility.upgradeRequired ?? buildAccountStoredContentUpgradeRequired() } });
+                        }
+                        if (!candidates.length) return result;
+                        // Runtime credentials never acquire their hosting Account's private facts.
+                        const discussionFacts = verifiedSessionRuntimePrincipal ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
+                        const latestFailureSequences = verifiedSessionRuntimePrincipal ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
+                        const ruleReadStates = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? undefined
+                            : await loadSessionRuleReadStatesInTx(tx, { accountId: userId, authentication, rows: candidates, ruleRows });
+                        const otherNamed = runtimeManagedSubtree ? undefined : await readSessionListOtherNamedCollaboratorFacts(candidates, userId, tx);
+                        const ownerModes = new Map<string, ReturnType<typeof deriveSessionMetadataOwnerAccountMode>>();
+                        const mapped = candidates.flatMap(session => {
+                            try {
+                                const admission = admissions.get(session.id)!;
+                                if (admission.status !== 'allowed') return [];
+                                if (requiresSessionMetadataOwnerAccountMode({ session }) && !ownerModes.has(session.accountId)) {
+                                    ownerModes.set(session.accountId, deriveSessionMetadataOwnerAccountMode(session.account));
+                                }
+                                return [mapV2SessionListRow({ row: session, userId,
+                                    ownerAccountMode: ownerModes.get(session.accountId),
+                                    discussionFacts, latestFailureSequences, ruleReadStates,
+                                    hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal })];
+                            } catch (error) { result.set(session.id, sessionDetailFailure(error)); return []; }
+                        });
+                        const projected = runtimeManagedSubtree ? mapped : await projectSessionManagerForRowsInTx(tx, { ...admissionInput, sessions: mapped,
+                            ruleReceiverCounts: projectAccountFollowRuleReceiverCounts(ruleRows), nowMs: Date.now() });
+                        const ownerIds = projected.filter(session => {
+                            const admission = admissions.get(session.id);
+                            return admission?.status === 'allowed' && admission.access.level === 'owner';
+                        }).map(session => session.id);
+                        const targets = await listQueuedExecutionRunPendingTargetsForSessions({ accountId: userId, sessionIds: ownerIds, reader: tx });
+                        const pendingRuns = new Map<string, string[]>();
+                        for (const target of targets) {
+                            const runs = pendingRuns.get(target.sessionId) ?? [];
+                            runs.push(target.runId);
+                            pendingRuns.set(target.sessionId, runs);
+                        }
+                        const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, ownerIds);
+                        const activations = await loadPendingActivationPublicationsInTx(tx, ownerIds);
+                        const owners = new Set(ownerIds);
+                        for (const session of projected) {
+                            try {
+                                const binding = bindings.get(session.id);
+                                if (binding?.status === 'rejected') throw binding.reason;
+                                const payload = parseProjectedSessionByIdResponse({ session: runtimeManagedSubtree
+                                    ? SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session)
+                                    : owners.has(session.id) ? { ...session,
+                                    acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
+                                    pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
+                                } : session });
+                                result.set(session.id, { kind: 'found', session: payload.session, observationCursor });
+                            } catch (error) { result.set(session.id, sessionDetailFailure(error)); }
+                        }
+                        return result;
+                    })();
+                } catch (reason) {
+                    // A failed shared DB fact read affects this chunk, not completed or
+                    // subsequent chunks. Scalar callers still throw their own result.
+                    for (const id of batch) results.set(id, { status: 'rejected', reason });
+                    continue;
+                }
+                for (const [id, row] of captured) results.set(id, row.kind === 'error' ? { status: 'rejected', reason: row.error }
+                    : { status: 'fulfilled', value: row.kind === 'found' ? { status: 200, body: {
+                        session: row.session, ...(row.observationCursor !== undefined ? { observationCursor: row.observationCursor } : {}),
+                    } } : row.response });
             }
-            const targets = await listQueuedExecutionRunPendingTargetsForSessions({
-                accountId: userId,
-                sessionIds: [session.id],
-                reader: tx,
-            });
-            return {
-                kind: "found",
-                payload: V2SessionByIdResponseSchema.parse({
-                    session: {
-                        ...mappedSession,
-                        acceptedTeamCredentialBinding: await readAcceptedSessionTeamCredentialProviderModelBindingInTx(tx, session.id),
-                        pendingActivationAuthorization: await loadPendingActivationPublicationInTx(tx, session.id) ?? undefined,
-                        pendingExecutionRunIds: targets.map((target) => target.runId),
-                    },
-                }),
-            } as const;
-        } catch (error) {
-            if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
-                return { kind: "metadata_privacy_upgrade_required" } as const;
-            }
-            throw error;
-        }
-    }, async (tx, captured) => {
-        if (captured.kind !== "found") return captured;
-        const managedIds = await readManagedIds(tx);
-        if (managedIds && !managedIds.has(sessionId)) return { kind: "unavailable" } as const;
-        try {
-            const admissions = await readmitSessionRowsWithAdmissionInTx(tx, { accountId: userId, authentication: runtimeManagedSubtree ? accountAuthentication : authentication,
-                accessMode: input.accessProjectionVersion === 1 ? "effective_access_v1" : "legacy_owner_or_direct" }, [captured.payload.session]);
-            const admission = admissions.get(sessionId);
-            if (!admission) return { kind: "unavailable" } as const;
-            if (admission.status !== "allowed") return { kind: admission.status } as const;
-            if (runtimeManagedSubtree) {
-                const { share: _share, ...shared } = admission.row;
-                return { ...captured, payload: { session: SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse({ ...shared,
-                    effectiveAccess: projectSessionEffectiveAccessV1(viewAccess(sessionId)) }) } };
-            }
-            const [session] = await readmitCapturedSessionManagerReferencesInTx(tx, { accountId: userId, authentication,
-                accessMode: input.accessProjectionVersion === 1 ? "effective_access_v1" : "legacy_owner_or_direct", sessions: [admission.row], contributions });
-            return { ...captured, payload: { session } };
-        } catch (error) {
-            if (isSessionMetadataPrivacyUpgradeRequiredError(error)) return { kind: "metadata_privacy_upgrade_required" } as const;
-            throw error;
-        }
-    });
-    if (result.kind === "authentication_required") {
-        return { status: 403, body: { error: "team_authentication_required" } };
+        });
+    } catch (reason) {
+        for (const id of ids) results.set(id, { status: 'rejected', reason });
     }
-    if (result.kind === "authentication_unavailable") {
-        return { status: 503, body: { error: "team_authentication_unavailable" } };
-    }
-    if (result.kind === "unavailable") {
-        return { status: 404, body: { error: "Session not found" } };
-    }
-    if (result.kind === "client_update_required") {
-        return { status: 426, body: input.storedContentCompatibility.upgradeRequired ?? buildAccountStoredContentUpgradeRequired() };
-    }
-    if (result.kind === "metadata_privacy_upgrade_required") {
-        return { status: 409, body: createSessionMetadataPrivacyUpgradeRequiredResponse() };
-    }
-    if (result.kind === "found") {
-        return { status: 200, body: result.payload };
-    }
-    throw new Error(`Unexpected Session detail result: ${result.kind}`);
+    return results;
+}
+
+/** Scalar consumers use the same admitted fact loader as batches. */
+export async function readSessionDetail(input: SessionDetailInput & Readonly<{ sessionId: string }>): Promise<SessionDetailResponse> {
+    const result = (await readSessionDetails({ ...input, sessionIds: [input.sessionId] })).get(input.sessionId)!;
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
 }
 export function registerSessionListingRoutes(app: Fastify) {
     registerSessionFilteredListingRoute(app);
@@ -431,6 +422,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const result = await readSessionDetail({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request), accessProjectionVersion: request.query?.accessProjectionVersion, storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest(request) });
+        if (result.status === 200) return reply.serializer(JSON.stringify).code(200).send(parseProjectedSessionByIdResponse(result.body));
         return reply.code(result.status).send(result.body);
     });
 }

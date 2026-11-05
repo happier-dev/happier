@@ -11,8 +11,9 @@ describe('Follow receiver-count database work', () => {
         const receiverId = randomUUID();
         const statements: string[] = [];
         const account = { status: 'active', encryptionMode: 'plain', publicKey: null, contentPublicKey: null, contentPublicKeySig: null };
-        const rows: Array<{ key: string; version: number; value: Uint8Array<ArrayBuffer> | null }> = Array.from({ length: count }, () => ({
+        const rows: Array<{ key: string; version: number; createdAt: Date; value: Uint8Array<ArrayBuffer> | null }> = Array.from({ length: count }, (_, index) => ({
             key: buildSessionFollowRulePhysicalKeyV1(randomUUID()), version: 1,
+            createdAt: new Date(1234 + index * 1000),
             value: new TextEncoder().encode(JSON.stringify(SessionFollowRuleStoredRowV1Schema.parse({
                 version: 1, receiver: { kind: 'session', sessionId: receiverId },
                 content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } },
@@ -26,7 +27,7 @@ describe('Follow receiver-count database work', () => {
             } },
             userKVStore: {
                 findMany: async (input: { select: { createdAt?: boolean }; where: { key: { in?: readonly string[] } } }) => {
-                    if (input.select.createdAt) {
+                    if (input.where.key.in) {
                         statements.push('KV inception set SELECT');
                         return rows.flatMap((row, index) => input.where.key.in?.includes(row.key)
                             ? [{ key: row.key, createdAt: new Date(1234 + index * 1000) }] : []);
@@ -59,6 +60,15 @@ describe('Follow receiver-count database work', () => {
         expect(listed.status).toBe('listed');
         if (listed.status !== 'listed') throw new Error('Expected retained rule');
         expect(listed.rows[0]?.envelope?.inception).toEqual({ createdAt: 1234 });
+    });
+
+    it('ignores an unaddressable rule key without losing valid receiver counts or adding reads', async () => {
+        const f = fixture(2);
+        f.rows[0]!.key = buildSessionFollowRulePhysicalKeyV1('invalid').replace(/invalid$/, '%');
+        expect(await readAccountFollowRuleReceiverCountsInTx(f.tx, {
+            accountId: 'account', authentication: createPresentUserSessionAccessAuthentication(),
+        })).toEqual(new Map([[f.receiverId, 1]]));
+        expect(f.statements).toEqual(['Account SELECT', 'Account SELECT', 'KV list SELECT']);
     });
 
     it.each([1, 4, 1100])('hydrates rich retained rules in bind-bounded sets (%i rules)', async count => {

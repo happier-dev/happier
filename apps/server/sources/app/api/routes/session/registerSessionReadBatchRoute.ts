@@ -1,7 +1,6 @@
 import {
     SessionReadBatchRequestV1Schema,
     SessionReadBatchResponseV1Schema,
-    SessionReadBatchDetailV1Schema,
     SessionReadBatchTurnsV1Schema,
     SessionReadBatchMessagesV1Schema,
     type SessionReadBatchResultV1,
@@ -11,15 +10,18 @@ import type { Fastify } from '../../types';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 import { readAccountStoredContentCompatibilityForHttpRequest } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { projectSessionTurnWaitingCompatibility } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
-import { readDatabaseErrorCode } from '@/app/api/utils/enableErrorHandlers';
+import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
-import { getPrismaConnectionLimit } from '@/storage/prisma';
-import { readSessionDetail } from './registerSessionListingRoutes';
-import { readSessionMessagePage } from './registerSessionMessageRoutes';
-import { readSessionTurns } from './registerSessionTurnMutationRoute';
+import { readSessionDetails } from './registerSessionListingRoutes';
+import { readSessionMessagePages } from './readSessionMessagePages';
+import { readSessionTurnsBatch } from './readSessionTurns';
+import { inReadSnapshot } from '@/storage/inTx';
+import { loadSessionRuleReadBoundariesInTx, projectSessionRuleReadStates } from '@/app/session/personal/readState';
+import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from '@/app/session/follow/accountFollowRuleService';
+import { parseProjectedSessionBatchDetail, parseProjectedSessionBatchResponse } from './sessionRecordResponse';
 
-/** Batches transport only; each component keeps its existing read and fresh admission owner. */
+/** Each demanded kind reads one admitted set; projection preserves per-id outcomes. */
 export function registerSessionReadBatchRoute(app: Fastify) {
     app.post('/v2/sessions/read-batch', {
         preHandler: app.authenticate,
@@ -39,18 +41,47 @@ export function registerSessionReadBatchRoute(app: Fastify) {
                 return { status: 503 as const, body: { error: databaseError ?? 'session_read_unavailable' } };
             }
         };
+        const details = request.body.includeSnapshot ? await readComponent(() => readSessionDetails({
+            userId: request.userId, sessionIds: request.body.sessionIds, authentication,
+            accessProjectionVersion: request.body.accessProjectionVersion, storedContentCompatibility,
+            underSessionId: request.body.underSessionId,
+            includePrivateRuleProjection: false,
+        })) : undefined;
+        const turnIds = request.body.includeSnapshot && request.body.includeTurns !== false && details && !('status' in details)
+            ? request.body.sessionIds.filter(id => {
+                const detail = details.get(id);
+                return detail?.status === 'fulfilled' && detail.value.status === 200;
+            }) : [];
+        const turnResults = turnIds.length ? await readComponent(() => readSessionTurnsBatch({
+            userId: request.userId, sessionIds: turnIds, authentication,
+        })) : undefined;
+        const messageResults = request.body.includeMessages ? await readComponent(() => readSessionMessagePages({
+            userId: request.userId, sessionIds: request.body.sessionIds, authentication, previewRequest: request,
+        })) : undefined;
+        const componentFor = <T>(batch: ReadonlyMap<string, PromiseSettledResult<T>> | { status: 503; body: { error: string } } | undefined, id: string): T | { status: 503; body: { error: string } } => {
+            if (!batch) throw new Error('Session component batch missing');
+            if ('status' in batch) return batch;
+            const result = batch.get(id);
+            if (!result) throw new Error('Session component result missing');
+            if (result.status === 'rejected') throw result.reason;
+            return result.value;
+        };
         const readSession = async (sessionId: string) => {
-            const input = { userId: request.userId, sessionId, authentication };
             const result: SessionReadBatchResultV1 = { sessionId };
             if (request.body.includeSnapshot) {
                 result.detail = await readComponent(async () => {
-                    const detail = await readSessionDetail({ ...input, accessProjectionVersion: request.body.accessProjectionVersion, storedContentCompatibility, underSessionId: request.body.underSessionId });
-                    return SessionReadBatchDetailV1Schema.parse({ ...detail,
+                    if (!details) throw new Error('Session detail batch missing');
+                    if ('status' in details) return details;
+                    const result = details.get(sessionId);
+                    if (!result) throw new Error('Session detail result missing');
+                    if (result.status === 'rejected') throw result.reason;
+                    const detail = result.value;
+                    return parseProjectedSessionBatchDetail({ ...detail,
                         body: projectSessionTurnWaitingCompatibility(detail.body, storedContentCompatibility) });
                 });
                 if (result.detail.status === 200 && request.body.includeTurns !== false) {
                     result.turns = await readComponent(async () => {
-                        const turns = await readSessionTurns(input);
+                        const turns = componentFor(turnResults, sessionId);
                         return SessionReadBatchTurnsV1Schema.parse({ ...turns,
                             body: projectSessionTurnWaitingCompatibility(turns.body, storedContentCompatibility) });
                     });
@@ -58,26 +89,40 @@ export function registerSessionReadBatchRoute(app: Fastify) {
             }
             if (request.body.includeMessages) {
                 result.messages = await readComponent(async () => {
-                    const messages = await readSessionMessagePage({ ...input,
-                        query: { scope: 'all', roles: 'user,agent,event' }, previewRequest: request });
+                    const messages = componentFor(messageResults, sessionId);
                     return SessionReadBatchMessagesV1Schema.parse({ ...messages,
                         body: projectSessionTurnWaitingCompatibility(messages.body, storedContentCompatibility) });
                 });
             }
             return result;
         };
-        // Each component awaits its own DB work before the next one starts.
-        // Without an explicit pool budget, read sequentially rather than
-        // multiplying the request into an unknown number of acquisitions.
-        const concurrency = getPrismaConnectionLimit() ?? 1;
-        const results = new Array<SessionReadBatchResultV1>(request.body.sessionIds.length);
-        let nextIndex = 0;
-        await Promise.all(Array.from({ length: Math.min(concurrency, results.length) }, async () => {
-            while (nextIndex < results.length) {
-                const index = nextIndex++;
-                results[index] = await readSession(request.body.sessionIds[index]!);
+        const results: SessionReadBatchResultV1[] = [];
+        for (const sessionId of request.body.sessionIds) results.push(await readSession(sessionId));
+        // Only already-admitted details supply this corpus, visible sequence
+        // and private cursor. One fresh mode-admitted rule snapshot serves the
+        // whole request; no per-Session rule census or private filter evaluation.
+        const projectedDetails = results.flatMap(result => result.detail?.status === 200 && result.detail.body.session.viewer
+            ? [{ result, detail: result.detail, session: result.detail.body.session, viewer: result.detail.body.session.viewer }] : []);
+        if (projectedDetails.length) {
+            const ruleProjection = await readComponent(() => inReadSnapshot(async tx => {
+                const ruleRows = await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: request.userId, authentication });
+                return { receiverCounts: projectAccountFollowRuleReceiverCounts(ruleRows),
+                    boundaries: await loadSessionRuleReadBoundariesInTx(tx, { accountId: request.userId, authentication,
+                        sessionIds: projectedDetails.map(row => row.session.id), ruleRows }) };
+            }));
+            for (const row of projectedDetails) {
+                if ('status' in ruleProjection) row.result.detail = ruleProjection;
+                else {
+                    const ruleReadStates = projectSessionRuleReadStates({ visibleSessionSeq: row.session.seq, readState: row.viewer.readState,
+                        boundaries: ruleProjection.boundaries.get(row.session.id) ?? [] });
+                    row.result.detail = parseProjectedSessionBatchDetail({ ...row.detail, body: { ...row.detail.body, session: {
+                        ...row.session, viewer: { ...row.viewer, ...(ruleReadStates.length ? { ruleReadStates } : {}) },
+                        ...(row.session.ownerAccountId === request.userId && ruleProjection.receiverCounts
+                            ? { receivedRuleCount: ruleProjection.receiverCounts.get(row.session.id) ?? 0 } : {}),
+                    } } });
+                }
             }
-        }));
-        return reply.header('Cache-Control', 'no-store').send({ results });
+        }
+        return reply.header('Cache-Control', 'no-store').serializer(JSON.stringify).send(parseProjectedSessionBatchResponse({ results }));
     });
 }
