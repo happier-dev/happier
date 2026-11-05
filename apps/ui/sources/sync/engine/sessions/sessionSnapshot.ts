@@ -646,16 +646,25 @@ function needsWarmHydration(params: {
             ?? (existing && sameDocumentAdmission(existing[SESSION_LIST_DOCUMENT_ADMISSION], admission)
                 ? buildSessionListRenderableFromSession(existing) : undefined)
             ?? readSessionListWarmCacheDisplay(cachedEntry, admission, row);
+        const existingCurrentness = existing && classifySessionTupleApplyCurrentness(row, {
+            metadataLayoutVersion: existing.metadataLayoutVersion,
+            metadataVersion: existing.metadataVersion,
+            agentStateVersion: existing[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion,
+        });
+        const currentCurrentness = current && classifySessionTupleApplyCurrentness(row, {
+            metadataLayoutVersion: current.metadataLayoutVersion,
+            metadataVersion: current.metadataVersion,
+            agentStateVersion: current[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion,
+        });
         const fullCurrent = sameDocumentAdmission(existing?.[SESSION_LIST_DOCUMENT_ADMISSION], admission)
-            && existing != null && hasCurrentSessionListDisplayMetadata(existing) && existing.metadataVersion === row.metadataVersion
-            && existing[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion === row.agentStateVersion;
+            && existing != null && hasCurrentSessionListDisplayMetadata(existing) && existingCurrentness?.fullyCurrent;
         if (params.isRequiredHydrationRow) return !fullCurrent;
         if (params.fullDocumentDemand && (!existing || !sameDocumentAdmission(existing[SESSION_LIST_DOCUMENT_ADMISSION], admission)
-            || !hasCurrentSessionListDisplayMetadata(existing) || existing.metadataVersion !== row.metadataVersion)) return true;
+            || !hasCurrentSessionListDisplayMetadata(existing) || !existingCurrentness?.metadataCurrent)) return true;
         if (!sameDocumentAdmission(current?.[SESSION_LIST_DOCUMENT_ADMISSION], admission)
-            || !current || !hasCurrentSessionListDisplayMetadata(current) || current.metadataVersion !== row.metadataVersion) return true;
+            || !current || !hasCurrentSessionListDisplayMetadata(current) || !currentCurrentness?.metadataCurrent) return true;
         return row.active && ((row.pendingPermissionRequestCount ?? 0) > 0 || (row.pendingUserActionRequestCount ?? 0) > 0)
-            && current[SESSION_LIST_DOCUMENT_ADMISSION]?.openedAgentStateVersion !== row.agentStateVersion;
+            && !currentCurrentness?.agentStateCurrent;
     }
     if (params.isRequiredHydrationRow) return true;
     if (!existingSession) {

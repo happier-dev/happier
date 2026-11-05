@@ -1952,6 +1952,52 @@ describe('sync AccountChange catch-up projection', () => {
         }
     });
 
+    it('reuses current off-page pinned Session admission across identical inventory refreshes and repairs a pushed revision', async () => {
+        let pinned = createPlainSessionCurrentProjectionRecordFixture({ id: 'off-page-admitted-pin' });
+        const batches: string[][] = [];
+        await restoreTestAccount({
+            physicalRequest: (url, init) => {
+                if (new URL(url).pathname === '/v2/sessions/read-batch') {
+                    batches.push([...SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body))).sessionIds]);
+                }
+                return undefined;
+            },
+            runtimeRequest: path => {
+                if (path === '/v2/session-organization') return jsonResponse({ snapshot: {
+                    schemaVersion: 1, version: 1,
+                    pins: [{ sessionId: pinned.id, sortKey: null, pinnedAt: 1, listPinned: true, railPinned: false }],
+                    folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+                } });
+                return path === `/v2/sessions/${pinned.id}` ? jsonResponse({ session: pinned }) : undefined;
+            },
+        });
+        if (!syncRuntime || !account) throw new Error('Expected restored Sync');
+        const sync = syncRuntime;
+        const serverId = account.serverId;
+        const { storage } = await import('./domains/state/storage');
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(batches).toEqual([[pinned.id]]);
+        expect(storage.getState().sessions[pinned.id]?.metadataVersion).toBe(1);
+        const retainedRow = storage.getState().sessionListRowsByServerId[serverId]?.[pinned.id];
+        expect(retainedRow).toBeDefined();
+        batches.length = 0;
+        for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
+            await sync.refreshSessions({ awaitSessionListHydration: true });
+            expect(storage.getState().sessionListRowsByServerId[serverId]?.[pinned.id]).toBe(retainedRow);
+        }
+        expect(batches).toEqual([]);
+        pinned = createPlainSessionCurrentProjectionRecordFixture({ id: pinned.id, seq: 2, updatedAt: 2,
+            metadataVersion: 2, metadata: { path: '/pin-updated', host: 'home' } });
+        await sync.consumeSessionRealtimeUpdateForHome({ serverId, credentials: account.credentials,
+            encryption: null, isCurrent: () => true,
+            update: { id: 'off-page-pin-revision', seq: 2, createdAt: 2, body: { t: 'update-session', id: pinned.id,
+                metadataLayoutVersion: 1, metadataDocument: 'omitted', metadataVersion: 2 } },
+        });
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(batches).toEqual([[pinned.id]]);
+        expect(storage.getState().sessions[pinned.id]?.ownerMetadataView?.path).toBe('/pin-updated');
+    });
+
     it('drops a queued AccountChange wake when its server/account lifetime resets', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
         const { loadChangesCursor } = await import('./domains/state/persistence');

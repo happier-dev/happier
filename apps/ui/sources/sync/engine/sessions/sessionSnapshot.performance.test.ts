@@ -12,6 +12,8 @@ import {
     type SessionListQueryV1,
 } from '@happier-dev/protocol';
 
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+
 import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
 import { createSessionListQueryHomeController } from '@/sync/domains/session/listing/sessionListQueryController';
@@ -189,6 +191,68 @@ it('hydrates full Sessions only on demand while reusing current display document
     await vi.runAllTimersAsync();
     expect(open).toHaveBeenCalledTimes(7);
     await vi.waitFor(() => expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Updated Session 4'));
+});
+
+it.each(['metadata', 'agent-state'] as const)('reuses a newer admitted %s document when an identical inventory descriptor lags behind', async document => {
+    storage.setState(storage.getInitialState(), true);
+    const serverId = 'lagging-inventory-home';
+    const credentials = { token: 'lagging-inventory-account' };
+    const accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
+    const base = { ...createOwnerChoicesPage(1).sessions[0]!, metadataLayoutVersion: 0, ownerMetadata: undefined,
+        metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home', summary: { text: 'Original', updatedAt: 1 } }),
+        agentStateVersion: 1, agentState: JSON.stringify({ requests: {} }),
+        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 1 };
+    const rowAt = (version: number) => ({ ...base,
+        ...(document === 'metadata'
+            ? { metadataVersion: version, metadata: JSON.stringify({ path: '/lagging-inventory', host: 'home',
+                summary: { text: `Opened ${version}`, updatedAt: version } }) }
+            : { agentStateVersion: version, agentState: JSON.stringify({ requests: {
+                [`permission-${version}`]: { tool: 'Bash', kind: 'permission', arguments: { command: 'git status' }, createdAt: version },
+            } }) }),
+    });
+    let inventory = rowAt(1);
+    let detail = rowAt(2);
+    const batches: string[][] = [];
+    const boundary = createCompactSessionListFetchBoundary(async (path, init) => {
+        if (path === '/v2/sessions/read-batch') {
+            const request = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
+            batches.push(request.sessionIds);
+            return Response.json({ results: request.sessionIds.map(sessionId => ({ sessionId,
+                detail: { status: 200, body: { session: detail } } })) });
+        }
+        return Response.json({ sessions: [inventory], nextCursor: null, hasNext: false });
+    });
+    const currentRow = () => storage.getState().sessionListRowsByServerId[serverId]?.[base.id];
+    const refresh = () => fetchAndApplySessionsSource({ serverId, credentials, accountCurrentness, encryption: null,
+        contentDemand: 'list-projection', sessionDataKeys: new Map(), request: boundary,
+        getExistingSession: id => storage.getState().sessions[id], getCurrentSessionListRenderable: currentRow,
+        applySessionListRenderables: values => storage.getState().applyServerScopedSessionListRows(serverId, values, { source: 'rowOnly', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: values => storage.getState().applySessions(values), awaitSessionListHydration: true, log: { log() {} },
+    });
+    await refresh();
+    expect(batches).toEqual([[base.id]]);
+    expect(currentRow()?.[document === 'metadata' ? 'metadataVersion' : 'agentStateVersion']).toBe(2);
+    const retained = currentRow();
+    batches.length = 0;
+    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
+        await refresh();
+        expect(currentRow()).toBe(retained);
+    }
+    expect(batches).toEqual([]);
+    inventory = rowAt(3);
+    detail = rowAt(3);
+    await refresh();
+    expect(batches).toEqual([[base.id]]);
+    if (document === 'metadata') expect(currentRow()?.metadata?.summaryText).toBe('Opened 3');
+    else expect(currentRow()?.currentRequestRef).toMatchObject({ kind: 'permission', requestId: 'permission-3' });
+    const settled = currentRow();
+    batches.length = 0;
+    for (let refreshIndex = 0; refreshIndex < 3; refreshIndex++) {
+        await refresh();
+        expect(currentRow()).toBe(settled);
+    }
+    expect(batches).toEqual([]);
 });
 
 afterEach(() => {
@@ -672,6 +736,8 @@ it.each(['unavailable-authority', 'retired-read', 'empty-query'] as const)(
         const outcome = await pending;
         if (scenario === 'unavailable-authority') {
             expect(outcome).toMatchObject({ error: { code: 'account-encryption-currentness-unavailable' } });
+        } else if (scenario === 'retired-read') {
+            expect(outcome).toMatchObject({ error: { name: 'AbortError' } });
         } else {
             expect(outcome).toMatchObject({ result: { current: scenario === 'empty-query', sessionIds: scenario === 'empty-query' ? [] : body.sessions.map(row => row.id) } });
         }

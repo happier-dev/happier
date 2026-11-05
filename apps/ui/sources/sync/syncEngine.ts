@@ -7440,7 +7440,6 @@ class Sync {
         // was never stored and no later refresh recovers it. Same guard the
         // concurrent-cache owner already applies before publishing a page.
         if (!result.current || !shouldContinue()) return;
-        const fetchedSessionIdSet = new Set(result.sessionIds.filter((sessionId) => result.isSessionCurrent?.(sessionId) !== false));
         // The overlapping organization refresh may discover pins that were
         // absent from the warm snapshot used to prioritize the list read.
         const settledRequiredHydrationSessionIds = Array.from(new Set([
@@ -7458,7 +7457,7 @@ class Sync {
         };
         const missingRequiredHydrationSessionIds = settledRequiredHydrationSessionIds.filter(
             sessionId => result.isSessionCurrent?.(sessionId) !== false
-                && (!fetchedSessionIdSet.has(sessionId) || !hasCurrentRequiredSession(sessionId)),
+                && !hasCurrentRequiredSession(sessionId),
         );
         await hydrateRequiredSessions(missingRequiredHydrationSessionIds, result.accountCurrentness);
         if (!shouldContinue()) return;
