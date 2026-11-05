@@ -29,6 +29,8 @@ test('incomplete package results show a bounded redacted stderr reason', async t
   const signedToken = ['eyJ' + randomUUID().replaceAll('-', ''), randomUUID(), randomUUID()].join('.');
   await writeFile(join(cwd, 'fail.mjs'), `
     process.stderr.write('HSTACK_TRACE: discarded-start\\n' + 'HSTACK_TRACE: padding\\n'.repeat(1000));
+    process.stderr.write('[typecheck-failure] compiler: exit=2 signal=none reason=no-complete-diagnostics\\n');
+    process.stdout.write('\\u001b[31m\\u2009ERR_PNPM_NO_SCRIPT\\u2009 Missing script: typecheck\\u001b[0m\\n');
     process.stderr.write('HSTACK_ADMISSION_REFUSED: worker unavailable\\n');
     process.stderr.write('ssh: Connection reset by peer\\n');
     process.stderr.write('ssh_dispatch_run_fatal: Connection reset by peer\\n');
@@ -43,7 +45,7 @@ test('incomplete package results show a bounded redacted stderr reason', async t
     process.exitCode = 255;
   `);
   const child = spawn(process.execPath, [fileURLToPath(new URL('./typecheckTouched.mjs', import.meta.url)),
-    packagePath, `${packagePath}/touched.ts`], { cwd: repoRoot,
+    '--baseline', baseline, packagePath, `${packagePath}/touched.ts`], { cwd: repoRoot,
     // This subprocess fixture contains no compiler. Keep its fake package
     // command on the test host, as an already dispatched controller would.
     env: { ...process.env, HAPPIER_TYPECHECK_DISPATCHED: '1', TOUCHED_FAILURE_SECRET: secret },
@@ -56,6 +58,8 @@ test('incomplete package results show a bounded redacted stderr reason', async t
     child.once('close', resolveResult);
   });
   assert.equal(status, 2, redactFailureDiagnostic(stderr, { TOUCHED_FAILURE_SECRET: secret }));
+  assert.ok(stderr.includes('reason=no-complete-diagnostics'), 'compiler failure reason is visible');
+  assert.ok(stderr.includes('ERR_PNPM_NO_SCRIPT'), 'package manager stdout failure is visible');
   assert.ok(stderr.includes('HSTACK_ADMISSION_REFUSED: worker unavailable'), 'admission reason is visible');
   assert.ok(stderr.includes('Connection reset by peer'), 'SSH transport reason is visible');
   assert.ok(stderr.includes('ssh_dispatch_run_fatal:'), 'fatal SSH transport reasons are visible');

@@ -55,6 +55,7 @@ native_command_policy_base() {
   policy_requiredTools=''
   policy_selfPublisher='0'
   policy_compilerLeaf='0'
+  policy_controllerDispatcher='0'
   policy_workspaceLock=''
   policy_preparationBuildMode='strict'
   policy_workspaceSync='1'
@@ -127,6 +128,9 @@ native_command_policy_base() {
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/buildTypeScriptPackageDist.mjs' ] || [ "$policy_entryRepositoryPath" = 'packages/cli-common/scripts/build.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/cli/scripts/build.mjs' ]; }; then
     policy_selfPublisher='1'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/typecheckTouched.mjs' ]; }; then
+    policy_controllerDispatcher='1'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryRepositoryPath" = 'scripts/workspaces/runTypeScriptCli.mjs' ] || [ "$policy_entryRepositoryPath" = 'apps/server/scripts/runTypeScriptCli.mjs' ]; }; then
     policy_compilerLeaf='1'

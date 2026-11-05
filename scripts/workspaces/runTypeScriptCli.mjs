@@ -98,6 +98,11 @@ async function runCompiler(invocation, project, isCancelled, captureDiagnostics 
     return { ...result, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString(), emittedFiles };
   };
   const publish = async result => {
+    if (result.error || result.signal || result.status !== 0) {
+      const reason = result.error ? typecheckDiagnosticFailureIdentifier(result.error, 'spawn')
+        : result.signal ? 'compiler-signal' : 'compiler-exit';
+      process.stderr.write(`[typecheck-failure] compiler: exit=${result.status ?? 'unavailable'} signal=${result.signal ?? 'none'} reason=${reason}\n`);
+    }
     if (diagnosticReportDir) await writeJsonAtomic(resolve(diagnosticReportDir, `${randomUUID()}.json`), {
       cwd: process.cwd(), project: project.authoredProject ?? project.project,
       compiler: invocation.compilerPath,
@@ -159,6 +164,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
   // Forwarding and reaping stay with runCommand. A graceful native exit must
   // still stop the batch after the user cancels the containing operation.
   for (const [signal, handler] of cancellationHandlers) process.on(signal, handler);
+  let failureStep = 'project-preparation';
   try {
     const projects = compilerProjects(args).map(project => ({ ...project, authoredProject: project.project, authoredArgs: project.args }));
     // Public dependency outputs must be current before partition derivation
@@ -174,6 +180,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     ]);
     const started = performance.now();
     const built = new Set();
+    failureStep = 'workspace-preparation';
     try {
       for (const component of components) {
         if (cancelled) break;
@@ -192,9 +199,11 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     const uiInventory = cancelled ? undefined : await prepareUiTypecheckProjects(projects, process.cwd());
     const { prepareCliTypecheckProjects } = await import('../../apps/cli/scripts/deriveTypecheckProjects.mjs');
     const inventory = cancelled ? undefined : await prepareCliTypecheckProjects(projects, process.cwd());
+    failureStep = 'project-coverage';
     if (coverageBaseline && !cancelled) await verifyTypeScriptProjectCoverage({ baselinePath: coverageBaseline,
       baseline: (inventory ?? uiInventory)?.baseline,
       projectPaths: projects.map(({ project }) => project).filter(Boolean), cwd: process.cwd() });
+    failureStep = 'declaration-preparation';
     const producers = cancelled ? [] : await prepareReferencedTypecheckDeclarations(projects, process.cwd(), inventory);
     let diagnostics;
     if (!cancelled) {
@@ -208,9 +217,11 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       prepareTypeScriptProjectBuildFromArgs(project.authoredArgs, { cwd: process.cwd() });
       // Declaration preparation is a UI workload. Expose its actual project
       // to the existing classifier instead of charging it to the CLI consumer.
+      failureStep = 'compiler-resolution';
       const invocation = resolveTypeScriptCliInvocation({ args: project.args, admissionArgs: project.authoredArgs, repoRoot,
         workspaceDir: process.cwd(), processExecPath: process.execPath, prepareWorkspaceDeclarations: false });
       const producer = producers.includes(project);
+      failureStep = 'compiler';
       const projectResult = await runCompiler(invocation, project, () => cancelled, diagnostics?.enabled, producer);
       diagnostics?.record(project, projectResult);
       if (projectResult.error || projectResult.signal || projectResult.status == null) {
@@ -249,6 +260,9 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
         // This optional hint cannot turn an inspection failure into a verdict.
       }
     }
+  } catch (error) {
+    process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
+    result = { status: 1, signal: null };
   } finally {
     for (const [signal, handler] of cancellationHandlers) process.off(signal, handler);
   }

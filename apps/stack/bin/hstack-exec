@@ -222,6 +222,7 @@ try_run_self_dispatching_package_command() {
       ;;
   esac
   resolve_command_policy "$@"
+  if [ "${policy_controllerDispatcher-0}" = 1 ]; then exec "$@"; fi
   [ "$policy_hasScript" = 1 ] || return 1
   case "$policy_command" in corepack|yarn|npm|npx|pnpm) ;; *) return 1 ;; esac
   run_dependency_free_node "$projection_command_policy" "${command_repo_root:-$repo_root}" "$invoked_cwd" "$@" || return 1

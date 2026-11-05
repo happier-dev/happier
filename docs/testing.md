@@ -1003,14 +1003,15 @@ The repository deliberately separates the compiler from the programmatic TypeScr
 
 ### Touched-path typecheck delta (0.3 development)
 
-From the repository root, run `pnpm run typecheck:touched -- apps/ui apps/ui/sources/path.ts`
+From the repository root, run `pnpm run typecheck:touched -- --baseline .project/tmp/systemic-orch/ui-1104b.locs apps/ui apps/ui/sources/path.ts`
 (substitute `apps/cli` or `apps/server` and repository-relative files or directories).
 This runs the package's complete public `typecheck` through `hstack-exec` AUTO,
 using the canonical compiler, projects and existing incremental caches. It does
 not create a scoped tsconfig or make compilation cheaper by omitting inputs.
-The controller compares locations against the newest complete shared
-`.project/tmp/systemic-orch/<package-directory>-*.locs` baseline; partial and
-comparison inventories are excluded. The baseline path, new and removed
+The controller reads the explicit `--baseline <path>` inventory before dispatch
+and compares it with location reports returned by the worker. `.project` is
+controller-local and need not be synchronized. Choose the complete shared inventory
+published by the integration owner; modification times never select a baseline. The baseline path, new and removed
 `file:line:code` locations in the selected paths, and new locations elsewhere
 (unattributed) are reported separately. Columns and diagnostic prose do not
 change location identity. This command never advances the shared baseline.
@@ -1026,7 +1027,8 @@ Exit 0 means no new diagnostics in the selected paths; exit 1 means new selected
 diagnostics. The full package verdict is reported separately. Missing or invalid
 baselines, global compiler diagnostics, and incomplete or failed launches return
 exit 2, never a zero delta. Incomplete results include a bounded, redacted tail
-of executor and SSH stderr reasons; compiler diagnostic prose stays private.
+of executor, package-manager and compiler-runner failure reasons from either
+stream; compiler diagnostic prose stays private.
 Review unattributed additions before claiming a lane
 caused zero new diagnostics anywhere in its package. The ordinary runner's
 automatic dirty-path snapshot remains advisory; it is not this shared baseline.

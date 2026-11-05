@@ -34,7 +34,7 @@ export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } fr
 // not travel to the worker and must not split an otherwise identical command.
 const COMMAND_ENVIRONMENT = Object.freeze({
   preparation: ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS', 'HAPPIER_CLI_TEST_SKIP_BUILD'],
-  payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS'],
+  payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS', 'HAPPIER_TYPECHECK_LOCATIONS_ONLY'],
   vitest: ['HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
     'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS'],
   controller: ['HOME', 'PATH', 'TMPDIR', 'XDG_RUNTIME_DIR', 'NODE_OPTIONS', 'CI', 'SSH_AUTH_SOCK',
@@ -180,7 +180,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   validation: '0', kind: 'runtime', heavyClass: '', workerTool: '',
   workerArguments: '0', runnerKnown: '0', componentOverride: '',
   generator: '0', generatorCheck: '0', componentFromNative: '0',
-  localCompile: '0', requiredTools: '', selfPublisher: '0', compilerLeaf: '0', workspaceLock: '',
+  localCompile: '0', requiredTools: '', selfPublisher: '0', compilerLeaf: '0', controllerDispatcher: '0', workspaceLock: '',
   preparationBuildMode: 'strict',
   workspaceSync: '1',
   compilerSuite: '0',
@@ -282,6 +282,9 @@ const COMMAND_RULES = [
     'packages/cli-common/scripts/build.mjs',
     'apps/cli/scripts/build.mjs',
   ] }, set: { selfPublisher: '1' } },
+  // Baselines are controller-local; only this dispatcher's compiler child travels.
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['scripts/workspaces/typecheckTouched.mjs'] },
+    set: { controllerDispatcher: '1' } },
   // Source typecheck runners admit their compiler leaves directly. They do not
   // publish first-party dependency outputs or acquire publication custody.
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: [
@@ -815,6 +818,8 @@ export async function isSelfDispatchingPackageCommand(commandArgs, { repoRoot = 
   // no parallel list of public script names or workspace aliases is kept.
   if (scripts?.[`pre${scriptName}`] || scripts?.[`post${scriptName}`]
     || typeof script !== 'string' || /[;&|<>`$\n\r]/u.test(script)) return false;
+  const controller = /^\s*node(?:js)?\s+(\S+)\s*$/u.exec(script);
+  if (controller && resolveRemoteCommandPolicy(['node', controller[1]], { repoRoot, cwd: packageDir }).controllerDispatcher === '1') return true;
   const match = /^\s*(\S+)\s+--script=\S+(?:\s+[^;&|<>`$\n\r]*)?\s*$/u.exec(script);
   return Boolean(match && resolve(packageDir, match[1]) === resolve(repoRoot, 'apps/stack/bin/hstack-exec'));
 }

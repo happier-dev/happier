@@ -702,11 +702,12 @@ test('routed compiler wrapper forwards cancellation to its launcher', { skip: pr
   assert.deepEqual(await exited, [null, 'SIGTERM']);
 });
 
-for (const exitCode of [0, 7]) {
+for (const exitCode of [0, 2, 7]) {
   test(`compiler runner preserves compiler exit code ${exitCode}`, async (t) => {
     const setup = await fixture(t, { exitCode });
     const { child, stderr } = setup.start([runner]);
     assert.deepEqual(await once(child, 'exit'), [exitCode, null], stderr());
+    if (exitCode) assert.match(stderr(), /\[typecheck-failure\].*compiler.*exit=/u);
   });
 }
 
@@ -1144,3 +1145,16 @@ for (const helper of ['run', 'runCapture', 'runCaptureResult']) {
     await waitUntil(() => !alive(pid), `${helper} child ${pid} survived wrapper cancellation`);
   });
 }
+
+
+test('preparation failures report their stage without starting the compiler', async t => {
+  const setup = await fixture(t, { exitCode: 0 });
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { noEmit: true }, files: ['source.ts'],
+  }));
+  await writeFile(join(setup.root, 'source.ts'), 'export const value = 1;\n');
+  const { child, stderr } = setup.start([runner, '--verifyProjectCoverage', 'absent.json', '-p', 'tsconfig.json']);
+  assert.deepEqual(await once(child, 'exit'), [1, null]);
+  assert.match(stderr(), /\[typecheck-failure\] project-coverage:/u);
+  await assert.rejects(readFile(setup.pidFile), { code: 'ENOENT' });
+});
