@@ -98,6 +98,8 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   launchSchema: strictPortableSchema, resourceSchema: strictPortableSchema,
   schemaVersion: z.number().check(z.int(), z.positive()),
   platforms: z.array(z.enum(['darwin', 'linux', 'win32'])).check(z.minLength(1), z.refine(values => new Set(values).size === values.length)),
+  /** All required endpoints allow browser access and bootstrap needs no native SSH transport. */
+  browserReachable: z.optional(z.boolean()),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()) }),
@@ -183,8 +185,8 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
       const path = ['machineProvisioners', index, ...(binding.role === 'nativeCredentialApply' ? ['nativeCredentialDelivery', 'apply']
         : binding.role === 'reconcile' || binding.role === 'cleanup' ? ['reconciliation', binding.role === 'cleanup' ? 'cleanup' : 'action']
         : [descriptor.actions[binding.role as keyof typeof descriptor.actions] ? 'actions' : 'bootstrapTransport', binding.role])];
-      if (!action || action.execution.target !== 'daemon') {
-        context.addIssue({ code: 'custom', path, message: 'Machine provisioner roles require a declared same-plugin daemon Action.' });
+      if (!action || action.execution.target !== 'daemon' && action.execution.target !== 'account') {
+        context.addIssue({ code: 'custom', path, message: 'Machine provisioner roles require a declared same-plugin Account or daemon Action.' });
         continue;
       }
       if (!action.inputSchema || !action.resultSchema) {
@@ -298,6 +300,7 @@ export const MachineProvisionerCheckResultV1Schema = lazyZodSchema(() => z.lazy(
 export const MachineProvisionerOptionsResultV1Schema = lazyZodSchema(() => z.lazy(() => machineProvisionerOptionsResult));
 export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.strictObject({ controller: mini.optional(ManagedControllerV1Schema), provisioners: z.array(z.strictObject({
   contribution: asProtocolZod(PluginContributionIdentityV1Schema), occurrenceId: z.string().check(z.minLength(1)),
+  acquireExecutionTarget: z.enum(['account', 'daemon']),
   descriptor: MachineProvisionerContributionV1Schema,
   credentialPurposes: z.optional(z.array(z.strictObject({
     purpose: QualifiedConnectedAccountPurposeV1Schema,
@@ -306,7 +309,6 @@ export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.stric
 })) }).check(z.superRefine((result, context) => {
   result.provisioners.forEach((entry, entryIndex) => {
     if (entry.credentialPurposes === undefined) return;
-    if (!result.controller) context.addIssue({ code: 'custom', path: ['controller'], message: 'Credential choices require their exact controller.' });
     const seen = new Set<string>();
     entry.credentialPurposes.forEach(({ purpose }, purposeIndex) => {
       const path = ['provisioners', entryIndex, 'credentialPurposes', purposeIndex, 'purpose'];

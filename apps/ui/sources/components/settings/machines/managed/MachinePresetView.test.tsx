@@ -81,7 +81,7 @@ const resource = { id: 'resource', homeId: 'srv_history', custodianAccountId: 'o
     resource: { contributionRef: preset.recipe.provider, schemaVersion: 1, value: { nativeId: 'original' } },
     allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: 'guest' } as const;
-const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution: preset.recipe.provider, occurrenceId: 'occurrence', credentialPurposes: [], descriptor: {
+const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution: preset.recipe.provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, credentialPurposes: [], descriptor: {
     id: 'native', title: 'Custom compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
     launchSchema: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, additionalProperties: false },
     resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],

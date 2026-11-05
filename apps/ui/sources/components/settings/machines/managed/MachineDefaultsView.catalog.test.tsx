@@ -22,7 +22,7 @@ beforeEach(() => { resetScopedHomeActionExecutorsForTests(); });
 afterEach(() => standardCleanup());
 
 function provisioner(title: string, location: 'local' | 'cloud'): MachineProvisionersListResultV1['provisioners'][number] {
-    return { contribution: { pluginId: 'custom.compute', localId: location }, occurrenceId: `${location}-occurrence`, descriptor: {
+    return { contribution: { pluginId: 'custom.compute', localId: location }, occurrenceId: `${location}-occurrence`, acquireExecutionTarget: 'daemon' as const, descriptor: {
         id: location, title, icon: 'server', resourceKind: 'VM', schemaVersion: 1,
         launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
         platforms: ['linux'], prerequisites: [], billing: { location, stoppedBilling: location === 'local' ? 'not-billed' : 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },

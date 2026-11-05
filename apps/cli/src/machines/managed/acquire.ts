@@ -1,3 +1,4 @@
+import { executeManagedProvisionerDiscovery, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createManagedNativeInvocation } from './reconcile';
 import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -635,51 +636,41 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             if (action === 'machines.provisioners.list') {
                 const request = ManagedMachineActionInputSchemasV1[action].parse(parsed);
                 const { resolveRegistryConnectedAccountActionPurposeAuthorizations } = await import('@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations');
-                const currentChecks: Array<() => boolean> = [];
                 const signal = options.signal ?? new AbortController().signal;
                 // An existing machine needs its own current descriptor, not
                 // acquisition credentials for unrelated provisioners.
                 // The controller is the machine the guest is created on, so a provisioner declared
                 // for other operating systems cannot run here and is not offered.
-                const providers = (input.runtimeRegistry.contributes.machineProvisioners ?? []).filter(provider => (!request.contribution
-                    || provider.identity.pluginId === request.contribution.pluginId && provider.identity.localId === request.contribution.localId)
-                    && (provider.definition.platforms as readonly string[]).includes(process.platform));
-                const entries = await Promise.all(providers.map(async provider => {
-                    signal.throwIfAborted();
+                const providers = (input.runtimeRegistry.contributes.machineProvisioners ?? []).filter(provider =>
+                    (provider.definition.platforms as readonly string[]).includes(process.platform));
+                const entries = providers.flatMap(provider => {
                     const occurrenceId = input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId);
-                    if (!occurrenceId) return null;
+                    return occurrenceId ? [{ contribution: provider.identity, occurrenceId, descriptor: provider.definition,
+                        acquireExecutionTarget: input.runtimeRegistry.contributes.actionsById!.get(buildQualifiedPluginContributionKey(
+                            { pluginId: provider.pluginId, localId: provider.definition.actions.acquire }))!.admittedTarget!
+                            .declaration.execution.target as ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'],
+                    }] : [];
+                });
+                return await executeManagedProvisionerDiscovery({ actionId: action, value: request,
+                    controller: input.controller, entries, readCredentialPurposes: async provider => {
+                    signal.throwIfAborted();
                     // Save/acquire admits exactly this Action's purposes. Other
                     // roles recheck captured selections when invoked; their
                     // private scopes cannot become extra acquisition choices.
-                    const readAuthorizations = () => resolveRegistryConnectedAccountActionPurposeAuthorizations({
+                    const authorizations = resolveRegistryConnectedAccountActionPurposeAuthorizations({
                         registry: input.runtimeRegistry.contributes,
-                        qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: provider.pluginId, localId: provider.definition.actions.acquire }),
+                        qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: provider.contribution.pluginId, localId: provider.descriptor.actions.acquire }),
                         resolveOptionalAccess: input.runtimeRegistry.resolveOptionalAccess,
                     });
-                    const authorizations = readAuthorizations();
-                    const isCurrent = () => input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId) === occurrenceId
-                        && isDeepStrictEqual(authorizations, readAuthorizations());
-                    currentChecks.push(isCurrent);
-                    if (!authorizations) {
-                        return { contribution: provider.identity, occurrenceId, descriptor: provider.definition };
-                    }
-                    const credentialPurposes = await Promise.all(authorizations.map(async authorization => {
+                    if (!authorizations) return undefined;
+                    return await Promise.all(authorizations.map(async authorization => {
                         const list = input.managedProviderOperationAuthority.listActionFormConnectedAccountOptions;
                         if (!list) throw new ManagedMachineControllerError('credential_unavailable');
                         const choices = await list({ purpose: authorization.purpose, serviceRefs: authorization.serviceRefs, signal });
                         signal.throwIfAborted();
-                        if (!isCurrent()) {
-                            throw new ManagedMachineControllerError('provider_unavailable');
-                        }
-                        return { purpose: { consumer: provider.identity, purpose: authorization.purpose.purpose }, options: [...choices] };
+                        return { purpose: { consumer: provider.contribution, purpose: authorization.purpose.purpose }, options: [...choices] };
                     }));
-                    return { contribution: provider.identity, occurrenceId, descriptor: provider.definition, credentialPurposes };
-                }));
-                if (currentChecks.some(isCurrent => !isCurrent())) {
-                    throw new ManagedMachineControllerError('provider_unavailable');
-                }
-                return ManagedMachineActionOutputSchemasV1[action].parse({ controller: input.controller,
-                    provisioners: entries.filter(entry => entry !== null) });
+                } });
             }
             if (action === 'machines.provisioners.check' || action === 'machines.provisioners.options') {
                 const probe = ManagedMachineActionInputSchemasV1[action].parse(parsed);

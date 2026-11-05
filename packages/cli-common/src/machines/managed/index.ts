@@ -1,12 +1,13 @@
 export * from './controllerErrors.js';
 export * from './bootstrapCredential.js';
+export * from './bootstrapCredentialLease.js';
 export * from './reconcile.js';
 export * from './nativeBootstrap.js';
-
-
-
-
-
-export { prepareManagedMachineSetupApplyInput } from './setupApply.js';
+export * from './acquire.js';
+export * from './nativeObservationWait.js';
+export * from './wakeThenRun.js';
+export * from './power.js';
+export * from './destroy.js';
+export * from './setupApply.js';
 export * from './enrollmentIsolation.js';
-export * from './bootstrapCredentialLease.js';
+export { waitForChangeOrDeadline, type WaitForChangeOutcome } from '../../lifecycle/waitForChangeOrDeadline.js';

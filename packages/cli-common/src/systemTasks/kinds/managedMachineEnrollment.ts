@@ -82,7 +82,8 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
 async function installNativeSelfDownload(input: ManagedNativePayloadInstallation): Promise<Readonly<{ binaryPath: string }>> {
   input.signal?.throwIfAborted();
   const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
-    os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir });
+    os: input.os, arch: input.arch, remoteHomeDir: input.remoteHomeDir,
+    runRemoteText: command => input.exec({ command, signal: input.signal }) });
   input.signal?.throwIfAborted();
   const result = await executeRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel,
     remoteHomeDir: input.remoteHomeDir, plan, runRemoteText: async command => input.exec({ command, signal: input.signal }) });

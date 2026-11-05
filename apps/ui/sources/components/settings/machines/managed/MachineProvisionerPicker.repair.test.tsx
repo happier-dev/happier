@@ -59,7 +59,7 @@ describe('mounted provisioner repair', () => {
             machineListStatusByServerId: { [serverId]: 'idle' } });
         const contribution = { pluginId: 'custom.compute', localId: 'native' };
         const action = { pluginId: 'custom.compute', localId: 'repair' };
-        const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', credentialPurposes: [], descriptor: {
+        const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', acquireExecutionTarget: 'daemon' as const, credentialPurposes: [], descriptor: {
             id: contribution.localId, title: 'Native compute', icon: 'magic-wand', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['darwin'], prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },

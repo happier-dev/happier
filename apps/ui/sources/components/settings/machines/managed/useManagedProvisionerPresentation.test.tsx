@@ -11,7 +11,7 @@ afterEach(() => standardCleanup());
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];
 function provisioner(icon: string): Provisioner {
-    return { contribution: { pluginId: 'custom.compute', localId: 'native' }, occurrenceId: 'native-occurrence', descriptor: {
+    return { contribution: { pluginId: 'custom.compute', localId: 'native' }, occurrenceId: 'native-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
         id: 'native', title: 'Native compute', icon, resourceKind: 'VM', schemaVersion: 1,
         launchSchema: { type: 'object', properties: {}, additionalProperties: false },
         resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],

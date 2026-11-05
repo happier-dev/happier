@@ -21,7 +21,7 @@ const descriptor = MachineProvisionerContributionV1Schema.parse({
     billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
     actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
 });
-const provisioner = { contribution: { pluginId: 'custom.compute', localId: 'vm' }, occurrenceId: 'occurrence', descriptor };
+const provisioner = { contribution: { pluginId: 'custom.compute', localId: 'vm' }, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor };
 const controller = { machineId: 'host', installationId: 'installation' };
 
 const emptyDimensions = () => ({ size: [], image: [], location: [], network: [], duration: [] });
@@ -165,7 +165,7 @@ describe('managed configurator draft owner', () => {
             selectors = writeInputPath(selectors, field.path, values[field.path as keyof typeof values]);
         }
         const draft = setManagedConfiguratorOptionsSelectors(createManagedConfiguratorDraft({
-            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', descriptor },
+            provisioner: { contribution: { pluginId: DEVCONTAINER_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'devcontainer', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Project child',
         }), selectors);
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual(values);
@@ -174,7 +174,7 @@ describe('managed configurator draft owner', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(CUA_PLUGIN.manifest.contributes.actions?.find(entry => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
-        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
+        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'cua', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Sandbox' });
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!)).toEqual({});
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({ size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
@@ -187,7 +187,7 @@ describe('managed configurator draft owner', () => {
         const descriptor = MachineProvisionerContributionV1Schema.parse(projected.contributes.machineProvisioners.find((entry: { id: string }) => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(projected.contributes.actions.find((entry: { id: string }) => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);
-        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: projected.id, localId: descriptor.id }, occurrenceId: 'cua', descriptor },
+        const draft = createManagedConfiguratorDraft({ provisioner: { contribution: { pluginId: projected.id, localId: descriptor.id }, occurrenceId: 'cua', acquireExecutionTarget: 'daemon' as const, descriptor },
             controller, name: 'Sandbox' });
         expect(managedConfiguratorOptionsSelectors(draft, action.inputSchema!, hints)).toEqual({ size: { cpu: 2, memoryBytes: 4 * 1024 ** 3 } });
     });
@@ -300,7 +300,7 @@ describe('managed configurator draft owner', () => {
                 nativeLifetime: finite ? { kind: 'finite', durationSeconds: 7200 } : { kind: 'no-native-ttl' } });
             const retention = finite ? { supportedIntents: ['delete' as const], finiteOnly: true } : { supportedIntents: ['start' as const, 'stop' as const, 'delete' as const], finiteOnly: false };
             const draft = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({
-                provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor }, controller, name: 'BYOC',
+                provisioner: { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', acquireExecutionTarget: 'daemon' as const, descriptor }, controller, name: 'BYOC',
                 preset: { id: 'saved', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
             }), { base: { launch, retention, ...(finite ? { nativeFacts: { duration: { id: '7200', title: '2 hours', afterMs: 7_200_000 } } } : {}) }, dimensions: emptyDimensions() });
             const facts = managedConfiguratorFacts(draft);
@@ -363,7 +363,7 @@ describe('managed configurator draft owner', () => {
         const contribution = { pluginId: CRABBOX_PLUGIN.manifest.id, localId: descriptor.id };
         const credential = { purpose: { consumer: contribution, purpose: 'crabbox-coordinator' }, account: {
             service: { pluginId: contribution.pluginId, localId: 'coordinator' }, accountId: 'reviewed-coordinator' } };
-        const crabbox = { contribution, occurrenceId: 'crabbox', descriptor,
+        const crabbox = { contribution, occurrenceId: 'crabbox', acquireExecutionTarget: 'daemon' as const, descriptor,
             credentialPurposes: [{ purpose: credential.purpose, options: [{ value: credential.account, label: 'Coordinator' }] }] };
         const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
         const direct = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: crabbox, controller, name: 'Local', credentials: [credential] }),

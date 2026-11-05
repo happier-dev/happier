@@ -16,6 +16,7 @@ import { prepareMachineProvisionerStoredSchemas } from './machineProvisionerStor
 import * as provisioners from './machineProvisioners.js';
 import { RetentionCapabilitiesV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { PluginManifestV2Schema } from '../manifest/v2.js';
+import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
 
 function nativeDurationManifest() {
@@ -138,6 +139,39 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('admits Account and native provisioner roles through the same strict contribution owner', () => {
+    const base = nativeDurationManifest().contributes;
+    const portable = { ...base,
+      machineProvisioners: base.machineProvisioners.map(descriptor => ({ ...descriptor, browserReachable: true })),
+      actions: base.actions.map(action => ({ ...action, execution: action.id === 'inspect'
+        ? action.execution : { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } })),
+    };
+    const admitted = PluginContributesV2Schema.safeParse(portable);
+    expect(admitted.success, admitted.success ? '' : JSON.stringify(admitted.error.issues)).toBe(true);
+    if (admitted.success) expect(admitted.data.machineProvisioners?.[0]?.browserReachable).toBe(true);
+    expect(PluginContributesV2Schema.safeParse(base).success).toBe(true);
+    expect(PluginContributesV2Schema.safeParse({ ...portable, actions: portable.actions.map(action => action.id === 'acquire'
+      ? { ...action, execution: { target: 'client', client: { artifactId: 'portable', exportName: 'activate' }, platforms: ['web'] } }
+      : action) }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ ...portable,
+      machineProvisioners: portable.machineProvisioners.map(descriptor => ({ ...descriptor, browserReachable: 'yes' })),
+    }).success).toBe(false);
+  });
+
+  it('carries selected Account credential choices without inventing a controller', () => {
+    const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+    const contribution = { pluginId: 'fixture.cloud', localId: descriptor.id };
+    const entry = { contribution, occurrenceId: 'bundled-cloud', descriptor, acquireExecutionTarget: 'daemon',
+      credentialPurposes: [{ purpose: { consumer: contribution, purpose: 'cloud-api' }, options: [{
+        value: { service: { pluginId: 'fixture.cloud', localId: 'account' }, accountId: 'selected' }, label: 'My cloud account',
+      }] }] };
+    expect(provisioners.MachineProvisionersListResultV1Schema.parse({ provisioners: [entry] })).toEqual({ provisioners: [entry] });
+    expect(provisioners.MachineProvisionersListResultV1Schema.safeParse({ provisioners: [{ ...entry,
+      credentialPurposes: [{ ...entry.credentialPurposes[0], purpose: { consumer: { ...contribution, pluginId: 'other.plugin' }, purpose: 'cloud-api' } }],
+    }] }).success).toBe(false);
+  });
+
+
   it('retains older optional result snapshots while rejecting changed retained fields and native values', () => {
     const manifest = nativeDurationManifest();
     const snapshot = structuredClone(manifest);

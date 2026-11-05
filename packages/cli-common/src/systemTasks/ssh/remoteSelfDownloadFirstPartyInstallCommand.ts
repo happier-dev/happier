@@ -2,6 +2,8 @@ import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { lookupSha256 } from '@happier-dev/release-runtime/checksums';
 import { DEFAULT_MINISIGN_PUBLIC_KEY, verifyMinisign } from '@happier-dev/release-runtime/minisign';
+import { fetchGitHubReleaseByTag, GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github';
+import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 import {
   getFirstPartyComponentCatalogEntry,
@@ -49,6 +51,8 @@ export async function executeRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
 type FetchImpl = typeof fetch;
 type VerifyMinisignImpl = typeof verifyMinisign;
 
+const REMOTE_DOWNLOAD_FUNCTION = 'if command -v curl >/dev/null 2>&1; then download() { curl -fsSL "$1" -o "$2"; }; elif command -v wget >/dev/null 2>&1; then download() { wget -qO "$2" "$1"; }; else echo "missing required command: curl or wget" >&2; exit 127; fi';
+
 function normalizeChannel(value: unknown): PublicReleaseRingId {
   return normalizePublicReleaseRingId(value) || 'stable';
 }
@@ -60,59 +64,18 @@ function readEnv(name: string): string {
   return String(process.env?.[name] ?? '').trim();
 }
 
-function buildGitHubReleaseTagUrl(githubRepo: string, tag: string): string {
-  const repo = String(githubRepo ?? '').trim();
-  const releaseTag = String(tag ?? '').trim();
-  if (!repo) throw new Error('[native-ssh-bootstrap] githubRepo is required');
-  if (!releaseTag) throw new Error('[native-ssh-bootstrap] release tag is required');
-  return `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(releaseTag)}`;
-}
-
-async function fetchGitHubReleaseByTag(params: Readonly<{
-  githubRepo: string;
-  tag: string;
-  userAgent: string;
-  githubToken?: string;
-  fetchImpl?: FetchImpl;
-}>): Promise<unknown> {
-  const fetchImpl = params.fetchImpl ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') {
-    throw new Error('[native-ssh-bootstrap] fetch is unavailable.');
-  }
-  const headers: Record<string, string> = {
-    'user-agent': params.userAgent,
-    accept: 'application/vnd.github+json',
-  };
-  const githubToken = String(params.githubToken ?? '').trim();
-  if (githubToken) {
-    headers.authorization = `Bearer ${githubToken}`;
-  }
-  const url = buildGitHubReleaseTagUrl(params.githubRepo, params.tag);
-  const response = await fetchImpl(url, { headers });
-  if (!response.ok) {
-    throw new Error(`[native-ssh-bootstrap] failed to resolve release tag ${params.tag} (${response.status})`);
-  }
-  return await response.json();
-}
-
-async function fetchTextAsset(params: Readonly<{
+async function readRemoteReleaseTextAsset(params: Readonly<{
   url: string;
-  userAgent: string;
-  fetchImpl?: FetchImpl;
+  runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
 }>): Promise<string> {
-  const fetchImpl = params.fetchImpl ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') {
-    throw new Error('[native-ssh-bootstrap] fetch is unavailable.');
+  // The guest already downloads the archive. Read its signed integrity files
+  // through that same transport: GitHub download redirects do not support CORS.
+  const url = safeBashSingleQuote(params.url);
+  const result = await params.runRemoteText(`${REMOTE_DOWNLOAD_FUNCTION}; download ${url} -`);
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || '[native-ssh-bootstrap] failed to download release asset');
   }
-  const response = await fetchImpl(params.url, {
-    headers: {
-      'user-agent': params.userAgent,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`[native-ssh-bootstrap] failed to download release asset (${response.status})`);
-  }
-  return await response.text();
+  return result.stdout;
 }
 
 export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly<{
@@ -140,7 +103,7 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
     'set -eu',
     'require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 127; }; }',
     'require_cmd tar',
-    'if command -v curl >/dev/null 2>&1; then download() { curl -fsSL "$1" -o "$2"; }; elif command -v wget >/dev/null 2>&1; then download() { wget -qO "$2" "$1"; }; else echo "missing required command: curl or wget" >&2; exit 127; fi',
+    REMOTE_DOWNLOAD_FUNCTION,
     'if command -v sha256sum >/dev/null 2>&1; then sha256_file() { sha256sum "$1" | awk \'{print $1}\'; }; elif command -v shasum >/dev/null 2>&1; then sha256_file() { shasum -a 256 "$1" | awk \'{print $1}\'; }; else echo "missing required command: sha256sum or shasum" >&2; exit 127; fi',
     `mkdir -p ${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)}`,
     `stage="$(mktemp -d ${quoteRemotePathWithHomeExpansion(`${layout.remoteHomeDir}/bootstrap-self-download.XXXXXX`)})"`,
@@ -176,6 +139,7 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
   remoteHomeDir?: string;
   fetchImpl?: FetchImpl;
   verifyMinisign?: VerifyMinisignImpl;
+  runRemoteText: (command: string) => Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
 }>): Promise<RemoteSelfDownloadFirstPartyInstallPlan> {
   const channel = normalizeChannel(params.channel);
   const component = getFirstPartyComponentCatalogEntry(params.componentId);
@@ -191,7 +155,13 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
     githubToken,
     tag: variant.releaseTag,
     userAgent,
-    ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+    transientNotFoundAttempts: 1,
+    fetchImpl: params.fetchImpl ?? globalThis.fetch,
+  }).catch((error: unknown) => {
+    // Translate the release owner's closed refusal once into the task contract,
+    // which all managed/SSH hosts already preserve without exposing raw output.
+    if (error instanceof GitHubReleaseRateLimitError) throw new SystemTaskExecutionError(error.code, error.message);
+    throw error;
   });
   const bundle = resolveReleaseAssetBundle({
     assets: (release as { assets?: unknown }).assets,
@@ -200,15 +170,13 @@ export async function resolveRemoteSelfDownloadFirstPartyInstallPlan(params: Rea
     arch: params.arch,
     preferZipOnWindows: false,
   });
-  const checksumsText = await fetchTextAsset({
+  const checksumsText = await readRemoteReleaseTextAsset({
     url: bundle.checksums.url,
-    userAgent,
-    ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+    runRemoteText: params.runRemoteText,
   });
-  const checksumsSig = await fetchTextAsset({
+  const checksumsSig = await readRemoteReleaseTextAsset({
     url: bundle.checksumsSig.url,
-    userAgent,
-    ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+    runRemoteText: params.runRemoteText,
   });
   const verify = params.verifyMinisign ?? verifyMinisign;
   const minisignPublicKey = String(params.minisignPublicKey ?? '').trim() || DEFAULT_MINISIGN_PUBLIC_KEY;

@@ -45,7 +45,7 @@ const cloud = { service: { pluginId: 'cloud.auth', localId: 'cloud' }, accountId
 const otherCloud = { service: { pluginId: 'cloud.auth', localId: 'cloud' }, accountId: 'other-account' };
 const cua = { service: { pluginId: 'cua.auth', localId: 'cua' }, accountId: 'same-account' };
 const credentials = [{ purpose: cloudPurpose, account: cloud }, { purpose: cuaPurpose, account: cua }];
-const provisioner = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{ contribution, occurrenceId: 'occurrence', descriptor: {
+const provisioner = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{ contribution, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
     launchSchema: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, required: ['cpu'], additionalProperties: false },
     resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],

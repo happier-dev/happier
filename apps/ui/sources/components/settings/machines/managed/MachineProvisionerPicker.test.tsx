@@ -621,7 +621,7 @@ describe('provisioner picker demand', () => {
       machineListStatusByServerId: { [serverId]: 'idle' },
     });
     const descriptor = (localId: string, title: string, kind = 'VM') => ({
-      contribution: { pluginId: 'custom.compute', localId }, occurrenceId: `occurrence-${localId}`, credentialPurposes: [],
+      contribution: { pluginId: 'custom.compute', localId }, occurrenceId: `occurrence-${localId}`, acquireExecutionTarget: 'daemon' as const, credentialPurposes: [],
       descriptor: {
         id: localId, title, icon: 'server', resourceKind: 'native-compute-vm', schemaVersion: 1,
         kindTitle: { key: `${localId}.kind`, fallback: kind }, description: { key: `${localId}.description`, fallback: `${title} guest.` },

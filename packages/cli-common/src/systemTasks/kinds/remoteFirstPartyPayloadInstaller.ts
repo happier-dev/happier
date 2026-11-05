@@ -78,6 +78,7 @@ export interface RemoteFirstPartyInstallDeps {
     os: 'linux' | 'darwin';
     arch: 'x64' | 'arm64';
     remoteHomeDir?: string;
+    runRemoteText: Parameters<typeof resolveRemoteSelfDownloadFirstPartyInstallPlan>[0]['runRemoteText'];
   }>) => Promise<RemoteSelfDownloadFirstPartyInstallPlan>;
   now?: () => number;
 }
@@ -164,6 +165,7 @@ export async function installRemoteFirstPartyComponentPayload(
       channel,
       os: target.os,
       arch: target.arch,
+      runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
       ...(params.remoteHomeDir ? { remoteHomeDir } : {}),
     });
     const installResult = await executeRemoteSelfDownloadFirstPartyInstallPlan({

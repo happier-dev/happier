@@ -1,4 +1,6 @@
-import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, matchesMachineSetupCreationSourcesV1, type ActionExecuteResult, type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** Prepare the same reviewed creation operand for signed and local dispatch. */

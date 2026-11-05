@@ -52,7 +52,7 @@ beforeEach(async () => {
 afterEach(() => { standardCleanup(); restoreViewport?.(); restoreViewport = undefined; });
 const defaultController = { machineId: 'host', installationId: 'installation' };
 const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
-    contribution: { pluginId: 'custom.compute', localId: 'vm' }, occurrenceId: 'occurrence', credentialPurposes: [], descriptor: {
+    contribution: { pluginId: 'custom.compute', localId: 'vm' }, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, credentialPurposes: [], descriptor: {
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
     launchSchema: { type: 'object', properties: { cpu: { type: 'integer', minimum: 1 } }, required: ['cpu'], additionalProperties: false },
     resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
@@ -462,7 +462,7 @@ describe('mounted managed configurator', () => {
         const optionsDeclaration = modalManifest.contributes.actions?.find(action => action.id === descriptor.actions.options);
         if (!optionsDeclaration?.inputSchema || !optionsDeclaration.inputHints) throw new Error('The actual Modal options declaration must publish its schema and fields');
         const contribution = { pluginId: modalManifest.id, localId: descriptor.id };
-        const modal = { contribution, occurrenceId: 'modal-provisioner', descriptor, credentialPurposes: [] };
+        const modal = { contribution, occurrenceId: 'modal-provisioner', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] };
         const action = PluginProjectedActionV2Schema.parse({ id: optionsDeclaration.id, pluginId: modalManifest.id,
             occurrenceId: 'modal-options', title: optionsDeclaration.title, scopes: optionsDeclaration.scopes,
             surfaces: optionsDeclaration.surfaces, execution: optionsDeclaration.execution,

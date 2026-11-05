@@ -136,7 +136,7 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
     if (!actionId) return null;
     const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
     const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
-        provisioners: [{ contribution: machine.launch.provider, occurrenceId: 'static-native-occurrence', descriptor: {
+        provisioners: [{ contribution: machine.launch.provider, occurrenceId: 'static-native-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: machine.launch.provider.localId, title: 'Static native resource', icon: 'server',
             resourceKind: 'static-native-resource', schemaVersion: machine.launch.schemaVersion,
             launchSchema: { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } }, additionalProperties: false },
@@ -830,7 +830,7 @@ describe('managed Machine detail', () => {
                 schemaVersion: 1, name: 'Shared guest', choices: {} }, controller, allocation: 'bound', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'retained-shared-resource' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 5, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-        const provisioner = { contribution: provider, occurrenceId: 'occurrence', descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'vm', title: 'Guest', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -924,7 +924,7 @@ describe('managed Machine detail', () => {
             resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'original-paid-resource' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 5, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const moved = { ...machine, controller: destination, intentRevision: 6 };
-        const provisioner = { contribution: provider, occurrenceId: 'occurrence', descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'vm', title: 'Guest', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -997,7 +997,7 @@ describe('managed Machine detail', () => {
             launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} }, controller,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
-        const provisioner = { contribution: provider, occurrenceId: 'occurrence', descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'vm', title: 'Guest', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -1107,7 +1107,7 @@ describe('managed Machine detail', () => {
                     : { supportedIntents: ['delete'], finiteOnly: true }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
                 ...(cloud === 'modal' ? { nativeFacts: { duration: { id: '7200', title: '7200 s', afterMs: 7_200_000 } } } : {}) } };
         ManagedMachineV1Schema.parse(machine);
-        const provisioner = { contribution: provider, occurrenceId: `variant-occurrence-${variant}`, descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: `variant-occurrence-${variant}`, acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'byoc', title: 'Cua BYOC', icon: 'server', resourceKind: 'cua-byoc-resource', schemaVersion: 1,
             launchSchema: { type: 'object', properties: { cloud: { type: 'string' }, region: { type: 'string' },
                 nativeImageId: { type: 'string' }, nativeSizeId: { type: 'string' }, nativeLifetime: { type: 'object',
@@ -1226,7 +1226,7 @@ describe('managed Machine detail', () => {
             retention: { kind: 'unused', afterMs: 3_600_000, effect: 'delete' }, wakeOnAcceptedMessage: false,
             ...(observed ? { observation: { observedAt: 1_790_001_000_000, availability: 'present' as const,
                 nativeExpiry: 1_790_008_200_000 } } : {}) };
-        const provisioner = { contribution: provider, occurrenceId: 'finite-occurrence', descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: 'finite-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'guest', title: 'Finite guest', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
@@ -1376,7 +1376,7 @@ describe('managed Machine detail', () => {
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location, stoppedBilling: 'billed' },
                 prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
-        const provisioner = { contribution: provider, occurrenceId: 'occurrence', descriptor: {
+        const provisioner = { contribution: provider, occurrenceId: 'occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location, stoppedBilling: 'billed' },
@@ -1582,7 +1582,7 @@ describe('managed Machine detail', () => {
             intentRevision: 6, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'billed' },
                 prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
-        const provisioner = { contribution: launch.provider, occurrenceId: 'fresh-occurrence', descriptor: {
+        const provisioner = { contribution: launch.provider, occurrenceId: 'fresh-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor: {
             id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
             platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'not-billed' },
@@ -2072,7 +2072,7 @@ describe('managed Machine detail', () => {
                 if (actionId === 'machines.managed.rebuild') rebuilds.push(request);
                 if (actionId === 'machines.provisioners.options') expect(request.input).toMatchObject({ selectors });
                 const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
-                    provisioners: [{ contribution: provider, occurrenceId: 'container-occurrence', descriptor }] })
+                    provisioners: [{ contribution: provider, occurrenceId: 'container-occurrence', acquireExecutionTarget: 'daemon' as const, descriptor }] })
                     : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ base: { available: true,
                         launch: { ...selectors, reviewedEffectDigest: 'b'.repeat(64) }, effectReview: { kind: 'devcontainer',
                             reviewedEffectDigest: 'b'.repeat(64), effects: [
