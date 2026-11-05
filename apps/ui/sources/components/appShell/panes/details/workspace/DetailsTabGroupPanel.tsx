@@ -3,6 +3,7 @@ import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScr
 import { PaneMainRestoreChip, usePaneMainRestoreChipVisible } from '@/components/appShell/panes/mainColumn/PaneMainColumnControls';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
+import Animated, { FadeIn, type EntryOrExitLayoutType } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
@@ -14,6 +15,7 @@ import { useWebScrollLockBypass } from '@/components/ui/scroll/useWebScrollLockB
 import { DIFF_SPLIT_MIN_WIDTH_PX, DiffPresentationWidthProvider, resolveDiffSplitFits } from '@/components/ui/code/diff/diffPresentationStyle';
 import { DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { t } from '@/text';
+import { motionTokens } from '@/components/ui/motion';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DetailsTabState, DetailsWorkspaceGroupView } from './detailsWorkspaceTypes';
 import {
@@ -34,9 +36,13 @@ type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 const ViewWithWheel = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onWheel?: (event: unknown) => void; onTouchMove?: (event: unknown) => void }
 >;
-const AccessibleTabPanelView = View as unknown as React.ComponentType<
-    React.ComponentPropsWithRef<typeof View> & Pick<React.HTMLAttributes<HTMLElement>, 'inert'>
+// Animated so a tab that takes another's place in the same group (a Start form becoming its Discussion
+// or Run) can fade in; every other tab mounts still. One type for every panel, so none remounts.
+const AccessibleTabPanelView = Animated.View as unknown as React.ComponentType<
+    React.ComponentPropsWithRef<typeof View> & Pick<React.HTMLAttributes<HTMLElement>, 'inert'> & { entering?: EntryOrExitLayoutType }
 >;
+/** Lab flows: after Ask/Start the body cross-fades into its result on the base duration, also under reduced motion. */
+const REPLACED_TAB_ENTERING = FadeIn.duration(motionTokens.durationMs.base);
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -64,6 +70,8 @@ const DetailsTabSurface = React.memo((props: Readonly<{
     groupId: string;
     tabKey: string;
     isActive: boolean;
+    /** Mounted in place of a tab that just left this group (`replaceTab`): it fades in. */
+    replacing?: boolean;
     children: React.ReactNode;
 }>) => {
     const a11yHiddenProps =
@@ -76,6 +84,7 @@ const DetailsTabSurface = React.memo((props: Readonly<{
 
     return (
         <AccessibleTabPanelView
+            entering={props.replacing ? REPLACED_TAB_ENTERING : undefined}
             nativeID={detailsTabPanelNativeId(props.groupId, props.tabKey)}
             role="tabpanel"
             accessibilityLabelledBy={detailsTabNativeId(props.groupId, props.tabKey)}
@@ -181,6 +190,16 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
     }, [props.group.activeTabKey, props.group.tabs]);
     const effectiveActiveKey = props.group.activeTabKey ?? activeTab?.key ?? null;
     const forceEmptyState = props.forceEmptyState === true;
+    // A tab replaced in place: the active key is new while a key the group showed before has left.
+    // Only that tab's mount reads it, so a later render computing nothing changes no animation.
+    const previousTabKeys = React.useRef<ReadonlySet<string> | null>(null);
+    const tabKeys = React.useMemo(() => new Set(props.group.tabs.map((tab) => tab.key)), [props.group.tabs]);
+    const previousKeys = previousTabKeys.current;
+    const replacingKey = previousKeys && effectiveActiveKey && !previousKeys.has(effectiveActiveKey)
+        && [...previousKeys].some((key) => !tabKeys.has(key)) ? effectiveActiveKey : null;
+    React.useLayoutEffect(() => {
+        previousTabKeys.current = tabKeys;
+    }, [tabKeys]);
 
 
     const headerPaddingTop = props.headerPaddingTop ?? 0;
@@ -275,6 +294,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 groupId={props.group.id}
                                 tabKey={tab.key}
                                 isActive={isActive}
+                                replacing={tab.key === replacingKey}
                             >
                                 <RetainedPanelSurface isActive={presented} mode="flow">
                                     <DetailsTabChromeProvider value={chromeFor(tab.key)}>
