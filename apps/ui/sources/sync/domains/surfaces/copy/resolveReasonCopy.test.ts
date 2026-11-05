@@ -518,6 +518,12 @@ const HOSTED_WEB_LOCAL_TERMINAL_CODES = [
 ] as const;
 
 describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)', () => {
+  it.each(['timeout', 'plugin_action_outcome_unknown'])('preserves the unsettled Action outcome for %s', reasonCode => {
+    const copy = resolveReasonCopy({ kind: 'pluginRuntime', reasonCode });
+    expect(copy.body).toBe(t('ui.pluginUi.actionNoAnswer'));
+    expect(copy.diagnosticCode).toBe(reasonCode);
+  });
+
   it('tells the user to choose a machine when installed copies of a plugin disagree', () => {
     // The projection blocks a page whose machines carry different plugin versions until
     // one is chosen; the generic "unavailable right now" hides that one press fixes it.
