@@ -1,4 +1,6 @@
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { AgentConnectedAccountPurposeMigrationDescriptor } from '../account/settings/connectedServicesSettings.js';
 import {
   openConnectedAccountCatalogContentV1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
@@ -10,9 +12,12 @@ import {
 
 export { CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1, emptyConnectedAccountCatalogRecordV1,
   readRetainedConnectedAccountCatalogRecordV1 } from './connectedAccountConfigurationRowsV1.js';
-export type ConnectedAccountCatalogUnavailableReasonV1 = 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch'
-  | 'encryption-material-unavailable' | 'invalid-stored-content' | 'invalid-reference' | 'unauthorized' | 'forbidden' | 'unsupported'
-  | 'unreachable' | 'database_transaction_conflict_exhausted' | 'scope-retired' | 'cancelled' | 'source-version-conflict' | 'authority-not-confirmed';
+export const ConnectedAccountCatalogUnavailableReasonV1Schema = lazyZodSchema(() => z.enum([
+  'account-not-found', 'account-inconsistent', 'account-mode-mismatch',
+  'encryption-material-unavailable', 'invalid-stored-content', 'invalid-reference', 'unauthorized', 'forbidden', 'unsupported',
+  'unreachable', 'database_transaction_conflict_exhausted', 'scope-retired', 'cancelled', 'source-version-conflict', 'authority-not-confirmed',
+]));
+export type ConnectedAccountCatalogUnavailableReasonV1 = z.infer<typeof ConnectedAccountCatalogUnavailableReasonV1Schema>;
 export type ConnectedAccountCatalogSourceCleanupV1 = Readonly<{ status: 'complete' }> | Readonly<{
   status: 'cleanup-pending'; reason: 'source-unavailable' | 'source-conflict' | 'history-incomplete' | 'cancelled';
 }>;

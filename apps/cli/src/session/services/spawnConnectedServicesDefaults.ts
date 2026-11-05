@@ -5,7 +5,9 @@ import {
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
+import type { ConnectedAccountCatalogSnapshotV1, ConnectedAccountCatalogUnavailableReasonV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
+import type { ConnectedServicesDefaultUnavailableDetailsV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { TeamCredentialLaunchFailurePhase } from './sessionTeamCredentialLaunchError';
 import { TeamCredentialResourceEntitledPageV1Schema, resolveTeamResourceConnectedServiceSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
@@ -16,7 +18,7 @@ import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBin
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
-import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
+import { readConnectedAccountCatalogUnavailableReason, refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
@@ -35,6 +37,7 @@ export type SpawnConnectedServicesDefaultDisposition =
   | Readonly<{ kind: 'native' }>
   | Readonly<{
       kind: 'unavailable';
+      catalogReason?: ConnectedAccountCatalogUnavailableReasonV1;
       reason:
         | 'connected_services_default_settings_invalid'
         | 'connected_account_purpose_catalog_unavailable'
@@ -95,12 +98,18 @@ export function createCredentialsSpawnConnectedServicesTeamResourceCatalogResolv
 
 export class ConnectedServicesDefaultUnavailableError extends Error {
   readonly code = 'connected_services_default_unavailable';
+  readonly details?: ConnectedServicesDefaultUnavailableDetailsV1;
 
   constructor(readonly reason:
     | 'connected_services_default_settings_invalid'
     | 'connected_account_purpose_catalog_unavailable'
-    | 'connected_services_team_default_requires_current_resource') {
+    | 'connected_services_team_default_requires_current_resource',
+    readonly phase: TeamCredentialLaunchFailurePhase = 'purpose_binding',
+    readonly catalogReason?: ConnectedAccountCatalogUnavailableReasonV1) {
     super(reason);
+    if (reason !== 'connected_services_team_default_requires_current_resource') {
+      this.details = { v: 1, source: 'account_default', reason, phase: 'purpose_binding', ...(catalogReason ? { catalogReason } : {}) };
+    }
   }
 }
 
@@ -160,11 +169,12 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
     const purposeCatalog = await refreshConnectedAccountCatalogForAdmission({ credentials: params.credentials,
       key: 'purposes', operationContext, ...(params.signal ? { signal: params.signal } : {}) });
     if (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes') {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+        purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
     }
     const admittedSnapshot = operationContext.readSnapshot();
     if (!admittedSnapshot || !await operationContext.isCurrent()) {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
     }
     const accountSettings = admittedSnapshot.settings;
     const teamIds = readTeamResourceDefaultTeamIds({
@@ -192,7 +202,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
     });
     if (disposition.kind === 'unavailable') {
-      throw new ConnectedServicesDefaultUnavailableError(disposition.reason);
+      throw new ConnectedServicesDefaultUnavailableError(disposition.reason, 'purpose_binding', disposition.catalogReason);
     }
     if (disposition.kind === 'native') return null;
     const teamCredentialBindings = resolvePurposeTeamCredentialBindingIntents({
@@ -205,7 +215,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       teamCredentialResourceCatalog,
     });
     if (!await operationContext.isCurrent()) {
-      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+      throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
     }
     return {
       connectedServices: disposition.bindings,
@@ -217,7 +227,8 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
     }
     if (error instanceof ConnectedServicesDefaultUnavailableError) throw error;
-    throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+    throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+      readConnectedAccountCatalogUnavailableReason(error, params.signal));
   }
   };
   return params.operationContext ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, resolve) : resolve();
@@ -419,6 +430,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
     return {
       kind: 'unavailable',
       reason: 'connected_account_purpose_catalog_unavailable',
+      ...(params.purposeCatalog.status === 'unavailable' ? { catalogReason: params.purposeCatalog.reason } : {}),
     };
   }
 

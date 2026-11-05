@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ConnectedAccountCatalogUnavailableReasonV1Schema } from './connectedAccountCatalogV1.js';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
@@ -10,6 +11,17 @@ import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
 } from '../common/sensitiveKeys.js';
+
+/** Content-free provenance for a refusal before any pool/model is admitted. */
+export const ConnectedServicesDefaultUnavailableDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  source: z.literal('account_default'),
+  reason: z.enum(['connected_services_default_settings_invalid', 'connected_account_purpose_catalog_unavailable']),
+  phase: z.literal('purpose_binding'),
+  catalogReason: z.optional(ConnectedAccountCatalogUnavailableReasonV1Schema),
+}));
+
+export type ConnectedServicesDefaultUnavailableDetailsV1 = z.infer<typeof ConnectedServicesDefaultUnavailableDetailsV1Schema>;
 
 export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   providerSessionStateUnavailableForResume: 'provider_session_state_unavailable_for_resume',

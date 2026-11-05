@@ -19,6 +19,7 @@ import { ArtifactAccessErrorCodeV1Schema } from '../../artifacts/artifactAccessV
 import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
 import { MemoryDecisionSourceErrorCodeV1Schema } from '../../prompts/library/memoryActionsV1.js';
 import { SkillUnavailableReasonV1Schema } from '../../prompts/library/skills/skillLibraryItemV1.js';
+import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import { isActionOutcomeUnknownErrorCodeV1, ActionExceptionFailureDetailsV1Schema,
   projectActionExceptionFailureDetailsV1 } from '../actionExecutionResult.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunTransportErrorCodeSchema } from '../../execution/runs/responseSchemas.js';
@@ -69,6 +70,11 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: Actio
   const rawCodes = [errorRecord.code, errorRecord.errorCode]
     .map((value) => (typeof value === 'string' ? String(value).trim() : ''))
     .filter((value) => value.length > 0);
+  if (rawCodes.includes('connected_services_default_unavailable')) {
+    const defaultDetails = ConnectedServicesDefaultUnavailableDetailsV1Schema.safeParse(rawDetails);
+    if (defaultDetails.success) return { errorCode: 'connected_services_default_unavailable',
+      error: defaultDetails.data.reason, details: defaultDetails.data };
+  }
   const managedRequest = ManagedControllerRequestFailureDetailsV1Schema.safeParse(rawDetails);
   if (managedRequest.success && (!managedRequest.data.code || rawCodes.includes(managedRequest.data.code))) {
     const code = managedRequest.data.code ?? rawCodes[0] ?? 'managed_controller_request_failed';

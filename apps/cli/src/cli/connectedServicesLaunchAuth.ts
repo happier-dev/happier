@@ -213,7 +213,11 @@ export async function resolveConnectedServicesLaunchAuthWithInventory(params: Re
 type ConnectedServicesLaunchDefaultDisposition =
   | Readonly<{ kind: 'connected'; bindings: ConnectedServiceBindingsV2 }>
   | Readonly<{ kind: 'native' }>
-  | Readonly<{ kind: 'unavailable'; reason: ConstructorParameters<typeof ConnectedServicesDefaultUnavailableError>[0] }>;
+  | Readonly<{
+      kind: 'unavailable';
+      reason: ConstructorParameters<typeof ConnectedServicesDefaultUnavailableError>[0];
+      catalogReason?: ConstructorParameters<typeof ConnectedServicesDefaultUnavailableError>[2];
+    }>;
 
 export async function resolveCliConnectedServicesLaunchBindings(params: Readonly<{
   authRaw: string | undefined;
@@ -239,7 +243,7 @@ export async function resolveCliConnectedServicesLaunchBindings(params: Readonly
   const intent = parseConnectedServicesLaunchAuth(params.authRaw ?? 'default');
   if (intent.kind === 'default') {
     if (params.defaultDisposition.kind === 'unavailable') {
-      throw new ConnectedServicesDefaultUnavailableError(params.defaultDisposition.reason);
+      throw new ConnectedServicesDefaultUnavailableError(params.defaultDisposition.reason, 'purpose_binding', params.defaultDisposition.catalogReason);
     }
     return params.defaultDisposition.kind === 'connected'
       ? params.defaultDisposition.bindings

@@ -227,6 +227,16 @@ describe('connectedServicesLaunchAuth', () => {
     })).rejects.toMatchObject({ code: 'connected_services_default_unavailable', reason: 'connected_services_default_settings_invalid' });
   });
 
+  it('keeps the catalog admission reason on the CLI default-auth refusal', async () => {
+    await expect(resolveCliConnectedServicesLaunchBindings({
+      authRaw: undefined,
+      authJsonRaw: undefined,
+      supportedServiceIds: [CODEX_SERVICE_KEY],
+      defaultDisposition: { kind: 'unavailable', reason: 'connected_account_purpose_catalog_unavailable', catalogReason: 'forbidden' },
+      listInventory: async () => null,
+    })).rejects.toMatchObject({ code: 'connected_services_default_unavailable', details: { catalogReason: 'forbidden' } });
+  });
+
   it('rejects structured connected-service auth for an unsupported backend', async () => {
     await expect(resolveCliConnectedServicesLaunchBindings({
       authRaw: undefined,

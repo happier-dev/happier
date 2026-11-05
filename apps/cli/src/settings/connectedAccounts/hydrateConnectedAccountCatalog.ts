@@ -24,6 +24,18 @@ type ConnectedAccountCatalogReadyObserver = (
   catalog: Extract<ConnectedAccountCatalogSnapshotV1, { status: 'ready' }>,
 ) => void;
 
+/** One classification for catalog transport/opening failures, including admission bootstrap. */
+export function readConnectedAccountCatalogUnavailableReason(error: unknown, signal?: AbortSignal): ConnectedAccountCatalogUnavailableReasonV1 {
+  const code = error instanceof Error && 'code' in error ? error.code : undefined;
+  return signal?.aborted ? 'cancelled'
+    : code === 'scope-retired' || code === 'unauthorized' || code === 'forbidden' || code === 'unsupported'
+      || code === 'account-mode-mismatch' || code === 'database_transaction_conflict_exhausted' ? code
+    : isRetryableAccountEncryptionCurrentnessError(error) ? 'unreachable'
+    : code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable'
+      ? 'encryption-material-unavailable'
+    : error instanceof $ZodError ? 'invalid-stored-content' : 'unreachable';
+}
+
 /** Coalesce first demand and content-free row hints within the incumbent Account lifetime. */
 export function refreshActiveConnectedAccountCatalog(
   input: ConnectedAccountCatalogRefreshInput,
@@ -80,15 +92,7 @@ function refreshConnectedAccountCatalog(
           catalog = await readTransferCatalog();
         }
       } catch (error) {
-        const code = error instanceof Error && 'code' in error ? error.code : undefined;
-        const reason: ConnectedAccountCatalogUnavailableReasonV1 = input.signal?.aborted ? 'cancelled'
-          : code === 'scope-retired' || code === 'unauthorized' || code === 'forbidden' || code === 'unsupported'
-            || code === 'account-mode-mismatch' || code === 'database_transaction_conflict_exhausted' ? code
-          : isRetryableAccountEncryptionCurrentnessError(error) ? 'unreachable'
-          : code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable'
-            ? 'encryption-material-unavailable'
-          : error instanceof $ZodError ? 'invalid-stored-content' : 'unreachable';
-        catalog = { status: 'unavailable', reason };
+        catalog = { status: 'unavailable', reason: readConnectedAccountCatalogUnavailableReason(error, input.signal) };
       }
       if (!context && reloadAfterPending.has(workKey)) continue;
       try {
