@@ -12,6 +12,17 @@ import {
 } from './catalog.js';
 
 describe('MODEL_PACK_CATALOG', () => {
+  it('owns distinct human display names for every selectable pack, including Parakeet v3', () => {
+    const entries = listModelPackCatalogEntries();
+    for (const entry of entries) {
+      expect(entry).toHaveProperty('displayName', expect.stringMatching(/\S/));
+      expect(entry).not.toHaveProperty('displayName', entry.model);
+    }
+    expect(new Set(entries.map(entry => entry.displayName)).size).toBe(entries.length);
+    expect(getModelPackCatalogEntry('sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8'))
+      .toHaveProperty('displayName', 'Parakeet v3 (0.6B, int8)');
+  });
+
   it('publishes only the exact canonical q8 Kokoro pack after normalized asset publication', () => {
     expect(KOKORO_DEFAULT_TTS_PACK_ID).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
     expect(getModelPackCatalogEntry(KOKORO_DEFAULT_TTS_PACK_ID)).toMatchObject({

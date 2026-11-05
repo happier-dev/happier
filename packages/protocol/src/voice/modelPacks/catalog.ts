@@ -24,6 +24,8 @@ type ModelPackCatalogEntryBase = Readonly<{
   kind: ModelPackKind;
   /** Underlying model identifier. */
   model: string;
+  /** Human-readable pack identity shared by every speech picker. */
+  displayName: string;
   /** When set, this entry is the default pack for the given kind. */
   defaultFor?: ModelPackKind;
   /** Archive download URL, or null until a published manifest supplies it. */
@@ -59,6 +61,7 @@ export const MODEL_PACK_CATALOG = [
     packId: KOKORO_DEFAULT_TTS_PACK_ID,
     kind: 'tts_sherpa',
     model: 'kokoro-int8-multi-lang-v1_1',
+    displayName: 'Kokoro v1.0 (q8)',
     runtimeFamily: 'sherpa_kokoro_offline',
     defaultFor: 'tts_sherpa',
     runtimeArtifacts: {
@@ -82,6 +85,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+    displayName: 'Zipformer English (2023-06-26)',
     languages: ['en'],
     runtimeFamily: 'sherpa_zipformer_streaming',
     defaultFor: 'stt_sherpa',
@@ -106,6 +110,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+    displayName: 'Zipformer English (20M)',
     languages: ['en'],
     runtimeFamily: 'sherpa_zipformer_streaming',
     runtimeArtifacts: {
@@ -137,6 +142,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+    displayName: 'Parakeet v2 (0.6B, int8)',
     languages: ['en'],
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
@@ -156,6 +162,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     kind: 'stt_sherpa',
     model: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+    displayName: 'Parakeet v3 (0.6B, int8)',
     languages: ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk'],
     runtimeFamily: 'sherpa_parakeet_offline',
     runtimeArtifacts: {
@@ -179,6 +186,7 @@ export const MODEL_PACK_CATALOG = [
     packId: 'kokoro-en-v0_19',
     kind: 'tts_sherpa',
     model: 'kokoro-en-v0_19',
+    displayName: 'Kokoro English v0.19',
     runtimeFamily: 'sherpa_kokoro_offline',
     runtimeArtifacts: {
       model: { type: 'file', path: 'model.onnx' },

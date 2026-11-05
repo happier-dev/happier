@@ -16,8 +16,7 @@ describe('sherpaStreamingSttPacks', () => {
     const published = listModelPackCatalogEntries('stt_sherpa').filter(entry => entry.publicationStatus === 'published' && entry.streamingCapable);
     expect(options.map(option => option.id)).toEqual(published.map(entry => entry.packId));
     expect(options[0]?.id).toBe(getDefaultModelPackId('stt_sherpa'));
-    expect(options.find(option => option.id === 'sherpa-onnx-streaming-zipformer-en-2023-06-26')?.title).toContain('2023 06 26');
-    expect(options.find(option => option.id === 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17')?.title).toContain('20M');
+    expect(options.map(option => option.title)).toEqual(published.map(entry => entry.displayName));
   });
 
   it('projects the built-in description through the active locale while preserving environment-provided option copy', async () => {
