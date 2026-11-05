@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
-import { SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS } from '@/components/ui/selectionList/_constants';
 import { SessionAccessEditor } from './SessionAccessEditor';
 import type { SessionAccessCandidateRowModel, SessionAccessEditorActions, SessionAccessEditorModel, SessionAccessGrantRowModel } from './sessionAccessEditorTypes';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -11,8 +11,8 @@ vi.mock('react-native', async () => {
 });
 // The virtualized list is a third-party rendering boundary; the testkit owns it.
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit');
-    return { LegendList: createCapturingLegendListMock({ renderItems: true, renderItemLimit: 20 }).module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true, renderItemLimit: 20 });
 });
 // The platform screen-reader live region is a genuine OS/DOM boundary.
 // The platform clipboard is an OS boundary.
@@ -57,6 +57,7 @@ const ISSUE_ROW_TEST_ID = 'session-access-editor:list:session-access:option:issu
 describe('SessionAccessEditor', () => {
     beforeEach(() => announceAccessibilityMessage.mockClear());
     afterEach(() => vi.useRealTimers());
+
     it('adds different principal kinds without closing and preserves source-ranked results', async () => {
         vi.useFakeTimers();
         const intent = actions();
@@ -75,11 +76,11 @@ describe('SessionAccessEditor', () => {
             resolverKey: `home-one:${row.principal.ref.kind}`, resolveCandidates: async () => [row],
         })) };
         const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="full" onRequestClose={close} />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('session-access-candidate-account:bob')).not.toBeNull();
         await screen.pressByTestIdAsync('session-access-candidate-account:bob');
         await screen.pressByTestIdAsync('session-access-browse:group');
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         await screen.pressByTestIdAsync('session-access-candidate-group:acme:dev');
         expect(intent.addPrincipal).toHaveBeenNthCalledWith(1, people.principal.ref);
         expect(intent.addPrincipal).toHaveBeenNthCalledWith(2, group.principal.ref);
@@ -97,6 +98,7 @@ describe('SessionAccessEditor', () => {
             'session-access-level:account:alice:admin']);
     });
     it('copies the Session link the host supplies and offers nothing to copy without one', async () => {
+        installBrowserClipboardBoundary(async value => { clipboard.written.push(value); });
         clipboard.written = [];
         const screen = await renderScreen(<SessionAccessEditor model={model()} actions={actions()} presentation="full" linkPath="/session/s-1" />);
         await screen.pressByTestIdAsync('session-access-copy-link');
@@ -148,7 +150,7 @@ describe('SessionAccessEditor', () => {
         }] };
         const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="full" />);
         await screen.pressByTestIdAsync('session-access-browse:group');
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         await screen.pressByTestIdAsync('session-access-editor:list:pagination:more');
         expect(intent.loadMore).toHaveBeenCalledWith('group');
         expect(intent.addPrincipal).not.toHaveBeenCalled();
@@ -165,7 +167,7 @@ describe('SessionAccessEditor', () => {
         }] };
         const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="full" />);
         await screen.pressByTestIdAsync('session-access-browse:group');
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         await screen.pressByTestIdAsync('session-access-editor:list:pagination:retry');
         expect(intent.retryDirectory).toHaveBeenCalledWith('group');
         expect(intent.loadMore).not.toHaveBeenCalled();
@@ -537,7 +539,7 @@ describe('SessionAccessEditor', () => {
                 displayName: 'Owner', accessibilityLabel: 'Owner, Account', avatar: { id: 'owner' } } },
             grants: [aliceWithAvatar, team], directory,
         })} actions={actions()} presentation="full" />);
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
 
         for (const key of ['account:owner', 'account:alice', 'team:acme']) {
             const visual = screen.findByTestId(`session-access-principal-visual:${key}`);
@@ -546,7 +548,7 @@ describe('SessionAccessEditor', () => {
             expect(visual?.props.accessibilityElementsHidden).toBe(true);
         }
         await screen.pressByTestIdAsync('session-access-browse:group');
-        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('session-access-principal-visual:group:acme:dev')?.props.accessibilityElementsHidden).toBe(true);
     });
 

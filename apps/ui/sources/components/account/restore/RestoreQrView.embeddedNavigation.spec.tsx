@@ -5,6 +5,7 @@ import type { IModal } from '@/modal';
 import type { ActiveServerSwitchResult } from '@/sync/domains/server/activeServerSwitch';
 
 import { renderScreen } from '@/dev/testkit';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 import { t } from '@/text';
 // Resolve the real component graph during collection, not inside the first timed assertion.
 import './RestoreQrView';
@@ -38,9 +39,8 @@ vi.mock('expo-router', async () => (
     await import('@/dev/testkit/mocks/router')
 ).createExpoRouterMock({ params: {}, router: { replace: routerSpies.replace } }).module);
 
-vi.mock('@react-navigation/native', () => ({
-    usePreventRemove: (locked: boolean) => state.preventRemove(locked),
-}));
+vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation'))
+    .createReactNavigationNativeMock({ usePreventRemove: (locked) => state.preventRemove(locked) }));
 
 vi.mock('@/hooks/auth/useReversePairingSession', () => ({
     useReversePairingSession: () => ({
@@ -51,8 +51,8 @@ vi.mock('@/hooks/auth/useReversePairingSession', () => ({
     }),
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: (value: string) => state.copy(value),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: (value: string) => state.copy(value),
 }));
 
 vi.mock('@/components/qr/QRCode', () => ({ QRCode: 'QRCode' }));
@@ -86,6 +86,7 @@ describe('RestoreQrView known-target requester QR', () => {
         state.cancel.mockClear();
         state.start.mockClear();
         state.copy.mockClear();
+        installBrowserClipboardBoundary(async value => { await state.copy(value); });
         state.preventRemove.mockClear();
         state.switchHome.mockReset();
         state.switchHome.mockResolvedValue('switched');
@@ -94,7 +95,9 @@ describe('RestoreQrView known-target requester QR', () => {
         routerSpies.replace.mockClear();
     });
 
-    afterEach(() => vi.clearAllMocks());
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
 
     it('renders the exact known-target requester QR with no code or approval controls', async () => {
         const { RestoreQrView } = await import('./RestoreQrView');
