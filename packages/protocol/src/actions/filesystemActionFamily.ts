@@ -2,6 +2,7 @@ import { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANS
 export { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { TransferEndpointCandidateSchema } from '../machines/transfer/transferStream.js';
 import { WorkspaceSyncEntryExpectationV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
@@ -163,10 +164,16 @@ export const FilesystemUploadInputSchema = lazyZodSchema(() => z.strictObject({
   overwrite: z.boolean(),
   expectedHash: z.optional(z.nullable(z.string())),
 }));
+export const FileDownloadDestinationV1Schema = lazyZodSchema(() => z.strictObject({
+  destinationId: z.string().check(z.minLength(1)),
+}));
+export const FileDownloadDestinationV1ProtocolSchema = projectZodProtocolSchema(FileDownloadDestinationV1Schema);
+export type FileDownloadDestinationV1 = z.infer<typeof FileDownloadDestinationV1Schema>;
+
 export const FilesystemDownloadInputSchema = lazyZodSchema(() => z.strictObject({
   rootPath: z.string().check(z.minLength(1)),
   path: z.string().check(z.minLength(1)),
-  destination: z.strictObject({ destinationId: z.string().check(z.minLength(1)) }),
+  destination: FileDownloadDestinationV1Schema,
   asZip: z.boolean(),
   format: z.optional(z.literal('entry_tree')),
 }).check(z.refine(input => !input.format || !input.asZip, { message: 'Entry-tree export cannot also be a ZIP export' })));
@@ -210,6 +217,8 @@ export const FilesystemDownloadOutputSchema = lazyZodSchema(() => z.union([
     sha256: z.string().check(z.regex(/^[a-f0-9]{64}$/i)) }),
   FilesystemTransferFailureSchema,
 ]));
+export const FileDownloadResultV1ProtocolSchema = projectZodProtocolSchema(FilesystemDownloadOutputSchema);
+export type FileDownloadResultV1 = z.infer<typeof FilesystemDownloadOutputSchema>;
 export const FilesystemTransferCancelOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ success: z.literal(true), aborted: z.boolean() }),
   z.strictObject({ success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()) }),
