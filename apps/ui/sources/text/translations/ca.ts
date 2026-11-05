@@ -14146,12 +14146,6 @@ settingsSession: {
                 screenTitle: 'Instal·lables',
                 aboutGroupTitle: 'Quant a',
                 aboutSubtitle: 'Gestiona les eines que Happier pot instal·lar i mantenir actualitzades en aquesta màquina.',
-                experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimental)`,
-                autoInstallTitle: 'Auto-instal·la quan cal',
-                autoInstallSubtitle: 'S\'instal·la en segon pla quan és necessari per a un backend seleccionat (millor esforç).',
-                autoUpdateTitle: 'Auto-actualització',
-                autoUpdatePromptTitle: 'Auto-actualització',
-                autoUpdatePromptBody: 'Tria com ha de gestionar Happier les actualitzacions d\'aquest instal·lable.',
                 autoUpdateModes: {
                     off: 'Desactivat',
                     notify: 'Notifica',

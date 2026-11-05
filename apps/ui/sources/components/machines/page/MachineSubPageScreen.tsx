@@ -158,7 +158,7 @@ function MachineSubPageBody(props: Readonly<{
             return <MachineSecuritySection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
                 installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey} />;
         case 'installables':
-            return <MachineInstallablesSection machineId={machine.id} serverId={serverId} />;
+            return <MachineInstallablesSection machineId={machine.id} serverId={serverId} machineSentenceName={target.machineSentenceName} />;
         case 'doctor':
             return <MachineDoctorPageBody machine={machine} serverId={serverId} switchReady={target.switchReady} refreshKey={props.refreshKey} />;
         case 'details':

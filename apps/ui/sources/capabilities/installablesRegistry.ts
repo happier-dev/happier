@@ -1,5 +1,4 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import type { KnownSettings } from '@/sync/domains/settings/settings';
 import type { TranslationKey } from '@/text';
 import { t } from '@/text';
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
@@ -39,7 +38,7 @@ export type InstallableRegistryEntry = Readonly<{
     key: string;
     kind: 'dep';
     experimental: boolean;
-    enabledWhen: (settings: KnownSettings) => boolean;
+    enabledWhen: () => boolean;
     capabilityId: Extract<CapabilityId, `dep.${string}`>;
     title: string;
     subtitle: string | null;

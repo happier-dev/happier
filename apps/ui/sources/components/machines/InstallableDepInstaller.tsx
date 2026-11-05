@@ -4,8 +4,8 @@ import * as React from 'react';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
+import { useInstallableDepInstall } from '@/components/machines/installables/useInstallableDepInstall';
 import { t } from '@/text';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
@@ -14,7 +14,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 
 function formatTimestamp(ms: number): string {
     try {
@@ -45,8 +44,7 @@ export type InstallableDepInstallerProps = {
 
 export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const { theme } = useUnistyles();
-    const installation = useMountedActionExecution(props.serverId);
-    const [isInstalling, setIsInstalling] = React.useState(false);
+    const { isInstalling, run: runInstall } = useInstallableDepInstall(props);
     // Page sections carry no decorative row icons; the grouped look (new-session wizard) keeps them.
     const page = useListPresentation() === 'page';
 
@@ -84,40 +82,6 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const presentedSubtitle = props.depSubtitle
         ? `${props.depSubtitle} • ${subtitle}`
         : subtitle;
-
-    const runInstall = async () => {
-        const isInstalled = props.depStatus?.installed === true;
-        const method = isInstalled ? (updateAvailable ? 'upgrade' : 'install') : 'install';
-
-        setIsInstalling(true);
-        try {
-            const execution = await installation.execute('machines.capabilities.install', {
-                machineId: props.machineId, serverId: props.serverId ?? undefined,
-                capabilityId: props.depId, method,
-            });
-            if (!execution.ok) {
-                Modal.alert(t('common.error'), execution.error);
-            } else {
-                const invoke = MachineCapabilityInstallOutputSchema.parse(execution.result);
-                if (!invoke.supported) {
-                    Modal.alert(t('common.error'), invoke.reason === 'not-supported' ? t('deps.installNotSupported') : t('deps.installFailed'));
-                } else if (!invoke.response.ok) {
-                    Modal.alert(t('common.error'), invoke.response.error.message);
-                } else {
-                    const result = invoke.response.result;
-                    const logPath = result && typeof result === 'object' && !Array.isArray(result) && 'logPath' in result && typeof result.logPath === 'string'
-                        ? result.logPath : null;
-                    Modal.alert(t('common.success'), logPath ? t('deps.installLog', { path: logPath }) : t('deps.installed'));
-                }
-            }
-            props.refreshStatus();
-            props.refreshLatestVersion?.();
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('deps.installFailed'));
-        } finally {
-            setIsInstalling(false);
-        }
-    };
 
     return (
         <ItemGroup title={props.groupTitle}>

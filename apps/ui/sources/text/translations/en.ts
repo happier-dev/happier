@@ -18655,15 +18655,6 @@ const enMachine = {
     aboutGroupTitle: 'About',
     aboutSubtitle:
       'Manage tools that Happier can install and keep up to date on this machine.',
-    experimentalGroupTitle: ({ title }: { title: string }) =>
-      `${title} (experimental)`,
-    autoInstallTitle: 'Auto-install when needed',
-    autoInstallSubtitle:
-      'Installs in the background when required for a selected backend (best-effort).',
-    autoUpdateTitle: 'Auto-update',
-    autoUpdatePromptTitle: 'Auto-update',
-    autoUpdatePromptBody:
-      'Choose how Happier should handle updates for this installable.',
     autoUpdateModes: {
       off: 'Off',
       notify: 'Notify',

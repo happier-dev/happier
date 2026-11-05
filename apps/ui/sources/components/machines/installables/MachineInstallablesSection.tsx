@@ -1,12 +1,12 @@
 import React from 'react';
 
-import { Item } from '@/components/ui/lists/Item';
-import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
-import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
-import { Switch } from '@/components/ui/forms/Switch';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
-import { useMachine, useSettings } from '@/sync/domains/state/storage';
+import { useMachine, useSetting } from '@/sync/domains/state/storage';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
@@ -15,26 +15,28 @@ import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPoli
 import { getPreferredLanguage, t } from '@/text';
 import { Modal } from '@/modal';
 
+import { MachineToolRow } from './MachineToolRow';
+
 function buildAutoUpdateModeOptions(): ReadonlyArray<SegmentedChoiceOption<InstallableAutoUpdateMode>> {
     return [
-        { id: 'off', label: t('machine.installables.autoUpdateModes.off') },
-        { id: 'notify', label: t('machine.installables.autoUpdateModes.notify') },
-        { id: 'auto', label: t('machine.installables.autoUpdateModes.auto') },
+        { id: 'off', label: t('machine.installables.autoUpdateModes.off'), description: t('machineDetailPage.toolsPage.autoUpdateOff') },
+        { id: 'notify', label: t('machine.installables.autoUpdateModes.notify'), description: t('machineDetailPage.toolsPage.autoUpdateNotify') },
+        { id: 'auto', label: t('machine.installables.autoUpdateModes.auto'), description: t('machineDetailPage.toolsPage.autoUpdateAuto') },
     ];
 }
 
 /**
- * The machine's tools that are not agents (Tools sub-page): each installable with its status, install
- * or update, and its auto-install and auto-update policy. Agents and their parts install from the
- * machine's Agents page (lab agent-setup M1).
+ * The machine's tools that are not agents (Tools sub-page, lab setup-over Tools): one row per tool with its
+ * version, state and next action; each row opens in place into its auto-install and auto-update policy.
+ * Agents and their parts install from the machine's Agents page (lab agent-setup M1).
  */
-export function MachineInstallablesSection(props: Readonly<{ machineId: string; serverId: string }>) {
-    const { machineId, serverId } = props;
+export function MachineInstallablesSection(props: Readonly<{ machineId: string; serverId: string; machineSentenceName: string }>) {
+    const { machineId, serverId, machineSentenceName } = props;
     const machine = useMachine(machineId);
     const presence = useMachinePresenceSummary(serverId, machineId);
     const isOnline = !!machine && presence.reachability === 'reachable';
 
-    const settings = useSettings();
+    const installablesPolicyByMachineId = useSetting('installablesPolicyByMachineId');
     const policyAction = useMountedActionExecution(serverId);
 
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
@@ -71,18 +73,18 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
         });
         const results = capabilitiesSnapshot?.response.results;
         return entries.map((entry) => {
-            const enabled = entry.enabledWhen(settings as any);
+            const enabled = entry.enabledWhen();
             const status = entry.getStatus(results);
             const detectResult = entry.getDetectResult(results);
             const policy = resolveInstallablePolicy({
-                settings: settings as any,
+                settings: { installablesPolicyByMachineId },
                 machineId: machineId ?? '',
                 installableKey: entry.key,
                 defaults: entry.defaultPolicy,
             });
             return { entry, enabled, status, detectResult, policy };
         });
-    }, [capabilitiesSnapshot, daemonMergedProjectionInputs?.pluginProjectionV2, machineId, settings]);
+    }, [capabilitiesSnapshot, daemonMergedProjectionInputs?.pluginProjectionV2, machineId, installablesPolicyByMachineId]);
 
     React.useEffect(() => {
         if (!machineId) return;
@@ -117,61 +119,57 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
     const preferredLanguage = getPreferredLanguage();
     const autoUpdateModeOptions = React.useMemo(buildAutoUpdateModeOptions, [preferredLanguage]);
 
+    const visible = installables.filter((d) => d.enabled);
+    const capabilitiesStatus = isOnline ? detectedCapabilities.status : 'idle';
+    const refreshStatus = React.useCallback(() => refreshDetectedCapabilities(), [refreshDetectedCapabilities]);
+    const checking = isOnline && detectedCapabilities.status === 'loading';
+    // Like the machine's Agents: what is here, then what can be added. Only a finished answer makes a tool one
+    // "to install"; a tool still being checked stays with the machine's tools and says so.
+    const isAvailable = (d: (typeof visible)[number]) => d.status ? !d.status.installed : capabilitiesStatus === 'loaded';
+    const here = visible.filter((d) => !isAvailable(d));
+    const available = visible.filter(isAvailable);
+    const row = (d: (typeof visible)[number], index: number, list: readonly unknown[]) => (
+        <MachineToolRow
+            key={d.entry.key}
+            entry={d.entry}
+            machineId={machineId}
+            serverId={serverId}
+            status={d.status}
+            capabilitiesStatus={capabilitiesStatus}
+            policy={d.policy}
+            autoUpdateModeOptions={autoUpdateModeOptions}
+            onPolicyChange={setPolicyPatch}
+            refreshStatus={refreshStatus}
+            refreshLatestVersion={isOnline
+                ? () => refreshDetectedCapabilities({ request: d.entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })
+                : undefined}
+            showDivider={index < list.length - 1}
+        />
+    );
     return (
         <>
-            {installables.map(({ entry, enabled, status, policy }) => {
-                if (!enabled) return null;
-                return (
-                    <InstallableDepInstaller
-                        key={entry.key}
-                        machineId={machineId ?? ''}
-                        serverId={serverId}
-                        enabled={true}
-                        groupTitle={entry.experimental ? t('machine.installables.experimentalGroupTitle', { title: entry.title }) : entry.title}
-                        depId={entry.capabilityId}
-                        depTitle={entry.title}
-                        depSubtitle={entry.subtitle}
-                        depIconName={entry.iconName as any}
-                        setupUrl={entry.setupUrl}
-                        depStatus={status}
-                        capabilitiesStatus={isOnline ? detectedCapabilities.status : 'idle'}
-                        extraItems={
-                            <>
-                                <Item
-                                    title={t('machine.installables.autoInstallTitle')}
-                                    subtitle={t('machine.installables.autoInstallSubtitle')}
-                                    rightElement={<Switch value={policy.autoInstallWhenNeeded} onValueChange={(next) => setPolicyPatch(entry.key, { autoInstallWhenNeeded: next })} />}
-                                    showChevron={false}
-                                    onPress={() => setPolicyPatch(entry.key, { autoInstallWhenNeeded: !policy.autoInstallWhenNeeded })}
-                                />
-                                <SegmentedChoiceItem<InstallableAutoUpdateMode>
-                                    title={t('machine.installables.autoUpdateTitle')}
-                                    subtitle={t('machine.installables.autoUpdatePromptBody')}
-                                    options={autoUpdateModeOptions}
-                                    value={policy.autoUpdateMode}
-                                    onChange={(next) => setPolicyPatch(entry.key, { autoUpdateMode: next })}
-                                    testIDPrefix={`machine-installables-auto-update-${entry.key}`}
-                                />
-                            </>
-                        }
-                        installLabels={{
-                            install: entry.installLabels.install,
-                            update: entry.installLabels.update,
-                            reinstall: entry.installLabels.reinstall,
-                        }}
-                        installModal={{
-                            installTitle: entry.installModal.installTitle,
-                            updateTitle: entry.installModal.updateTitle,
-                            reinstallTitle: entry.installModal.reinstallTitle,
-                            description: entry.installModal.description,
-                        }}
-                        refreshStatus={() => refreshDetectedCapabilities()}
-                        refreshLatestVersion={isOnline
-                            ? () => refreshDetectedCapabilities({ request: entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })
-                            : undefined}
+            <ItemGroup
+                description={machine ? t('machineDetailPage.toolsPage.description', { machine: machineSentenceName }) : undefined}
+                action={isOnline ? (
+                    <RoundButton
+                        testID="machine-tools-check-again"
+                        size="small"
+                        display="inverted"
+                        title={t('machineDetailPage.toolsPage.checkAgain')}
+                        loading={checking && capabilitiesSnapshot !== null}
+                        onPress={refreshStatus}
                     />
-                );
-            })}
+                ) : undefined}
+            >
+                {here.length > 0 ? here.map(row) : (
+                    <SurfaceStateCard testID="machine-tools-empty" size="line" kind="empty" title={t('machineDetailPage.toolsPage.emptyInstalled')} />
+                )}
+            </ItemGroup>
+            {available.length > 0 ? (
+                <ItemGroup title={t('machineDetailPage.toolsPage.availableTitle')} description={t('machineDetailPage.toolsPage.availableDescription')}>
+                    {available.map(row)}
+                </ItemGroup>
+            ) : null}
         </>
     );
 }

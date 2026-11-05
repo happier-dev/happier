@@ -14876,12 +14876,6 @@ settingsSession: {
       installDescription: ({ title }: { title: string }) => `这会在所选机器上安装 ${title}。`,
       aboutGroupTitle: "关于",
       aboutSubtitle: "管理 Happier 可在此设备上安装并保持最新的工具。",
-      experimentalGroupTitle: ({ title }: { title: string }) => `${title}（实验性）`,
-      autoInstallTitle: "按需自动安装",
-      autoInstallSubtitle: "当所选后端需要时在后台安装（尽力而为）。",
-      autoUpdateTitle: "自动更新",
-      autoUpdatePromptTitle: "自动更新",
-      autoUpdatePromptBody: "选择 Happier 应如何处理此可安装项的更新。",
       autoUpdateModes: {
         off: "关闭",
         notify: "通知",

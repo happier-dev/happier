@@ -12318,12 +12318,6 @@ settingsSession: {
             screenTitle: '可安裝項目',
             aboutGroupTitle: '關於',
             aboutSubtitle: '管理 Happier 可在此裝置上安裝並保持最新的工具。',
-            experimentalGroupTitle: ({ title }: { title: string }) => `${title}（實驗性）`,
-            autoInstallTitle: '按需自動安裝',
-            autoInstallSubtitle: '當所選後端需要時在背景安裝（盡力而為）。',
-            autoUpdateTitle: '自動更新',
-            autoUpdatePromptTitle: '自動更新',
-            autoUpdatePromptBody: '選擇 Happier 應如何處理此可安裝項目的更新。',
             autoUpdateModes: {
                 off: '關閉',
                 notify: '通知',

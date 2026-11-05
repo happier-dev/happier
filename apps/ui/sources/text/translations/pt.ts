@@ -15330,15 +15330,6 @@ settingsSession: {
       aboutGroupTitle: "Sobre",
       aboutSubtitle:
         "Gerencie ferramentas que o Happier pode instalar e manter atualizadas nesta máquina.",
-      experimentalGroupTitle: ({ title }: { title: string }) =>
-        `${title} (experimental)`,
-      autoInstallTitle: "Auto-instalar quando necessário",
-      autoInstallSubtitle:
-        "Instala em segundo plano quando necessário para um backend selecionado (best-effort).",
-      autoUpdateTitle: "Auto-atualizar",
-      autoUpdatePromptTitle: "Auto-atualizar",
-      autoUpdatePromptBody:
-        "Escolha como o Happier deve lidar com atualizações para este instalável.",
       autoUpdateModes: {
         off: "Desativado",
         notify: "Notificar",

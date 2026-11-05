@@ -15135,15 +15135,6 @@ settingsSession: {
       aboutGroupTitle: "О разделе",
       aboutSubtitle:
         "Управляйте инструментами, которые Happier может устанавливать и поддерживать в актуальном состоянии на этой машине.",
-      experimentalGroupTitle: ({ title }: { title: string }) =>
-        `${title} (экспериментально)`,
-      autoInstallTitle: "Автоустановка при необходимости",
-      autoInstallSubtitle:
-        "Устанавливает в фоне, когда это требуется для выбранного бэкенда (best‑effort).",
-      autoUpdateTitle: "Автообновление",
-      autoUpdatePromptTitle: "Автообновление",
-      autoUpdatePromptBody:
-        "Выберите, как Happier должен обрабатывать обновления для этого устанавливаемого элемента.",
       autoUpdateModes: {
         off: "Выключено",
         notify: "Уведомлять",

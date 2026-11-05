@@ -67,7 +67,7 @@ async function loadMachineInstallablesSection() {
         sourceServerId: home!.home.id, sourceAccountId: home!.home.accountId,
     });
     return function MachineInstallablesScreen() {
-        return <MachineInstallablesSection machineId={machine.id} serverId={home!.home.id} />;
+        return <MachineInstallablesSection machineId={machine.id} serverId={home!.home.id} machineSentenceName={machine.id} />;
     };
 }
 
@@ -190,6 +190,13 @@ describe('machine managed installables projection', () => {
                 && Array.isArray(node.props.options)
             ))[0]?.props.options.map((option: { label: string }) => option.label) as string[] | undefined;
 
+            // A tool's update policy sits inside its row; open the first listed tool.
+            await vi.waitFor(() => expect(screen.listRows('machine-tool-').length).toBeGreaterThan(0));
+            const firstToolId = screen.listRows('machine-tool-').map((node) => node.props.testID as string)
+                .find((id) => !id.includes('.'))!;
+            await act(async () => {
+                screen.pressRow(firstToolId);
+            });
             await vi.waitFor(() => {
                 expect(optionLabels()?.length).toBeGreaterThan(0);
                 expect(optionLabels()!.every((label) => !label.startsWith('fr:'))).toBe(true);

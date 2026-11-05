@@ -15363,12 +15363,6 @@ settingsSession: {
             installDescription: ({ title }: { title: string }) => `${title} wird auf dem ausgewählten Rechner installiert.`,
             aboutGroupTitle: 'Über',
             aboutSubtitle: 'Tools verwalten, die Happier auf diesem Rechner installieren und aktuell halten kann.',
-            experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimentell)`,
-            autoInstallTitle: 'Bei Bedarf automatisch installieren',
-            autoInstallSubtitle: 'Installiert im Hintergrund, wenn ein gewähltes Backend es braucht (nach Möglichkeit).',
-            autoUpdateTitle: 'Automatische Updates',
-            autoUpdatePromptTitle: 'Automatische Updates',
-            autoUpdatePromptBody: 'Lege fest, wie Happier Updates für dieses Installierbare behandelt.',
             autoUpdateModes: {
                 off: 'Aus',
                 notify: 'Benachrichtigen',

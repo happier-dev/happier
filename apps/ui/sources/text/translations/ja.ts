@@ -15494,15 +15494,6 @@ settingsSession: {
       aboutGroupTitle: "概要",
       aboutSubtitle:
         "このマシンで、Happier がインストールし最新状態に保てるツールを管理します。",
-      experimentalGroupTitle: ({ title }: { title: string }) =>
-        `${title}（実験的）`,
-      autoInstallTitle: "必要時に自動インストール",
-      autoInstallSubtitle:
-        "選択したバックエンドで必要になったときにバックグラウンドでインストールします（ベストエフォート）。",
-      autoUpdateTitle: "自動更新",
-      autoUpdatePromptTitle: "自動更新",
-      autoUpdatePromptBody:
-        "このインストール可能項目の更新をどのように扱うか選択してください。",
       autoUpdateModes: {
         off: "オフ",
         notify: "通知",
