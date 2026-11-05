@@ -167,6 +167,14 @@ hdev auth password enroll --email person@example.com --yes \
 JSON
 ```
 
+For recovery-key sign-in, use `hdev auth login --secrets-json-stdin --json` with
+the same document shape and a `recoveryKey` secret field. This development CLI
+entry uses `auth recovery-key login`, so it signs in directly instead of waiting
+for browser or mobile approval. Close the stdin writer after sending the document.
+Use the Home's canonical address for `--server-url`; when reaching it through
+a local endpoint, pass that endpoint as `--local-server-url`. An address or Home
+identity mismatch refuses sign-in before sending the signed recovery proof.
+
 Every password or email mutation requires the selected Home's stored
 present-user credential and an explicit confirmation. An authenticated API Token
 may run `auth security get`, which returns only the safe projection, but it cannot

@@ -48,6 +48,8 @@ class NativeEmailCommandError extends Error {
         'Use the selected Home\u2019s stored interactive login. API tokens cannot change email or passwords.',
       invalid_arguments: NATIVE_EMAIL_USAGE,
       authentication_failed: 'Sign-in failed. Check your sign-in details and the selected Home, then try again.',
+      'home-address-mismatch': 'The sign-in challenge names a different Home address. Select the canonical Home with --server-url and use --local-server-url for a local endpoint.',
+      'home-identity-mismatch': 'The sign-in challenge belongs to a different Home identity. Check the selected Home before trying again.',
       cancelled: 'The email operation was cancelled before any change began.',
       'account-disabled': 'This Account is disabled. Contact a Home administrator.',
       'method_not_available': 'Email/password is not available for this operation on the selected Home.',
@@ -185,12 +187,11 @@ async function redeemNativePasswordChallenge(input: Readonly<{
   signal?: AbortSignal;
 }>): Promise<string> {
   const expectedOrigin = canonicalizeKeyChallengeV2AudienceOrigin(input.captured.serverUrl);
-  if (
-    !expectedOrigin
-    || input.challenge.audience.origin !== expectedOrigin
-    || input.challenge.audience.serverIdentityId !== input.captured.serverIdentityId
-  ) {
-    throw new NativeEmailCommandError('authentication_failed');
+  if (input.challenge.audience.serverIdentityId !== input.captured.serverIdentityId) {
+    throw new NativeEmailCommandError('home-identity-mismatch');
+  }
+  if (!expectedOrigin || input.challenge.audience.origin !== expectedOrigin) {
+    throw new NativeEmailCommandError('home-address-mismatch');
   }
   const keyPair = tweetnacl.sign.keyPair.fromSeed(input.secret);
   const contentPrivateKey = deriveAccountMachineKeyFromRecoverySecret(input.secret);

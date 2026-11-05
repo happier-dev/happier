@@ -36,6 +36,7 @@ ${chalk.bold('happier auth')} - Authentication management
 ${chalk.bold('Usage:')}
   happier auth login [--no-open] [--force] [--method web|mobile] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
   happier auth login --email <email> --password <password> [--invitation-token <token>] [--json]   Use native email/password on the selected Home
+  happier auth login --key <recovery-key> [--json]   Sign in with a recovery key on the selected Home
   happier auth request --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                                    Create a claim-gated auth request (headless-friendly)
   happier auth approve --public-key <base64> --json [--request-json-file <path>] [--authorize-unattended-team-access] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]              Approve an auth request using your local credentials
   happier auth wait --public-key <base64> --json [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]                Wait for approval and write credentials for this machine

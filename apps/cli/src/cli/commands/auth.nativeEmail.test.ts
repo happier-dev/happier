@@ -122,11 +122,15 @@ describe('native email and recovery CLI commands', () => {
   it.each([
     { canonicalUrl: 'http://account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: true },
     { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_home', succeeds: true },
-    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: false },
-    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://other.account.test', identity: 'srv_home', succeeds: false },
-    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_other', succeeds: false },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: false, failureCode: 'home-address-mismatch' },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://other.account.test', identity: 'srv_home', succeeds: false, failureCode: 'home-address-mismatch' },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_other', succeeds: false, failureCode: 'home-identity-mismatch' },
     { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_home', succeeds: true, failRegistration: true },
-  ])('binds recovery login to canonical $canonicalUrl and audience $audienceOrigin / $identity ($failRegistration)', async ({ canonicalUrl, audienceOrigin, identity, succeeds, failRegistration }) => {
+  ].flatMap((scenario, index) => (index === 0
+    ? ['canonical', 'stdin', 'inline'] as const
+    : index === 2 || index === 5
+      ? ['canonical', 'stdin'] as const
+    : ['canonical'] as const).map((entry) => ({ ...scenario, entry }))))('binds $entry recovery login to canonical $canonicalUrl and audience $audienceOrigin / $identity ($failRegistration)', async ({ canonicalUrl, audienceOrigin, identity, succeeds, failRegistration, failureCode, entry }) => {
     env.patch({ HAPPIER_PUBLIC_SERVER_URL: canonicalUrl, HAPPIER_LOCAL_SERVER_URL: 'http://account.test', HAPPIER_ACTIVE_SERVER_ID: 'stack_qa__id_default' });
     reloadConfiguration();
     const app = fastify();
@@ -177,7 +181,15 @@ describe('native email and recovery CLI commands', () => {
     });
     const output = captureConsoleJsonOutput<unknown>();
     try {
-      await handleAuthCommand(['recovery-key', 'login', '--key', recoveryKey, '--json']);
+      // A supplied recovery key must never enter interactive pairing.
+      vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('unexpected_interactive_login'); });
+      const args = entry === 'stdin'
+        ? await expandAuthSecretsFromStdin(['login', '--json', '--secrets-json-stdin'],
+          Readable.from([JSON.stringify({ v: 1, secrets: { recoveryKey } })]))
+        : entry === 'inline'
+          ? ['login', `--key=${recoveryKey}`, '--json']
+          : ['recovery-key', 'login', '--key', recoveryKey, '--json'];
+      await handleAuthCommand(args);
       const envelope = output.json();
       if (failRegistration) {
         expect(envelope).toMatchObject({ ok: false, error: { code: 'ERR_BAD_RESPONSE', phase: 'machine_registration' } });
@@ -196,7 +208,7 @@ describe('native email and recovery CLI commands', () => {
         expect(envelope).toEqual(expect.objectContaining({ ok: true, data: expect.objectContaining({ accountId: 'account-1' }) }));
         expect(await readStoredCredentials()).toMatchObject({ token: terminalBearer, encryption: { type: 'legacy', secret: recoverySecret } });
       } else {
-        expect(envelope).toMatchObject({ ok: false, error: { code: 'authentication_failed' } });
+        expect(envelope).toMatchObject({ ok: false, error: { code: failureCode, phase: 'challenge_redemption' } });
         expect(await readStoredCredentials()).toBeNull();
       }
       expect(redeemed).toBe(succeeds);

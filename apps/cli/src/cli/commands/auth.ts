@@ -39,6 +39,10 @@ export async function handleAuthCommand(args: string[], signal?: AbortSignal): P
       await (await import('./auth/nativeEmail')).handleAuthEmailNativeCommand(['recovery-key', ...args.slice(1)], signal);
       return;
     case 'login':
+      if (hasFlagValue(args.slice(1), '--key')) {
+        await (await import('./auth/nativeEmail')).handleAuthEmailNativeCommand(['recovery-key', 'login', ...args.slice(1)], signal);
+        return;
+      }
       if (hasFlagValue(args.slice(1), '--email')) {
         await (await import('./auth/nativeEmail')).handleAuthEmailNativeCommand(['login', ...args.slice(1)], signal);
         return;
