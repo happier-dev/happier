@@ -16,6 +16,7 @@ import { Typography } from '@/constants/Typography';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
 import { requireReactNativeScreens } from '@/utils/web/reactNativeScreensCjs';
+import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 
 type AppCrashRecoveryBoundaryProps = Readonly<{
   children: React.ReactNode;
@@ -117,13 +118,14 @@ export function AppBlockingScreen(props: Readonly<{
 }>): React.ReactElement {
   React.useSyncExternalStore(subscribeSystemTheme, readSystemThemeForCrashRecovery, () => null);
   const theme = resolveCrashRecoveryFallbackTheme();
+  const onContentLayout = useDesktopMainWindowContentReady();
 
   const primary = props.actions.filter((a) => a.variant === 'primary');
   const secondary = props.actions.filter((a) => a.variant === 'secondary');
   const ordered = [...primary, ...secondary];
 
   return (
-    <View testID={props.testID} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
+    <View testID={props.testID} onLayout={onContentLayout} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}

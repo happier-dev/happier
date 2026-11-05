@@ -4446,6 +4446,87 @@ the native `notch-position.json` record, so reconnecting restores the choice.
 On Wayland without connector facts, built-in status is unknown and Automatic
 uses the primary display.
 
+The matching 0.3 development desktop client accepts `session.open` with
+`presentation: 'window'` to present the resolved Session through the same
+destination-window owner used by generic tabs. Omission preserves ordinary main
+navigation. A successful window result reports `opened` or `focused` with its
+`windowId` and optional rectangle; a cancelled move reports `cancelled` without
+claiming an open. Unsupported addressed clients use the existing
+`unsupported_action` failure envelope. These presentation inputs require a
+matching development client; older strict readers reject them.
+
+`presentation: 'overlay'` is also a development-client input. It calls the main
+renderer’s mounted overlay presentation handler for the resolved Home and
+Session. An absent handler, including a non-desktop client, returns
+`unavailable` without navigating the main workspace. The mounted main owner sets
+the admitted Session target, then calls `desktop.notch.set {state:'pinned'}`.
+The presentation interaction's `target:null` releases that target and its one
+transcript consumer; retargeting, delivery withdrawal and disable also release
+it. The existing effective privacy mode covers both reply and ask before
+publication. Pinned-panel UI composition and N4's addressed draft transport have
+separate owners in development source.
+
+The overlay's person-initiated pinned-field edits use the existing draft owner's
+direct transaction path, routed to the presenting window by
+`applyDesktopSessionDraftTransaction`. Typing never creates an approval prompt,
+including with a saved UI Require preference. Agent `composer.transaction.apply`
+still uses ordinary Action admission with required approval; this adds no approval
+mode or bypass flag.
+
+`desktop.windows.open` is the single generic window entry for a qualified
+workspace tab, destination href or pane tab. Its closed `target` includes
+`accountId` and `serverId`; workspace targets name `tabId` and may qualify its
+`layoutId`, destinations name `href`, and pane targets require `layoutId`,
+`scopeId` and `tabKey` (`resourceId` remains optional legacy context). An optional
+`windowId` retargets an existing window. Source tabs move through their existing
+guards; opening the same qualified target reuses its window. Session window
+presentation is documented under `session.open` above. The Action keeps the
+existing safe/reversible approval default and introduces no separate focus,
+return, close or window-list Action.
+
+In 0.3 development source, the same input accepts `chrome: 'full'` with a
+qualified Session, destination or `{kind: 'home', accountId, serverId}` target.
+Without `windowId`, every full open creates an independent workspace, including
+another view of the same Session. An explicit `windowId` focuses or retargets
+that full window. Full opens do not move source tabs; workspace and pane move
+targets retain destination chrome and reject `chrome: 'full'`. Omitting chrome
+preserves destination-window behavior and approval defaults.
+
+In matching unreleased 0.3 clients, `workspace.tabs.list` includes an `address`
+qualified by Home, Account and layout. Pane rows describe their scope, key and
+pane type rather than inventing a workspace destination. Pass that address to
+`workspace.tabs.activate`, `workspace.tabs.move` or `workspace.tabs.close`.
+These mutations still accept their legacy `tabId` input; send one addressing
+form per call.
+
+In 0.3 development source, the list also includes `windows` with native window,
+Home, Account and layout ids, primary/secondary role, chrome and focus. Empty full
+shells appear here without fabricated tabs. `workspace.tabs.activate` accepts
+`{windowId}` as an alternative to either tab address and reveals that window
+without retargeting it. Full-window tab activate/close operations continue at
+the admitted mounted tab owner; closing a tab keeps its full shell alive.
+To close the shell itself, discover its opaque **Close window** command through
+`ui.current_context.read` and invoke it with `ui.current_context.command.invoke`.
+It requests the same native Close as the window controls: main hides, and an
+extra full window goes through its mounted dirty/draft guard. Acceptance of the
+Close request does not imply that a later dirty prompt was confirmed.
+
+The desktop's native main-to-destination hop continues the admitted built-in
+client Action at its existing effect dispatcher. The wire owner projects the
+dispatch context; process-local runtime facts and callbacks remain local.
+Admission retains its actual surface and effective authority in the typed client
+context, including for workspace close; transport does not invent those facts.
+Missing or unknown surfaces remain unavailable.
+The trusted native receiver uses `executeAdmittedClientAction`, so the hop does
+not repeat Action settings or approval evaluation. Ordinary entry points still
+use `execute` and its admission policy.
+
+The declaration's host-only `clientPresenter: 'session'` marks mounted Session
+effects: draft append, composer/prompt controls, Session Work and capture
+delivery. Native forwarding and CLI reverse delivery consume that same fact.
+Session navigation, workspace lifecycle and native capture controls keep the
+main client's owner; an invoking Agent's Session does not change that placement.
+
 In 0.3 development source, `projects.pages.list {workspaceRefId,serverId}` is
 the safe client read for an accepted Project's built-in and applicable plugin
 pages. Its closed `{pages}` result carries host-generated `href`, title, icon,

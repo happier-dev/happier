@@ -55,6 +55,7 @@ export type WorkspaceFileEditorState = Readonly<{
     lineEndingNormalization: 'lf' | 'crlf' | null;
     initialLine: number | undefined; onEditorReady(): void; startEditingFile(at?: WorkspaceFileEditStart): void;
     cancelEditingFile(): void; doneEditingFile(): Promise<void>; saveFileEdits(): Promise<boolean>;
+    prepareEditorTransition(): Promise<boolean>;
     resolveConflict(choice: 'useMine' | 'useTheirs'): Promise<void>; undoSetAside(): Promise<void>;
     isComparing: boolean; startComparison(): void; backToEditing(): void;
     rebaseMergedDraft(text: string, shown?: Omit<EditorComparisonResolution, 'text'>): void;
@@ -109,13 +110,31 @@ export function useWorkspaceFileEditorState(input: Input): WorkspaceFileEditorSt
     const updateBase = React.useCallback((next: Base) => { baseRef.current = next; setBase(next); }, []);
     const updateRefusal = React.useCallback((next: WorkspaceFileEditorRefusal | null) => { refusalRef.current = next; setRefusal(next); }, []);
     const persist = React.useCallback(() => {
-        if (!isCurrentOwner() || !latest.current.accountId) return;
+        if (!isCurrentOwner() || !latest.current.accountId) return false;
         try {
             latest.current.persistDraft?.(editing.current && text.current !== baseRef.current.text
                 ? { accountId: latest.current.accountId, isEditingFile: true, editorOriginalHash: baseRef.current.hash, editorText: text.current } : null);
             setDraftPersistenceFailed(false);
-        } catch { setDraftPersistenceFailed(true); }
+            return true;
+        } catch { setDraftPersistenceFailed(true); return false; }
     }, [isCurrentOwner]);
+    const prepareEditorTransition = React.useCallback(async () => {
+        if (!isCurrentOwner()) return false;
+        const handle = editorHandleRef.current;
+        try {
+            await handle?.flushPendingChange();
+            if (!isCurrentOwner() || editorHandleRef.current !== handle) return false;
+            text.current = handle?.getValue() ?? text.current;
+            liveValue.publish(text.current);
+            setEditorDirty(editing.current && text.current !== baseRef.current.text);
+            return persist();
+        } catch {
+            if (isCurrentOwner() && editorHandleRef.current === handle) {
+                updateRefusal({ kind: 'failed', message: t('errors.operationFailed') });
+            }
+            return false;
+        }
+    }, [isCurrentOwner, liveValue, persist, updateRefusal]);
     const publishDebounce = React.useMemo(() => createAdvancedDebounce<string>(value => {
         if (!isCurrentOwner()) return;
         liveValue.publish(value); persist();
@@ -442,7 +461,7 @@ export function useWorkspaceFileEditorState(input: Input): WorkspaceFileEditorSt
         editorSeedText, editorHandleRef, onEditorChange, getEditorText, liveValue, isSavingEdits, editorDirty,
         editorStatus: conflict ? 'conflict' : isSavingEdits ? 'saving' : editorDirty ? 'dirty' : 'clean', conflict, refusal,
         draftPersistenceFailed: editorDirty && (draftPersistenceFailed || input.panePersistenceFailed === true),
-        savedAtMs, initialLine, onEditorReady, startEditingFile, cancelEditingFile, doneEditingFile,
+        savedAtMs, initialLine, onEditorReady, startEditingFile, cancelEditingFile, doneEditingFile, prepareEditorTransition,
         lineEndingNormalization: editorDirty && base.encoding?.mixedEol ? base.encoding.eol : null,
         saveFileEdits, resolveConflict, undoSetAside, isComparing: comparison !== null, comparison, startComparison,
         usePlaceMine, usePlaceTheirs, useAllMine, useAllTheirs, backToEditing, rebaseMergedDraft, readSnapshot };

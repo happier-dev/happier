@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { getCurrentAuth, setCurrentAuth } from './currentAuth';
 export { getCurrentAuth, setCurrentAuth } from './currentAuth';
 import { readCredentialAuthorityKind, type CredentialAuthorityKind } from './credentialAuthority';
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, replayHomeCredentialMutation, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { loadLocalSettings } from '@/sync/domains/state/persistence';
 import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -35,6 +35,11 @@ import {
 } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { loadExpoPushTokensToUnregister } from '@/sync/domains/state/pushTokenRegistration';
 import { unregisterPushTokenForHomeBestEffort } from '@/sync/engine/account/syncAccount';
+import { listenDesktopAccountAuthActions, requestAdmittedDesktopLogout, type DesktopAccountCredentialMutationNotice } from '@/desktop/window/accountWindowAuthBoundary';
+import { openDesktopCredentialJourneyInMain } from '@/auth/flows/accountCredentialJourney';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { desktopHostKind, getDesktopHostWindowLabel, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 export type AuthCredentialLifecycleResult =
     | Readonly<{ kind: 'completed' }>
@@ -50,6 +55,13 @@ type AuthLogoutOptions = Readonly<{
     /** Retain the original Home during confirmed-erasure local cleanup recovery. */
     target?: HomeCredentialTarget;
     expectedCredentials?: AuthCredentials;
+}>;
+
+type AdmittedAuthLogout = Readonly<{
+    options?: Omit<AuthLogoutOptions, 'beforeMutation'>;
+    activeServer: HomeCredentialTarget;
+    forgottenScope: ReturnType<typeof getActiveServerAccountScope>;
+    archiveServerId: string;
 }>;
 
 /** The exact Home a credential belongs to: endpoint URL plus stable identity. */
@@ -293,42 +305,21 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         [loginWithCredentials],
     );
 
-    const logout = React.useCallback(async (
-        options?: AuthLogoutOptions,
-    ): Promise<AuthCredentialLifecycleResult> => {
+    const applyAdmittedLogout = React.useCallback(async (admission: AdmittedAuthLogout): Promise<AuthCredentialLifecycleResult> => {
+        const { options, activeServer, forgottenScope, archiveServerId } = admission;
         const logoutTarget = options?.target;
-        const activeServer = logoutTarget ?? getActiveServerSnapshot();
         const activeServerId = String(activeServer.serverId ?? '').trim();
         const activeServerUrl = String(activeServer.serverUrl ?? '').trim();
-        if (options?.target && (!options.expectedCredentials || options.scope === 'all-credentials')) {
-            throw new Error('Targeted logout requires the original Home credentials');
+        let activeCredentials: AuthCredentials | null = options?.expectedCredentials ?? (options?.target ? null : credentials);
+        if (activeServerUrl && !logoutTarget) {
+            try {
+                activeCredentials = await TokenStorage.getCredentialsForServerUrl(activeServerUrl, {
+                    serverId: activeServerId || undefined,
+                }) ?? activeCredentials;
+            } catch {
+                // Keep the captured target's bearer, never the later focused Home's.
+            }
         }
-        const targetProfile = logoutTarget
-            ? listServerProfiles().find(profile => isSameServerTarget(logoutTarget, {
-                serverId: resolveServerProfileScopeId(profile), serverUrl: profile.serverUrl,
-            })) : null;
-        const forgottenScope = options?.target && options.expectedCredentials
-            ? createServerAccountScope(targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId,
-                parseToken(options.expectedCredentials.token))
-            : getActiveServerAccountScope();
-        if (options?.target && !forgottenScope) throw new Error('Original Home Account scope is unavailable');
-        // PA-CUSTODY1 guards the credential this logout destroys: a focused logout
-        // removes only the active Home's credential, so only that Home's retained
-        // first-key custody blocks it; forgetting every credential (or a logout
-        // with no addressable active Home) stays guarded by custody on any Home.
-        const guard =
-            await guardAccountEncryptionFirstKeyCredentialMutation(
-                options?.scope === 'all-credentials' || !activeServerUrl
-                    ? undefined
-                    : {
-                        serverUrl: activeServerUrl,
-                        ...(activeServerId ? { serverId: activeServerId } : {}),
-                    },
-            );
-        if (guard.kind !== 'allowed') {
-            return guard;
-        }
-        await options?.beforeMutation?.();
         if (options?.scope === 'all-credentials') {
             const pushTokens = loadExpoPushTokensToUnregister();
             const pushCleanupTargets: Array<Parameters<typeof unregisterPushTokenForHomeBestEffort>[0]> = [];
@@ -379,16 +370,6 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             return { kind: 'completed' };
         }
 
-        let activeCredentials: AuthCredentials | null = options?.expectedCredentials ?? (options?.target ? null : credentials);
-        if (activeServerUrl && !logoutTarget) {
-            try {
-                activeCredentials = await TokenStorage.getCredentialsForServerUrl(activeServerUrl, {
-                    serverId: activeServerId || undefined,
-                }) ?? activeCredentials;
-            } catch {
-                // Keep the captured target's bearer, never the later focused Home's.
-            }
-        }
         const activeProfile = activeServerUrl && activeCredentials
             ? listServerProfiles().find((profile) => (
                 areServerProfileIdentifiersEquivalent(resolveServerProfileScopeId(profile), activeServerId)
@@ -420,7 +401,6 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 throw new Error('Failed to remove active Home credentials');
             }
         }
-        const archiveServerId = targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId;
         if (archiveServerId) getStorage().getState().clearSessionArchiveOperations(archiveServerId);
         const focusedCredentials = getCurrentAuth()?.credentials;
         const shouldClearFocusedAuth = (
@@ -442,6 +422,111 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         fireAndForget(cleanup, { tag: 'AuthContext.logout.unregisterPushToken' });
         return { kind: 'completed' };
     }, [credentials]);
+
+    const logout = React.useCallback(async (
+        options?: AuthLogoutOptions,
+    ): Promise<AuthCredentialLifecycleResult> => {
+        const logoutTarget = options?.target;
+        const activeServer = logoutTarget ?? getActiveServerSnapshot();
+        const activeServerId = String(activeServer.serverId ?? '').trim();
+        const activeServerUrl = String(activeServer.serverUrl ?? '').trim();
+        if (options?.target && (!options.expectedCredentials || options.scope === 'all-credentials')) {
+            throw new Error('Targeted logout requires the original Home credentials');
+        }
+        const targetProfile = logoutTarget
+            ? listServerProfiles().find(profile => isSameServerTarget(logoutTarget, {
+                serverId: resolveServerProfileScopeId(profile), serverUrl: profile.serverUrl,
+            })) : null;
+        const forgottenScope = options?.target && options.expectedCredentials
+            ? createServerAccountScope(targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId,
+                parseToken(options.expectedCredentials.token))
+            : getActiveServerAccountScope();
+        if (options?.target && !forgottenScope) throw new Error('Original Home Account scope is unavailable');
+        // PA-CUSTODY1 guards the credential this logout destroys: a focused logout
+        // removes only the active Home's credential, so only that Home's retained
+        // first-key custody blocks it; forgetting every credential (or a logout
+        // with no addressable active Home) stays guarded by custody on any Home.
+        const guard =
+            await guardAccountEncryptionFirstKeyCredentialMutation(
+                options?.scope === 'all-credentials' || !activeServerUrl
+                    ? undefined
+                    : {
+                        serverUrl: activeServerUrl,
+                        ...(activeServerId ? { serverId: activeServerId } : {}),
+                    },
+            );
+        if (guard.kind !== 'allowed') {
+            return guard;
+        }
+        await options?.beforeMutation?.();
+        const admission = {
+            options, activeServer, forgottenScope,
+            archiveServerId: targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId,
+        };
+        if (resolveDesktopWindowContext().role === 'secondary') {
+            await requestAdmittedDesktopLogout({
+                activeServer: { serverUrl: activeServerUrl, ...(activeServerId ? { serverId: activeServerId } : {}) },
+                forgottenScope, archiveServerId: admission.archiveServerId,
+                forgetAll: options?.scope === 'all-credentials', targeted: Boolean(options?.target),
+                ...(options?.expectedCredentials ? { expectedCredentialScopeKey: resolveAuthCredentialsScopeKey(options.expectedCredentials) } : {}),
+            });
+            return { kind: 'completed' };
+        }
+        return await applyAdmittedLogout(admission);
+    }, [applyAdmittedLogout]);
+
+    useEffect(() => {
+        if (desktopHostKind() !== 'tauri' || resolveDesktopWindowContext().role !== 'primary') return;
+        let disposed = false;
+        let unlisten: (() => void) | undefined;
+        fireAndForget(listenDesktopAccountAuthActions({ logout: async data => {
+            if (disposed) return;
+            let expectedCredentials: AuthCredentials | undefined;
+            if (data.expectedCredentialScopeKey !== undefined) {
+                const stored = await TokenStorage.getCredentialsForServerUrl(data.activeServer.serverUrl, { serverId: data.activeServer.serverId });
+                if (!stored || resolveAuthCredentialsScopeKey(stored) !== data.expectedCredentialScopeKey) throw new Error('Original Home credential changed');
+                expectedCredentials = stored;
+            }
+            // The originating Auth owner already admitted this mutation and ran its callback.
+            // Primary alone applies it, so all app windows leave the same credential lifetime.
+            await applyAdmittedLogout({
+                activeServer: data.activeServer, forgottenScope: data.forgottenScope,
+                archiveServerId: data.archiveServerId,
+                options: {
+                    ...(data.forgetAll ? { scope: 'all-credentials' as const } : {}),
+                    ...(data.targeted ? { target: data.activeServer } : {}),
+                    ...(expectedCredentials ? { expectedCredentials } : {}),
+                },
+            });
+        }, credentialJourney: async data => {
+            if (disposed) return;
+            await openDesktopCredentialJourneyInMain(data, refreshFromActiveServer);
+        } }).then(dispose => {
+            if (disposed) dispose();
+            else unlisten = dispose;
+        }), { tag: 'AuthContext.desktopLogout.listen' });
+        return () => { disposed = true; unlisten?.(); };
+    }, [applyAdmittedLogout, refreshFromActiveServer]);
+
+    useEffect(() => {
+        if (desktopHostKind() !== 'tauri') return;
+        const windowLabel = getDesktopHostWindowLabel();
+        const primary = resolveDesktopWindowContext().role === 'primary';
+        let disposed = false;
+        let unlisten: (() => void) | undefined;
+        fireAndForget(listenDesktopHostEvent<DesktopAccountCredentialMutationNotice>('desktopAppWindow://account-teardown', notice => {
+            if (notice.sourceWindowLabel !== windowLabel) {
+                for (const mutation of notice.mutations) replayHomeCredentialMutation(mutation);
+            }
+            if (primary) {
+                fireAndForget(refreshFromActiveServer(), { tag: 'AuthContext.desktopAccountTeardown.refreshFromActiveServer' });
+            }
+        }).then(dispose => {
+            if (disposed) dispose();
+            else unlisten = dispose;
+        }), { tag: 'AuthContext.desktopAccountTeardown.listen' });
+        return () => { disposed = true; unlisten?.(); };
+    }, [refreshFromActiveServer]);
 
     // Single source of truth for the context value so consumers (and the non-React
     // `getCurrentAuth()` bridge) share one identity-stable object. Without this memo the

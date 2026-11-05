@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { WorkspaceOpenOptions, WorkspaceOpenDestination } from './workspaceNavigationAdapter';
-import type { WorkspaceAction, WorkspaceState } from './workspaceState';
+import type { WorkspaceAction, WorkspaceState, WorkspacePresentationVisibility } from './workspaceState';
+import { getDesktopAppWindowPlacedTabs, getDesktopAppWindowTransfers, subscribeDesktopAppWindows, subscribeDesktopAppWindowTransfers } from '@/desktop/window/appWindowRuntime';
 import type { DestinationNavigation } from './DestinationInstanceHost';
 import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCanvasHost';
 import type { SharedWorkspaceTabs } from './workspaceSyncedTabs';
@@ -37,6 +38,8 @@ export type WorkspaceNavigationContextValue = Readonly<{
     /** Present only on a phone, where the workspace owns the tab set but not navigation. */
     phone?: WorkspacePhoneControls | null;
     state: WorkspaceState;
+    /** Current native presentation realm; global records remain scoped to their Home and Account. */
+    desktopPresentation?: Readonly<{ serverId: string; accountId: string; windowId?: string; layoutId?: string }>;
     catalog?: readonly CompactAppDestination[];
     /** Current mounted screen identities, local to this owner and never persisted. */
     destinationTitles?: Readonly<Record<string, WorkspaceDestinationTitle>>;
@@ -60,16 +63,48 @@ export type WorkspaceNavigationContextValue = Readonly<{
 }>;
 
 export const WorkspaceNavigationContext = React.createContext<WorkspaceNavigationContextValue | null>(null);
+const NO_CATALOG: readonly CompactAppDestination[] = Object.freeze([]);
 const WorkspaceFileNavigationContext = React.createContext<Readonly<{ canOpen: boolean; phone: boolean }>>({ canOpen: false, phone: false });
+
+export type WorkspaceRouterFacts = Readonly<Pick<WorkspaceNavigationContextValue, 'active' | 'openHref' | 'navigationForTab' | 'back'>
+    & {
+        /** Rows that open destinations resolve against this; it moves only with the catalog itself. */
+        catalog: readonly CompactAppDestination[];
+        hasPhone: boolean;
+        read: () => WorkspaceNavigationContextValue;
+    }>;
+const WorkspaceRouterFactsContext = React.createContext<WorkspaceRouterFacts | null>(null);
+
+/** The lifecycle owner pushes placement and admitted transfer changes; consumers project the same membership. */
+export function useWorkspacePresentationVisibility(desktop: WorkspaceNavigationContextValue['desktopPresentation']): WorkspacePresentationVisibility {
+    const placedTabs = React.useSyncExternalStore(subscribeDesktopAppWindows, getDesktopAppWindowPlacedTabs, getDesktopAppWindowPlacedTabs);
+    const transferringTabIds = React.useSyncExternalStore(subscribeDesktopAppWindowTransfers, getDesktopAppWindowTransfers, getDesktopAppWindowTransfers);
+    return React.useMemo(() => ({ placedTabs, transferringTabIds, scope: desktop, windowId: desktop?.windowId }),
+        [desktop, placedTabs, transferringTabIds]);
+}
 
 /** Stable navigation capability facts for frequently mounted file-link consumers. */
 export function WorkspaceNavigationProvider(props: React.PropsWithChildren<{ value: WorkspaceNavigationContextValue }>) {
+    const latest = React.useRef(props.value);
+    latest.current = props.value;
     const canOpen = props.value.active || props.value.ownsRoute === true || Boolean(props.value.phone);
     const phone = Boolean(props.value.phone);
     const capabilities = React.useMemo(() => ({ canOpen, phone }), [canOpen, phone]);
+    const catalog = props.value.catalog ?? NO_CATALOG;
+    const { active, openHref, navigationForTab } = props.value;
+    // `back` is rebuilt per publication; the facts delegate to the latest one so their identity follows capabilities only.
+    const routerFacts = React.useMemo<WorkspaceRouterFacts>(() => ({ active, openHref, navigationForTab, catalog, hasPhone: phone,
+        back: () => latest.current.back(), read: () => latest.current }),
+        [active, catalog, navigationForTab, openHref, phone]);
     return <WorkspaceNavigationContext.Provider value={props.value}>
+        <WorkspaceRouterFactsContext.Provider value={routerFacts}>
         <WorkspaceFileNavigationContext.Provider value={capabilities}>{props.children}</WorkspaceFileNavigationContext.Provider>
+        </WorkspaceRouterFactsContext.Provider>
     </WorkspaceNavigationContext.Provider>;
+}
+
+export function useWorkspaceRouterFacts(): WorkspaceRouterFacts | null {
+    return React.useContext(WorkspaceRouterFactsContext);
 }
 
 export function useWorkspaceFileNavigationCapabilities() {

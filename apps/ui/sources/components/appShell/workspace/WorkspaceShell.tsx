@@ -23,8 +23,8 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { DestinationInstanceHost } from './DestinationInstanceHost';
-import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import type { WorkspaceGroup } from './workspaceState';
+import { useOptionalWorkspaceNavigation, useWorkspacePresentationVisibility, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
+import { selectWorkspaceVisibleGroup, type WorkspaceGroup } from './workspaceState';
 import { createWorkspaceSplit, WORKSPACE_VIEW_MINIMUM } from './workspaceSplit';
 import { WorkspaceGroupTabs } from './titleBar/WorkspaceGroupTabs';
 import { executeWorkspaceUiAction } from './workspaceActionRuntime';
@@ -57,12 +57,13 @@ const styles = StyleSheet.create(() => ({
 
 function splitTab(workspace: WorkspaceNavigationContextValue, input: Readonly<{
     groupId: string;
+    tabId: string;
     direction: SplitCanvasDirection;
     availableSizePx?: number;
     minimumExistingSizePx?: number;
 }>) {
     if (input.availableSizePx === undefined || input.minimumExistingSizePx === undefined) return;
-    const action = createWorkspaceSplit(workspace.state, { groupId: input.groupId, direction: input.direction,
+    const action = createWorkspaceSplit(workspace.state, { groupId: input.groupId, tabId: input.tabId, direction: input.direction,
         availableSizePx: input.availableSizePx, minimumExistingSizePx: input.minimumExistingSizePx, createId: randomUUID });
     if (action) workspace.dispatch(action);
 }
@@ -82,13 +83,17 @@ function WorkspaceCanvas(props: Readonly<{
     presentation?: 'destination';
 }>) {
     const workspace = props.workspace;
+    const presentation = useWorkspacePresentationVisibility(workspace.desktopPresentation);
+    const visibleGroups = React.useMemo(() => Object.fromEntries(Object.entries(workspace.state.groups)
+        .map(([id, group]) => [id, selectWorkspaceVisibleGroup(workspace.state, group, presentation)])), [presentation, workspace.state]);
+
     const arrangement = useLocalSetting('paneArrangement');
     const leafMinimum = React.useCallback((leaf: SplitCanvasLeafNode<GroupPayload>) => {
-        const group = workspace.state.groups[leaf.payload.groupId];
+        const group = visibleGroups[leaf.payload.groupId];
         const destination = group ? workspace.state.tabs[group.activeTabId]?.target : undefined;
         return arrangement === 'editor' && (destination?.kind === 'session' || destination?.kind === 'project')
             ? EDITOR_WORKSPACE_MINIMUM : WORKSPACE_VIEW_MINIMUM;
-    }, [arrangement, workspace.state.groups, workspace.state.tabs]);
+    }, [arrangement, visibleGroups, workspace.state.tabs]);
     const scope = useActiveServerAccountScope();
     const workspaceRefs = useWorkspaceRefs();
     const runtime = useEntityDragDropRuntime();
@@ -96,13 +101,13 @@ function WorkspaceCanvas(props: Readonly<{
         switch (action.type) {
             case 'focusLeaf':
                 if (action.leafId) {
-                    const group = workspace.state.groups[action.leafId];
-                    if (group) workspace.activateTab(group.id, group.activeTabId);
+                    const group = visibleGroups[action.leafId];
+                    if (group?.activeTabId) workspace.activateTab(group.id, group.activeTabId);
                 }
                 break;
             case 'closeLeaf': {
                 const lifetime = captureActiveServerAccountScopeCurrentness();
-                const group = workspace.state.groups[action.leafId];
+                const group = visibleGroups[action.leafId];
                 if (!group) break;
                 // Closing a pane explicitly closes pinned members too; Close All keeps them.
                 fireAndForget((async () => {
@@ -131,7 +136,7 @@ function WorkspaceCanvas(props: Readonly<{
                 }
                 break;
         }
-    }, [workspace]);
+    }, [visibleGroups, workspace]);
     // Top-row panes' tabs live in the title strip when the shell draws one (workspace lab T/S).
     const titleBarGeometry = React.useContext(WorkspaceBarGeometryContext);
     const titleBarKey = titleBarGeometry ? resolveWorkspaceTopRowGroupIds(workspace.state).join('|') : '';
@@ -142,13 +147,13 @@ function WorkspaceCanvas(props: Readonly<{
         requestSplit: (direction: SplitCanvasDirection) => void;
     }>) => {
         if (props.presentation === 'destination') return null;
-        const group = workspace.state.groups[input.leaf.payload.groupId];
+        const group = visibleGroups[input.leaf.payload.groupId];
         if (!group) return null;
         return <WorkspaceGroupView workspace={workspace} group={group} catalog={props.catalog}
             focused={input.isFocused}
             tabsInTitleBar={titleBarGroupIds.includes(group.id)} />;
-    }, [props.catalog, props.presentation, titleBarGroupIds, workspace]);
-    const retainedLeafContents = React.useMemo(() => Object.values(workspace.state.groups).flatMap(group =>
+    }, [props.catalog, props.presentation, titleBarGroupIds, visibleGroups, workspace]);
+    const retainedLeafContents = React.useMemo(() => Object.values(visibleGroups).flatMap(group =>
         (props.presentation === 'destination'
             ? group.id === workspace.state.focusedGroupId && group.activeTabId ? [group.activeTabId] : []
             : group.tabIds).flatMap((tabId): SplitCanvasRetainedLeafContent[] => {
@@ -171,13 +176,13 @@ function WorkspaceCanvas(props: Readonly<{
                             </React.Suspense> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
                     </DestinationInstanceHost>
                 </View> }];
-        })), [props.catalog, workspace]);
+        })), [props.catalog, props.presentation, visibleGroups, workspace]);
     return <SplitCanvasHost
         entityDrop={scope ? {
             runtime, id: 'workspace', scope, acceptedKinds: WORKSPACE_ENTITY_KINDS,
             isCurrent: () => workspace.active && !workspace.phone,
             label: target => {
-                const group = workspace.state.groups[target.leafId];
+                const group = visibleGroups[target.leafId];
                 return describePaneDropDestination(target.placement,
                     group ? readWorkspaceTabTitle(workspace.state, props.catalog, group.activeTabId, workspace.destinationTitles) : null);
             },
@@ -193,7 +198,10 @@ function WorkspaceCanvas(props: Readonly<{
         renderLeafHeader={renderLeafHeader}
         retainedLeafContents={retainedLeafContents}
         getLeafMinimumSizePx={leafMinimum}
-        onRequestSplitLeaf={(input) => splitTab(workspace, { ...input, groupId: input.leafId })}
+        onRequestSplitLeaf={(input) => {
+            const group = visibleGroups[input.leafId];
+            if (group?.activeTabId) splitTab(workspace, { ...input, groupId: group.id, tabId: group.activeTabId });
+        }}
         keyboardEnabled={workspace.active}
         chrome="flat"
         gutterSizePx={8}

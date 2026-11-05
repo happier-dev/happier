@@ -2929,6 +2929,7 @@ const enCommon = {
   minimizeWindow: 'Minimize window',
   maximizeWindow: 'Maximize window',
   restoreWindow: 'Restore window',
+  newWindow: 'New window',
   closeWindow: 'Close window',
   dismissKeyboard: 'Dismiss keyboard',
   open: 'Open',

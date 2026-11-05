@@ -2643,6 +2643,7 @@ export const fr: TranslationStructure = {
     minimizeWindow: "Réduire la fenêtre",
     maximizeWindow: "Agrandir la fenêtre",
     restoreWindow: "Restaurer la fenêtre",
+    newWindow: 'Nouvelle fenêtre',
     closeWindow: "Fermer la fenêtre",
     dismissKeyboard: 'Masquer le clavier',
       open: "Ouvrir",

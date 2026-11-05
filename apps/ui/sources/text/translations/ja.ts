@@ -2787,6 +2787,7 @@ export const ja: TranslationStructure = {
     minimizeWindow: "ウィンドウを最小化",
     maximizeWindow: "ウィンドウを最大化",
     restoreWindow: "ウィンドウを元に戻す",
+    newWindow: '新しいウィンドウ',
     closeWindow: "ウィンドウを閉じる",
     dismissKeyboard: 'キーボードを閉じる',
       open: "開く",

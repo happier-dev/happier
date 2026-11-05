@@ -144,6 +144,8 @@ export type PluginSurfaceDestinationOpenSurfaceHandlerInput = Readonly<{
      * a page, pane, or another selected plugin surface.
      */
     handlers: PluginSurfaceDestinationContainerHandlers;
+    /** Window presentation uses the same admitted binding and its incumbent owner. */
+    windowHandlers?: PluginSurfaceDestinationContainerHandlers;
 }>;
 
 /**
@@ -153,13 +155,14 @@ export type PluginSurfaceDestinationOpenSurfaceHandlerInput = Readonly<{
  */
 export type PluginSurfaceDestinationNavigationBindingInput = Omit<
     PluginSurfaceDestinationOpenSurfaceHandlerInput,
-    'handlers'
+    'handlers' | 'windowHandlers'
 >;
 
 type PluginSurfaceDestinationPlacementOwner = {
     [Container in PluginSurfacePlacementContainer]: Readonly<{
         container: Container;
         handler: PluginSurfaceDestinationContainerHandler<PluginUiSurfacePlacementProjection>;
+        openWindow?: PluginSurfaceDestinationContainerHandler<PluginUiSurfacePlacementProjection>;
     }>;
 }[PluginSurfacePlacementContainer];
 
@@ -167,6 +170,7 @@ export type PluginSurfaceDestinationNavigationOwner =
     | Readonly<{
         container: 'settingsPage';
         handler: PluginSurfaceDestinationContainerHandler<PluginUiSettingsPageProjection>;
+        openWindow?: PluginSurfaceDestinationContainerHandler<PluginUiSettingsPageProjection>;
     }>
     | PluginSurfaceDestinationPlacementOwner;
 
@@ -360,8 +364,12 @@ export function createPluginSurfaceDestinationOpenSurfaceHandler(
                 ? await input.enclosingOpenSurface(request)
                 : resolved;
         }
+        const handlers = request.presentation === 'window' ? input.windowHandlers : input.handlers;
+        if (request.presentation === 'window' && !handlers?.[resolved.placement.binding.container]) {
+            return unsupportedWindowPresentation();
+        }
         if (isSettingsPageResolution(resolved)) {
-            const handler = input.handlers.settingsPage;
+            const handler = handlers?.settingsPage;
             if (!handler) {
                 return unavailable('plugin_surface_open_destination_owner_unavailable');
             }
@@ -374,12 +382,16 @@ export function createPluginSurfaceDestinationOpenSurfaceHandler(
         if (container === 'settingsPage') {
             return unavailable('plugin_surface_open_destination_owner_unavailable');
         }
-        const handler = input.handlers[container];
+        const handler = handlers?.[container];
         if (!handler) {
             return unavailable('plugin_surface_open_destination_owner_unavailable');
         }
         return await handler(resolved);
     };
+}
+
+function unsupportedWindowPresentation(): PluginSurfaceOpenOutcome {
+    return { ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_window_unsupported' };
 }
 
 type RegisteredPluginSurfaceDestinationOwner = (
@@ -400,7 +412,8 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
                 if (!isSettingsPageResolution(resolution)) {
                     return unavailable('plugin_surface_open_destination_owner_unavailable');
                 }
-                return await owner.handler(resolution);
+                const handler = resolution.request.presentation === 'window' ? owner.openWindow : owner.handler;
+                return handler ? await handler(resolution) : unsupportedWindowPresentation();
             }
             if (
                 !isSurfacePlacementResolution(resolution)
@@ -408,7 +421,8 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
             ) {
                 return unavailable('plugin_surface_open_destination_owner_unavailable');
             }
-            return await owner.handler(resolution);
+            const handler = resolution.request.presentation === 'window' ? owner.openWindow : owner.handler;
+            return handler ? await handler(resolution) : unsupportedWindowPresentation();
         };
         const current = ownersByContainer.get(owner.container) ?? new Set<RegisteredPluginSurfaceDestinationOwner>();
         current.add(delegate);

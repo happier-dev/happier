@@ -4,6 +4,9 @@ import { act } from 'react-test-renderer';
 import { BaseNavigationContainer, createNavigatorFactory, StackRouter, useNavigationBuilder } from '@react-navigation/core';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createSessionFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { storage } from '@/sync/domains/state/storage';
@@ -17,6 +20,21 @@ import { DestinationInstanceHost, useDestinationInstanceKey, useDestinationParam
 import { useOptionalWorkspaceNavigation, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { WorkspaceAppShellProvider } from './WorkspaceAppShellProvider';
+import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
+import { DesktopDestinationWindow } from '@/desktop/window/DesktopDestinationWindow';
+import { AppWindowRecordContext } from '@/desktop/window/AppWindowRecordContext';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { prepareDesktopAppWindowReturn, registerDesktopAppWindowReturnHandler } from '@/sync/ops/actions/desktopAppWindowActionDispatch';
+import { createSessionDraftRepository, getSessionDraftSnapshot, writeExistingSessionDraft, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { createSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
+import { getSessionDraftAuthoringFieldValues, getSessionDraftDocumentField } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
+import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
+import { writeNewSessionAuthoringDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { AppShellPluginUiProjectionValueProvider } from '../plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import { WorkspaceShell } from './WorkspaceShell';
@@ -45,10 +63,11 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 const boundary = vi.hoisted(() => ({ layouts: {} as Record<string, unknown>, mirrors: [] as string[], scope: { serverId: 'home-a', accountId: 'alice' }, dataReady: true,
     platform: 'ios', pathname: '/session/A1', params: { id: 'A1', serverId: 'home-a' } as Record<string, string | string[]>,
     renderScene: null as (() => React.ReactNode) | null }));
-// Socket transport is a genuine boundary; this layout-owner suite has no authenticated RPCs.
-vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {} }));
-// Session list surfaces demand content from the sync singleton; the fixture settles that demand without a Home.
-vi.mock('@/sync/sync', async () => ({ sync: (await import('@/dev/testkit/mocks/sync')).createSessionListHydrationSyncBoundary() }));
+const nativeWindow = { handlers: new Map<string, (event: { payload: unknown }) => void>() };
+// Keep Sync and record readers real; this layout suite has no connected Home transport.
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal),
+);
 // This navigation journey never renders Markdown; the vendor/native SDK remains a boundary.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace navigation test'); },
@@ -101,14 +120,19 @@ vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return createReactNavigationNativeMock();
 });
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 const initialStorageState = storage.getState();
+const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
 // Test inputs use the same store snapshots and selectors as the mounted workspace.
 Object.defineProperties(boundary, {
     layouts: {
-        get: () => storage.getState().localSettings.workspaceLayoutV1,
-        set: (layouts: Record<string, unknown>) => storage.setState({
-            localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: layouts },
-        }),
+        get: () => workspaceLayoutsState.readAll(),
+        set: (layouts: Record<string, unknown>) => {
+            for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
+            for (const [key, layout] of Object.entries(layouts)) workspaceLayoutsState.set(key, layout);
+            storage.setState({ localSettings: { ...storage.getState().localSettings, workspaceLayoutV1: {} } });
+        },
     },
     scope: {
         get: () => storage.getState().profileScope,
@@ -124,6 +148,11 @@ function HostedProbe() {
     const params = useDestinationParams<{ id?: string; serverId?: string }>();
     const router = useDestinationRouter();
     return React.createElement('HostedIdentity', { params, next: () => router.push('/session/A2?serverId=home-a') });
+}
+
+function WorkspaceRecordProbe() {
+    const navigation = useOptionalWorkspaceNavigation();
+    return React.createElement('WorkspaceOwner', { navigation });
 }
 
 function RailActivationProbe() {
@@ -190,6 +219,25 @@ function ColdAccountNavigator(props: Readonly<{ children: React.ReactNode }>) {
 }
 const ColdAccountStack = createNavigatorFactory(ColdAccountNavigator)();
 
+function RetainedWorkspaceResource(props: Readonly<{ acquire: () => () => void }>) {
+    React.useEffect(props.acquire, [props.acquire]);
+    return React.createElement('RetainedWorkspaceResourceView');
+}
+
+const pendingNewSessionPrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+
+function PendingNewSessionAuthoring(props: Readonly<{ scope: ServerAccountScope; draftId: string }>) {
+    const [profileId, selectProfile] = React.useState<string | null>(null);
+    const draft: NewSessionDraft = { input: pendingNewSessionPrompt, selectedMachineId: 'machine', selectedPath: '/repo',
+        entryIntent: 'session', selectedProfileId: profileId, selectedSecretId: null, agentType: 'codex',
+        permissionMode: 'default', acpSessionModeId: null, updatedAt: 10 };
+    const text = React.useMemo(() => ({ getLength: () => pendingNewSessionPrompt.length,
+        subscribe: () => () => {} }), []);
+    useNewSessionDraftAutoPersist({ focused: true, draftText: text, draftChangeKey: profileId ?? 'initial',
+        persistDraftNow: () => writeNewSessionAuthoringDraftToRepository({ ...props, draft }) });
+    return React.createElement('PendingNewSessionAuthoring', { selectProfile });
+}
+
 /** Real event dispatch beneath the external browser URL/history fixtures. */
 function installBrowserBoundary(input: Record<string, unknown> & { history: object }) {
     const events = new EventTarget();
@@ -198,6 +246,50 @@ function installBrowserBoundary(input: Record<string, unknown> & { history: obje
         removeEventListener: events.removeEventListener.bind(events),
         dispatchEvent: events.dispatchEvent.bind(events),
     });
+}
+
+/** IndexedDB is the external boundary; repository serialization and dirty-write draining stay real. */
+async function installDelayedDraftRecordBoundary() {
+    const records = new Map<string, string>();
+    let commit!: () => void;
+    let reject!: (error: Error) => void;
+    const pendingCommit = new Promise<void>((resolve, rejectWrite) => { commit = resolve; reject = rejectWrite; });
+    const browserRecords = {
+        list: async () => new Map(records),
+        read: async (key: string) => records.get(key),
+        update: async (key: string, update: (current: string | undefined) => { value: string | undefined; result: string | undefined }) => {
+            await pendingCommit;
+            const next = update(records.get(key));
+            if (next.value === undefined) records.delete(key);
+            else records.set(key, next.value);
+            return next.result;
+        },
+    };
+    const legacy = { getAllKeys: () => [], getString: () => undefined, delete: () => {} };
+    const drafts = createSessionDraftPersistenceStorage({ legacy, records: browserRecords });
+    await drafts.prepare();
+    const storage = getPersistenceStorage();
+    const set = storage.set.bind(storage);
+    const getString = storage.getString.bind(storage);
+    const remove = storage.delete.bind(storage);
+    vi.spyOn(storage, 'set').mockImplementation((key, value) => key.startsWith('session-drafts-repository-v1:')
+        ? drafts.set(key, String(value)) : set(key, value));
+    vi.spyOn(storage, 'getString').mockImplementation(key => key.startsWith('session-drafts-repository-v1:')
+        ? drafts.getString(key) : getString(key));
+    vi.spyOn(storage, 'delete').mockImplementation(key => key.startsWith('session-drafts-repository-v1:')
+        ? drafts.delete(key) : remove(key));
+    const previousFlush = Object.getOwnPropertyDescriptor(storage, 'flush');
+    Object.defineProperty(storage, 'flush', { configurable: true, value: drafts.flush });
+    onTestFinished(() => {
+        if (previousFlush) Object.defineProperty(storage, 'flush', previousFlush);
+        else Reflect.deleteProperty(storage, 'flush');
+    });
+    return { records, commit, reject, reopen: async () => {
+        const reopened = createSessionDraftPersistenceStorage({ legacy, records: browserRecords });
+        await reopened.prepare();
+        return createSessionDraftRepository({ storage: reopened, syncEnabled: false,
+            cipher: { seal: async () => { throw new Error('Unexpected draft network encryption'); }, open: async () => null } });
+    } };
 }
 
 describe('consumed workspace navigation owner', () => {
@@ -227,6 +319,288 @@ describe('consumed workspace navigation owner', () => {
             expect(screen.tree.findAllByType('JoinAddHomeForm' as never)).toHaveLength(1);
             expect(screen.tree.findAllByType('JoinSettingsOverview' as never)).toHaveLength(0);
         } finally { await screen.unmount(); }
+    });
+
+
+    it('keeps the dirty editor decision and pending NewSession authoring durable through full Close', async () => {
+        boundary.platform = 'web';
+        // Idle is an external browser scheduling boundary; do not let it hide a Close-time loss.
+        vi.stubGlobal('requestIdleCallback', () => 1);
+        vi.stubGlobal('cancelIdleCallback', () => {});
+        const disk = await installDelayedDraftRecordBoundary();
+        const scope = { serverId: 'full-close-authoring-home', accountId: 'alice' };
+        const draftId = '00000000-0000-4000-8000-00000000c105';
+        writeNewSessionDraft({ scope, draftId, patch: { text: pendingNewSessionPrompt }, materializationIntent: 'userEdit' });
+        expect(getSessionDraftDocumentField(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document ?? null,
+            { kind: 'composer', field: 'text' })?.value).toBe(pendingNewSessionPrompt);
+        const record = { windowId: 'full-close-authoring', chrome: 'full' as const, homeId: scope.serverId,
+            accountId: scope.accountId, layoutId: 'authoring-layout', selectedAddress: { kind: 'home' as const } };
+        let allowClose = false;
+        const dirty = { current: true };
+        const guard: ActiveUnsavedChangesGuard = { isDirtyRef: dirty,
+            requestDecision: async () => allowClose ? 'discard' : 'keepEditing', tag: 'full-close-file-editor' };
+        const screen = await renderScreen(<AppWindowRecordContext.Provider value={record}>
+            <DesktopDestinationWindow full><RetainedDirtyEditor tabId="dirty-file" focused guard={guard} />
+                <PendingNewSessionAuthoring scope={scope} draftId={draftId} />
+            </DesktopDestinationWindow>
+        </AppWindowRecordContext.Provider>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('PendingNewSessionAuthoring')).toHaveLength(1));
+            await act(async () => { invokeTestInstanceHandler(screen.root.findByType('PendingNewSessionAuthoring'), 'selectProfile', 'latest-profile'); });
+            await act(async () => { expect(await prepareDesktopAppWindowReturn('close')).toBe(false); });
+            expect(screen.root.findAllByType('PendingNewSessionAuthoring')).toHaveLength(1);
+            expect(dirty.current).toBe(true);
+            allowClose = true;
+            let closing!: Promise<boolean>;
+            await act(async () => { closing = prepareDesktopAppWindowReturn('close'); });
+            expect(getSessionDraftAuthoringFieldValues(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document).profileId).toBe('latest-profile');
+            await act(async () => { disk.commit(); expect(await closing).toBe(true); });
+            const reopened = await disk.reopen();
+            const restored = reopened.getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
+            expect(getSessionDraftAuthoringFieldValues(restored?.document).profileId).toBe('latest-profile');
+        } finally { disk.commit(); await screen.unmount(); }
+    });
+
+    it('keeps pending NewSession authoring durable when its tab unmounts immediately before full Close', async () => {
+        boundary.platform = 'web';
+        vi.stubGlobal('requestIdleCallback', () => 1);
+        vi.stubGlobal('cancelIdleCallback', () => {});
+        const disk = await installDelayedDraftRecordBoundary();
+        const scope = { serverId: 'full-close-unmounted-authoring', accountId: 'alice' };
+        const draftId = '00000000-0000-4000-8000-00000000c106';
+        writeNewSessionDraft({ scope, draftId, patch: { text: pendingNewSessionPrompt }, materializationIntent: 'userEdit' });
+        expect(getSessionDraftDocumentField(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document ?? null,
+            { kind: 'composer', field: 'text' })?.value).toBe(pendingNewSessionPrompt);
+        const record = { windowId: 'full-close-unmounted', chrome: 'full' as const, homeId: scope.serverId,
+            accountId: scope.accountId, layoutId: 'unmounted-layout', selectedAddress: { kind: 'home' as const } };
+        function AuthoringTab() {
+            const [visible, setVisible] = React.useState(true);
+            return <>{React.createElement('AuthoringTab', { close: () => setVisible(false) })}
+                {visible && <DestinationInstanceHost tabId="new-session-tab" ref={{ kind: 'newTab', params: {} }}
+                    pathname="/" focused visible><PendingNewSessionAuthoring scope={scope} draftId={draftId} /></DestinationInstanceHost>}</>;
+        }
+        const screen = await renderScreen(<AppWindowRecordContext.Provider value={record}>
+            <DesktopDestinationWindow full><AuthoringTab /></DesktopDestinationWindow>
+        </AppWindowRecordContext.Provider>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('PendingNewSessionAuthoring')).toHaveLength(1));
+            await act(async () => { invokeTestInstanceHandler(screen.root.findByType('PendingNewSessionAuthoring'), 'selectProfile', 'last-tab-profile'); });
+            await act(async () => { invokeTestInstanceHandler(screen.root.findByType('AuthoringTab'), 'close'); });
+            expect(screen.root.findAllByType('PendingNewSessionAuthoring')).toHaveLength(0);
+            expect(getSessionDraftAuthoringFieldValues(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document).profileId).toBe('last-tab-profile');
+            let closing!: Promise<boolean>;
+            await act(async () => { closing = prepareDesktopAppWindowReturn('close'); });
+            await act(async () => { disk.commit(); expect(await closing).toBe(true); });
+            const reopened = await disk.reopen();
+            const restored = reopened.getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
+            expect(getSessionDraftAuthoringFieldValues(restored?.document).profileId).toBe('last-tab-profile');
+        } finally { disk.commit(); await screen.unmount(); }
+    });
+
+    it('keeps full Close mounted until every pending local draft write is durable', async () => {
+        const disk = await installDelayedDraftRecordBoundary();
+        const scope = { serverId: 'full-close-home', accountId: 'alice' };
+        const otherScope = { serverId: 'retained-other-home', accountId: 'alice' };
+        const record = { windowId: 'full-close', chrome: 'full' as const, homeId: scope.serverId, accountId: scope.accountId,
+            layoutId: 'full-close-layout', selectedAddress: { kind: 'home' as const } };
+        const screen = await renderScreen(<AppWindowRecordContext.Provider value={record}>
+            <DesktopDestinationWindow full><RetainedWorkspaceResource acquire={() => () => {}} /></DesktopDestinationWindow>
+        </AppWindowRecordContext.Provider>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('RetainedWorkspaceResourceView')).toHaveLength(1));
+            writeExistingSessionDraft({ scope, sessionId: 'closing-session', patch: { text: 'latest local edit' } });
+            writeExistingSessionDraft({ scope: otherScope, sessionId: 'retained-session', patch: { text: 'other Home retained edit' } });
+            expect(getSessionDraftDocumentField(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'closing-session' })!.document,
+                { kind: 'composer', field: 'text' })?.value).toBe('latest local edit');
+            let acknowledged = false;
+            let closing!: Promise<boolean>;
+            await act(async () => { closing = prepareDesktopAppWindowReturn('close').then(result => { acknowledged = true; return result; }); });
+            expect(disk.records.size).toBe(0);
+            expect(acknowledged).toBe(false);
+            expect(screen.root.findAllByType('RetainedWorkspaceResourceView')).toHaveLength(1);
+            await act(async () => { disk.commit(); expect(await closing).toBe(true); });
+            expect(screen.root.findAllByType('RetainedWorkspaceResourceView')).toHaveLength(0);
+            const reopened = await disk.reopen();
+            for (const [draftScope, sessionId, text] of [[scope, 'closing-session', 'latest local edit'],
+                [otherScope, 'retained-session', 'other Home retained edit']] as const) {
+                expect(getSessionDraftDocumentField(reopened.getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId })!.document,
+                    { kind: 'composer', field: 'text' })?.value).toBe(text);
+            }
+        } finally { disk.commit(); await screen.unmount(); }
+    });
+
+    it('keeps a full window live when its local draft durability fails', async () => {
+        const disk = await installDelayedDraftRecordBoundary();
+        const scope = { serverId: 'full-close-failed-home', accountId: 'alice' };
+        const record = { windowId: 'full-close-failed', chrome: 'full' as const, homeId: scope.serverId, accountId: scope.accountId,
+            layoutId: 'full-close-failed-layout', selectedAddress: { kind: 'home' as const } };
+        const screen = await renderScreen(<AppWindowRecordContext.Provider value={record}>
+            <DesktopDestinationWindow full><RetainedWorkspaceResource acquire={() => () => {}} /></DesktopDestinationWindow>
+        </AppWindowRecordContext.Provider>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('RetainedWorkspaceResourceView')).toHaveLength(1));
+            writeExistingSessionDraft({ scope, sessionId: 'failed-session', patch: { text: 'unsaved local edit' } });
+            let rejected!: Promise<unknown>;
+            await act(async () => {
+                rejected = expect(prepareDesktopAppWindowReturn('close')).rejects.toThrow('storage unavailable');
+                disk.reject(new Error('storage unavailable'));
+                await rejected;
+            });
+            expect(disk.records.size).toBe(0);
+            expect(screen.root.findAllByType('RetainedWorkspaceResourceView')).toHaveLength(1);
+            expect(getSessionDraftDocumentField(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'failed-session' })!.document,
+                { kind: 'composer', field: 'text' })?.value).toBe('unsaved local edit');
+        } finally { disk.commit(); await screen.unmount(); }
+    });
+
+    it('shows the existing unavailable surface when a full Home change cannot update its native record', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/desktop/app-window'; boundary.params = {};
+        const home = await upsertServerProfile({ serverUrl: 'https://full-home-update.example.test', name: 'Full', source: 'manual' });
+        const nextHome = await upsertServerProfile({ serverUrl: 'https://full-home-update-next.example.test', name: 'Next', source: 'manual' });
+        const record = { windowId: 'full-home-update', chrome: 'full' as const, accountId: 'alice', homeId: home.id,
+            layoutId: 'full-home-update-layout', selectedAddress: { kind: 'home' as const } };
+        const callbacks = new Map<number, (event: { payload: unknown }) => void>();
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'plugin:event|listen' && typeof args?.event === 'string' && typeof args.handler === 'number') {
+                nativeWindow.handlers.set(args.event, callbacks.get(args.handler)!); return args.handler;
+            }
+            if (command === 'plugin:event|unlisten' && typeof args?.event === 'string') { nativeWindow.handlers.delete(args.event); return null; }
+            if (command === 'desktop_app_window_read') return record;
+            if (command === 'desktop_app_window_update') throw new Error('Native record persistence unavailable');
+            if (command === 'desktop_host_get_availability') return { activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' } };
+            if (command === 'desktop_app_window_restore') return [record];
+            if (command === 'desktop_app_window_responders') return [{ homeId: home.id, accountId: 'alice', windowId: record.windowId }];
+            return null;
+        });
+        installBrowserBoundary({ location: { href: 'https://app.test/desktop/app-window', pathname: '/desktop/app-window', search: '', hash: '' },
+            sessionStorage: globalThis.sessionStorage, history: { state: null, pushState() {}, replaceState() {}, go() {} },
+            __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: (event: string) => nativeWindow.handlers.delete(event) },
+            __TAURI_INTERNALS__: { invoke, metadata: { currentWindow: { label: 'destination_full-home-update' } },
+                transformCallback: (callback: (event: { payload: unknown }) => void) => {
+                    const id = callbacks.size + 1; callbacks.set(id, callback); return id;
+                } } });
+        await setActiveServer({ serverId: home.id, scope: 'tab' });
+        boundary.scope = { serverId: home.id, accountId: 'alice' };
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<AppWindowWorkspace catalog={catalog}><WorkspaceRecordProbe /></AppWindowWorkspace>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('WorkspaceOwner')).toHaveLength(1));
+            await act(async () => { await setActiveServer({ serverId: nextHome.id, scope: 'tab' });
+                boundary.scope = { serverId: nextHome.id, accountId: 'alice' }; });
+            await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_app_window_update', { record: {
+                ...record, homeId: nextHome.id, selectedAddress: { kind: 'home' },
+            } }));
+            await vi.waitFor(() => expect(screen.root.findAllByType(SurfaceStateCard).some(node => node.props.kind === 'unavailable')).toBe(true));
+            expect(invoke.mock.calls.some(([command, args]) => command === 'desktop_app_window_ready' && args?.failure)).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+
+    it('hydrates a blank full window with its retained layout, local navigation and ready guard', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/desktop/app-window'; boundary.params = {};
+        const home = await upsertServerProfile({ serverUrl: 'https://full-window.example.test', name: 'Full', source: 'manual' });
+        const record = { windowId: 'full', chrome: 'full' as const, accountId: 'alice', homeId: home.id, layoutId: 'full-layout',
+            selectedAddress: { kind: 'home' as const } };
+        const callbacks = new Map<number, (event: { payload: unknown }) => void>();
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'plugin:event|listen' && typeof args?.event === 'string' && typeof args.handler === 'number') {
+                nativeWindow.handlers.set(args.event, callbacks.get(args.handler)!); return args.handler;
+            }
+            if (command === 'plugin:event|unlisten' && typeof args?.event === 'string') { nativeWindow.handlers.delete(args.event); return null; }
+            if (command === 'desktop_app_window_read') return record;
+            if (command === 'desktop_host_get_availability') return { activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' } };
+            if (command === 'desktop_app_window_restore') return [record];
+            if (command === 'desktop_app_window_responders') return [{ homeId: home.id, accountId: 'alice', windowId: 'full' }];
+            return null;
+        });
+        installBrowserBoundary({ location: { href: 'https://app.test/desktop/app-window', pathname: '/desktop/app-window', search: '', hash: '' },
+            sessionStorage: globalThis.sessionStorage, history: { state: null, pushState() {}, replaceState() {}, go() {} },
+            __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: (event: string) => nativeWindow.handlers.delete(event) },
+            __TAURI_INTERNALS__: { invoke, metadata: { currentWindow: { label: 'destination_full' } },
+                transformCallback: (callback: (event: { payload: unknown }) => void) => {
+                    const id = callbacks.size + 1; callbacks.set(id, callback); return id;
+                } } });
+        await setActiveServer({ serverId: home.id, scope: 'tab' });
+        boundary.scope = { serverId: home.id, accountId: 'alice' };
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const key = workspaceLayoutScopeKey({ ...boundary.scope, windowId: record.layoutId });
+        const saved = createWorkspaceState({ id: 'retained', target: { kind: 'session', params: { id: 'saved-session', serverId: home.id, accountId: 'alice' } }, pinned: true, preview: false });
+        workspaceLayoutsState.set(key, serializeWorkspaceLayout(saved));
+        const screen = await renderScreen(<AppWindowWorkspace catalog={catalog}><WorkspaceRecordProbe /></AppWindowWorkspace>);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAllByType('WorkspaceOwner')).toHaveLength(1));
+            const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+            expect(navigation().state.tabs.retained.target.params.id).toBe('saved-session');
+            await act(async () => { navigation().navigationForTab('retained').push('/session/local-next'); });
+            expect(navigation().state.tabs[navigation().state.groups[navigation().state.focusedGroupId].activeTabId].target.params.id).toBe('local-next');
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_window_open')).toHaveLength(0);
+            await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_app_window_ready', undefined));
+            expect(boundary.mirrors).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
+
+    it('reports a hidden presentation failure without mounting a Session over unreadable retained drafts', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/desktop/window'; boundary.params = {};
+        const home = await upsertServerProfile({ serverUrl: 'https://draft-failure-window.example.test', name: 'Destination', source: 'manual' });
+        const record = { windowId: 'draft-failure', accountId: 'alice', homeId: home.id, layoutId: 'draft-failure-layout',
+            selectedAddress: { kind: 'session' as const, sessionId: 'unreadable-session' } };
+        const callbacks = new Map<number, (event: { payload: unknown }) => void>();
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'plugin:event|listen' && typeof args?.event === 'string' && typeof args.handler === 'number') {
+                nativeWindow.handlers.set(args.event, callbacks.get(args.handler)!); return args.handler;
+            }
+            if (command === 'plugin:event|unlisten' && typeof args?.event === 'string') { nativeWindow.handlers.delete(args.event); return null; }
+            if (command === 'desktop_app_window_read') return record;
+            if (command === 'desktop_host_get_availability') return { activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' } };
+            if (command === 'desktop_app_window_restore') return [record];
+            if (command === 'desktop_get_window_chrome_policy') return { strategy: 'none' };
+            return null;
+        });
+        installBrowserBoundary({ location: { href: 'https://app.test/desktop/window', pathname: '/desktop/window', search: '', hash: '' },
+            sessionStorage: globalThis.sessionStorage, history: { state: null, pushState() {}, replaceState() {}, go() {} },
+            __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: (event: string) => nativeWindow.handlers.delete(event) },
+            __TAURI_INTERNALS__: { invoke, metadata: { currentWindow: { label: 'destination_draft-failure' } },
+                transformCallback: (callback: (event: { payload: unknown }) => void) => {
+                    const id = callbacks.size + 1; callbacks.set(id, callback); return id;
+                } } });
+        await setActiveServer({ serverId: home.id, scope: 'tab' });
+        boundary.scope = { serverId: home.id, accountId: 'alice' };
+        const storageKey = `session-drafts-repository-v1:${serverAccountScopeKeySuffix(boundary.scope)}`;
+        getPersistenceStorage().set(storageKey, '{"unreadableRetainedContent":true}');
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<AppWindowWorkspace catalog={catalog}><DesktopDestinationWindow /></AppWindowWorkspace>);
+        try {
+        await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_app_window_ready', { failure: 'presentation_unavailable' }));
+        expect(invoke).not.toHaveBeenCalledWith('desktop_app_window_ready', undefined);
+        expect(getPersistenceStorage().getString(storageKey)).toBe('{"unreadableRetainedContent":true}');
+        } finally {
+            await screen.unmount();
+            await vi.waitFor(() => expect([...nativeWindow.handlers.keys()].filter(event => event.startsWith('desktopAppWindow://'))).toEqual([]));
+        }
+    });
+    it('restores the destination layout and navigates locally without rewriting its native boot route', async () => {
+        boundary.platform = 'web'; boundary.pathname = '/desktop/window'; boundary.params = {};
+        const location = { pathname: '/desktop/window', search: '', hash: '' };
+        const pushState = vi.fn(); const replaceState = vi.fn();
+        installBrowserBoundary({ location, history: { state: null, pushState, replaceState, go() {} },
+            sessionStorage: { getItem: () => 'different-main-layout' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const initialTarget = { kind: 'session', params: { id: 'A1', serverId: 'home-a', accountId: 'alice' } };
+        const retained = createWorkspaceState({ id: 'saved-tab', target: initialTarget, preview: false, pinned: false });
+        boundary.layouts = { [workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'destination-layout' })]: serializeWorkspaceLayout(retained) };
+        const record = { windowId: 'destination-id', accountId: 'alice', homeId: 'home-a', layoutId: 'destination-layout', selectedAddress: { kind: 'session' as const, sessionId: 'A1' } };
+        const screen = await renderScreen(<WorkspaceProvider enabled appWindow={{ record, initialTarget }} catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        expect(navigation().active).toBe(true);
+        expect(navigation().state.tabs['saved-tab']?.target).toEqual(initialTarget);
+        await act(async () => { navigation().navigationForTab('saved-tab').push('/session/A2?serverId=home-a'); });
+        expect(navigation().state.tabs['saved-tab']?.target.params.id).toBe('A2');
+        expect(pushState).not.toHaveBeenCalled();
+        expect(replaceState).not.toHaveBeenCalled();
+        expect(boundary.mirrors).toEqual([]);
+        expect(location.pathname).toBe('/desktop/window');
+        expect(parseWorkspaceLayout(boundary.layouts[workspaceLayoutScopeKey({ ...boundary.scope, windowId: 'destination-layout' })])?.tabs['saved-tab']?.target.params.id).toBe('A2');
     });
 
     it('retains the initial settings navigator while its first Account catalog is published, but withdraws a retired Account', async () => {
@@ -822,6 +1196,7 @@ describe('consumed workspace navigation owner', () => {
         // Existing navigation fixtures model a native/no-browser runtime unless
         // a test explicitly installs its own web History and location boundary.
         vi.stubGlobal('window', undefined);
+        boundary.layouts = {};
         storage.setState({ ...initialStorageState, profileScope: { serverId: 'home-a', accountId: 'alice' }, isDataReady: true,
             localSettings: { ...initialStorageState.localSettings, workspaceLayoutV1: {}, titleStripThemeToggleVisible: false } }, true);
     });

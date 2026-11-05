@@ -13,6 +13,7 @@ import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storage
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { completeDesktopAccountCredentialReplacement, publishDesktopAccountCredentialMutation, retireDesktopAccountWindowsBeforeCredentialChange } from '@/desktop/window/accountWindowAuthBoundary';
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerId,
@@ -106,6 +107,8 @@ export type ServerCredentialReadOptions = ServerCredentialLookupOptions & Readon
 export type HomeCredentialWriteRollback = Readonly<{
     serverUrl: string;
     serverId: string | null;
+    /** Captured by the canonical writer before this replacement. */
+    previousToken?: string;
     rollback(): Promise<boolean>;
 }>;
 
@@ -116,6 +119,9 @@ export type HomeCredentialMutationEvent = Readonly<{
     credentials?: AuthCredentials;
 }>;
 
+/** The existing desktop notice carries routing facts, never credentials or keys. */
+export type HomeCredentialMutationNotice = Pick<HomeCredentialMutationEvent, 'kind' | 'serverId' | 'serverUrl'>;
+
 /** A missing credential permits a full shell's existing Connect recovery, never authenticated content. */
 export type HomeCredentialContext = Readonly<{ serverId: string; accountId: string | null }>;
 
@@ -124,6 +130,14 @@ function homeAccountCredentialScope(serverId: string | null, token: string | und
     if (!serverId || !token) return null;
     try { return { serverId, accountId: parseToken(token) }; }
     catch { return null; } // Malformed stored credentials cannot identify an eligible Account context.
+}
+
+/** Adoption calls this only after its credential write and profile commit have succeeded. */
+export async function completeHomeCredentialReplacement(serverUrl: string, serverId: string | null, previousToken: string | undefined, nextToken: string): Promise<void> {
+    if (desktopHostKind() !== 'tauri') return;
+    const previous = homeAccountCredentialScope(serverId, previousToken);
+    if (!previous || previous.accountId === homeAccountCredentialScope(serverId, nextToken)?.accountId) return;
+    await completeDesktopAccountCredentialReplacement([previous], { kind: 'credentials_set', serverId: previous.serverId, serverUrl: normalizeUrl(serverUrl) });
 }
 
 type HomeCredentialMutationListener = (event: HomeCredentialMutationEvent) => void;
@@ -499,9 +513,9 @@ function emitHomeCredentialMutation(
     serverUrl: string,
     options: ServerCredentialLookupOptions,
     credentials?: AuthCredentials,
-): void {
+): HomeCredentialMutationEvent | null {
     const target = resolveHomeCredentialMutationTarget(serverUrl, options);
-    if (!target) return;
+    if (!target) return null;
     const event = { kind, ...target } as HomeCredentialMutationEvent;
     // Keep the existing observable event shape stable for subscribers that
     // compare the routing tuple, while allowing the captured Account-settings
@@ -512,6 +526,12 @@ function emitHomeCredentialMutation(
             enumerable: false,
         });
     }
+    replayHomeCredentialMutation(event);
+    return event;
+}
+
+/** Another app realm consumes the credential owner's already-decided routing facts. */
+export function replayHomeCredentialMutation(event: HomeCredentialMutationNotice): void {
     for (const listener of [...homeCredentialMutationListeners]) {
         try {
             listener(event);
@@ -2737,6 +2757,7 @@ export const accountDirectoryAuthCredentials: AccountDirectoryAuthCredentialsFac
 type HomeCredentialWriteOutcome = Readonly<{
     stored: boolean;
     serverId: string | null;
+    previousToken?: string;
     /** Exact-scope rollback for the attempted write; null when nothing was written. */
     rollback: (() => Promise<boolean>) | null;
 }>;
@@ -2798,7 +2819,7 @@ async function writeHomeCredentialsForServerScope(
     if (!keys) return { stored: false, serverId: null, rollback: null };
 
     return await serializeCredentialScopeOperations([keys.primary, ...keys.legacy], async () => {
-    const readFailure = options.preserveHistoricalEncryption ? 'surface' : 'absent';
+    const readFailure = options.preserveHistoricalEncryption || desktopHostKind() === 'tauri' ? 'surface' : 'absent';
     const previousPrimaryRaw = await readCredentialRawByKey(keys.primary, readFailure);
     const previousLegacyRaws = await Promise.all(keys.legacy.map((legacyKey) => readCredentialRawByKey(legacyKey, readFailure)));
     const currentCredentials = parseCredentialsRaw(previousPrimaryRaw)
@@ -2862,7 +2883,7 @@ async function writeHomeCredentialsForServerScope(
         return restored;
         }, authority);
     };
-    return { stored: true, serverId: identity.serverId, rollback };
+    return { stored: true, serverId: identity.serverId, rollback, previousToken: currentCredentials?.token };
     }, authority);
 }
 
@@ -2895,6 +2916,7 @@ export async function setHomeCredentialsWithRollbackUnderMutationAuthority(
         return {
             serverUrl: normalizeUrl(serverUrl),
             serverId: outcome.serverId,
+            previousToken: outcome.previousToken,
             rollback: outcome.rollback,
         };
     });
@@ -2913,24 +2935,28 @@ export async function removeHomeCredentialsUnderMutationAuthority(
         const removed = await serializeCredentialScopeOperations(
             targetKeys,
             async () => {
-                if (options.expectedCredentials) {
+                if (options.expectedCredentials || desktopHostKind() === 'tauri') {
                     let raws: (string | null)[];
                     try { raws = await Promise.all(targetKeys.map(key => readCredentialRawByKey(key, 'surface'))); }
                     catch { return false; }
                     const currentCredentials = raws.map(parseCredentialsRaw).find((value): value is AuthCredentials => value !== null) ?? null;
                     // An absent credential is already removed. Changed or unreadable bytes
                     // are not custody the original caller is authorized to discard.
-                    if (currentCredentials
+                    if (options.expectedCredentials && (currentCredentials
                         ? !areCredentialsEqual(currentCredentials, options.expectedCredentials)
-                        : raws.some(raw => raw !== null)) return false;
+                        : raws.some(raw => raw !== null))) return false;
+                    const scope = homeAccountCredentialScope(
+                        resolveHomeCredentialMutationTarget(serverUrl, options)?.serverId ?? null, currentCredentials?.token);
+                    if (scope) await retireDesktopAccountWindowsBeforeCredentialChange([scope]);
                 }
                 return await removeCredentialKeysAtomically(targetKeys);
             },
             owned,
         );
         if (!removed) return false;
-        emitHomeCredentialMutation('credentials_removed', serverUrl, options);
+        const mutation = emitHomeCredentialMutation('credentials_removed', serverUrl, options);
         retireIrohHomeTransportDiagnostics(resolveHomeCredentialMutationTarget(serverUrl, options)?.serverId ?? '');
+        if (mutation) await publishDesktopAccountCredentialMutation([mutation]);
         return true;
     });
 }
@@ -2939,6 +2965,7 @@ export const TokenStorage = {
     /** Dedicated Account Service credential namespace (never the active Home). */
     accountDirectoryAuthCredentials,
 
+    /** Enumerate routing contexts from the existing Home profiles and qualified credential reader. */
     async listHomeCredentialContexts(): Promise<readonly HomeCredentialContext[]> {
         return await withHomeMutationAuthority(undefined, listHomeCredentialContextsUnderMutationAuthority);
     },
@@ -3175,27 +3202,14 @@ export const TokenStorage = {
 
     async setCredentials(credentials: AuthCredentials, options: Readonly<{ preserveHistoricalEncryption?: boolean }> = {}): Promise<boolean> {
         return await withHomeMutationAuthority(undefined, async (authority) => {
-        const keys = await getAuthKeys();
-        if (!keys) return false;
-        return await serializeCredentialScopeOperations([keys.primary, ...keys.legacy], async () => {
-        const previousRaws = options.preserveHistoricalEncryption
-            ? await Promise.all([keys.primary, ...keys.legacy].map(key => readCredentialRawByKey(key, 'surface'))) : [];
-        const previous = previousRaws.map(parseCredentialsRaw).find((value): value is AuthCredentials => value !== null) ?? null;
-        const effectiveCredentials = options.preserveHistoricalEncryption
-            ? credentialsForAuthenticationRefresh(previous, credentials) : credentials;
-        if (!effectiveCredentials) return false;
-        const json = JSON.stringify(effectiveCredentials);
-        const written = await writeCredentialRawByKey(keys.primary, json);
-        if (!written) return false;
-        await TokenStorage.setAuthAutoRedirectSuppressedUntil(0);
-        for (const legacyKey of keys.legacy) {
-            await removeCredentialByKey(legacyKey);
-        }
-        emitHomeCredentialMutation('credentials_set', getActiveServerUrl(), {
-            serverId: getActiveServerId(),
-        }, effectiveCredentials);
-        return true;
-        }, authority);
+            const serverUrl = getActiveServerUrl();
+            const outcome = await writeHomeCredentialsForServerScope(serverUrl, {
+                serverId: getActiveServerId(), ...options,
+            }, credentials, authority);
+            if (!outcome.stored) return false;
+            await TokenStorage.setAuthAutoRedirectSuppressedUntil(0);
+            await completeHomeCredentialReplacement(serverUrl, outcome.serverId, outcome.previousToken, credentials.token);
+            return true;
         });
     },
 
@@ -3205,9 +3219,11 @@ export const TokenStorage = {
         options: ServerCredentialLookupOptions,
         credentials: AuthCredentials,
     ): Promise<boolean> {
-        return await withHomeMutationAuthority(undefined, async (authority) => (
-            await writeHomeCredentialsForServerScope(serverUrl, options, credentials, authority)
-        ).stored);
+        return await withHomeMutationAuthority(undefined, async (authority) => {
+            const outcome = await writeHomeCredentialsForServerScope(serverUrl, options, credentials, authority);
+            if (outcome.stored) await completeHomeCredentialReplacement(serverUrl, outcome.serverId, outcome.previousToken, credentials.token);
+            return outcome.stored;
+        });
     },
 
     /**
@@ -3238,10 +3254,15 @@ export const TokenStorage = {
 
     async removeCredentials(): Promise<boolean> {
         return await withHomeMutationAuthority(undefined, async (authority) => {
+        if (desktopHostKind() === 'tauri') {
+            const contexts = await listHomeCredentialContextsUnderMutationAuthority(authority);
+            await retireDesktopAccountWindowsBeforeCredentialChange(contexts.filter((context): context is ServerAccountScope => context.accountId !== null));
+        }
         // Clearing credentials should not implicitly suppress auth redirects forever.
         // Reset any suppression so subsequent auth flows can run normally.
         await TokenStorage.setAuthAutoRedirectSuppressedUntil(0);
         let allRemoved = true;
+        const mutations: HomeCredentialMutationNotice[] = [];
         const emittedMutationTargets = new Set<string>();
         const knownTargetKeys = new Set<string>();
         const knownServerTargets = listKnownServerCleanupTargets();
@@ -3271,7 +3292,8 @@ export const TokenStorage = {
                     const mutationKey = `${mutationTarget.serverId}\u0000${mutationTarget.serverUrl}`;
                     if (!emittedMutationTargets.has(mutationKey)) {
                         emittedMutationTargets.add(mutationKey);
-                        emitHomeCredentialMutation('credentials_removed', target.serverUrl, options);
+                        const mutation = emitHomeCredentialMutation('credentials_removed', target.serverUrl, options);
+                        if (mutation) mutations.push(mutation);
                         retireIrohHomeTransportDiagnostics(mutationTarget.serverId);
                     }
                 }
@@ -3293,6 +3315,7 @@ export const TokenStorage = {
             }
         }
 
+        if (mutations.length) await publishDesktopAccountCredentialMutation(mutations);
         return allRemoved;
         });
     },

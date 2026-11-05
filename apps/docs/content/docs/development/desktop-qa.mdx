@@ -7,6 +7,24 @@ Some changes can only be judged by using them: the setup flow, the control
 panel, anything where the question is "does this feel right on a real window".
 This page is the recipe for getting one in front of you.
 
+## Full app windows (0.3 development)
+
+In the Tauri development client, **File → New Window** on macOS and **New window**
+in Search open a full app window on the invoking window's Home. Each window can
+select a different Home or Project under the same Account. Closing an extra
+window checks its own unsaved work; closing main hides it. Neither stops Sessions.
+Quit retains the full windows for restoration.
+
+For automation, the existing workspace list includes empty full windows and can
+activate a window id without changing its selected tab. Close a whole window
+through its current-UI **Close window** command; closing an addressed tab keeps
+the full window open. See the [host Actions reference](/plugins/api/host-actions).
+Browser and Electron hosts do not offer native full-window creation.
+
+The composed native QA journey must cover two Homes and Projects, local drafts,
+guard cancellation, scoped logout, hidden main, Quit/relaunch, and restoration
+after a monitor disappears. Browser smoke tests do not certify these native paths.
+
 ## Quick start (web QA stack)
 
 1. Create a fresh stack:

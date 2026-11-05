@@ -2842,6 +2842,7 @@ export const pt: TranslationStructure = {
     minimizeWindow: "Minimizar janela",
     maximizeWindow: "Maximizar janela",
     restoreWindow: "Restaurar janela",
+    newWindow: 'Nova janela',
     closeWindow: "Fechar janela",
     dismissKeyboard: 'Ocultar teclado',
     open: "Abrir",

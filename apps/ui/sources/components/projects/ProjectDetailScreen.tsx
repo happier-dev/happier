@@ -268,7 +268,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         defaultDestinationId: 'terminal',
         render: () => workspaceRef ? <ProjectTerminalSurface scopeId={scopeId} workspaceRefId={workspaceRef.id}
             serverId={workspaceRef.serverId} machineId={workspaceRef.machineId} rootPath={resolvedActiveRootPath}
-            workspace={terminalWorkspace} /> : null,
+            workspace={terminalWorkspace} presentation="bottom" /> : null,
     }), [resolvedActiveRootPath, scopeId, terminalWorkspace, workspaceRef]);
     const wrapProjectScopeContent = React.useCallback((content: React.ReactNode) => (
         workspaceRef ? (

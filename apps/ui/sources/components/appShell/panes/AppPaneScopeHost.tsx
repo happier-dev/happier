@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
@@ -14,6 +15,8 @@ import {
     type PluginSurfacePaneLaunchStore,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
+import { resolvePluginSurfaceDestinationLabel } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
@@ -36,7 +39,10 @@ import {
     resolveSelectedPaneDestination,
     type PaneDestinationRuntimeAdmission,
 } from './model/resolveSelectedPaneDestination';
-import { isSelectedPaneSlotVisible, readSelectedPaneDestinationSlot, type SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import { isSelectedPaneSlotVisible, readSelectedPaneDestinationSlot, selectedPaneDestinationTabKey, type SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import { useOpenPaneDestinationWindow, usePaneDestinationWindowActions } from './useOpenPaneDestinationWindow';
+import { PaneHeader } from './PaneHeader';
+import { PaneHeaderActions } from './PaneHeaderActions';
 import { PluginDetailsPaneOverlay } from './details/surfaces/PluginDetailsPaneOverlay';
 import type { InitialRightPaneState } from './model/appPaneReducer';
 import {
@@ -261,6 +267,7 @@ function resolveScopedPaneDestination(input: Readonly<{
  * delivers the ephemeral input to that one mounted binding.
  */
 function PluginAppPaneSurface(props: Readonly<{
+    scopeId: string;
     selection: AvailablePaneSelection;
     container: 'rightPane' | 'bottomPane';
     paneProjection: PluginUiProjectionModel | null;
@@ -271,6 +278,12 @@ function PluginAppPaneSurface(props: Readonly<{
     scopedLaunchFacts: PluginSurfaceScopedLaunchFacts;
     runtimeAdmission: PaneDestinationRuntimeAdmission;
 }>): React.ReactElement {
+    const openActions = usePaneDestinationWindowActions(props.scopeId, props.container === 'rightPane' ? 'right' : 'bottom');
+    const menuActions = React.useMemo(() => openActions.presentationItems.map(item => ({
+        id: item.id, title: item.title, icon: item.icon, onPress: () => { openActions.select(item.id); },
+    })), [openActions]);
+    const localize = usePluginLocalizedTextResolver({ projection: props.paneProjection });
+    const title = resolvePluginSurfaceDestinationLabel(props.selection.placement, localize);
     const launch = usePluginSurfacePaneLaunch({
         store: props.store,
         placement: props.selection.placement,
@@ -283,6 +296,9 @@ function PluginAppPaneSurface(props: Readonly<{
     });
     return (
         <PluginSurfaceFocusEligibilityProvider active>
+            <View style={{ flex: 1, minHeight: 0 }}>
+            <PaneHeader title={title} testID={`plugin-${props.container}-header`}
+                actions={<PaneHeaderActions published={null} title={title} paneMenuActions={menuActions} testID={`plugin-${props.container}`} />} />
             <PluginSurfacePlacementHost
                 placement={props.selection.placement}
                 pluginUiProjection={props.paneProjection}
@@ -299,14 +315,16 @@ function PluginAppPaneSurface(props: Readonly<{
                 launchInput={launch?.input}
                 mountInstanceKey={props.selection.instanceKey}
             />
+            </View>
         </PluginSurfaceFocusEligibilityProvider>
     );
 }
 
 const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Readonly<{ paneAdapter: ResolvedPaneAdapter | null }>) => {
     const enclosingNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
-    const { dispatch, right, bottom, detailsOverlay, detailsOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
+    const { dispatch, getReadState, right, bottom, detailsOverlay, detailsOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
         dispatch: value.dispatch,
+        getReadState: value.getReadState,
         right: value.state.scopes[props.scopeId]?.right,
         bottom: value.state.scopes[props.scopeId]?.bottom,
         detailsOverlay: value.state.scopes[props.scopeId]?.details.overlay,
@@ -316,6 +334,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         overlayFocusReturnOwner: value.overlayFocusReturnOwner,
     }));
     const pane = useAppPaneScope(props.scopeId, () => null);
+    const openPaneWindow = useOpenPaneDestinationWindow();
     const deviceType = useDeviceType();
     const appProjection = useAppShellPluginUiProjection(value => right?.selectedDestination?.kind === 'plugin'
         ? value.pluginUiProjection : null);
@@ -416,6 +435,12 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     const rightSidebarAdapter = paneAdapter?.rightSidebarAdapter ?? null;
     const detailsPaneBuiltinAdapter = paneAdapter?.detailsPaneBuiltinAdapter ?? null;
     const bottomPaneBuiltinAdapter = paneAdapter?.bottomPaneBuiltinAdapter ?? null;
+    const openDetailsOverlay = React.useCallback<NonNullable<typeof pane.openDetailsOverlay>>((request) => {
+        // Selection cannot be accepted by a host that has no Details presenter.
+        if (!detailsPaneEnabled || !detailsPaneBuiltinAdapter) return false;
+        return pane.openDetailsOverlay?.(request) === true;
+    }, [detailsPaneBuiltinAdapter, detailsPaneEnabled, pane.openDetailsOverlay]);
+
 
     // The shared Account lifetime is the only retirement source for the
     // AppPane-private handoff. It carries no pane state and is never persisted.
@@ -442,7 +467,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     }, [accountLifetime, paneLaunchStore]);
     React.useEffect(() => () => { paneLaunchStore.retire(); }, [paneLaunchStore]);
 
-    const openPaneDestination = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution']) => {
+    const openPaneDestination = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution'], window = false) => {
         if (!stagePluginSurfacePaneLaunch({ store: paneLaunchStore, resolution })) {
             return { ok: false as const, code: 'unavailable' as const, reason: 'plugin_surface_open_origin_unavailable' };
         }
@@ -452,18 +477,29 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             ...(resolution.request.instanceKey === undefined ? {} : { instanceKey: resolution.request.instanceKey }),
         };
         if (resolution.placement.binding.container === 'rightPane') {
-            dispatch({ type: 'selectRightDestination', scopeId: props.scopeId, destination });
+            const select = () => dispatch({ type: 'selectRightDestination', scopeId: props.scopeId, destination });
+            if (window || getReadState().scopes[props.scopeId]?.right.presentation) {
+                return openPaneWindow(props.scopeId, selectedPaneDestinationTabKey('right'), select);
+            }
+            select();
             return { ok: true as const };
         }
         if (resolution.placement.binding.container === 'bottomPane') {
-            dispatch({ type: 'selectBottomDestination', scopeId: props.scopeId, destination });
+            const select = () => dispatch({ type: 'selectBottomDestination', scopeId: props.scopeId, destination });
+            if (window || getReadState().scopes[props.scopeId]?.bottom.presentation) {
+                return openPaneWindow(props.scopeId, selectedPaneDestinationTabKey('bottom'), select);
+            }
+            select();
             return { ok: true as const };
         }
         // The resolver's handler map below never names another container. Do
         // not turn this defensive branch into a hidden pane/sidebar fallback.
         paneLaunchStore.retire();
         return { ok: false as const, code: 'unavailable' as const, reason: 'plugin_surface_open_destination_owner_unavailable' };
-    }, [dispatch, paneLaunchStore, props.scopeId]);
+    }, [dispatch, getReadState, openPaneWindow, paneLaunchStore, props.scopeId]);
+    const openPaneDestinationInWindow = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution']) => (
+        openPaneDestination(resolution, true)
+    ), [openPaneDestination]);
     const detailsDestinationMount = React.useMemo(() => {
         if (paneSurfaceScope?.targetKind === 'session') {
             return {
@@ -497,12 +533,28 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             projectionInteractionEnabled: false,
         };
     }, [paneSurfaceScope, runtimeAdmission.formFactor]);
+    const openDetailsTabWindow = React.useCallback((tab: Parameters<typeof pane.openDetailsTab>[0]) => (
+        openPaneWindow(props.scopeId, tab.key, () => pane.openDetailsTab(tab))
+    ), [openPaneWindow, pane.openDetailsTab, props.scopeId]);
+    const openDetailsOverlayWindow = React.useCallback((overlay: Parameters<typeof openDetailsOverlay>[0]) => (
+        openPaneWindow(props.scopeId, selectedPaneDestinationTabKey('detailsOverlay'), () => { openDetailsOverlay(overlay); })
+    ), [openDetailsOverlay, openPaneWindow, props.scopeId]);
+    const openPluginDetailsTab = React.useCallback((tab: Parameters<typeof pane.openDetailsTab>[0]) => {
+        if (getReadState().scopes[props.scopeId]?.details.tabsByKey[tab.key]?.presentation) return openDetailsTabWindow(tab);
+        pane.openDetailsTab(tab);
+    }, [getReadState, openDetailsTabWindow, pane.openDetailsTab, props.scopeId]);
+    const openPluginDetailsOverlay = React.useCallback((overlay: Parameters<typeof openDetailsOverlay>[0]) => {
+        if (getReadState().scopes[props.scopeId]?.details.overlay?.presentation) return openDetailsOverlayWindow(overlay);
+        return openDetailsOverlay(overlay);
+    }, [getReadState, openDetailsOverlay, openDetailsOverlayWindow, props.scopeId]);
     const detailsDestinationOwners = usePluginDetailsDestinationNavigationOwners({
         targetKind: paneSurfaceScope?.targetKind ?? 'session',
         projection: paneProjection,
         mount: detailsDestinationMount,
-        openTab: pane.openDetailsTab,
-        openOverlay: pane.openDetailsOverlay,
+        openTab: openPluginDetailsTab,
+        openOverlay: openPluginDetailsOverlay,
+        openTabWindow: openDetailsTabWindow,
+        openOverlayWindow: openDetailsOverlayWindow,
     });
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: paneProjection ? selectPluginDestinationSurfacePlacements(paneProjection) : [],
@@ -514,21 +566,21 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     });
     const paneNavigationBinding = paneSurfaceScope ? targetNavigationBinding : null;
     const rightPaneOwner = React.useMemo(() => paneSurfaceScope
-        ? { container: 'rightPane' as const, handler: openPaneDestination }
+        ? { container: 'rightPane' as const, handler: openPaneDestination, openWindow: openPaneDestinationInWindow }
         : null,
-    [openPaneDestination, paneSurfaceScope]);
+    [openPaneDestination, openPaneDestinationInWindow, paneSurfaceScope]);
     const bottomPaneOwner = React.useMemo(() => paneSurfaceScope
-        ? { container: 'bottomPane' as const, handler: openPaneDestination }
+        ? { container: 'bottomPane' as const, handler: openPaneDestination, openWindow: openPaneDestinationInWindow }
         : null,
-    [openPaneDestination, paneSurfaceScope]);
+    [openPaneDestination, openPaneDestinationInWindow, paneSurfaceScope]);
     const detailsTabOwner = React.useMemo(() => (
         paneSurfaceScope && detailsDestinationOwners
-            ? { container: 'detailsTab' as const, handler: detailsDestinationOwners.detailsTab }
+            ? { container: 'detailsTab' as const, handler: detailsDestinationOwners.detailsTab, openWindow: detailsDestinationOwners.detailsTabWindow }
             : null
     ), [detailsDestinationOwners, paneSurfaceScope]);
     const detailsPaneOwner = React.useMemo(() => (
         paneSurfaceScope && detailsDestinationOwners
-            ? { container: 'detailsPane' as const, handler: detailsDestinationOwners.detailsPane }
+            ? { container: 'detailsPane' as const, handler: detailsDestinationOwners.detailsPane, openWindow: detailsDestinationOwners.detailsPaneWindow }
             : null
     ), [detailsDestinationOwners, paneSurfaceScope]);
     useRegisterPluginSurfaceDestinationNavigationOwner(rightPaneOwner, paneNavigationBinding);
@@ -594,6 +646,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         container: 'rightPane' | 'bottomPane',
     ) => paneSurfaceScope ? (
         <PluginAppPaneSurface
+            scopeId={props.scopeId}
             selection={selection}
             container={container}
             paneProjection={paneProjection}
@@ -612,6 +665,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         pluginBinding,
         runtimeAdmission,
         scopedLaunchFacts,
+        props.scopeId,
     ]);
 
     // `MultiPaneHost` uses pane node presence as the logical "open" signal. Keep the

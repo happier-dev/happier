@@ -503,6 +503,26 @@ describe('pluginDetailsDestination', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('routes a window request through the Details window owner with the admitted tab identity', async () => {
+        const { placement, projection } = createDetailsTabProjection();
+        const opened: DetailsTabState[] = [];
+        const hook = await renderHook(() => usePluginDetailsDestinationOpenSurfaceHandler({
+            targetKind: 'session', projection,
+            mount: { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
+                platform: 'web', formFactor: 'tablet', projectionPhase: 'current', projectionInteractionEnabled: true },
+            openTab: () => { throw new Error('window requests must use the presentation owner'); },
+            openTabWindow: async tab => { opened.push({ ...tab, isPinned: true, isPreview: false }); return { ok: true }; },
+        }), { wrapper: ({ children }) => React.createElement(runtime.Wrapper, null,
+            React.createElement(PluginDetailsDestinationLaunchScope, null, children)) });
+        const handler = hook.getCurrent();
+        if (!handler) throw new Error('Details handler must be mounted');
+        await expect(handler({ destination: placement.binding.destination, instanceKey: 'file-instance-1',
+            presentation: 'window' })).resolves.toEqual({ ok: true });
+        expect(opened).toHaveLength(1);
+        expect(opened[0].resource).toMatchObject({ destination: placement.binding.destination, instanceKey: 'file-instance-1' });
+        await hook.unmount();
+    });
+
     it('refreshes direct Details openSurface admission when the mounted form factor changes', async () => {
         const { placement, projection } = createDetailsTabProjection();
         const openTab = vi.fn();
@@ -861,7 +881,7 @@ describe('pluginDetailsDestination', () => {
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         if (!accountLifetime) throw new Error('The restored test Home must have a current Account lifetime');
         const openTab = vi.fn();
-        const openOverlay = vi.fn();
+        const openOverlay = vi.fn(() => true);
         const store = createStore();
         const handler = createHandler({
             store,

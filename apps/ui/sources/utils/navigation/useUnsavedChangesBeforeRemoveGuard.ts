@@ -10,6 +10,7 @@ import {
 } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAlert';
+import { useDetailsTabNavigationKey } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 
 export type { UnsavedChangesDecision };
 
@@ -49,7 +50,8 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
     } = params;
     const enabled = enabledParam ?? true;
     const tabId = useDestinationInstanceKey();
-    const hosted = tabId !== null;
+    const mountedTabId = useDetailsTabNavigationKey(tabId ?? '');
+    const hosted = mountedTabId !== '';
     const destinationFocused = useDestinationFocus();
     const [pendingContinuation, setPendingContinuation] = React.useState<Readonly<{
         action: unknown;
@@ -101,7 +103,7 @@ export function useUnsavedChangesBeforeRemoveGuard(params: Readonly<{
         guard,
         enabled,
         focused: destinationFocused,
-        tabId,
+        tabId: mountedTabId || null,
     });
 
     // Ownership is fixed for a mounted body; hosted views are outside the native Stack.

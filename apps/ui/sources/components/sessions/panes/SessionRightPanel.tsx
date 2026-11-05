@@ -535,6 +535,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
                 {closeButtonAtStart ? null : closeButton}
             </View> : null}
             <RightSidebarPaneHeader
+                scopeId={props.scopeId}
                 tabs={rightPanelTabs}
                 activeTabId={activeTab}
                 menuActions={paneCompanionActions}

@@ -8,7 +8,8 @@ import { teamSessionsPath } from '@/components/settings/teams/teamsRoutes';
 import { HomeAuthenticationFlow } from '@/components/account/auth/HomeAuthenticationFlow';
 import { TeamAuthenticationStep } from '@/components/teams/entry/TeamAuthenticationStep';
 import { projectTeamAuthSelection } from '@/components/teams/entry/teamAuthAction';
-import { teamSignInReturnPath, useTeamSignInHome } from '@/components/teams/entry/teamSignInHome';
+import { teamSignInReturnPath, useTeamSignInHome, type TeamSignInHome } from '@/components/teams/entry/teamSignInHome';
+import { AccountCredentialJourney } from '@/components/account/auth/AccountCredentialJourney';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
@@ -45,26 +46,33 @@ export default function TeamSignInRoute() {
     const serverId = firstRouteParam(params.serverId);
     const carrier = firstRouteParam(params.target);
     const expectsPostAuthInvitation = firstRouteParam(params.postAuthInvitation) === '1';
+    const home = useTeamSignInHome({ carrier, serverId });
     // Expo Router updates a mounted dynamic route's params in place, so a second Team
     // link arrives without a remount. Every state below is bound to ONE Team + Home
     // authority — the claimed post-auth continuation most of all — so the body is keyed
     // by that authority instead of being reset field by field.
     return (
+        <AccountCredentialJourney request={home.kind === 'resolved' && home.savedProfileId && !expectsPostAuthInvitation
+            ? { kind: 'team', teamId, profileRef: home.savedProfileId }
+            : null}>
         <TeamSignInRouteBody
             key={`${teamId}\u0000${carrier || serverId}`}
             teamId={teamId}
             serverId={serverId}
             carrier={carrier}
             expectsPostAuthInvitation={expectsPostAuthInvitation}
+            home={home}
         />
+        </AccountCredentialJourney>
     );
 }
 
-function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitation }: Readonly<{
+function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitation, home }: Readonly<{
     teamId: string;
     serverId: string;
     carrier: string;
     expectsPostAuthInvitation: boolean;
+    home: TeamSignInHome;
 }>) {
     const router = useRouter();
     const navigation = useNavigation();
@@ -75,7 +83,6 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     // carrier in place through the same Homes acquisition flow the join screen
     // consumes, and re-resolves when somebody adopts the Home from the recovery
     // action below, so neither case leaves this page stranded.
-    const home = useTeamSignInHome({ carrier, serverId });
     const savedProfileId = home.kind === 'resolved' ? home.savedProfileId : null;
     const scopeResolution = useServerCredentialAccountScopeResolution(savedProfileId);
     const [selection, setSelection] = React.useState<TeamAuthEntrySelection | null>(null);

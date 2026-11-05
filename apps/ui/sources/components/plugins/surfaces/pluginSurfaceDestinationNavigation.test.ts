@@ -22,6 +22,31 @@ import {
 
 const destination = Object.freeze({ pluginId: 'acme.notes', localId: 'notes' });
 
+describe('plugin window presentation', () => {
+    it('never silently opens an ordinary container for an unsupported window request', async () => {
+        const selected: string[] = [];
+        const page = placement({ container: 'appPage' });
+        const binding = createPluginSurfaceDestinationNavigationBinding({ placements: [page], targetKind: 'app' });
+        binding.registerOwner({ container: 'appPage', handler: () => { selected.push('ordinary'); return { ok: true }; } });
+        expect(await binding.openSurface({ destination, presentation: 'window' })).toMatchObject({ ok: false, code: 'unsupported_method' });
+        expect(selected).toEqual([]);
+        expect(await binding.openSurface({ destination })).toEqual({ ok: true });
+        expect(selected).toEqual(['ordinary']);
+    });
+
+    it('dispatches one admitted destination to its window owner and preserves its exact launch request', async () => {
+        const opened: unknown[] = [];
+        const binding = createPluginSurfaceDestinationNavigationBinding({
+            placements: [placement({ container: 'appPage' })], targetKind: 'app',
+        });
+        binding.registerOwner({ container: 'appPage', handler: () => { throw new Error('must use window owner'); },
+            openWindow: resolution => { opened.push(resolution.request); return { ok: true }; } });
+        const request = { destination, subPath: 'recent', presentation: 'window' as const };
+        expect(await binding.openSurface(request)).toEqual({ ok: true });
+        expect(opened).toEqual([request]);
+    });
+});
+
 function executionOrigin(input: Readonly<{
     pluginId?: string;
     materializationId?: string;

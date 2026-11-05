@@ -558,9 +558,11 @@ export function usePluginDetailsPaneLaunchStaging(): Readonly<{
 
 export type PluginDetailsDestinationOpenSurfaceCallbacks = Readonly<{
     /** The existing Details workspace tab owner; no plugin tab reducer exists. */
-    openTab?: DetailsSurfaceHostCallbacksV1['openTab'];
+    openTab?: (...args: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openTab']>>) => void | Promise<PluginSurfaceOpenOutcome>;
     /** The existing Details workspace overlay owner; no plugin overlay store exists. */
-    openOverlay?: DetailsSurfaceHostCallbacksV1['openOverlay'];
+    openOverlay?: (...args: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openOverlay']>>) => boolean | Promise<PluginSurfaceOpenOutcome>;
+    openTabWindow?: (tab: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openTab']>>[0]) => Promise<PluginSurfaceOpenOutcome>;
+    openOverlayWindow?: (overlay: Parameters<NonNullable<DetailsSurfaceHostCallbacksV1['openOverlay']>>[0]) => Promise<PluginSurfaceOpenOutcome>;
 }>;
 
 export type PluginDetailsDestinationOpenSurfaceAdapterInput = Readonly<{
@@ -582,6 +584,8 @@ function unavailableDetailsDestination(reason: string): PluginSurfaceOpenOutcome
 export type PluginDetailsDestinationNavigationOwners = Readonly<{
     detailsTab: PluginSurfaceDestinationContainerHandler;
     detailsPane: PluginSurfaceDestinationContainerHandler;
+    detailsTabWindow?: PluginSurfaceDestinationContainerHandler;
+    detailsPaneWindow?: PluginSurfaceDestinationContainerHandler;
 }>;
 
 /**
@@ -598,8 +602,8 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
         projection: input.projection,
         mount: input.mount,
     });
-    const openDetailsTab = (resolution: PluginSurfaceDestinationOpenResolution): PluginSurfaceOpenOutcome => {
-        if (!input.openTab) {
+    const openDetailsTab = (resolution: PluginSurfaceDestinationOpenResolution, window = false): PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome> => {
+        if (window ? !input.openTabWindow : !input.openTab) {
             return unavailableDetailsDestination('details_destination_tab_owner_unavailable');
         }
         const receipt = stagePluginDetailsDestinationLaunch({
@@ -613,11 +617,20 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
         });
         if (!receipt) return unavailableDetailsDestination('details_destination_not_current');
         try {
-            input.openTab(createPluginDetailsDestinationTab({
+            const tab = createPluginDetailsDestinationTab({
                 destination: receipt.resource.destination,
                 ...(receipt.resource.instanceKey === undefined ? {} : { instanceKey: receipt.resource.instanceKey }),
                 title: resolvePluginSurfaceDestinationLabel(resolution.placement, localizePluginText),
-            }));
+            });
+            if (window && input.openTabWindow) return input.openTabWindow(tab).catch(() => {
+                input.store.retire();
+                return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
+            });
+            const opened = input.openTab?.(tab);
+            if (opened) return opened.catch(() => {
+                input.store.retire();
+                return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
+            });
         } catch {
             // The stage/open pair is atomic from the caller's point of view:
             // a failed incumbent owner cannot leave a private input eligible for
@@ -627,8 +640,8 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
         }
         return { ok: true };
     };
-    const openDetailsPane = (resolution: PluginSurfaceDestinationOpenResolution): PluginSurfaceOpenOutcome => {
-        if (!input.openOverlay) {
+    const openDetailsPane = (resolution: PluginSurfaceDestinationOpenResolution, window = false): PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome> => {
+        if (window ? !input.openOverlayWindow : !input.openOverlay) {
             return unavailableDetailsDestination('details_destination_overlay_owner_unavailable');
         }
         const receipt = stagePluginDetailsPaneLaunch({
@@ -642,10 +655,23 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
         });
         if (!receipt) return unavailableDetailsDestination('details_destination_not_current');
         try {
-            input.openOverlay({
+            const overlay = {
                 destination: receipt.destination,
                 ...(receipt.instanceKey === undefined ? {} : { instanceKey: receipt.instanceKey }),
+            };
+            if (window && input.openOverlayWindow) return input.openOverlayWindow(overlay).catch(() => {
+                input.store.retire();
+                return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
             });
+            const opened = input.openOverlay?.(overlay);
+            if (opened instanceof Promise) return opened.catch(() => {
+                input.store.retire();
+                return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
+            });
+            if (opened !== true) {
+                input.store.retire();
+                return unavailableDetailsDestination('details_destination_overlay_owner_unavailable');
+            }
         } catch {
             input.store.retire();
             return { ok: false, code: 'internal_error', reason: 'details_destination_open_failed' };
@@ -655,6 +681,10 @@ export function createPluginDetailsDestinationNavigationOwners(input: Readonly<{
     return Object.freeze({
         detailsTab: openDetailsTab,
         detailsPane: openDetailsPane,
+        ...(input.openTabWindow ? { detailsTabWindow: async (resolution: PluginSurfaceDestinationOpenResolution) => {
+            return openDetailsTab(resolution, true);
+        } } : {}),
+        ...(input.openOverlayWindow ? { detailsPaneWindow: (resolution: PluginSurfaceDestinationOpenResolution) => openDetailsPane(resolution, true) } : {}),
     });
 }
 
@@ -688,6 +718,7 @@ export function createPluginDetailsDestinationOpenSurfaceHandler(input: Readonly
                 }
         ),
         handlers: owners,
+        windowHandlers: { detailsTab: owners.detailsTabWindow, detailsPane: owners.detailsPaneWindow },
     });
 }
 
@@ -717,6 +748,8 @@ export function usePluginDetailsDestinationOpenSurfaceHandler(
         input.mount.serverId,
         input.openOverlay,
         input.openTab,
+        input.openOverlayWindow,
+        input.openTabWindow,
         input.projection,
         input.targetKind,
         scope,
@@ -746,6 +779,8 @@ export function usePluginDetailsDestinationNavigationOwners(
         input.mount.serverId,
         input.openOverlay,
         input.openTab,
+        input.openOverlayWindow,
+        input.openTabWindow,
         input.projection,
         input.targetKind,
         scope,

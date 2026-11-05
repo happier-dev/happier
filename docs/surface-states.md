@@ -6,6 +6,30 @@ This page describes **0.3 development source**, not completed platform or live-f
 
 ## Retained workspace destinations (0.3 development)
 
+A destination moved into a desktop window keeps its source layout entry while that
+entry and body are hidden by presentation placement. The recipient uses the real
+Session surface, its ordinary loading/error/offline states and existing draft
+repository. It reports ready before native reveal. A failed hidden presentation
+returns ownership to the source; it does not leave a second writable composer.
+Pane and file tabs use their scoped persisted state on move and Return; their
+parent and siblings remain mounted at the source. Unpersisted authoring forms
+use the existing departure decision before moving. A dirty persisted file moves
+without saving, while an explicit tab Close still uses its normal save/discard
+decision.
+
+See [destination windows](app-shell-panes.md#destination-windows-03-development) for the
+lifecycle and current validation limits.
+
+A full secondary window uses the whole existing shell and its retained layout,
+including a blank Home target. It can change Home independently from main.
+Missing saved credentials use the ordinary Connect surface; local loading,
+offline, dirty-page and Action-settlement states remain owned by that realm.
+Closing it checks its own editors; Quit preserves its restore record.
+New Window opens on the invoking shell's Home. Empty full shells remain
+discoverable through the existing workspace list; activation by window id
+preserves selection. An addressed tab Close retains the shell, while the opaque
+current-UI Close window command requests its normal native Close and guard.
+
 The Account's `workspace:tabs:v1` record shares intentional open-tab membership,
 order, pins and split membership. The local `workspaceLayoutV1` owner retains
 window/device layout, active tab/group, MRU, maximize and destination presentation.

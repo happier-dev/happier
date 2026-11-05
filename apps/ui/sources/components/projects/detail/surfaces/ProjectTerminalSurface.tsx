@@ -8,7 +8,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import { SessionTerminalPageView } from '@/components/sessions/panes/terminal/SessionTerminalPage';
-import { EMPTY_TERMINAL_WORKSPACE } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { EMPTY_TERMINAL_WORKSPACE, type SessionTerminalWorkspaceHost } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { useSessionTerminalWorkspace } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
 import { SessionTerminalWorkspaceView } from '@/components/sessions/terminal/strip/SessionTerminalWorkspaceView';
 import { useSessionTerminalTabMenu } from '@/components/sessions/terminal/strip/useSessionTerminalTabMenu';
@@ -24,6 +24,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { presentTerminalActionFailure } from '@/components/sessions/terminal/terminalActionFailure';
 import { t } from '@/text';
+import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { buildProjectTerminalKey, resolveProjectTerminalScope } from '../projectTerminalScope';
 import { SessionTerminalTrustNotice } from '@/components/sessions/terminal/strip/SessionTerminalTrustNotice';
 
@@ -32,9 +33,11 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     scopeId: string; workspaceRefId: string; machineId: string; rootPath: string; serverId: string;
     terminalInstanceId?: string; closeOnUnmount?: boolean;
     workspace?: WorkspaceAddressV1 | null;
+    presentation?: SessionTerminalWorkspaceHost;
 }>) => {
     const pane = useAppPaneScope(props.scopeId, () => null);
     const { theme } = useUnistyles();
+    const openActions = usePaneDestinationWindowActions(props.presentation === 'bottom' ? props.scopeId : null, 'bottom');
     const deviceType = useDeviceType();
     const refs = useWorkspaceRefs();
     const machines = useMachineListForServer(props.workspace?.serverId ?? props.serverId);
@@ -95,8 +98,8 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const newMenuItems = React.useMemo(() => buildSessionTerminalNewMenuItems({ folder: authority?.workspace.rootPath ?? '',
         machineName: context.sessionMachineName, agent: null, scripts: [], machines: [] }, glyph, () => null)
         .filter(item => item.id === 'shell').map(item => ({ ...item, category: authority?.workspace.rootPath ?? '' })), [context.sessionMachineName, glyph, authority]);
-    const paneMenuItems = React.useMemo(() => buildSessionTerminalPaneMenuItems({ showList: workspace.showList,
-        canJump: false, canOpenSettings: false }, glyph), [glyph, workspace.showList]);
+    const paneMenuItems = React.useMemo(() => [...buildSessionTerminalPaneMenuItems({ showList: workspace.showList,
+        canJump: false, canOpenSettings: false }, glyph), ...openActions.presentationItems], [glyph, openActions.presentationItems, workspace.showList]);
     const renderLeaf = React.useCallback((member: SessionTerminalMemberV1, state: Readonly<{ focused: boolean; descriptor: SessionTerminalDescriptor | null }>) => {
         if (!authority) return null;
         const selected = member.target.kind === 'workspace_shell' || member.target.kind === 'terminal_view'
@@ -137,7 +140,7 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
                 newMenuItems={newMenuItems} onNewMenuSelect={openShell} canSplit={workspace.activeTabId !== null}
                 onSplit={() => { void run('session.terminals.split', { target: { kind: 'workspace_shell' } }); }}
                 tabMenuItems={tabMenu.items} onTabMenuSelect={tabMenu.select} paneMenuItems={paneMenuItems}
-                onPaneMenuSelect={id => { if (id === 'hide') pane.closeBottom(); if (id === 'showList') void run('session.terminals.list_view', { showList: !workspace.showList }); }}
+                onPaneMenuSelect={id => { if (openActions.select(id)) return; if (id === 'hide') pane.closeBottom(); if (id === 'showList') void run('session.terminals.list_view', { showList: !workspace.showList }); }}
                 onHide={pane.closeBottom} onOpenUrl={url => { void openExternalUrl(url, Platform.OS === 'web' ? { platformOS: 'web' } : undefined); }}
                 emptyAction={openShell} testIdPrefix="project-terminal-workspace" />}
     </View>;

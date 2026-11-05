@@ -1,4 +1,5 @@
 import type { WorkspaceActionId } from '@happier-dev/protocol';
+import type { AdmittedClientActionContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -8,7 +9,8 @@ import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurn
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-type MountedWorkspaceAction = (request: Readonly<{ actionId: WorkspaceActionId; input: unknown; signal?: AbortSignal }>) => Promise<WorkspaceActionOutcome>;
+type MountedWorkspaceAction = (request: Readonly<{ actionId: WorkspaceActionId; input: unknown; signal?: AbortSignal;
+    context?: AdmittedClientActionContext }>) => Promise<WorkspaceActionOutcome>;
 let mounted: MountedWorkspaceAction | null = null;
 
 /** One client/window has one WorkspaceProvider. Cleanup cannot retire a newer mount. */
@@ -42,7 +44,7 @@ export function resolveWorkspaceUiActionOutcome(result: Readonly<{ ok: true } | 
 }
 
 /** Human menus and shortcuts enter Action policy before reaching the admitted mounted transport. */
-export async function executeWorkspaceUiAction(request: Parameters<MountedWorkspaceAction>[0], openApproval: (href: Href) => void): Promise<ActionExecuteResult> {
+export async function executeWorkspaceUiAction(request: Readonly<{ actionId: WorkspaceActionId | 'session.open' | 'desktop.windows.open'; input: unknown; signal?: AbortSignal }>, openApproval: (href: Href) => void): Promise<ActionExecuteResult> {
     const lifetime = captureActiveServerAccountScopeCurrentness();
     const scope = getActiveServerAccountScope();
     try {

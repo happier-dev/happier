@@ -19,6 +19,7 @@ export type WorkspaceBarTranslation = Readonly<{
         searchTabs: string;
         splitPane: string;
         openInNewTab: string;
+        openInWindow: string;
         openToRight: string;
         openBelow: string;
         newTab: string;
@@ -46,6 +47,7 @@ export const en: WorkspaceBarTranslation = {
         searchTabs: 'Search tabs',
         splitPane: 'Split the focused pane',
         openInNewTab: 'Open in new tab',
+        openInWindow: 'Open in window',
         openToRight: 'Open to the right',
         openBelow: 'Open below',
         newTab: 'New tab',

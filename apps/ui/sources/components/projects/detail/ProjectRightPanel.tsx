@@ -400,6 +400,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                 ) : null}
             </View> : null}
             <RightSidebarPaneHeader
+                scopeId={props.scopeId}
                 tabs={rightPanelTabs}
                 activeTabId={activeTab}
                 onClose={deviceType === 'phone' ? props.onRequestClose ?? props.model.pane.closeRight : undefined}

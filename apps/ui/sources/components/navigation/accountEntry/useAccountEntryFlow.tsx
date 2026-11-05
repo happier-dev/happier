@@ -12,6 +12,7 @@ import { consumeAccountServiceOAuthReturn } from '@/sync/ops/accountDirectory/co
 import { isCompletedAccountPostAuthResult, shouldDismissAccountPostAuthContinuation, type AccountPostAuthInput, type AccountPostAuthResult, type CompletedAccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 
 import { AUTHENTICATED_ACCOUNT_ENTRY_ROUTE, type AuthenticatedAccountEntryRequest } from './authenticatedAccountEntryRoute';
+import { moveAccountCredentialJourneyToMain } from '@/auth/flows/accountCredentialJourney';
 
 type State =
     | Readonly<{ kind: 'loading' }>
@@ -99,6 +100,10 @@ export function useAccountEntryFlow(props: Readonly<{
         recoveryAbortRef.current = controller;
         setState({ kind: 'loading' });
         void (async () => {
+            if (await moveAccountCredentialJourneyToMain({ kind: 'account_directory', request: props.request })) {
+                if (!controller.signal.aborted) onExitRef.current(props.request.returnTo);
+                return;
+            }
             const returned = await consumeAccountServiceOAuthReturn(routeParamsRef.current, {
                 invokingSurface: AUTHENTICATED_ACCOUNT_ENTRY_ROUTE,
                 signal: controller.signal,

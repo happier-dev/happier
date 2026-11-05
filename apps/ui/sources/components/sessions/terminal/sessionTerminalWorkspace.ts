@@ -45,6 +45,8 @@ export function getVisibleSessionTerminalWorkspacePane(scope: PaneScopeState): '
 }
 
 /** Pane visibility and terminal tab selection share the AppPane workspace owner. */
+export type SessionTerminalWorkspaceHost = 'right' | 'bottom' | 'details' | 'page';
+
 export function selectVisibleSessionTerminalTabs(state: AppPaneState, scopeId: string): readonly SessionTerminalTabV1[] {
     const scope = state.scopes[scopeId];
     const selected = scope?.bottom.selectedDestination;

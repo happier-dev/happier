@@ -2647,6 +2647,7 @@ export const ru: TranslationStructure = {
     minimizeWindow: "Свернуть окно",
     maximizeWindow: "Развернуть окно",
     restoreWindow: "Восстановить окно",
+    newWindow: 'Новое окно',
     closeWindow: "Закрыть окно",
     dismissKeyboard: 'Скрыть клавиатуру',
     open: "Открыть",

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AccountCredentialJourney } from '@/components/account/auth/AccountCredentialJourney';
 import { useRouter } from 'expo-router';
 import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol';
 import { View } from 'react-native';
@@ -49,6 +50,7 @@ export type EmailPasswordAuthOutcome = Readonly<{
 }>;
 
 export type EmailPasswordAuthPanelProps = Readonly<{
+    returnTo?: string;
     target: EmailPasswordLoginTarget;
     /** Portable Home identity carried into the recovery-key password replacement entry. */
     recoveryTarget: string;
@@ -112,6 +114,15 @@ function useDelayedProgress(busy: boolean): boolean {
  * than a silently different journey.
  */
 export const EmailPasswordAuthPanel = React.memo(function EmailPasswordAuthPanel(props: EmailPasswordAuthPanelProps) {
+    return <AccountCredentialJourney request={props.action === 'connect' || props.admission ? null
+        : props.credentialTarget === 'account_directory'
+            ? { kind: 'account_directory', request: { service: props.target, intent: { kind: 'refresh' }, returnTo: props.returnTo ?? '/settings/account' } }
+            : { kind: 'home', profileRef: props.target.serverId, returnTo: props.returnTo ?? '/' }}>
+        <EmailPasswordAuthPanelBody {...props} />
+    </AccountCredentialJourney>;
+});
+
+const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBody(props: EmailPasswordAuthPanelProps) {
     const router = useRouter();
     const { theme } = useUnistyles();
     const [draft, setDraft] = React.useState<EmailPasswordDraft>(() => createEmailPasswordDraft(props.initialEmail ?? ''));

@@ -52,6 +52,7 @@ import {
   PluginUiInstanceKeyV1Schema,
   PluginUiLaunchInputV1Schema,
   PluginUiSubPathV1Schema,
+  PluginUiSurfacePresentationV1Schema,
   normalizePluginUiSubPathV1,
 } from './semanticCommands.js';
 import { PluginUiSurfaceContextV1Schema } from './surfaceContext.js';
@@ -486,6 +487,7 @@ export const PluginUiOpenSurfaceRequestV1Schema = lazyZodSchema(() => z.strictOb
   input: zMini.optional(PluginUiLaunchInputV1Schema),
   subPath: zMini.optional(PluginUiSubPathV1Schema),
   instanceKey: zMini.optional(PluginUiInstanceKeyV1Schema),
+  presentation: zMini.optional(PluginUiSurfacePresentationV1Schema),
 }));
 export type PluginUiOpenSurfaceRequestV1 =
   z.infer<typeof PluginUiOpenSurfaceRequestV1Schema>;

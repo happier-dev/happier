@@ -65,3 +65,9 @@ export function createAccountEncryptionCurrentnessFixtureForCredentials(
     }
     return createPlainAccountEncryptionCurrentnessFixture();
 }
+
+/** Current Home HTTP fixture; the separate legacy /encryption route has a different schema. */
+export function createPlainAccountEncryptionCurrentnessHttpResponse(pathname: string): Response | null {
+    return pathname === '/v1/account/encryption/currentness'
+        ? Response.json(createPlainAccountEncryptionCurrentnessFixture()) : null;
+}

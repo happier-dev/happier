@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { AppPaneContext, type AppPaneContextSubscription } from '@/components/appShell/panes/AppPaneContext';
+import { findSelectedPaneSlot, isSelectedPaneDestinationTabKey } from '@/components/appShell/panes/model/selectedPaneDestination';
 import { useRetainedPresentationEntryRetirement } from '@/components/ui/presentation/retainedPresentationEntryLifetime';
 
 type DetailsTabBinding = Readonly<{
@@ -42,7 +43,9 @@ function RetainedDetailsTab(props: React.PropsWithChildren<Readonly<{
         if (!binding) return true;
         const scopes = binding.pane.getSnapshot().state.scopes;
         const scope = Object.hasOwn(scopes, binding.scopeId) ? scopes[binding.scopeId] : undefined;
-        return scope !== undefined && Object.hasOwn(scope.details.tabsByKey, binding.tabKey);
+        return scope !== undefined && (isSelectedPaneDestinationTabKey(binding.tabKey)
+            ? findSelectedPaneSlot(scope, binding.tabKey) !== null
+            : Object.hasOwn(scope.details.tabsByKey, binding.tabKey));
     }, [binding]);
     // Subscribe to one boolean from the existing pane owner, not all tab state. Hide, focus,
     // group moves and route handoff do not remove membership; tab/group removal does.

@@ -12,12 +12,15 @@ import { hrefForDestinationRef, useDestinationInstanceTitles, type DestinationRe
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { useWorkspaceRouterFacts } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { detailsTabNavigationKey } from './detailsTabLifetime';
 
 export type DetailsTabStripTestIds = DocumentTabStripTestIds;
 export type DetailsTabPresentation = DocumentTabPresentation;
 export type DetailsTabStripProps = Readonly<{
     sessionId?: string;
     serverId?: string | null;
+    paneScopeId?: string;
     resolveTabHref?: (tab: DetailsTabState) => string | null;
     pane: Pick<AppPaneScopeApi, 'setActiveDetailsTab' | 'pinDetailsTab' | 'unpinDetailsTab' | 'closeDetailsTab'>;
     group: DetailsWorkspaceGroupView;
@@ -42,13 +45,19 @@ function detailsTabDestinationRef(tab: DetailsTabState, sessionId: string, serve
     };
 }
 
+/** A Details tab's close, as its strip offers it: an unsaved tab asks first. */
+export function useGuardedDetailsTabClose(closeDetailsTab: AppPaneScopeApi['closeDetailsTab'], scopeId?: string): (tabKey: string) => void {
+    return React.useCallback((tabKey: string) => {
+        void runGuardedTabNavigation([scopeId ? detailsTabNavigationKey(scopeId, tabKey) : tabKey], () => closeDetailsTab(tabKey));
+    }, [closeDetailsTab, scopeId]);
+}
+
 /** Details owns resource semantics; DocumentTabStrip owns the shared document chrome. */
 export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
     const { theme } = useUnistyles();
     const { sessionId, serverId, resolveTabHref, resolveTabIconName } = props;
-    const closeTab = React.useCallback((tabKey: string) => {
-        void runGuardedTabNavigation([tabKey], () => props.pane.closeDetailsTab(tabKey));
-    }, [props.pane.closeDetailsTab]);
+    const workspace = useWorkspaceRouterFacts();
+    const closeTab = useGuardedDetailsTabClose(props.pane.closeDetailsTab, props.paneScopeId);
     const entries = React.useMemo(() => sessionId ? props.group.tabs.map(tab => ({
         key: tab.key, fallbackTitle: tab.title, ref: detailsTabDestinationRef(tab, sessionId, serverId),
     })) : [], [props.group.tabs, serverId, sessionId]);
@@ -84,9 +93,14 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
     const wrapTab = React.useCallback((tab: DetailsTabState, content: React.ReactNode) => {
         const href = resolveTabHref ? resolveTabHref(tab)
             : sessionId ? hrefForDestinationRef(EMPTY_CATALOG, detailsTabDestinationRef(tab, sessionId, serverId)) : null;
-        return <WorkspaceDestinationRow href={href} middleClickBehavior="passthrough"
+        const scope = workspace?.read().desktopPresentation;
+        const windowTarget = props.paneScopeId && scope?.layoutId ? {
+            kind: 'paneTab' as const, serverId: scope.serverId, accountId: scope.accountId,
+            layoutId: scope.layoutId, scopeId: props.paneScopeId, tabKey: tab.key,
+        } : undefined;
+        return <WorkspaceDestinationRow href={href} middleClickBehavior="passthrough" openOptions={windowTarget ? { windowTarget } : undefined}
             onOpened={() => closeTab(tab.key)}>{content}</WorkspaceDestinationRow>;
-    }, [closeTab, resolveTabHref, serverId, sessionId]);
+    }, [closeTab, props.paneScopeId, resolveTabHref, serverId, sessionId, workspace]);
     return <DocumentTabStrip
         tabs={tabs}
         activeTabKey={props.group.activeTabKey}

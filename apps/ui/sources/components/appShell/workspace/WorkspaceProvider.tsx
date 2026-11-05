@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { resolveHref } from 'expo-router/build/link/href';
 import { matchWorkspaceDestinationRoute, workspaceRouteHref } from './workspaceRoutes';
@@ -8,7 +11,11 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { getActiveUnsavedChangesGuard, runGuardedNavigation, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
+import { desktopSessionTargetForDestination, type AppWindowRecord } from '@/desktop/window/appWindowBoot';
+import { registerDesktopAppWindowWorkspace, getDesktopAppWindowWorkspaceLayouts, getDesktopAppWindowTabPresentations,
+    getDesktopAppWindows, focusDesktopAppWindow, focusDesktopAppWindowTab, returnDesktopAppWindowTab, closeDesktopAppWindowTab, moveDesktopAppWindowTab, openDesktopAppWindow } from '@/desktop/window/appWindowRuntime';
+import { isDesktopHost, useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
 import { createWorkspaceNavigationAdapter, sameDestinationRef, type WorkspaceOpenOptions } from './workspaceNavigationAdapter';
 import { bindWorkspaceBrowserHistory, createWorkspaceBrowserTransport, installWorkspaceBrowserHistory } from './workspaceBrowserTransport';
 import type { WorkspaceNavigationEntry } from './workspaceNavigationHistory';
@@ -26,6 +33,9 @@ import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
 import { useOptionalAppPaneFindSeedContext, useOptionalPaneDriverReader } from '../panes/AppPaneProvider';
 import { AppPaneContext } from '../panes/AppPaneContext';
+import { listPaneWindowTabs, paneScopeIdsForWorkspaceTabs, preparePaneTabWindowTransfer, resolvePaneTabWindowTarget,
+    setPaneTabWindowPresentation, clearPaneTabWindowPresentations, activatePaneWindowTab,
+    closePaneWindowTab, movePaneWindowTab } from '../panes/paneTabWindowTransfer';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -51,6 +61,7 @@ function subscribeBrowserHref(changed: () => void): () => void {
 }
 
 const readServerHref = () => null;
+const subscribeNoBrowserHref = () => () => {};
 const NO_DESTINATION_TITLES: Readonly<Record<string, WorkspaceDestinationTitle>> = Object.freeze({});
 
 function runNavigation(navigate: () => void, intent?: 'history'): void {
@@ -70,17 +81,21 @@ export function WorkspaceProvider(props: Readonly<{
     entry?: boolean;
     /** A web shell awaiting onboarding teardown must not lend its editable routes to Expo. */
     deferred?: boolean;
+    appWindow?: Readonly<{ record: AppWindowRecord; initialTarget: DestinationRef; chrome?: 'full' | 'destination' }>;
     catalog: readonly CompactAppDestination[];
     children: React.ReactNode | ((navigation: WorkspaceNavigationContextValue) => React.ReactNode);
 }>): React.ReactNode {
     // Metro defers import evaluation. Resolve the decision owner while the app
     // shell initializes, before any lazy destination can register a draft.
-    installWorkspaceBrowserHistory();
+    if (!props.appWindow) installWorkspaceBrowserHistory();
+    const { theme } = useUnistyles();
     const router = useRouter();
     const pathname = usePathname();
     const params = useGlobalSearchParams();
-    const browserHref = React.useSyncExternalStore(subscribeBrowserHref, readBrowserHref, readServerHref);
+    const browserHref = React.useSyncExternalStore(props.appWindow ? subscribeNoBrowserHref : subscribeBrowserHref,
+        props.appWindow ? readServerHref : readBrowserHref, readServerHref);
     const scope = useActiveServerAccountScope();
+    const nativeWindows = useDesktopHostRoleAvailability('windows');
     const findSeedContext = useOptionalAppPaneFindSeedContext();
     const readPaneDriver = useOptionalPaneDriverReader();
     const paneSubscription = React.useContext(AppPaneContext);
@@ -88,6 +103,7 @@ export function WorkspaceProvider(props: Readonly<{
     const scopeKey = scope ? JSON.stringify([scope.serverId, scope.accountId]) : null;
     // Browser history is authoritative even when readiness changes before Expo updates its mirror.
     const routeHref = (() => {
+        if (props.appWindow) return hrefForDestinationRef(props.catalog, props.appWindow.initialTarget) ?? '/';
         if (browserHref !== null) return browserHref;
         return workspaceRouteHref(pathname, params);
     })();
@@ -126,7 +142,8 @@ export function WorkspaceProvider(props: Readonly<{
         // Initial URL admission is a local preview, not membership in the shared intentional tab set.
         const href = phoneTransport ? phoneTabHref : routeHref;
         return {
-            id: randomUUID(), target: (href ? resolveDestinationRefFromHref(props.catalog, href) : null) ?? { kind: 'newTab', params: {} },
+            id: props.appWindow?.record.selectedAddress.kind === 'workspaceTab' ? props.appWindow.record.selectedAddress.tabId : randomUUID(),
+            target: props.appWindow?.initialTarget ?? (href ? resolveDestinationRefFromHref(props.catalog, href) : null) ?? { kind: 'newTab', params: {} },
             pinned: false, preview: true,
         };
     });
@@ -134,8 +151,9 @@ export function WorkspaceProvider(props: Readonly<{
     admissionCatalog.current = props.catalog;
     const singletonPolicyKey = React.useMemo(() => JSON.stringify([...workspaceSingletonDestinationIds(props.catalog)].sort()), [props.catalog]);
     const admitState = React.useCallback((state: WorkspaceState, retainedState?: WorkspaceState) => admitWorkspaceSingletonState(state, admissionCatalog.current, randomUUID, retainedState), [singletonPolicyKey]);
-    const localOwner = useWorkspaceState({ initialTab, admitState });
-    const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog, enabled: props.enabled || phone });
+    const localOwner = useWorkspaceState({ initialTab, admitState, windowId: props.appWindow?.record.layoutId,
+        persistInitial: Boolean(props.appWindow) });
+    const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog, enabled: (!props.appWindow || props.appWindow.chrome === 'full') && (props.enabled || phone) });
     const [historyVersion, changed] = React.useReducer((value: number) => value + 1, 0);
     const [publishedTitles, setPublishedTitles] = React.useState<Readonly<{
         scopeKey: string | null; titles: Readonly<Record<string, WorkspaceDestinationTitle>>;
@@ -186,13 +204,15 @@ export function WorkspaceProvider(props: Readonly<{
     }, [isCurrentUiOwner]);
     const runtime = React.useMemo(() => {
         const mirror = (href: string, entry?: WorkspaceNavigationEntry) => {
+            // Native owns this window's boot URL. Its workspace history is entirely local.
+            if (props.appWindow) return;
             const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
             projectedHref.current = projected;
             if (phoneTransport && latest.current.phoneTabHref === null && projected !== '/') latest.current.router.push(projected as never);
             else latest.current.router.replace(projected as never);
         };
         // Hosted web destinations keep their transport across width changes.
-        const browser = !phoneTransport && Platform.OS === 'web' && typeof window !== 'undefined'
+        const browser = !props.appWindow && !phoneTransport && Platform.OS === 'web' && typeof window !== 'undefined'
             ? createWorkspaceBrowserTransport({
                 history: window.history,
                 getHref: () => `${window.location.pathname}${window.location.search}${window.location.hash}`,
@@ -267,8 +287,27 @@ export function WorkspaceProvider(props: Readonly<{
         });
         const mounted = { adapter, browser, initialized: false };
         return mounted;
-    }, [guardTraversal, scopeKey, phoneTransport]);
+    }, [guardTraversal, scopeKey, phoneTransport, Boolean(props.appWindow)]);
     const eligible = routeDestination !== null;
+    const appWindowRef = React.useRef(props.appWindow);
+    appWindowRef.current = props.appWindow;
+    const requestAppWindowOpen = React.useCallback((href: string): Promise<WorkspaceActionOutcome> | null => {
+        const appWindow = appWindowRef.current;
+        const scope = latest.current.scope;
+        if (!appWindow || appWindow.chrome === 'full' || !scope || !isDesktopHost()) return null;
+        const ref = runtime.adapter.resolveOpenTarget(href);
+        const target = ref ? desktopSessionTargetForDestination(ref, scope)
+            ?? { kind: 'destination' as const, href, serverId: scope.serverId, accountId: scope.accountId } : null;
+        const address = appWindow.record.selectedAddress;
+        if (!target || (target.kind === 'session' && address.kind === 'session' && target.sessionId === address.sessionId
+            && target.serverId === appWindow.record.homeId && target.accountId === appWindow.record.accountId)
+            || (ref && sameDestinationRef(ref, appWindow.initialTarget))) return null;
+        // The window lifecycle owns the dirty decision and draft release. Its native
+        // record publication, rather than this caller, commits the replacement target.
+        return openDesktopAppWindow({ windowId: appWindow.record.windowId, target }).then(result => result.status === 'cancelled'
+            ? workspaceActionFailure('workspace_navigation_cancelled') : { ok: true as const },
+        () => workspaceActionFailure('workspace_destination_unavailable'));
+    }, [runtime]);
     // Overlay routes (including direct /search) launch destinations through this
     // owner even though the overlay itself is not a retained workspace tab.
     const overlayRoute = resolveCurrentAppDestination(props.catalog, routeHref.split(/[?#]/)[0]!)?.activation === 'overlay';
@@ -282,6 +321,29 @@ export function WorkspaceProvider(props: Readonly<{
         const execute = createWorkspaceActionAdapter({
             getState: () => latest.current.owner.getState(), navigation: runtime.adapter,
             readCanvas: () => canvasControlsRef.current, createId: randomUUID,
+            ...(latest.current.scope ? { owner: { ...latest.current.scope,
+                layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? 'main' } } : {}),
+            ...(paneSubscription && latest.current.scope ? { panes: {
+                listTabs: () => {
+                    const context = paneSubscription.getSnapshot();
+                    return listPaneWindowTabs(context, { ...latest.current.scope!,
+                        layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? 'main',
+                        scopeIds: paneScopeIdsForWorkspaceTabs(context, Object.keys(latest.current.owner.getState().tabs)) });
+                },
+                activateTab: address => activatePaneWindowTab(paneSubscription.getSnapshot(), address),
+                closeTab: address => closePaneWindowTab(paneSubscription.getSnapshot(), address),
+                moveTab: (address, groupId) => movePaneWindowTab(paneSubscription.getSnapshot(), address, groupId),
+            } } : {}),
+            ...(nativeWindows?.kind === 'available' && latest.current.scope ? { appWindows: {
+                scope: latest.current.scope,
+                readWindows: () => getDesktopAppWindows(latest.current.scope!),
+                activateWindow: windowId => focusDesktopAppWindow(windowId, latest.current.scope!),
+                readLayouts: () => getDesktopAppWindowWorkspaceLayouts(latest.current.scope ?? undefined),
+                readPresentations: getDesktopAppWindowTabPresentations,
+                activateTab: focusDesktopAppWindowTab, returnTab: returnDesktopAppWindowTab, closeTab: closeDesktopAppWindowTab,
+                moveTab: moveDesktopAppWindowTab,
+                openHref: requestAppWindowOpen,
+            } } : {}),
             readClosedTitle: entry => readDestinationInstanceTitle(latest.current.catalog, entry.tab.target, {
                 publishedTitle: latest.current.destinationTitles[entry.tab.id], fallbackTitle: entry.fallbackTitle,
             }),
@@ -307,17 +369,21 @@ export function WorkspaceProvider(props: Readonly<{
             const isCurrent = () => current && isCurrentUiOwner();
             if (!isCurrent()) return workspaceActionFailure('workspace_unavailable');
             if (request.signal?.aborted) return workspaceActionFailure('action_cancelled');
+            const presented = execute.presented(request.actionId, request.input, request.context);
+            if (presented) return await presented;
             const state = latest.current.owner.getState();
-            const closing = selectWorkspaceTabsToClose(state, request.actionId, request.input);
+            const addressOwner = latest.current.scope ? { ...latest.current.scope,
+                layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? 'main' } : undefined;
+            const closing = selectWorkspaceTabsToClose(state, request.actionId, request.input, addressOwner);
             if (closing) {
-                if (!closing.tabIds.length) return execute(request.actionId, request.input);
+                if (!closing.tabIds.length) return execute(request.actionId, request.input, request.context);
                 let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
                 await runGuardedTabNavigation(closing.tabIds, async () => {
-                    const selection = selectWorkspaceTabsToClose(latest.current.owner.getState(), request.actionId, request.input);
+                    const selection = selectWorkspaceTabsToClose(latest.current.owner.getState(), request.actionId, request.input, addressOwner);
                     if (!selection || selection.groupId !== closing.groupId || selection.tabIds.length !== closing.tabIds.length
                         || selection.tabIds.some((id, index) => id !== closing.tabIds[index])) return false;
                     if (phone) runtime.initialized = true;
-                    outcome = await execute(request.actionId, request.input);
+                    outcome = await execute(request.actionId, request.input, request.context);
                     return outcome.ok;
                 }, {
                     includeActiveGuard: state.focusedGroupId === closing.groupId
@@ -334,18 +400,19 @@ export function WorkspaceProvider(props: Readonly<{
                 || request.actionId === 'workspace.tabs.move'
                 || request.actionId === 'workspace.tabs.reopen'
                 || request.actionId === 'workspace.groups.focus' || request.actionId === 'workspace.split';
-            if (!navigates) return execute(request.actionId, request.input);
+            if (!navigates) return execute(request.actionId, request.input, request.context);
             let outcome: WorkspaceActionOutcome = workspaceActionFailure('workspace_navigation_cancelled');
             await runGuardedNavigation(async () => {
                 if (phone && isCurrent() && !request.signal?.aborted) runtime.initialized = true;
                 outcome = !isCurrent() ? workspaceActionFailure('workspace_unavailable')
                     : request.signal?.aborted ? workspaceActionFailure('action_cancelled')
-                        : await execute(request.actionId, request.input);
+                        : await execute(request.actionId, request.input, request.context);
             });
             return outcome;
         });
         return () => { current = false; retire(); };
-    }, [eligible, findHandoff, isCurrentUiOwner, owner.isReady, overlayRoute, phone, props.enabled, runtime, scopeKey]);
+    }, [eligible, findHandoff, isCurrentUiOwner, localOwner.windowId, owner.isReady, overlayRoute, phone, props.enabled,
+        props.appWindow?.record.layoutId, nativeWindows?.kind, paneSubscription, requestAppWindowOpen, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
         if (!hostsRoute || !owner.isReady || !eligible) return;
@@ -425,12 +492,17 @@ export function WorkspaceProvider(props: Readonly<{
         }
         if (!isCurrentUiOwner() || !latest.current.hostsRoute
             || !resolveDestinationRefFromHref(latest.current.catalog, href)) return false;
+        const presented = requestAppWindowOpen(href);
+        if (presented) {
+            fireAndForget(presented.then(result => { if (result.ok) options?.onOpened?.(); }), { tag: 'Workspace.windowNavigation' });
+            return true;
+        }
         runUiNavigation(() => {
             runtime.initialized = true;
             runtime.adapter.openHref(href, options);
         });
         return true;
-    }, [entry, isCurrentUiOwner, phoneTransport, runUiNavigation, runtime, scopeKey]);
+    }, [entry, isCurrentUiOwner, phoneTransport, requestAppWindowOpen, runUiNavigation, runtime, scopeKey]);
     const tabNavigations = React.useMemo(() => new Map<string, DestinationNavigation>(), [runtime]);
     const navigationForTab = React.useCallback((tabId: string): DestinationNavigation => {
         const existing = tabNavigations.get(tabId);
@@ -463,6 +535,11 @@ export function WorkspaceProvider(props: Readonly<{
                 if (!isCurrentUiOwner()) return;
                 const resolved = resolveHref(href);
                 if (!resolveDestinationRefFromHref(latest.current.catalog, resolved)) return;
+                const presented = requestAppWindowOpen(resolved);
+                if (presented) {
+                    fireAndForget(presented.then(() => {}), { tag: 'Workspace.windowNavigation' });
+                    return;
+                }
                 const state = latest.current.owner.getState();
                 const group = Object.values(state.groups).find(candidate => candidate.tabIds.includes(tabId));
                 if (!group) return;
@@ -483,7 +560,7 @@ export function WorkspaceProvider(props: Readonly<{
         };
         tabNavigations.set(tabId, navigation);
         return navigation;
-    }, [guardTraversal, isCurrentUiOwner, openHref, runUiNavigation, runtime, tabNavigations]);
+    }, [guardTraversal, isCurrentUiOwner, openHref, requestAppWindowOpen, runUiNavigation, runtime, tabNavigations]);
     const phoneOnTab = phoneTabHref !== null;
     const phoneControls = React.useMemo<WorkspacePhoneControls | null>(() => {
         if (!phone || !owner.isReady) return null;
@@ -517,7 +594,37 @@ export function WorkspaceProvider(props: Readonly<{
             },
         };
     }, [activateTab, isCurrentUiOwner, navigationForTab, owner.isReady, phone, phoneOnTab, props.catalog, runUiNavigation, runtime]);
+    React.useEffect(() => {
+        if (!props.enabled || !owner.isReady || !scope || !isDesktopHost()) return;
+        return registerDesktopAppWindowWorkspace({
+            windowId: props.appWindow?.record.windowId ?? localOwner.windowId,
+            layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? undefined,
+            scope, getState: owner.getState, dispatch: owner.dispatch, catalog: props.catalog,
+            ...(paneSubscription ? { panes: {
+                list: address => listPaneWindowTabs(paneSubscription.getSnapshot(), { ...address, scopeIds: [address.scopeId] }),
+                prepare: address => preparePaneTabWindowTransfer(paneSubscription.getSnapshot(), address),
+                resolveTarget: address => resolvePaneTabWindowTarget(paneSubscription.getSnapshot(), address),
+                setPresentation: (address, windowId) => setPaneTabWindowPresentation(paneSubscription.getSnapshot(), address, windowId),
+                clearPresentations: windowId => clearPaneTabWindowPresentations(paneSubscription.getSnapshot(), windowId),
+                activate: address => activatePaneWindowTab(paneSubscription.getSnapshot(), address),
+                close: address => closePaneWindowTab(paneSubscription.getSnapshot(), address, { prepared: true }),
+                move: (address, groupId, beforeMove) => movePaneWindowTab(paneSubscription.getSnapshot(), address, groupId, beforeMove),
+            } } : {}),
+            activateTab: tabId => {
+                const group = Object.values(latest.current.owner.getState().groups).find(group => group.tabIds.includes(tabId));
+                if (group) activateTab(group.id, tabId);
+            },
+            placementMetrics: { cascadeOffset: theme.space.s24, screenInset: theme.space.s24 },
+            onRestoreError: (_error, retry) => { Modal.alert(t('common.error'), t('errors.operationFailed'), retry ? [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('common.retry'), onPress: retry },
+            ] : undefined); },
+        });
+    }, [activateTab, localOwner.windowId, owner.dispatch, owner.getState, owner.isReady, props.appWindow?.record.layoutId,
+        props.appWindow?.record.windowId, props.catalog, props.enabled, scope, paneSubscription, theme.space.s24]);
     const navigation = React.useMemo<WorkspaceNavigationContextValue>(() => ({
+        desktopPresentation: scope ? { ...scope, windowId: props.appWindow?.record.windowId ?? 'main',
+            layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? undefined } : undefined,
         // Scoped restoration grants the retained host custody synchronously.
         // Transport initialization adopts the URL in a layout effect; it is
         // not another hydration barrier on a ready remount.
@@ -562,7 +669,7 @@ export function WorkspaceProvider(props: Readonly<{
             if (runtime.browser) runtime.adapter.step(1);
             else guardTraversal(1, () => runtime.adapter.step(1), 'history');
         },
-    }), [activateTab, closeTabs, destinationTitles, publishDestinationTitle, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, ownsRoute, phoneControls, owner.isRestored, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, runUiNavigation, runtime]);
+    }), [activateTab, closeTabs, destinationTitles, publishDestinationTitle, eligible, guardTraversal, historyVersion, hostsRoute, isCurrentUiOwner, navigationForTab, openHref, ownsRoute, phoneControls, owner.isRestored, owner.state, owner.sharedTabs, owner.tabSyncStatus, owner.handoffSource, localOwner.windowId, props.appWindow?.record.layoutId, props.appWindow?.record.windowId, props.catalog, runUiNavigation, runtime, scope]);
     useWorkspaceKeyboardShortcuts(navigation.active, () => latest.current.owner.getState(), href => {
         const state = latest.current.owner.getState();
         navigationForTab(state.groups[state.focusedGroupId].activeTabId).pushRetainingCurrent?.(href);

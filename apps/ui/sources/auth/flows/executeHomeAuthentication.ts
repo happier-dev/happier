@@ -31,6 +31,7 @@ import {
 } from './resolveHomeAuthenticationTarget';
 import { createAuthenticationFailure } from './authenticationFailure';
 import { authenticationErrorMessage } from './authenticationErrorMessage';
+import { moveAccountCredentialJourneyToMain } from './accountCredentialJourney';
 
 type LoginWithCredentials = (
     credentials: AuthCredentials,
@@ -224,6 +225,12 @@ export async function executeHomeAuthentication(
     if (executionKind === 'email_password') return { kind: 'no_effect', reason: 'delegated_email_password' };
     if (executionKind !== 'generated_key' && executionKind !== 'oauth' && executionKind !== 'mtls') {
         return { kind: 'no_effect', reason: 'unsupported_execution' };
+    }
+    const target = resolveHomeAuthenticationTarget(request.authority.target);
+    if (target && !options.accountContinuation && !options.teamAdmission?.invitationToken
+        && await moveAccountCredentialJourneyToMain({ kind: 'home', profileRef: target.serverId, returnTo: options.returnTo })) {
+        await options.onExternalAuthStarted?.();
+        return { kind: 'handled' };
     }
     await runExecutableHomeAuthentication(options);
     return { kind: 'handled' };

@@ -62,6 +62,7 @@ import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workfl
 import { registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform, type KeyboardShortcutHandlers } from '@/keyboard';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useDesktopAppWindowCommands } from '@/desktop/window/useDesktopAppWindowCommands';
 import { readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
@@ -337,6 +338,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         }),
         [router],
     );
+    const openDesktopWindow = React.useCallback(async (input: import('@happier-dev/protocol/actions/actionSpecs').DesktopWindowsOpenInput) => {
+        const result = await actionExecutor.execute('desktop.windows.open', input, { surface: 'ui' });
+        return result.ok;
+    }, [actionExecutor]);
+    const desktopWindowCommands = useDesktopAppWindowCommands(openDesktopWindow);
     // One path for the palette row and a user-bound shortcut: the active File page's `file.view.set`.
     const fileViewControls = useMemo<FileViewCommandControls>(() => ({
         readActive: readActiveFileViewActionOwner,
@@ -437,6 +443,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             nav: {
                 push: (path) => router.push(path as any),
                 openNewSession,
+                ...(desktopWindowCommands.available ? { openNewWindow: desktopWindowCommands.open } : {}),
                 openNewWorkflow,
                 openWorkflowAgentAuthoring,
                 openAskHappier: async (context) => {
@@ -459,7 +466,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, fileViewControls, startAskHappier, togglePaneArrangement]);
+    }, [commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, desktopWindowCommands, fileViewControls, startAskHappier, togglePaneArrangement]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;

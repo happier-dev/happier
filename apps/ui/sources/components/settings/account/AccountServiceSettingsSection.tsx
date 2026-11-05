@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { moveAccountCredentialJourneyToMain } from '@/auth/flows/accountCredentialJourney';
 import { View } from 'react-native';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { AccountServiceContinuation } from '@/components/account/auth/AccountServiceContinuation';
@@ -440,6 +441,9 @@ export function AccountServiceSettingsSection(): React.ReactElement {
      */
     const startSignIn = React.useCallback(async (method: AccountDirectoryAuthenticationAction) => {
         if (!discovery || pendingMethod) return;
+        if (await moveAccountCredentialJourneyToMain({ kind: 'account_directory', request: {
+            service: discovery, intent: { kind: 'refresh' }, returnTo: '/settings/account',
+        } })) return;
         const { execution } = method;
         if (execution.kind === 'email_password') {
             setPasswordForm({ serviceKey, view: execution.action === 'provision' ? 'create' : 'sign_in' });

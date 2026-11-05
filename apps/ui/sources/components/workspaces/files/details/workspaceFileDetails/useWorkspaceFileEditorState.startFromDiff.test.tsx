@@ -55,6 +55,23 @@ describe('file editor entry and persisted restoration', () => {
         await cleanupWorkspaceFileDetailsActionBoundary();
     });
 
+    it('persists the final engine snapshot with its original base without saving the file during transfer', async () => {
+        const drafts: Array<WorkspaceFileEditorDraft | null> = [];
+        const hook = await harness({ displayMode: 'file', fileText: 'base', fileHash: 'base-hash' }, draft => drafts.push(draft));
+        await act(async () => hook.getCurrent().startEditingFile());
+        // The editor engine's imperative handle is the boundary: its last bytes have not reached onChange yet.
+        const flushPendingChange = vi.fn(async () => {});
+        hook.getCurrent().editorHandleRef.current = { getValue: () => 'pending engine bytes', flushPendingChange };
+        await act(async () => { expect(await hook.getCurrent().prepareEditorTransition()).toBe(true); });
+        expect(flushPendingChange).toHaveBeenCalledTimes(1);
+        expect(drafts.at(-1)).toEqual({ accountId: 'alice', isEditingFile: true, editorText: 'pending engine bytes', editorOriginalHash: 'base-hash' });
+        expect(hook.getCurrent().getEditorText()).toBe('pending engine bytes');
+        expect(hook.getCurrent().editorDirty).toBe(true);
+        expect(hook.getCurrent().isEditingFile).toBe(true);
+        expect(actionBoundary.calls).toEqual([]);
+        await hook.unmount();
+    });
+
     it.each([
         { displayMode: 'diff' as const, fileText: 'base', fileHash: 'base-hash' },
         { displayMode: 'file' as const, fileText: null, fileHash: null },

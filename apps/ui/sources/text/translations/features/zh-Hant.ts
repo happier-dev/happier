@@ -16339,7 +16339,7 @@ type WorkspaceBarTranslation = Shared_workspaceBarTranslations.WorkspaceBarTrans
 
 const en = Shared_workspaceBarTranslations.en;
 
-const workspaceBarTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zh-Hans' | 'zh-Hant', WorkspaceBarTranslation>>, "zh-Hant"> = { 'zh-Hant': { workspaceBar: { tabsLabel: '開啟的分頁', tabMenuLabel: '分頁選項', pinTab: '釘選分頁', unpinTab: '取消釘選分頁', splitRight: '向右分割', splitDown: '向下分割', maximizePane: '最大化窗格', restorePane: '還原窗格', closeTab: '關閉分頁', closeOtherTabs: '關閉其他分頁', closeTabsToLeft: '關閉左側分頁', closeAllTabs: '關閉所有分頁', closeTabsToRight: '關閉右側分頁', allTabs: '所有分頁', searchTabs: '搜尋分頁', splitPane: '分割目前的窗格', openInNewTab: '在新分頁中開啟', openToRight: '在右側開啟', openBelow: '在下方開啟', newTab: '新分頁' } } };
+const workspaceBarTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zh-Hans' | 'zh-Hant', WorkspaceBarTranslation>>, "zh-Hant"> = { 'zh-Hant': { workspaceBar: { tabsLabel: '開啟的分頁', tabMenuLabel: '分頁選項', pinTab: '釘選分頁', unpinTab: '取消釘選分頁', splitRight: '向右分割', splitDown: '向下分割', maximizePane: '最大化窗格', restorePane: '還原窗格', closeTab: '關閉分頁', closeOtherTabs: '關閉其他分頁', closeTabsToLeft: '關閉左側分頁', closeAllTabs: '關閉所有分頁', closeTabsToRight: '關閉右側分頁', allTabs: '所有分頁', searchTabs: '搜尋分頁', splitPane: '分割目前的窗格', openInNewTab: '在新分頁中開啟', openInWindow: '在視窗中開啟', openToRight: '在右側開啟', openBelow: '在下方開啟', newTab: '新分頁' } } };
 
 return { workspaceBarTranslations };
 })();

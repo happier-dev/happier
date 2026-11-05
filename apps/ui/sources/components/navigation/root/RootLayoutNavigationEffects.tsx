@@ -17,7 +17,7 @@ import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
-import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
@@ -33,11 +33,35 @@ import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/pub
  * to nothing that changes per navigation.
  */
 export function RootLayoutNavigationEffects(): React.ReactElement | null {
+    const context = resolveDesktopWindowContext();
+    if (context.role === 'presenter') return null;
+    return <>
+        {context.role === 'primary' ? <PrimaryRootLayoutNavigationEffects /> : null}
+        <LocalRootLayoutNavigationEffects />
+    </>;
+}
+
+function PrimaryRootLayoutNavigationEffects(): React.ReactElement | null {
     React.useEffect(() => {
         if (Platform.OS === 'web' && desktopHostKind() === 'tauri') {
             return installDesktopDeepLinks((href) => router.push(admitInternalRouteHref(href)));
         }
     }, []);
+    const auth = useAuth();
+    const isDesktopShell = isDesktopHost();
+    React.useEffect(() => {
+        if (!isDesktopShell) return;
+        void invokeDesktopHost('desktop_set_window_mode', { mode: 'main' });
+    }, [isDesktopShell]);
+
+    useNotificationResponseRouting({
+        enabled: auth.isAuthenticated,
+        refreshAuth: auth.refreshFromActiveServer,
+    });
+    return null;
+}
+
+function LocalRootLayoutNavigationEffects(): React.ReactElement | null {
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
     const refreshAuth = auth.refreshFromActiveServer;
@@ -45,16 +69,9 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
     const pathname = usePathname();
     const { serverId: routerServerId } = useGlobalSearchParams<{ serverId?: string | string[] }>();
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
-    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
-    const isDesktopShell = isDesktopHost();
     const activeServerAccountScope = useActiveServerAccountScope();
 
     useWebInitialRouteReconcile({ routerPathname: pathname, routerServerId });
-
-    React.useEffect(() => {
-        if (!isDesktopShell) return;
-        void invokeDesktopHost('desktop_set_window_mode', { mode: 'main' });
-    }, [isDesktopShell]);
 
     const legacySessionDeepLinkHandledRef = React.useRef(false);
     React.useEffect(() => {
@@ -76,11 +93,6 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
         if (!didConsume) return;
         legacySessionDeepLinkHandledRef.current = true;
     }, [isAuthenticated]);
-
-    useNotificationResponseRouting({
-        enabled: isAuthenticated && !isDesktopOverlayWindow,
-        refreshAuth,
-    });
 
     const pendingTerminalHandledRef = React.useRef(false);
     React.useEffect(() => {

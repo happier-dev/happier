@@ -2644,6 +2644,7 @@ export const pl: TranslationStructure = {
     minimizeWindow: "Minimalizuj okno",
     maximizeWindow: "Maksymalizuj okno",
     restoreWindow: "Przywróć okno",
+    newWindow: 'Nowe okno',
     closeWindow: "Zamknij okno",
     dismissKeyboard: 'Ukryj klawiaturę',
       open: "Otwórz",

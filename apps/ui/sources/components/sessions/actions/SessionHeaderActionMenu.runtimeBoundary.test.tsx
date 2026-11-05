@@ -24,6 +24,8 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { resolvePluginSessionHeaderActionPresentations } from './pluginHeaderActions';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
@@ -50,6 +52,8 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
     spies: { show: modalShow, alert: modalAlert },
 }).module);
 vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => ioSpy(...args) }));
+// Native role/event delivery is external; the shared menu and host-role decision stay real.
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 const MACHINE_ID = 'machine-projection';
 const OCCURRENCE_ID = 'acme-preview-occurrence-7';
@@ -421,4 +425,27 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         // Voice action must not dispatch an RPC to the Agent.
         expect(boundary.socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toEqual([]);
     });
+    it('offers the shared window presentation from the Session header menu', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => ({
+            activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+        }) });
+        const session = storage.getState().sessions.sess_1!;
+        const state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: session.id } }, pinned: false, preview: false });
+        const workspace = {
+            active: true, state, canGoBack: false, canGoForward: false,
+            desktopPresentation: { serverId: homes.homes.projection!.id, accountId: 'header-account', layoutId: 'main' },
+            openHref: () => false, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+            navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+            registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        } satisfies WorkspaceNavigationContextValue;
+        try {
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
+                <SessionHeaderActionMenu sessionId={session.id} session={session} />
+            </WorkspaceNavigationProvider>);
+            await vi.waitFor(() => {
+                expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
+            });
+        } finally { vi.unstubAllGlobals(); }
+    });
+
 });

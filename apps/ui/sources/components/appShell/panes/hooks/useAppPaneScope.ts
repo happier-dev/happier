@@ -3,6 +3,11 @@ import { usePaneRegion } from '../paneRegion';
 import { normalizeFileDetailsTab } from '../details/fileDetailsTab';
 import { usePanePresentation } from '../panePresentation';
 import { createBuiltinPaneDestination } from '../model/selectedPaneDestination';
+import { selectedPaneDestinationTabKey } from '../model/selectedPaneDestination';
+import { useOpenPaneDestinationWindow } from '../useOpenPaneDestinationWindow';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useWorkspaceRouterFacts } from '../../workspace/WorkspaceNavigationContext';
+import { closePaneDetailsWindowGroup } from '../paneTabWindowTransfer';
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { getDeviceType } from '@/utils/platform/responsive';
@@ -93,7 +98,7 @@ export type AppPaneScopeApi = {
     openDetailsOverlay?: (input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
-    }>) => void;
+    }>) => boolean;
     closeDetailsOverlay?: () => void;
     closeDetailsTab: (tabKey: string) => void;
     setActiveDetailsTab: (tabKey: string) => void;
@@ -106,7 +111,7 @@ export type AppPaneScopeApi = {
     moveDetailsTabToGroup?: (tabKey: string, targetGroupId: string) => void;
     focusDetailsGroup?: (groupId: string) => void;
     setMaximizedDetailsGroup?: (groupId: string | null) => void;
-    closeDetailsGroup?: (groupId: string) => void;
+    closeDetailsGroup?: (groupId: string) => void | Promise<void>;
 };
 
 function getScopeState(scopeState: PaneScopeState | null): AppPaneScopeStateView | null {
@@ -220,6 +225,7 @@ export function useOptionalPinnedDetailsTabCommand(scopeId: string): (tab: Detai
 export function useAppPaneScope<T>(scopeId: string, selector: (scope: PaneScopeState | null) => T): Omit<AppPaneScopeApi, 'scopeState'> & { scopeState: T };
 export function useAppPaneScope(scopeId: string): AppPaneScopeApi;
 export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScopeState | null) => T) {
+    const workspaceFacts = useWorkspaceRouterFacts();
     const { dispatch, getReadState, overlayFocusReturnOwner, persistenceFailed } = useAppPaneContext(value => ({
         dispatch: value.dispatch,
         getReadState: value.getReadState,
@@ -251,47 +257,59 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         };
     }, [recordNativeFocusTarget]);
 
+    const openPaneWindow = useOpenPaneDestinationWindow();
+    const selectPlacedPane = React.useCallback((slot: 'right' | 'bottom', commit: () => void): boolean => {
+        if (!getReadState().scopes[scopeId]?.[slot].presentation) return false;
+        fireAndForget(openPaneWindow(scopeId, selectedPaneDestinationTabKey(slot), commit), { tag: 'Pane.selectPlacedDestination' });
+        return true;
+    }, [getReadState, openPaneWindow, scopeId]);
     const openRight = React.useCallback((options?: Readonly<{ tabId?: string; present?: boolean }>) => {
+        if (options?.tabId && selectPlacedPane('right', () => dispatch({ type: 'openRight', scopeId, tabId: options.tabId }))) return;
         const destination = options?.tabId ? createBuiltinPaneDestination(options.tabId)
             : getReadState().scopes[scopeId]?.right.selectedDestination ?? null;
         dispatch({ type: 'openRight', scopeId, tabId: options?.tabId });
         if (options?.present !== false) presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, getReadState, presentPane, scopeId]);
+    }, [dispatch, getReadState, presentPane, scopeId, selectPlacedPane]);
 
     const closeRight = React.useCallback(() => {
         dispatch({ type: 'closeRight', scopeId });
     }, [dispatch, scopeId]);
 
     const setRightTab = React.useCallback((tabId: string) => {
+        if (selectPlacedPane('right', () => dispatch({ type: 'setRightTab', scopeId, tabId }))) return;
         const destination = createBuiltinPaneDestination(tabId);
         dispatch({ type: 'setRightTab', scopeId, tabId });
         presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, presentPane, scopeId]);
+    }, [dispatch, presentPane, scopeId, selectPlacedPane]);
 
     const selectRightDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
+        if (selectPlacedPane('right', () => dispatch({ type: 'selectRightDestination', scopeId, destination }))) return;
         dispatch({ type: 'selectRightDestination', scopeId, destination });
         presentPane?.({ scopeId, pane: 'right', destination });
-    }, [dispatch, presentPane, scopeId]);
+    }, [dispatch, presentPane, scopeId, selectPlacedPane]);
 
     const setRightTabState = React.useCallback((tabId: string, nextState: unknown) => {
         dispatch({ type: 'setRightTabState', scopeId, tabId, nextState });
     }, [dispatch, scopeId]);
 
     const openBottom = React.useCallback((options?: Readonly<{ tabId?: string }>) => {
+        if (options?.tabId && selectPlacedPane('bottom', () => dispatch({ type: 'openBottom', scopeId, tabId: options.tabId }))) return;
         dispatch({ type: 'openBottom', scopeId, tabId: options?.tabId });
-    }, [dispatch, scopeId]);
+    }, [dispatch, scopeId, selectPlacedPane]);
 
     const closeBottom = React.useCallback(() => {
         dispatch({ type: 'closeBottom', scopeId });
     }, [dispatch, scopeId]);
 
     const setBottomTab = React.useCallback((tabId: string) => {
+        if (selectPlacedPane('bottom', () => dispatch({ type: 'setBottomTab', scopeId, tabId }))) return;
         dispatch({ type: 'setBottomTab', scopeId, tabId });
-    }, [dispatch, scopeId]);
+    }, [dispatch, scopeId, selectPlacedPane]);
 
     const selectBottomDestination = React.useCallback((destination: SelectedPaneDestinationV1) => {
+        if (selectPlacedPane('bottom', () => dispatch({ type: 'selectBottomDestination', scopeId, destination }))) return;
         dispatch({ type: 'selectBottomDestination', scopeId, destination });
-    }, [dispatch, scopeId]);
+    }, [dispatch, scopeId, selectPlacedPane]);
 
     const setBottomTabState = React.useCallback((tabId: string, nextState: unknown) => {
         dispatch({ type: 'setBottomTabState', scopeId, tabId, nextState });
@@ -343,7 +361,12 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
             destination: input.destination,
             ...(input.instanceKey === undefined ? {} : { instanceKey: input.instanceKey }),
         });
-    }, [dispatch, scopeId]);
+        const details = getReadState().scopes[scopeId]?.details;
+        return details?.isOpen === true
+            && details.overlay?.destination.pluginId === input.destination.pluginId
+            && details.overlay.destination.localId === input.destination.localId
+            && details.overlay.instanceKey === input.instanceKey;
+    }, [dispatch, getReadState, scopeId]);
 
     const closeDetailsOverlay = React.useCallback(() => {
         dispatch({ type: 'closeDetailsOverlay', scopeId });
@@ -387,9 +410,15 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         dispatch({ type: 'setMaximizedDetailsGroup', scopeId, groupId });
     }, [dispatch, scopeId]);
 
-    const closeDetailsGroup = React.useCallback((groupId: string) => {
+    const closeDetailsGroup = React.useCallback((groupId: string): void | Promise<void> => {
+        const details = getReadState().scopes[scopeId]?.details;
+        if (details?.groupsById[groupId]?.tabKeys.some(tabKey => details.tabsByKey[tabKey]?.presentation)) {
+            const owner = workspaceFacts?.read().desktopPresentation;
+            if (!owner?.layoutId) return;
+            return closePaneDetailsWindowGroup({ getReadState, dispatch }, { ...owner, layoutId: owner.layoutId, scopeId }, groupId).then(() => {});
+        }
         dispatch({ type: 'closeDetailsGroup', scopeId, groupId });
-    }, [dispatch, scopeId]);
+    }, [dispatch, getReadState, scopeId, workspaceFacts]);
 
     // The api object lands in `useCallback`/`useMemo` dependency lists across its callsites
     // (`useOpenAttachedSessionTerminal`, `SessionHeaderTranscriptNavigationButton`, ...), whose

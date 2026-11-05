@@ -830,6 +830,7 @@ function AppShellPluginSurfaceNavigationOwners(): null {
         projection: projection.pluginUiProjection,
     });
     const openRightSidebarTab = useAppScopeRightSidebarDestinationHandler();
+    const openRightSidebarWindow = useAppScopeRightSidebarDestinationHandler(true);
     const pageOwner = React.useMemo(() => ({
         container: 'appPage' as const,
         handler: openPage,
@@ -841,7 +842,8 @@ function AppShellPluginSurfaceNavigationOwners(): null {
     const rightSidebarOwner = React.useMemo(() => ({
         container: 'rightSidebarTab' as const,
         handler: openRightSidebarTab,
-    }), [openRightSidebarTab]);
+        openWindow: openRightSidebarWindow,
+    }), [openRightSidebarTab, openRightSidebarWindow]);
     useRegisterPluginSurfaceDestinationNavigationOwner(pageOwner, binding);
     useRegisterPluginSurfaceDestinationNavigationOwner(settingsOwner, binding);
     useRegisterPluginSurfaceDestinationNavigationOwner(rightSidebarOwner, binding);

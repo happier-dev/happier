@@ -284,10 +284,10 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(screen.tree.findAllByProps({ testID: 'navigation-sidebar' })).toHaveLength(0);
   });
 
-  it('keeps the dedicated activity overlay transparent and free of sidebar chrome', async () => {
+  it.each(['activity-overlay', 'pet-overlay', 'capture', 'capture-selection'])('keeps the dedicated %s presenter transparent and free of sidebar chrome', async route => {
     vi.stubGlobal('isTauri', true);
     vi.stubGlobal('__TAURI_INTERNALS__', { invoke: createDesktopSecureStorageBoundary().invoke });
-    vi.stubGlobal('window', { location: { href: 'http://localhost/desktop/activity-overlay' } });
+    vi.stubGlobal('window', { location: { href: `http://localhost/desktop/${route}` } });
     const addEventListener = vi.fn();
     vi.stubGlobal('document', { addEventListener, removeEventListener: vi.fn() });
     const { SidebarNavigator } = await import('./SidebarNavigator');
@@ -296,9 +296,12 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     const screen = await renderScreen(<SidebarNavigator />);
     expect(screen.tree.findAllByProps({ testID: 'navigation-sidebar' })).toHaveLength(0);
     expect(screen.tree.findByType(Stack).props.screenOptions.contentStyle.backgroundColor).toBe('transparent');
-    const surface = screen.findByTestId('desktop-main-content-drag-surface');
-    expect(surface).toBeTruthy();
-    expect(StyleSheet.flatten(surface?.props.style)?.backgroundColor).toBeUndefined();
+    // Stack is empty in this harness: every painted host here belongs to the window backing.
+    const backgrounds = screen.tree.findAll(node => typeof node.type === 'string').flatMap(node => {
+      const color = StyleSheet.flatten(node.props.style)?.backgroundColor;
+      return color && color !== 'transparent' ? [color] : [];
+    });
+    expect(backgrounds).toEqual([]);
     expect(addEventListener).not.toHaveBeenCalledWith('mousedown', expect.any(Function), true);
   });
 

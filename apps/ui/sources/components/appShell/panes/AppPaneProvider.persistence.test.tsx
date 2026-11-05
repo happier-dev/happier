@@ -5,7 +5,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
-import { LOCAL_SETTING_DEFINITIONS } from '@/sync/domains/settings/registry/local/localSettingDefinitions';
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -38,7 +39,7 @@ beforeEach(async () => {
     serverId = await homes.addHome({ name: 'Find Home', serverUrl: 'https://file-find-home.test', accountId: 'account-a' });
     connection = await restoreServerAccountForTest({ serverUrl: 'https://file-find-home.test', accountId: 'account-a', request: homes.request });
     getStorage().setState({ profileScope: { serverId, accountId: 'account-a' } });
-    getStorage().getState().applyLocalSettings({ appPaneScopesV1: {} });
+    (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), getStorage().getState().applyLocalSettings({ }));
 });
 afterEach(async () => {
     standardCleanup();
@@ -74,6 +75,83 @@ function PaneScopeProbe(props: Readonly<{ triggerOpenDetails?: boolean }>) {
 }
 
 describe('AppPaneProvider persistence', () => {
+    it('persists an admitted recipient selection and its rollback without overwriting source siblings', async () => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { selectedPaneDestinationTabKey, selectedPaneDestinationResourceId } = await import('./model/selectedPaneDestination');
+        const { listPaneWindowTabs, resolvePaneTabWindowTarget } = await import('./paneTabWindowTransfer');
+        const scopeId = 'session:placed-selection';
+        const tabKey = selectedPaneDestinationTabKey('right');
+        const sourceWrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const source = await renderHook(useAppPaneContext, { wrapper: sourceWrapper });
+        await act(async () => {
+            source.getCurrent().dispatch({ type: 'openRight', scopeId, tabId: 'files' });
+            source.getCurrent().dispatch({ type: 'setSelectedPanePresentation', scopeId, tabKey, presentation: { windowId: 'placed' } });
+        });
+        const original = source.getCurrent().getReadState().scopes[scopeId].right;
+        const recipientWrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider presentedPaneTab={{ scopeId, tabKey }}>{children}</AppPaneProvider>;
+        const recipient = await renderHook(useAppPaneContext, { wrapper: recipientWrapper });
+        await act(async () => source.getCurrent().dispatch({ type: 'setBottomTabState', scopeId, tabId: 'sibling', nextState: { text: 'new source state' } }));
+        await act(async () => recipient.getCurrent().dispatch({ type: 'selectRightDestination', scopeId, destination: { kind: 'builtin', id: 'git' } }));
+        expect(paneUiState.read(scopeId)?.right.selectedDestination).toEqual({ kind: 'builtin', id: 'git' });
+        const address = { kind: 'paneTab' as const, serverId: 'home-a', accountId: 'account-a', layoutId: 'layout-a', scopeId, tabKey };
+        expect(resolvePaneTabWindowTarget(source.getCurrent(), address)?.resourceId).toBe(selectedPaneDestinationResourceId({ kind: 'builtin', id: 'git' }));
+        expect(listPaneWindowTabs(source.getCurrent(), { ...address, scopeIds: [scopeId] }).find(tab => tab.tabKey === tabKey)?.title).toBe('git');
+        await act(async () => source.getCurrent().dispatch({ type: 'setBottomTabState', scopeId, tabId: 'sibling', nextState: { text: 'newer source state' } }));
+        expect(paneUiState.read(scopeId)?.right.selectedDestination).toEqual({ kind: 'builtin', id: 'git' });
+        const remounted = await renderHook(useAppPaneContext, { wrapper: recipientWrapper });
+        expect(remounted.getCurrent().getReadState().scopes[scopeId].right.selectedDestination).toEqual({ kind: 'builtin', id: 'git' });
+        await remounted.unmount();
+        await act(async () => {
+            const current = recipient.getCurrent().getReadState().scopes[scopeId];
+            recipient.getCurrent().dispatch({ type: 'restoreScope', scopeId, selectedPaneTabKey: tabKey, scope: { ...current,
+                right: { ...current.right, activeTabId: original.activeTabId, selectedDestination: original.selectedDestination } } });
+        });
+        expect(paneUiState.read(scopeId)?.right.selectedDestination).toEqual(original.selectedDestination);
+        expect(paneUiState.read(scopeId)?.bottom.tabState.sibling).toEqual({ text: 'newer source state' });
+        await recipient.unmount();
+        await source.unmount();
+    });
+    it('returns the recipient draft while preserving a source sibling edit and terminal identity', async () => {
+        const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
+        const { setPaneTabWindowPresentation } = await import('./paneTabWindowTransfer');
+        const scopeId = 'project:wr_1';
+        const tabKey = 'file:/repo/moved.ts';
+        const sibling = 'file:/repo/sibling.ts';
+        const sourceWrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+        const source = await renderHook(() => ({ pane: useAppPaneScope(scopeId), owner: useAppPaneContext() }), { wrapper: sourceWrapper });
+        const address = { kind: 'paneTab' as const, serverId, accountId: 'account-a', layoutId: 'layout-a', scopeId, tabKey };
+        await act(async () => {
+            for (const key of [tabKey, sibling]) source.getCurrent().pane.openDetailsTab({ key, kind: 'file', title: key,
+                resource: { kind: 'file', path: key.slice(5) } }, { intent: 'pinned' });
+            source.getCurrent().pane.setDetailsTabState(tabKey, { accountId: 'account-a', isEditingFile: true,
+                editorText: 'source draft', editorOriginalHash: 'base-hash', scrollTop: 71 });
+            source.getCurrent().owner.dispatch({ type: 'openBottom', scopeId, tabId: 'terminal' });
+            source.getCurrent().owner.dispatch({ type: 'terminalWorkspace', scopeId, command: { type: 'split', terminal: {
+                id: 'terminal-pane-transfer', target: { kind: 'workspace_shell' },
+            }, availableWidthPx: 1000, minimumTerminalWidthPx: 320 } });
+            setPaneTabWindowPresentation(source.getCurrent().owner, address, 'recipient');
+        });
+        const terminal = source.getCurrent().pane.scopeState?.bottom.tabState.terminal;
+        expect(terminal).toBeDefined();
+        const recipientWrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider presentedPaneTab={{ scopeId, tabKey }}>{children}</AppPaneProvider>;
+        const recipient = await renderHook(() => useAppPaneScope(scopeId), { wrapper: recipientWrapper });
+        await act(async () => recipient.getCurrent().patchDetailsTabState(tabKey, { editorText: 'recipient draft', scrollTop: 92 }));
+        await act(async () => source.getCurrent().pane.setDetailsTabState(sibling, { text: 'source sibling draft' }));
+        await act(async () => { await setPaneTabWindowPresentation(source.getCurrent().owner, address, null); });
+        expect(source.getCurrent().pane.scopeState?.details.tabState[tabKey]).toEqual({ accountId: 'account-a',
+            isEditingFile: true, editorText: 'recipient draft', editorOriginalHash: 'base-hash', scrollTop: 92 });
+        expect(source.getCurrent().pane.scopeState?.details.tabState[sibling]).toEqual({ text: 'source sibling draft' });
+        expect(source.getCurrent().pane.scopeState?.bottom.tabState.terminal).toEqual(terminal);
+        expect(source.getCurrent().pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual([tabKey, sibling]);
+        await recipient.unmount();
+        await source.unmount();
+        const restored = await renderHook(() => useAppPaneScope(scopeId), { wrapper: sourceWrapper });
+        expect(restored.getCurrent().scopeState?.details.tabState[tabKey]).toMatchObject({ editorText: 'recipient draft', editorOriginalHash: 'base-hash', scrollTop: 92 });
+        expect(restored.getCurrent().scopeState?.details.tabState[sibling]).toEqual({ text: 'source sibling draft' });
+        expect(restored.getCurrent().scopeState?.bottom.tabState.terminal).toEqual(terminal);
+        await restored.unmount();
+    });
+
     it('does not disguise a pane serialization programmer error as a storage failure', async () => {
         const { AppPaneProvider } = await import('./AppPaneProvider');
         const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
@@ -94,7 +172,7 @@ describe('AppPaneProvider persistence', () => {
     it('keeps editing pane drafts in memory when MMKV rejects a write and clears the warning after the next successful write', async () => {
         const { AppPaneProvider } = await import('./AppPaneProvider');
         const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
-        const { loadLocalSettings, saveLocalSettings, LocalSettingsPersistenceError } = await import('@/sync/domains/state/settingsPersistence');
+        const { UiStatePersistenceError } = await import('@/sync/domains/state/persistentUiState');
         const { useWorkspaceFileEditorState } = await import('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState');
         const { readWorkspaceFileEditorDraft } = await import('@/components/workspaces/files/details/workspaceFileDetails/workspaceFileEditorDraft');
         const wrapper = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
@@ -130,15 +208,15 @@ describe('AppPaneProvider persistence', () => {
         const write = mmkv.set.bind(mmkv);
         const quota = new Error('MMKV quota exceeded');
         const set = vi.spyOn(mmkv, 'set').mockImplementation((key, value) => {
-            if (key === 'local-settings') throw quota;
+            if (key.startsWith('ui-state:pane-scopes-v1:')) throw quota;
             write(key, value);
         });
         const firstDraft = { accountId: 'account-a', isEditingFile: true, editorOriginalHash: 'base-hash', editorText: 'const answer = 1;' };
         const continuedDraft = { ...firstDraft, editorText: 'const answer = 2;' };
         try {
             let writeError: unknown;
-            try { saveLocalSettings(loadLocalSettings()); } catch (error) { writeError = error; }
-            expect(writeError).toBeInstanceOf(LocalSettingsPersistenceError);
+            try { paneUiState.set('failure', paneUiState.readAll()['project:wr_1']); } catch (error) { writeError = error; }
+            expect(writeError).toBeInstanceOf(UiStatePersistenceError);
             expect(writeError).toMatchObject({ message: quota.message, cause: quota });
             await act(async () => pane.getCurrent().editor.onEditorChange(firstDraft.editorText));
             expect(pane.getCurrent().scopeState?.details.tabState[tabKey]).toEqual(firstDraft);
@@ -152,7 +230,7 @@ describe('AppPaneProvider persistence', () => {
             expect(pane.getCurrent().persistenceFailed).toBe(true);
             expect(pane.getCurrent().editor.draftPersistenceFailed).toBe(true);
             expect(pane.getCurrent().editor.getEditorText()).toBe(continuedDraft.editorText);
-            expect(loadLocalSettings().appPaneScopesV1['project:wr_1'].details.tabState[tabKey]).toBeUndefined();
+            expect(paneUiState.readAll()['project:wr_1'].details.tabState[tabKey]).toBeUndefined();
             set.mockImplementation(write);
             const recoveredDraft = { ...firstDraft, editorText: 'const answer = 3;' };
             await act(async () => pane.getCurrent().editor.onEditorChange(recoveredDraft.editorText));
@@ -162,14 +240,14 @@ describe('AppPaneProvider persistence', () => {
             expect(pane.getCurrent().editor.editorDirty).toBe(true);
             expect(pane.getCurrent().editor.isEditingFile).toBe(true);
             expect(pane.getCurrent().editor.getEditorText()).toBe(recoveredDraft.editorText);
-            expect(loadLocalSettings().appPaneScopesV1['project:wr_1'].details.tabState[tabKey]).toEqual(recoveredDraft);
-            expect(readWorkspaceFileEditorDraft(loadLocalSettings().appPaneScopesV1['project:wr_1'].details.tabState[tabKey], 'account-a')).toEqual(recoveredDraft);
-            const stored: unknown = JSON.parse(mmkv.getString('local-settings') ?? 'null');
-            expect(LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse(
-                (stored as { appPaneScopesV1: unknown }).appPaneScopesV1,
+            expect(paneUiState.readAll()['project:wr_1'].details.tabState[tabKey]).toEqual(recoveredDraft);
+            expect(readWorkspaceFileEditorDraft(paneUiState.readAll()['project:wr_1'].details.tabState[tabKey], 'account-a')).toEqual(recoveredDraft);
+            const stored: unknown = JSON.parse(mmkv.getString('ui-state:pane-scopes-v1:project:wr_1') ?? 'null');
+            expect(PersistedPaneScopesSchema.parse(
+                { 'project:wr_1': stored },
             )['project:wr_1'].details.tabState[tabKey]).toEqual(recoveredDraft);
             set.mockImplementation((key, value) => {
-                if (key === 'local-settings') throw quota;
+                if (key.startsWith('ui-state:pane-scopes-v1:')) throw quota;
                 write(key, value);
             });
             await act(async () => pane.getCurrent().editor.onEditorChange(originalText));
@@ -190,7 +268,7 @@ describe('AppPaneProvider persistence', () => {
             first.getCurrent().dispatch({ type: 'activateScope', scopeId: 'app' });
             first.getCurrent().dispatch({ type: 'setMainHidden', scopeId: 'app', hidden: true });
         });
-        expect(getStorage().getState().localSettings.appPaneScopesV1.app.mainHidden).toBe(true);
+        expect(paneUiState.readAll().app.mainHidden).toBe(true);
         await first.unmount();
         const second = await renderHook(useAppPaneContext, { wrapper });
         expect(second.getCurrent().state.scopes.app.mainHidden).toBe(true);
@@ -211,7 +289,8 @@ describe('AppPaneProvider persistence', () => {
         const hook = await renderHook(() => useWorkspaceState({ initialTab, windowId }));
         expect(hook.getCurrent().isReady).toBe(true);
         await act(async () => hook.getCurrent().dispatch({ type: 'openTab', groupId: 'group:1', tab }));
-        expect(readScopedWorkspaceLayout(getStorage().getState().localSettings.workspaceLayoutV1, scopeKey)?.tabs['session-a']).toEqual(tab);
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        expect(readScopedWorkspaceLayout(workspaceLayoutsState.readAll(), scopeKey)?.tabs['session-a']).toEqual(tab);
         await hook.unmount();
         const restored = await renderHook(() => useWorkspaceState({ initialTab, windowId }));
         expect(restored.getCurrent().state.tabs['session-a']).toEqual(tab);
@@ -289,8 +368,7 @@ describe('AppPaneProvider persistence', () => {
     });
 
     it('hydrates persisted pane scopes from local settings on mount', async () => {
-        getStorage().getState().applyLocalSettings({
-            appPaneScopesV1: LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse({
+        (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse(PersistedPaneScopesSchema.parse({
                 'project:wr_1': {
                     right: { isOpen: true, activeTabId: 'git', tabState: {} },
                     details: {
@@ -312,8 +390,8 @@ describe('AppPaneProvider persistence', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            }),
-        });
+            }))), getStorage().getState().applyLocalSettings({
+        }));
 
         const { AppPaneProvider } = await import('./AppPaneProvider');
         const screen = await renderScreen(
@@ -349,8 +427,7 @@ describe('AppPaneProvider persistence', () => {
 
     it('preserves own Details tab keys through the local-setting boundary and removes inherited-only group references', async () => {
         const tabKey = '__proto__';
-        getStorage().getState().applyLocalSettings({
-            appPaneScopesV1: LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse(JSON.parse(JSON.stringify({
+        (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse(PersistedPaneScopesSchema.parse(JSON.parse(JSON.stringify({
                 'project:wr_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
@@ -385,8 +462,8 @@ describe('AppPaneProvider persistence', () => {
                     },
                     bottom: { isOpen: false, activeTabId: null, tabState: {} },
                 },
-            }))),
-        });
+            }))))), getStorage().getState().applyLocalSettings({
+        }));
 
         const { AppPaneProvider } = await import('./AppPaneProvider');
         const screen = await renderScreen(
@@ -410,8 +487,8 @@ describe('AppPaneProvider persistence', () => {
         ]);
         expect(Object.prototype.hasOwnProperty.call(scopeState.details.tabState, tabKey)).toBe(true);
         expect(scopeState.details.tabState[tabKey]).toEqual({ scrollY: 240 });
-        const roundTrippedScopes = LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse(
-            getStorage().getState().localSettings.appPaneScopesV1,
+        const roundTrippedScopes = PersistedPaneScopesSchema.parse(
+            paneUiState.readAll(),
         );
         expect(roundTrippedScopes).toEqual(expect.objectContaining({
             'project:wr_1': expect.objectContaining({
@@ -451,7 +528,7 @@ describe('AppPaneProvider persistence', () => {
             );
         });
 
-        expect(getStorage().getState().localSettings.appPaneScopesV1).toEqual(expect.objectContaining({
+        expect(paneUiState.readAll()).toEqual(expect.objectContaining({
             'project:wr_1': expect.objectContaining({
                 details: expect.objectContaining({
                     focusedGroupId: 'group:1',
@@ -483,7 +560,7 @@ describe('AppPaneProvider persistence', () => {
     });
 
     it('hydrates persisted pane scopes that arrive after the initial mount', async () => {
-        const persistedScopes = LOCAL_SETTING_DEFINITIONS.appPaneScopesV1.schema.parse({
+        const persistedScopes = PersistedPaneScopesSchema.parse({
             'project:wr_1': {
                 right: { isOpen: true, activeTabId: 'git', tabState: {} },
                 details: {
@@ -515,7 +592,7 @@ describe('AppPaneProvider persistence', () => {
         );
 
         await act(async () => {
-            getStorage().getState().applyLocalSettings({ appPaneScopesV1: persistedScopes });
+            (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse(persistedScopes)), getStorage().getState().applyLocalSettings({ }));
             await screen.update(
                 <AppPaneProvider>
                     <PaneScopeProbe />

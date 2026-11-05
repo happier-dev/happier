@@ -7,6 +7,71 @@ async function loadRunGuardedNavigationModule() {
 }
 
 describe('runGuardedNavigation', () => {
+    it('flushes full-window retained editors once and honors an active non-tab form', async () => {
+        const { registerMountedTabUnsavedChangesGuard, setActiveUnsavedChangesGuard, clearActiveUnsavedChangesGuard,
+            prepareMountedWindowPresentationTransfer } = await loadRunGuardedNavigationModule();
+        const flush = vi.fn(async () => true);
+        const editor = { isDirtyRef: { current: true }, requestDecision: async () => 'keepEditing' as const,
+            preparePresentationTransfer: flush, tag: 'full-editor' };
+        const stop = registerMountedTabUnsavedChangesGuard('editor', editor);
+        try {
+            setActiveUnsavedChangesGuard(editor);
+            expect(await prepareMountedWindowPresentationTransfer()).toBe(true);
+            expect(flush).toHaveBeenCalledOnce();
+            const decision = vi.fn(async () => 'keepEditing' as const);
+            setActiveUnsavedChangesGuard({ isDirtyRef: { current: true }, requestDecision: decision, tag: 'full-modal' });
+            expect(await prepareMountedWindowPresentationTransfer()).toBe(false);
+            expect(decision).toHaveBeenCalledOnce();
+            expect(editor.isDirtyRef.current).toBe(true);
+        } finally { stop(); clearActiveUnsavedChangesGuard(); }
+    });
+    it('requires the normal dirty Close decision even when a tab can persist its presentation transfer', async () => {
+        const { registerMountedTabUnsavedChangesGuard, prepareMountedTabClose, prepareMountedTabPresentationTransfer } = await loadRunGuardedNavigationModule();
+        const isDirtyRef = { current: true };
+        let decision: UnsavedChangesDecision = 'keepEditing';
+        const stop = registerMountedTabUnsavedChangesGuard('windowed-file', { isDirtyRef,
+            requestDecision: async () => decision, preparePresentationTransfer: async () => true,
+            continueOnSave: false, onSave: async () => { isDirtyRef.current = false; return true; }, tag: 'windowed-file' });
+        try {
+            expect(await prepareMountedTabPresentationTransfer('windowed-file')).toBe(true);
+            expect(await prepareMountedTabClose('windowed-file')).toBe(false);
+            expect(isDirtyRef.current).toBe(true);
+            decision = 'save';
+            expect(await prepareMountedTabClose('windowed-file')).toBe(false);
+            expect(isDirtyRef.current).toBe(false);
+            expect(await prepareMountedTabClose('windowed-file')).toBe(true);
+        } finally { stop(); }
+    });
+    it('flushes a restorable tab for presentation transfer without saving or discarding its dirty buffer', async () => {
+        const { registerMountedTabUnsavedChangesGuard, prepareMountedTabPresentationTransfer } = await loadRunGuardedNavigationModule();
+        let flushed = false;
+        const requestDecision = vi.fn(async (): Promise<UnsavedChangesDecision> => 'keepEditing');
+        const onSave = vi.fn(async () => true);
+        const onDiscard = vi.fn();
+        const isDirtyRef = { current: true };
+        const stop = registerMountedTabUnsavedChangesGuard('restorable', { isDirtyRef, requestDecision, onSave, onDiscard,
+            preparePresentationTransfer: async () => { flushed = true; return true; }, tag: 'restorable-file' });
+        try {
+            expect(await prepareMountedTabPresentationTransfer('restorable')).toBe(true);
+            expect(flushed).toBe(true);
+            expect(isDirtyRef.current).toBe(true);
+            expect(requestDecision).not.toHaveBeenCalled();
+            expect(onSave).not.toHaveBeenCalled();
+            expect(onDiscard).not.toHaveBeenCalled();
+        } finally { stop(); }
+    });
+
+    it('keeps an unpersisted form or failed file flush in place during presentation transfer', async () => {
+        const { registerMountedTabUnsavedChangesGuard, prepareMountedTabPresentationTransfer } = await loadRunGuardedNavigationModule();
+        const form = registerMountedTabUnsavedChangesGuard('form', { isDirtyRef: { current: true },
+            requestDecision: async () => 'keepEditing', tag: 'secret-form' });
+        const file = registerMountedTabUnsavedChangesGuard('failed-file', { isDirtyRef: { current: true },
+            requestDecision: async () => 'discard', preparePresentationTransfer: async () => false, tag: 'failed-file' });
+        try {
+            expect(await prepareMountedTabPresentationTransfer('form')).toBe(false);
+            expect(await prepareMountedTabPresentationTransfer('failed-file')).toBe(false);
+        } finally { form(); file(); }
+    });
     it('preserves a dirty editor across its internal Back and still guards the next departure', async () => {
         const { setActiveUnsavedChangesGuard, runGuardedNavigation } = await loadRunGuardedNavigationModule();
         const isDirtyRef = { current: true };

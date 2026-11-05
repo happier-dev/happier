@@ -21,6 +21,8 @@ import { storage, useAllMachines } from '@/sync/domains/state/storage';
 import { CurrentSessionPresentationRuntime } from '@/components/sessions/presentation/CurrentSessionPresentationRuntime';
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { useDesktopHomeResponder } from '@/desktop/window/appWindowRuntime';
 import { EntityDragRealmPreview } from './EntityDragRealmPreview';
 import { ClientActionReverseRuntime } from './ClientActionReverseRuntime';
 
@@ -88,6 +90,25 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
     isAuthenticated: boolean;
     isDesktopShell: boolean;
 }>) {
+    const context = resolveDesktopWindowContext();
+    const homeResponder = useDesktopHomeResponder();
+    if (context.role === 'presenter') return null;
+    return <>
+        {context.role === 'primary' ? <AppWideRuntimeMounts {...props} /> : null}
+        {props.isAuthenticated ? <ActionOperationRuntime /> : null}
+        {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}
+        {props.isAuthenticated ? <VoiceKeyboardRuntime /> : null}
+        {props.isAuthenticated ? <EntityDragRealmPreview /> : null}
+        {props.isAuthenticated && homeResponder ? <>
+            <ClientActionReverseRuntime />
+            <UpdateFactsBackgroundRuntime enabled />
+            {props.isDesktopShell ? <DesktopBrowserRecordingReverseCaptureRuntimeMount /> : null}
+        </> : null}
+    </>;
+});
+
+/** One retained primary realm owns OS effects, app ingress and automatic presentations. */
+function AppWideRuntimeMounts(props: Readonly<{ isAuthenticated: boolean; isDesktopShell: boolean }>) {
     // The route navigator is retained but display:none while the desktop workspace is
     // active. Global floating companions must render outside that hidden DOM branch;
     // the existing web portal preserves their React context and runtime ownership.
@@ -104,14 +125,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             <IosActivitySurfacesRuntimeMount />
             <ActivityLocalNotificationRuntime />
             <OnboardingShowcaseAutoShowMount />
-            {props.isAuthenticated ? <ActionOperationRuntime /> : null}
-            {props.isAuthenticated ? <ClientActionReverseRuntime /> : null}
-            {/* Keeps the Updates summary's coverage of agent CLIs and helpers (no timer of its own). */}
-            <UpdateFactsBackgroundRuntime enabled={props.isAuthenticated} />
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}
-            {props.isAuthenticated ? <CurrentSessionPresentationRuntime /> : null}
-            {props.isAuthenticated ? <VoiceKeyboardRuntime /> : null}
-            {props.isAuthenticated ? <EntityDragRealmPreview /> : null}
             <DesktopPetOverlayRuntimeMount />
             {/*
               * The app root's one no-drag registry covers routed viewers as well as these
@@ -125,10 +139,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
                 content: floatingCompanions,
             }) ?? floatingCompanions}
             {props.isAuthenticated ? <ReleaseNotesAutoShowMount /> : null}
-            {props.isAuthenticated && props.isDesktopShell ? (
-                <DesktopBrowserRecordingReverseCaptureRuntimeMount />
-            ) : null}
             {props.isDesktopShell ? <DesktopActivityOverlayRuntime /> : null}
         </>
     );
-});
+}

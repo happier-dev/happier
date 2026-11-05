@@ -2631,6 +2631,7 @@ export const ca: TranslationStructure = {
           minimizeWindow: "Minimitza la finestra",
           maximizeWindow: "Maximitza la finestra",
           restoreWindow: "Restaura la finestra",
+          newWindow: 'Finestra nova',
           closeWindow: "Tanca la finestra",
           dismissKeyboard: 'Amaga el teclat',
           open: 'Obre',

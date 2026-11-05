@@ -99,12 +99,17 @@ export const PluginUiSemanticDestinationReferenceV1Schema = asProtocolZod(destin
 export type PluginUiSemanticDestinationReferenceV1 =
   z.infer<typeof PluginUiSemanticDestinationReferenceV1Schema>;
 
+const surfacePresentation = defineProtocolLiteral('window');
+/** Optional destination presentation shared by host requests and semantic commands. */
+export const PluginUiSurfacePresentationV1Schema = asProtocolZod(surfacePresentation);
+
 const openSurfaceCommand = defineProtocolObject({
   kind: defineProtocolLiteral('openSurface'),
   destination: destinationReference,
   input: launchInput.optional(),
   subPath: subPath.optional(),
   instanceKey: instanceKey.optional(),
+  presentation: surfacePresentation.optional(),
 }, { policy: 'closed' });
 export const PluginUiSemanticOpenSurfaceCommandV1Schema = asProtocolZod(openSurfaceCommand);
 export type PluginUiSemanticOpenSurfaceCommandV1 =
@@ -178,6 +183,7 @@ export const PluginUiResolvedSemanticOpenSurfaceCommandV1Schema = lazyZodSchema(
   input: zMini.optional(PluginUiLaunchInputV1Schema),
   subPath: z.optional(PluginUiSubPathV1Schema),
   instanceKey: zMini.optional(PluginUiInstanceKeyV1Schema),
+  presentation: z.optional(PluginUiSurfacePresentationV1Schema),
 }));
 export type PluginUiResolvedSemanticOpenSurfaceCommandV1 =
   Readonly<z.infer<typeof PluginUiResolvedSemanticOpenSurfaceCommandV1Schema>>;
@@ -225,5 +231,6 @@ export function normalizePluginUiSemanticCommandV1(
     ...(command.input === undefined ? {} : { input: command.input }),
     ...(command.subPath === undefined ? {} : { subPath: normalizePluginUiSubPathV1(command.subPath)! }),
     ...(command.instanceKey === undefined ? {} : { instanceKey: command.instanceKey }),
+    ...(command.presentation === undefined ? {} : { presentation: command.presentation }),
   });
 }

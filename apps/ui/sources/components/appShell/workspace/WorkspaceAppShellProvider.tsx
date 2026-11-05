@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { useCompactAppDestinationCatalog } from '../destinations/compactAppDestinationCatalog';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
@@ -21,6 +23,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // their retired Account; public entry hosts no retained private destination.
     if (presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime))) return null;
+    if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog}>{props.children}</AppWindowWorkspace>;
     return <WorkspaceProvider enabled={presentation === 'shell'} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={presentation === 'deferred'} catalog={catalog}>
         {props.children}

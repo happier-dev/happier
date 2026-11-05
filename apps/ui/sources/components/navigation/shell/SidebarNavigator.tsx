@@ -17,7 +17,9 @@ import {
 } from './appRail/appRailModel';
 import { useAppShellLocation } from './appRail/useAppShellLocation';
 import { AppShellColumnContext, type AppShellColumnState } from './appRail/appShellColumnContext';
-import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -52,10 +54,22 @@ const renderPeekColumn = (column: AppShellColumnModel) => (
     </View>
 );
 
-export const SidebarNavigator = React.memo(() => {
+const ROUTE_STACK_OPTIONS = { lazy: false, headerShown: false } as const;
+const DESTINATION_STACK_OPTIONS = { ...ROUTE_STACK_OPTIONS, contentStyle: { backgroundColor: 'transparent' } } as const;
+
+export const SidebarNavigator = React.memo(function SidebarNavigator() {
+    // Dedicated destinations/presenters own their surface. Do not mount the full rail's
+    // subscriptions or let the workspace shell replace their app-owned route.
+    if (resolveDesktopWindowContext().chrome === 'destination') {
+        return <NavigatorSafeAreaBleed><Stack screenOptions={DESTINATION_STACK_OPTIONS} screenLayout={renderAppStackScreen} /></NavigatorSafeAreaBleed>;
+    }
+    return <FullSidebarNavigator />;
+});
+
+const FullSidebarNavigator = React.memo(() => {
+
     const accountScope = useActiveServerAccountScope();
     const { execute, isCurrent } = useMountedActionExecution(accountScope, { openOnRequest: true });
-    const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     const workspace = useOptionalWorkspaceNavigation();
     // The onboarding journey host owns the whole viewport until its session ends
     // (visual spec v3 §5): the post-auth setup beats must never render beside the
@@ -139,18 +153,6 @@ export const SidebarNavigator = React.memo(() => {
         handleSidebarWidthCommit(SIDEBAR_DEFAULT_WIDTH_PX);
     }, [handleSidebarWidthCommit]);
 
-    const stackNavigationOptions = React.useMemo(() => ({
-        lazy: false,
-        headerShown: false,
-        ...(isDesktopOverlayWindow
-            ? {
-                contentStyle: {
-                    backgroundColor: 'transparent',
-                },
-            }
-            : null),
-    }), [isDesktopOverlayWindow]);
-
     const handleToggleColumn = React.useCallback(() => {
         fireAndForget(requestSetColumnVisible(sidebarCollapsed), { tag: 'SidebarNavigator.toggleColumn' });
     }, [sidebarCollapsed, requestSetColumnVisible]);
@@ -222,7 +224,7 @@ export const SidebarNavigator = React.memo(() => {
                 resolveColumn={resolvePeekColumn} renderColumn={renderPeekColumn} /> : null}
         >
             <View style={[{ flex: 1, minWidth: 0, minHeight: 0 }, workspace?.active && { display: 'none' }]}>
-                <Stack screenOptions={stackNavigationOptions} />
+                <Stack screenOptions={ROUTE_STACK_OPTIONS} />
             </View>
             {workspace?.active ? <WorkspaceShell catalog={catalog} /> : null}
         </AppShellMaterialFrame>

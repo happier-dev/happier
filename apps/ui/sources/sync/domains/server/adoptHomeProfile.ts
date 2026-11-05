@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     getHomeCredentialsUnderMutationAuthority,
+    completeHomeCredentialReplacement,
     removeHomeCredentialsUnderMutationAuthority,
     setHomeCredentialsWithRollbackUnderMutationAuthority,
 } from '@/auth/storage/tokenStorage';
@@ -222,6 +223,7 @@ async function migrateExistingHomeCanonicalUrlUnderMutationAuthority(
             profile,
         );
     }
+    await completeHomeCredentialReplacement(toCanonicalServerUrl, credentialWrite.serverId, credentialWrite.previousToken, input.credentials.token);
     return profile;
 }
 
@@ -295,9 +297,10 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
         throw new Error('Unable to store Home credentials');
     }
 
+    let profile: ServerProfile;
     try {
         if (input.shouldCancel?.()) throw new Error('Home credential adoption cancelled');
-        return await adoptHomeProfileUnderMutationAuthority(adoption, authority);
+        profile = await adoptHomeProfileUnderMutationAuthority(adoption, authority);
     } catch (adoptionError) {
         let rollbackApplied: boolean;
         try {
@@ -320,4 +323,6 @@ async function adoptHomeProfileWithCredentialsUnderAuthority(
         }
         throw adoptionError;
     }
+    await completeHomeCredentialReplacement(target.canonicalServerUrl, credentialWrite.serverId, credentialWrite.previousToken, input.credentials.token);
+    return profile;
 }

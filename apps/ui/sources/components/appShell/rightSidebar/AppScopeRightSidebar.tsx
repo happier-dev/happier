@@ -220,6 +220,7 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         <View testID={props.testID} style={{ flex: 1 }}>
             {activeTab ? (
                 <RightSidebarPaneHeader
+                scopeId={props.scopeId}
                     testID={`${props.testID ?? 'app-scope-right-sidebar'}.header`}
                     tabs={tabs}
                     activeTabId={resolvedActiveTabId}

@@ -9,6 +9,7 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 import type { RightSidebarTabDefinition } from './rightSidebarBuiltinTabs';
 import { getRightSidebarTabLabel } from './rightSidebarTabRegistry';
+import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 
 /**
  * The open right sidebar's header band, beside the page header: it names the tab the action rail
@@ -19,6 +20,7 @@ import { getRightSidebarTabLabel } from './rightSidebarTabRegistry';
 export function RightSidebarPaneHeader(props: Readonly<{
     tabs: readonly RightSidebarTabDefinition[];
     activeTabId: string | null;
+    scopeId?: string;
     size?: 'band' | 'large';
     onClose?: () => void;
     /** The pane's own operations (for a session pane: Add to Companion), in the band's one ⋯. */
@@ -34,6 +36,10 @@ export function RightSidebarPaneHeader(props: Readonly<{
 }>): React.ReactElement | null {
     const tab = props.activeTabId ? props.tabs.find((candidate) => candidate.id === props.activeTabId) : undefined;
     const published = usePublishedPaneHeaderContent(tab ? tab.id : null);
+    const openActions = usePaneDestinationWindowActions(props.scopeId, 'right');
+    const menuActions = React.useMemo(() => [...(props.menuActions ?? []), ...openActions.presentationItems.map(item => ({
+        id: item.id, title: item.title, icon: item.icon, onPress: () => { openActions.select(item.id); },
+    }))], [openActions, props.menuActions]);
     // With no editor column beside it, the side panel's header carries a hidden main column's
     // restore chip at its leading edge (lab H3).
     const showMainChip = useOptionalAppPaneScopeLayout()?.effectiveDetailsOpen === false;
@@ -53,7 +59,7 @@ export function RightSidebarPaneHeader(props: Readonly<{
             leading={props.leading}
             title={title}
             line={line}
-            actions={<PaneHeaderActions published={published} title={title} paneMenuActions={props.menuActions} testID={props.testID} />}
+            actions={<PaneHeaderActions published={published} title={title} paneMenuActions={menuActions} testID={props.testID} />}
             size={props.size}
             onClose={props.onClose}
         />

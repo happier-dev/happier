@@ -5,6 +5,7 @@ import { accountDirectoryAuthClient, type AccountDirectoryAuthTransport, type Ac
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { prepareAccountCredentialJourney } from '@/auth/flows/accountCredentialJourney';
 import { asIconName } from '@/components/ui/icons/asIconName';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -78,6 +79,10 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
     const target = { endpoint: input.authority.endpointUrl, serverIdentityId: input.authority.serverIdentityId };
     let started: AccountDirectoryOAuthStartResult | null = null;
     try {
+        const move = prepareAccountCredentialJourney({ kind: 'account_directory', request: {
+            service: input.authority, intent: input.intent, returnTo: input.accountEntryReturnTo ?? input.returnTo,
+        } });
+        if (move) { await move(); return 'opened'; }
         started = await startAccountServiceOAuthAuthentication(input);
         if (input.signal?.aborted || input.isCurrent?.() === false) {
             await TokenStorage.clearPendingAccountDirectoryAuth(target, { expected: started.pending }).catch(() => false);

@@ -2605,6 +2605,7 @@ export const zhHans: TranslationStructure = {
     minimizeWindow: "最小化窗口",
     maximizeWindow: "最大化窗口",
     restoreWindow: "还原窗口",
+    newWindow: '新建窗口',
     closeWindow: "关闭窗口",
     dismissKeyboard: '收起键盘',
     open: "打开",

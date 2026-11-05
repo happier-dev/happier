@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -50,6 +51,7 @@ function basename(path: string | null | undefined): string | null {
  */
 export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: string; scopeId: string; onRequestClose?: () => void }>) => {
     const pane = useAppPaneScope(props.scopeId);
+    const openActions = usePaneDestinationWindowActions(props.scopeId, 'bottom');
     const { theme } = useUnistyles();
     const router = useRouter();
     const activeTabId = pane.scopeState?.bottom?.activeTabId ?? null;
@@ -153,22 +155,23 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
 
     const tabMenu = useSessionTerminalTabMenu({ scopeId: props.scopeId, workspace, tabs, run });
 
-    const paneMenuItems = React.useMemo(() => buildSessionTerminalPaneMenuItems({
+    const paneMenuItems = React.useMemo(() => [...buildSessionTerminalPaneMenuItems({
         showList: workspace.showList,
         canJump: openJump !== null,
         jumpShortcut: shortcutLabels['terminal.jump'],
         hideShortcut: shortcutLabels['terminal.toggle'],
         // Terminal settings are the renderer choice, which only native apps offer.
         canOpenSettings: Platform.OS !== 'web',
-    }, glyph), [glyph, openJump, shortcutLabels, workspace.showList]);
+    }, glyph), ...openActions.presentationItems], [glyph, openActions.presentationItems, openJump, shortcutLabels, workspace.showList]);
     const onPaneMenuSelect = React.useCallback((itemId: string) => {
+        if (openActions.select(itemId)) return;
         switch (itemId) {
             case 'jump': return openJump?.({ sessionId: props.sessionId, serverId });
             case 'showList': return void run('session.terminals.list_view', { showList: !workspace.showList });
             case 'hide': return requestClose();
             case 'settings': return router.push('/settings/features' as never);
         }
-    }, [openJump, props.sessionId, requestClose, router, run, serverId, workspace.showList]);
+    }, [openActions, openJump, props.sessionId, requestClose, router, run, serverId, workspace.showList]);
 
     const renderLeaf = React.useCallback((member: SessionTerminalMemberV1, state: Readonly<{ focused: boolean; descriptor: SessionTerminalDescriptor | null }>) => (
         <SessionEmbeddedTerminalPane

@@ -42,6 +42,7 @@ import type {
 import { DetailsTabGroupPanel, type DetailsTabGroupPanelProps } from './DetailsTabGroupPanel';
 import type { DetailsTabPresentation } from './DetailsTabStrip';
 import { runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { detailsTabNavigationKey } from './detailsTabLifetime';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -219,7 +220,7 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
     const materialColor = useHappierMaterialColorResolver();
     const backgroundColor = materialColor(theme.colors.surface.base, 'transparent');
     const details = getDetailsView(props.pane);
-    const overlay = details.overlay ?? null;
+    const overlay = details.overlay?.presentation ? null : details.overlay ?? null;
     const localOpeningFocusReturnRef = React.useRef<FocusReturnTarget>(null);
     const openingFocusReturnRef = props.pane.detailsOverlayFocusReturnRef ?? localOpeningFocusReturnRef;
     const groupsById = React.useMemo(
@@ -346,7 +347,8 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
                 return;
             case 'closeLeaf':
                 void runGuardedTabNavigation(
-                    getOwnDetailsWorkspaceRecordEntry(groupsById, action.leafId)?.tabKeys ?? [],
+                    (getOwnDetailsWorkspaceRecordEntry(groupsById, action.leafId)?.tabKeys ?? [])
+                        .map(key => detailsTabNavigationKey(props.pane.scopeId, key)),
                     () => props.pane.closeDetailsGroup?.(action.leafId),
                 );
                 return;

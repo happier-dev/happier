@@ -4,6 +4,112 @@ This page describes the unreleased 0.3 shell contracts under integration. The sh
 side panel, details workspace and bottom pane under one scoped owner. The left navigation column
 has its own visibility owner; hiding a page's main column does not collapse navigation.
 
+## Destination windows (0.3 development)
+
+Native `app_window.rs` owns Session window creation, readiness, reuse, teardown
+and restore records. `desktop/window/appWindowRuntime.ts` connects that lifecycle
+to the existing workspace and draft owners. `session.open` with
+`presentation: 'window'` delegates to `desktop.windows.open`. The window role of
+the shared desktop host result determines availability; Electron is unavailable.
+
+The same `desktop.windows.open` owner accepts catalog destinations and qualified
+workspace and pane tabs. `workspace.tabs.list` publishes an address containing
+Home, Account and layout, followed by either `tabId` or `scopeId`/`tabKey`.
+Activate, move and close accept that address; legacy workspace `tabId` calls
+retain their existing meaning. Pane addresses are pane membership, not invented
+workspace routes. The shared workspace open-menu builder supplies window,
+overlay and Happier presentation items to tab strips and sidebar rows.
+
+Moving restores the way a relaunch does. The existing pane provider persists
+Details tab state, including file draft text/base hash and view state, before
+the selected body releases; its parent scope and siblings remain in place.
+The recipient mounts the actual Details renderer and flushes that same owner
+before Return restores source presentation. There is no cross-window editor
+checkpoint API. Plugin runtime tab fallbacks retain the existing relaunch
+behavior rather than transferring a live plugin closure.
+
+Unpersisted authoring work uses its mounted Keep/Save/Discard guard before
+moving or replacing the destination. A failed save or Keep leaves it editable;
+secrets never enter window restore records. Team API credential creation fields
+participate in this guard as well as the already guarded uncopied bearer.
+
+A moved tab stays in its source window's layout and Account-shared membership.
+Its device-local `presentation: {windowId}` hides its strip entry and body; the
+native record set projects placement into every window on that Home and Account.
+Secondary providers use the record's `layoutId`; the primary layout is `main`.
+Full windows retain the existing Account-shared tabs with independent local layout.
+
+`desktop.windows.open` with `chrome: 'full'` creates an independent full shell
+from a Home, Session or catalog destination. Each implicit open creates another
+window; an explicit window id focuses or retargets it. Its retained record uses
+the existing layout id and an optional full chrome marker, with no copied tabs.
+Secondary Home changes use tab-local selection and update only that window's
+Home context. Main retains device selection. App-wide effects stay in main;
+Tauri's native live-window order selects one responder for each Home: main for
+its current Home, otherwise the earliest full window on that Home and Account.
+Hosts without multiwindow support, including Electron, retain their primary
+Home responder without acquiring the native responder projection.
+The native File menu's **New Window** and Search's **New window** use that
+invoking realm's Home with `chrome: 'full'` through the same window Action.
+Window discovery includes empty shells; activating a window id preserves its
+selected destination. Closing an addressed tab retains its full shell. The
+mounted current-UI **Close window** command requests the native guarded Close.
+Local Action settlement, keyboard navigation and Session presentation remain
+in every full realm. Native focus projects its actually presented Session;
+the initial restore address does not decide the current composer.
+
+Full Close guards its mounted editors and flushes pending New Session fields and
+local draft writes before destroying only that window. A failed write keeps the
+window open. Quit uses the existing app-wide handoff and retains all full and
+destination records for independent restoration. A full window whose saved
+credentials are unavailable opens the existing Connect path. Native restoration,
+platform chrome and loaded per-realm cost measurements remain release checks.
+
+The recipient restores the existing Session draft repository before reporting ready.
+Main forwards admitted Session presenter Actions once to that recipient; local
+composer typing stays local. Each realm publishes its committed mounted RPC address
+keys on the existing native app-window surface, without draft or editor contents.
+The single Home responder advertises those workflow-draft, mounted Work, Session UI
+and current-presentation command addresses. Placement forwards an admitted request
+once to the presenting realm's actual registry, including workflow, plugin and file
+editors; withdrawing a mount withdraws its address. Unmounted editors remain
+unavailable and are never recreated to answer an Action.
+The overlay's addressed draft adapter uses that same
+presenter and publishes only changed composer snapshots while demanded. A person's
+pinned-field edits use `applyDesktopSessionDraftTransaction`, then the existing
+`applyMountedComposerPresentationTransaction` document owner, without approval.
+Agent `composer.transaction.apply` requests retain the Action executor's required
+approval. There is no new approval mode or bypass flag.
+Return releases and flushes the recipient before the
+source resumes. Native Close returns placed source tabs; closing a no-source
+window creates no main tab. Ordinary Quit retains restore addresses and per-label
+geometry. Failed restore releases the partial native window without retiring its
+saved record or overwriting saved geometry; its error alert offers Retry through
+the same restore owner, re-reading the record with current Home credential contexts
+so a later logout cannot resurrect it. Placed tabs recover in their source layout.
+Relaunch enumerates Home/Account scopes through `TokenStorage`'s existing
+qualified credential reader, including Homes with different local Account ids;
+each new realm still resolves its own credentials at boot.
+Credential replacement retires the affected Home/Account pair. Explicit forget
+also retires that Home's Connect windows, including records without a current
+credential. Global forget enumerates every Home through the same `TokenStorage`
+owner. After commit, its existing native notice carries only the affected Home
+ids, URLs and mutation kinds to every app window. Each other realm replays that
+notice through its existing local credential-change event, immediately stopping
+the forgotten Home's multi-Home sockets and retiring its cached credentials and
+encryption keys. Native derives the source window label so the originating realm
+does not replay its own event. Main still refreshes and reveals. Account Directory
+sign-ins do not replace Home credentials.
+
+An Account switch or replacement started in a secondary first reveals and focuses
+main and opens the existing sign-in there, before acquiring credentials. Outgoing
+Account windows close after replacement succeeds; cancelled or failed sign-in
+keeps them open. Credentials never cross the window bridge.
+
+The real two-webview settings/relaunch probe passed. Loaded native arrival and
+idle measurements are a named release check under N4 Amendment A2.2. The N4 U1
+lane report distinguishes source checks from physical platform certification.
+
 The notch's native frame owner publishes `frame.screenOrigin` (logical screen
 top-left and `scaleFactor`) through the existing overlay state event. Overlay
 layers read it with `useDesktopActivityOverlayField('screenOrigin')`; subtract

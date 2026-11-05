@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import type { Socket } from 'socket.io-client';
@@ -14,7 +15,7 @@ import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/
 import { SystemTaskResultSchema, SystemTaskSpecSchema, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 
-const host = vi.hoisted(() => ({ platform: 'web', desktop: false }));
+const host = vi.hoisted(() => ({ platform: 'web', desktop: false, electron: false, windowLabel: 'main', responderWindowId: 'main' as string | null }));
 const nativeListeners = vi.hoisted(() => new Map<string, Set<(event: unknown) => void>>());
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -28,6 +29,9 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 }));
 vi.mock('react-native-unistyles', async () =>
     (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// The host renderer has no DOM; preserve app mounts behind the shared Radix boundary.
+vi.mock('@/utils/web/radixCjs', async () =>
+    (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 vi.mock('@expo/vector-icons', async () =>
     (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -37,18 +41,6 @@ vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('expo-file-system', async () =>
     (await import('@/dev/testkit/mocks/expoFileSystem')).createExpoFileSystemFileMock().module);
-vi.mock('@tauri-apps/api/event', () => ({
-    listen: async (event: string, listener: (event: unknown) => void) => {
-        const listeners = nativeListeners.get(event) ?? new Set();
-        nativeListeners.set(event, listeners);
-        listeners.add(listener);
-        return () => { listeners.delete(listener); };
-    },
-}));
-vi.mock('@tauri-apps/api/core', async importOriginal => ({
-    ...await importOriginal<typeof import('@tauri-apps/api/core')>(),
-    invoke: (command: string, args?: Record<string, unknown>) => invokeNative(command, args),
-}));
 vi.mock('expo-widgets', () => ({
     addUserInteractionListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
@@ -61,7 +53,7 @@ vi.mock('expo-blur', () => ({ BlurView: 'BlurView' }));
 
 type HomeHarness = ReturnType<typeof import('@/dev/testkit/harness/homeGovernanceHarness').createHomeGovernanceHarness>;
 type AccountConnection = Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>>;
-type RuntimeProps = Readonly<{ isAuthenticated: boolean; isDesktopShell: boolean }>;
+type RuntimeProps = Readonly<{ isAuthenticated: boolean; isDesktopShell: boolean; children?: React.ReactNode }>;
 type NativeDaemonStatus = import('@/components/settings/machines/localControl/useLocalDaemonControl').LocalDaemonStatusData;
 
 let homes: HomeHarness;
@@ -74,12 +66,53 @@ const sockets: Socket[] = [];
 const emissions: Array<Readonly<{ event: string; payload: unknown }>> = [];
 const nativeCalls: Array<Readonly<{ command: string; args?: Record<string, unknown> }>> = [];
 const nativeTasks = new Map<string, SystemTaskSpec>();
+const nativeEventHandles = new Map<number, Readonly<{ event: string; handler: (event: unknown) => void }>>();
 let nativeStatus: NativeDaemonStatus;
-const homeUrl = 'https://runtime.example.test';
+let homeUrl = 'https://runtime.example.test';
 const accountId = 'account-runtime';
+
+// Prepare the real graph once, after its external boundaries. Cold transforms
+// belong to suite collection, not each fixture's existing setup deadline.
+vi.stubGlobal('indexedDB', new IDBFactory());
+vi.stubGlobal('__TAURI_INTERNALS__', { get invoke() { return host.desktop ? invokeNative : undefined; } });
+vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
+const bootstrapHomes = await import('@/dev/testkit/harness/homeGovernanceHarness');
+bootstrapHomes.installHomeGovernanceBoundaries(bootstrapHomes.createHomeGovernanceHarness());
+await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
+await loadOwners();
 
 async function invokeNative(command: string, args?: Record<string, unknown>): Promise<unknown> {
     nativeCalls.push({ command, args });
+    if (command === 'plugin:event|listen') {
+        const id = Number(args?.handler);
+        const internals = (globalThis as unknown as { __TAURI_INTERNALS__: {
+            callbacks: Map<number, (event: unknown) => void>;
+        } }).__TAURI_INTERNALS__;
+        const handler = internals.callbacks.get(id);
+        if (!handler) throw new Error('Missing native callback');
+        const event = String(args?.event);
+        const listeners = nativeListeners.get(event) ?? new Set();
+        nativeListeners.set(event, listeners);
+        listeners.add(handler);
+        nativeEventHandles.set(id, { event, handler });
+        return id;
+    }
+    if (command === 'plugin:event|unlisten') {
+        const id = Number(args?.eventId);
+        const registration = nativeEventHandles.get(id);
+        if (registration) nativeListeners.get(registration.event)?.delete(registration.handler);
+        nativeEventHandles.delete(id);
+        return null;
+    }
+    if (command === 'desktop_app_window_surfaces') return [];
+    if (command === 'desktop_notification_list') return [];
+    if (command === 'desktop_host_get_availability') return {
+        activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+    };
+    // Electron's native command boundary has no multiwindow responder command.
+    if (command === 'desktop_app_window_responders' && host.electron) throw new Error('not_implemented: desktop_app_window_responders');
+    if (command === 'desktop_app_window_responders') return host.responderWindowId === null ? []
+        : [{ homeId: connection?.serverId ?? homeId, accountId, windowId: host.responderWindowId }];
     if (command === 'desktop_secure_storage_read' || command === 'desktop_secure_storage_write'
         || command === 'desktop_secure_storage_remove') return await secureStorage.invoke(command, args);
     if (command === 'start_system_task') {
@@ -104,16 +137,22 @@ async function invokeNative(command: string, args?: Record<string, unknown>): Pr
 beforeEach(async () => {
     host.platform = 'web';
     host.desktop = false;
+    host.electron = false;
+    host.windowLabel = 'main';
+    host.responderWindowId = 'main';
+    homeUrl = 'https://runtime.example.test';
     sockets.length = 0;
     emissions.length = 0;
     nativeCalls.length = 0;
     nativeTasks.clear();
     nativeListeners.clear();
+    nativeEventHandles.clear();
     nativeStatus = { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: null,
         daemonComparableKey: homeUrl, daemonAccountId: accountId, daemonMachineRegistered: true };
     secureStorage = (await import('@/dev/testkit/mocks/desktopSecureStorage')).createDesktopSecureStorageBoundary();
     vi.stubGlobal('indexedDB', new IDBFactory());
-    vi.stubGlobal('__TAURI_INTERNALS__', { get invoke() { return host.desktop ? invokeNative : undefined; } });
+    vi.stubGlobal('__TAURI_INTERNALS__', { metadata: { currentWindow: { get label() { return host.windowLabel; } } },
+        get invoke() { return host.desktop ? invokeNative : undefined; } });
     vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
     // Remote release-note assets are an independent external HTTP boundary.
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
@@ -142,7 +181,7 @@ afterEach(async () => {
 });
 
 async function loadOwners() {
-    const [runtime, auth, pane, tabs, currentUi, actionHost, attention, onboarding, release, desktop, ios, badge, notifications] = await Promise.all([
+    const [runtime, auth, pane, tabs, currentUi, actionHost, attention, onboarding, release, desktop, ios, badge, notifications, commands] = await Promise.all([
         import('./AuthenticatedAppRuntimeMounts'),
         import('@/auth/context/AuthContext'),
         import('@/components/appShell/providers/AppPaneModalProvider'),
@@ -156,11 +195,13 @@ async function loadOwners() {
         import('@/activity/adapters/ios/runtime/ActivitySurfacesRuntime'),
         import('@/activity/badges/ActivityBadgeRuntime'),
         import('@/activity/notifications/runtime/ActivityLocalNotificationRuntime'),
+        import('@/components/appShell/currentUiContext/CurrentUiContextCommands'),
     ]);
     return { AuthenticatedAppRuntimeMounts: runtime.AuthenticatedAppRuntimeMounts,
         InjectedAuthProvider: auth.InjectedAuthProvider, AppPaneModalProvider: pane.AppPaneModalProvider,
         MainAppTabStateProvider: tabs.MainAppTabStateProvider, CurrentUiContextProvider: currentUi.CurrentUiContextProvider,
         CurrentUiContextActionHost: actionHost.CurrentUiContextActionHost,
+        useCurrentUiContextLocalCommands: commands.useCurrentUiContextLocalCommands,
         SessionAttentionReminderRuntime: attention.SessionAttentionReminderRuntime,
         OnboardingShowcaseAutoShowMount: onboarding.OnboardingShowcaseAutoShowMount,
         ReleaseNotesAutoShowMount: release.ReleaseNotesAutoShowMount,
@@ -183,18 +224,37 @@ function RuntimeComposition(props: RuntimeProps): React.ReactElement {
                 <owners.CurrentUiContextProvider>
                     <owners.CurrentUiContextActionHost />
                     <owners.AuthenticatedAppRuntimeMounts {...props} />
+                    {props.children}
                 </owners.CurrentUiContextProvider>
             </owners.MainAppTabStateProvider>
         </owners.AppPaneModalProvider>
     </owners.InjectedAuthProvider>;
 }
 
-async function mount(props: RuntimeProps, machineIds: readonly string[] = []) {
+async function mount(props: RuntimeProps, machineIds: readonly string[] = [], serverIdentityId = 'srv_authenticated_runtime') {
+    if (host.desktop) {
+        // The sync singleton can load the real SDK outside Vitest's module graph.
+        // Model its actual native IPC/callback boundary so both import paths agree.
+        if (typeof window === 'undefined') vi.stubGlobal('window', {
+            location: new URL('https://runtime.example.test/'),
+            addEventListener() {}, removeEventListener() {},
+        });
+        Object.assign(window, { crypto: globalThis.crypto });
+        const { mockIPC } = await import('@tauri-apps/api/mocks');
+        // These renderer commands use named IPC arguments, never binary payloads.
+        mockIPC((command, args) => invokeNative(command, args as Record<string, unknown> | undefined));
+        const nativeWindow = window as unknown as { __TAURI_INTERNALS__: {
+            metadata?: { currentWindow: { readonly label: string } };
+        } };
+        nativeWindow.__TAURI_INTERNALS__.metadata = { currentWindow: { get label() { return host.windowLabel; } } };
+        vi.stubGlobal('__TAURI_INTERNALS__', nativeWindow.__TAURI_INTERNALS__);
+    }
     const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-    homes.answer(homeId, '/v1/machines', { body: machineIds.map(id => createPlainMachineRowFixture({ id, accountId })) });
+    const machines = machineIds.map(id => createPlainMachineRowFixture({ id, accountId }));
+    homes.answer(homeId, '/v1/machines', { body: machines });
     const { configureConnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     connection = await restoreServerAccountForTest({ serverUrl: homeUrl,
-        serverIdentityId: 'srv_authenticated_runtime', accountId, request: homes.request,
+        serverIdentityId, accountId, request: homes.request,
         configureSocket: socket => {
             sockets.push(socket);
             configureConnectedServerSocketBoundary(socket);
@@ -235,7 +295,10 @@ async function waitForDaemonStatus() {
     const { readLocalDaemonSharedState } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
     const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
     const { flushHookEffects } = await import('@/dev/testkit');
-    expect([...nativeTasks.values()].map(spec => spec.kind)).toContain('daemon.service.status.v1');
+    await waitForHomeGovernance(async () => {
+        await flushHookEffects();
+        expect([...nativeTasks.values()].map(spec => spec.kind)).toContain('daemon.service.status.v1');
+    });
     for (const [taskId, spec] of nativeTasks) {
         if (spec.kind === 'daemon.service.status.v1') {
             expect(getSystemTasksRunner().getSnapshot(taskId)?.result?.ok).not.toBe(false);
@@ -250,15 +313,39 @@ async function waitForDaemonStatus() {
 }
 
 describe('AuthenticatedAppRuntimeMounts', () => {
-    it.each([
-        { isDesktopShell: false, label: 'mobile' },
-        { isDesktopShell: true, label: 'desktop' },
-    ])('mounts the authenticated attention-reminder runtime for $label consumers', async ({ isDesktopShell }) => {
-        host.desktop = isDesktopShell;
-        const screen = await mount({ isAuthenticated: false, isDesktopShell });
-        expect(screen.findAllByType(owners.SessionAttentionReminderRuntime)).toHaveLength(0);
-        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={isDesktopShell} />);
-        expect(screen.findAllByType(owners.SessionAttentionReminderRuntime)).toHaveLength(1);
+    it('reconciles the full secondary route locally without acquiring primary native ingress', async () => {
+        host.desktop = true;
+        const location = new URL('https://runtime.example.test/desktop/app-window');
+        vi.stubGlobal('window', { location, addEventListener() {}, removeEventListener() {} });
+        (await import('@/desktop/window/isDesktopAuxiliaryWindowContext')).resolveDesktopWindowContext();
+        location.pathname = '/session/secondary/info';
+        const { RootLayoutNavigationEffects } = await import('@/components/navigation/root/RootLayoutNavigationEffects');
+        const { router } = await import('expo-router');
+        const screen = await mount({ isAuthenticated: true, isDesktopShell: true,
+            children: <RootLayoutNavigationEffects /> });
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith('/session/secondary/info'));
+        expect(nativeCalls.some(call => call.command === 'desktop_set_window_mode')).toBe(false);
+        expect(nativeListeners.has('deep-link://new-url')).toBe(false);
+        await screen.unmount();
+    });
+
+    it('adds no app-wide native producers when a secondary full realm mounts and disposes its local handlers', async () => {
+        host.desktop = true;
+        host.windowLabel = 'destination_secondary';
+        vi.stubGlobal('window', { location: { href: 'https://runtime.example.test/desktop/app-window' },
+            addEventListener() {}, removeEventListener() {} });
+        const screen = await mount({ isAuthenticated: true, isDesktopShell: true }, ['machine-secondary']);
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => {
+            storage.setState(state => ({ localSettings: { ...state.localSettings, desktopOverlayEnabled: true } }));
+        });
+        const { flushHookEffects } = await import('@/dev/testkit');
+        await flushHookEffects();
+        expect(nativeCalls.filter(call => call.command === 'desktop_activity_overlay_sync')).toHaveLength(0);
+        expect([...nativeTasks.values()]).toHaveLength(0);
+        expect(emittedMethods(SOCKET_RPC_EVENTS.REGISTER)).toEqual([]);
+        await screen.unmount();
+        expect([...nativeListeners.values()].every(listeners => listeners.size === 0)).toBe(true);
     });
 
     it('mounts first-open onboarding before auth while keeping release notes authenticated-only', async () => {
@@ -281,6 +368,13 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         host.desktop = true;
         const screen = await mount({ isAuthenticated: true, isDesktopShell: false });
         expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(0);
+        const { getDesktopHostAvailability } = await import('@/utils/platform/desktopHost');
+        expect((await getDesktopHostAvailability()).activity).toEqual({ kind: 'available' });
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => {
+            storage.setState(state => ({ localSettings: { ...state.localSettings, desktopOverlayEnabled: true } }));
+        });
+        expect(storage.getState().localSettings.desktopOverlayEnabled).toBe(true);
         await screen.update(<RuntimeComposition isAuthenticated isDesktopShell />);
         expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(1);
         const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
@@ -331,13 +425,33 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         expect(screen.findAllByType(owners.ActivitySurfacesRuntime)).toHaveLength(0);
     });
 
-    it('serves current UI context over the registered reverse Action RPC and retires it when authentication ends', async () => {
+    it.each(['browser', 'secondary full', 'electron'] as const)('serves current UI context through the %s Home responder and retires it when authentication ends', async realm => {
+        if (realm === 'electron') {
+            host.desktop = true;
+            host.electron = true;
+            vi.stubGlobal('navigator', { userAgent: 'Happier Electron/43.4.0', locks: navigator.locks });
+        }
+        if (realm === 'secondary full') {
+            host.desktop = true;
+            host.windowLabel = 'destination_responder';
+            host.responderWindowId = 'responder';
+            vi.stubGlobal('window', { location: { href: 'https://runtime.example.test/desktop/app-window' },
+                addEventListener() {}, removeEventListener() {} });
+        }
         const machineId = 'machine-current-ui';
         const method = machineId + ':' + currentUiContextReadClientRpcMethod();
-        const screen = await mount({ isAuthenticated: false, isDesktopShell: false }, [machineId]);
+        const isDesktopShell = realm === 'electron';
+        const screen = await mount({ isAuthenticated: false, isDesktopShell }, [machineId]);
         expect(emittedMethods(SOCKET_RPC_EVENTS.REGISTER)).not.toContain(method);
-        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={false} />);
+        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={isDesktopShell} />);
         const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        if (realm === 'electron') {
+            const { UpdateFactsBackgroundRuntime } = await import('@/updates/UpdateFactsBackgroundRuntime');
+            const { DesktopBrowserRecordingReverseCaptureRuntime } = await import('@/sync/domains/browser/recording/DesktopBrowserRecordingReverseCaptureRuntime');
+            expect(screen.findAllByType(UpdateFactsBackgroundRuntime)).toHaveLength(1);
+            expect(screen.findAllByType(DesktopBrowserRecordingReverseCaptureRuntime)).toHaveLength(1);
+            expect(nativeCalls.some(call => call.command === 'desktop_app_window_responders')).toBe(false);
+        }
         await waitForHomeGovernance(() => expect(emittedMethods(SOCKET_RPC_EVENTS.REGISTER)).toContain(method));
         const socket = sockets.find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
         const receive = socket?.listeners(SOCKET_RPC_EVENTS.REQUEST)[0];
@@ -355,7 +469,20 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         if (!result.execution.ok) throw new Error('The real reverse Action did not execute');
         const snapshot = CurrentUiContextSnapshotV1Schema.parse(result.execution.result);
         expect(snapshot.navigation).toEqual({ area: 'app', screen: 'tab.sessions', presentation: 'screen' });
-        await screen.update(<RuntimeComposition isAuthenticated={false} isDesktopShell={false} />);
+        if (realm === 'secondary full') {
+            await act(async () => {
+                for (const listener of nativeListeners.get('desktopAppWindow://responders') ?? []) listener({ payload: [] });
+            });
+            expect(await invoke()).toMatchObject({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+            await act(async () => {
+                for (const listener of nativeListeners.get('desktopAppWindow://responders') ?? []) {
+                    listener({ payload: [{ homeId: connection!.serverId, accountId, windowId: 'responder' }] });
+                }
+            });
+            await waitForHomeGovernance(() => expect(emittedMethods(SOCKET_RPC_EVENTS.REGISTER).filter(candidate => candidate === method)).toHaveLength(2));
+            expect(UiActionDispatchResultV1Schema.parse(await invoke()).execution.ok).toBe(true);
+        }
+        await screen.update(<RuntimeComposition isAuthenticated={false} isDesktopShell={isDesktopShell} />);
         expect(socket.connected).toBe(true);
         expect(emittedMethods(SOCKET_RPC_EVENTS.UNREGISTER)).toContain(method);
         expect(await invoke()).toMatchObject({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });

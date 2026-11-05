@@ -13,8 +13,9 @@ import { resolvePointerMenuAnchor } from '@/components/ui/popover/resolvePointer
 import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import type { WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
-import type { WorkspaceGroup } from '../workspaceState';
+import { useWorkspacePresentationVisibility, type WorkspaceNavigationContextValue } from '../WorkspaceNavigationContext';
+import { selectWorkspaceVisibleGroup, type WorkspaceGroup } from '../workspaceState';
+import { useWorkspaceOpenActions } from '../useWorkspaceOpenActions';
 import { selectWorkspaceTabsToClose } from '../workspaceActions';
 import { executeWorkspaceUiAction } from '../workspaceActionRuntime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -55,7 +56,10 @@ export function WorkspaceGroupTabs(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const { workspace, group } = props;
+    const { workspace } = props;
+    const presentation = useWorkspacePresentationVisibility(workspace.desktopPresentation);
+    const group = React.useMemo(() => selectWorkspaceVisibleGroup(workspace.state, props.group, presentation),
+        [presentation, props.group, workspace.state]);
     const scope = useActiveServerAccountScope();
     const workspaceRefs = useWorkspaceRefs();
     const runtime = useEntityDragDropRuntime();
@@ -145,13 +149,16 @@ export function WorkspaceGroupTabs(props: Readonly<{
         }
     }, [execute, group.id]);
 
-    const menuTab = menu ? workspace.state.tabs[menu.tabId] : undefined;
+    const menuTab = menu && group.tabIds.includes(menu.tabId) ? workspace.state.tabs[menu.tabId] : undefined;
+    const openActions = useWorkspaceOpenActions(menuTab ? hrefForDestinationRef(props.catalog, menuTab.target) : null, undefined, { sourceTabId: menuTab?.id });
+
     const menuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         if (!menuTab) return [];
         const glyph = (name: IconName) => <Icon name={name} size={16} color={theme.colors.text.secondary} />;
         const multiplePanes = Object.keys(workspace.state.groups).length > 1;
         const maximized = workspace.state.maximizedGroupId === group.id;
         return [
+            ...openActions.presentationItems,
             menuTab.pinned
                 ? { id: 'unpin', testID: 'workspace-tab-menu-unpin', title: t('workspaceBar.unpinTab'), icon: glyph('push-pin-slash') }
                 : { id: 'pin', testID: 'workspace-tab-menu-pin', title: t('workspaceBar.pinTab'), icon: glyph('push-pin') },
@@ -166,13 +173,14 @@ export function WorkspaceGroupTabs(props: Readonly<{
             ...(hasRecentlyClosed ? [{ id: 'reopen', testID: 'workspace-tab-menu-reopen', title: t('workspaceTabs.reopenTab'), shortcut: shortcutLabels['workspace.tab.reopen'], icon: glyph('clock-counter-clockwise') }] : []),
             ...closeItems(menuTab.id, 'workspace-tab-menu'),
         ];
-    }, [closeItems, group.id, hasRecentlyClosed, menuTab, shortcutLabels, theme.colors.text.secondary, workspace.state.groups,
+    }, [closeItems, group.id, hasRecentlyClosed, menuTab, openActions.items, shortcutLabels, theme.colors.text.secondary, workspace.state.groups,
         workspace.state.maximizedGroupId, workspace.state.tabs]);
 
     const selectMenu = React.useCallback((itemId: string) => {
         const tabId = menu?.tabId;
         setMenu(null);
         if (!tabId) return;
+        if (openActions.select(itemId)) return;
         if (close(itemId, tabId)) return;
         switch (itemId) {
             case 'pin': execute({ actionId: 'workspace.tabs.pin', input: { tabId, pinned: true } }); break;
@@ -185,7 +193,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
             case 'close': execute({ actionId: 'workspace.tabs.close', input: { tabId } }); break;
             case 'reopen': execute({ actionId: 'workspace.tabs.reopen', input: {} }); break;
         }
-    }, [close, execute, group.id, menu?.tabId, workspace.state.maximizedGroupId]);
+    }, [close, execute, group.id, menu?.tabId, openActions.select, workspace.state.maximizedGroupId]);
 
     // The menu lists the tabs in the strip's order: pinned marks lead, and each says so.
     const overflowItems = React.useMemo((): readonly DropdownMenuItem[] => overflowOpen ? [...[...stripTabs].sort((a, b) => Number(b.isPinned) - Number(a.isPinned)).map((tab) => ({

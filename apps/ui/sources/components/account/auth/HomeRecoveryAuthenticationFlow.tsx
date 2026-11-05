@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AccountCredentialJourney } from './AccountCredentialJourney';
 
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -13,12 +14,20 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
  * workflow. The saved Home's own entry catalog is the authority for every
  * advertised method, whichever Home is currently focused.
  */
-export function HomeRecoveryAuthenticationFlow(props: Readonly<{
+type HomeRecoveryAuthenticationFlowProps = Readonly<{
     profileRef: string;
     returnTo: string;
     onAuthenticated: () => void | Promise<void>;
     onBack: () => void;
-}>): React.ReactElement {
+}>;
+
+export function HomeRecoveryAuthenticationFlow(props: HomeRecoveryAuthenticationFlowProps): React.ReactElement {
+    return <AccountCredentialJourney request={{ kind: 'home', profileRef: props.profileRef, returnTo: props.returnTo }}>
+        <HomeRecoveryAuthenticationFlowBody {...props} />
+    </AccountCredentialJourney>;
+}
+
+function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlowProps): React.ReactElement {
     const profile = getServerProfileById(props.profileRef);
     const catalog = useExactSavedHomeAuthenticationCatalog(profile);
 

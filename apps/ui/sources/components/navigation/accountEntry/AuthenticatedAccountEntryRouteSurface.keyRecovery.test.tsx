@@ -4,33 +4,46 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import type { EmailPasswordLoginTarget } from '@/auth/password/loginEmailPassword';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { Platform } from 'react-native';
+import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
+import { installTokenStorageTestIsolation } from '@/auth/storage/tokenStorage.testHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { encodeBase64 } from '@/encryption/base64';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { AuthProvider } from '@/auth/context/AuthContext';
+import { AuthProvider, setCurrentAuth } from '@/auth/context/AuthContext';
 import { adoptHomeProfile, getActiveServerId, setActiveServerId, resolveServerProfileScopeId, setAccountServiceEndpoint } from '@/sync/domains/server/serverProfiles';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
+import { stopAllEndpointSupervisorsForTests } from '@/sync/runtime/connectivity/endpointSupervisorPool';
 import { useOnboardingWizardController } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import { useAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { useAccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
 import { WizardModalShell } from '@/components/onboarding/ui/WizardModalShell';
 import { AuthenticatedAccountEntryRouteSurface } from './AuthenticatedAccountEntryRouteSurface';
+import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
+import TeamSignInRoute from '@/app/(app)/teams/[teamId]/sign-in';
+import { SecretKeyLoginForm, type SecretKeyLoginTarget } from '@/components/account/restore/SecretKeyLoginForm';
+import { EmailPasswordAuthPanel } from '@/components/account/auth/emailPassword/EmailPasswordAuthPanel';
+import { AccountServiceAuthenticationFlow } from '@/components/account/auth/AccountServiceAuthenticationFlow';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-installTokenStorageWebPlatformMocks();
+// The connection singleton spans this file; reset fixture storage without
+// moving its owning Home generation lifetime backwards between cases.
+installTokenStorageTestIsolation('n4_a2_account_journey', { preserveGenerations: true });
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-        return boundary.request(url.origin, url.pathname, init);
-    },
-}));
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+const navigation = vi.hoisted(() => ({ push: vi.fn(), params: {} as Record<string, string> }));
+vi.mock('expo-router', async () => {
+    const mock = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
+    return { ...mock.module, useLocalSearchParams: () => navigation.params, router: { ...mock.module.router, push: navigation.push } };
+});
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -47,6 +60,9 @@ let unsubscribeFocus: (() => void) | undefined;
 afterEach(async () => {
     await screen?.unmount();
     await disconnectActiveServerConnection();
+    await stopAllEndpointSupervisorsForTests();
+    setCurrentAuth(null);
+    resetRuntimeFetch();
     unsubscribeFocus?.();
     browser?.restore();
     screen = undefined;
@@ -57,8 +73,14 @@ afterEach(async () => {
 });
 
 async function installStorageGlobals() {
-    boundary.request.mockReset();
+    boundary.request.mockReset().mockImplementation(async () => new Response('{}', { status: 404 }));
+    navigation.push.mockReset();
+    navigation.params = {};
     browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev' });
+    setRuntimeFetch((input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        return boundary.request(url.origin, url.pathname, init);
+    });
 }
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
@@ -124,6 +146,156 @@ const submitServiceKey = async () => {
     await act(async () => { screen!.findByTestId('restore-manual-secret-input')!.props.onChangeText('A'.repeat(43)); });
     await screen!.pressByTestIdAsync('restore-manual-submit');
 };
+
+it.each([...( ['directory', 'home'] as const).flatMap(journey => (['success', 'cancel', 'failure'] as const).map(outcome => ({ journey, outcome }))), ...(['team', 'direct_key', 'password', 'oauth'] as const).map(journey => ({ journey, outcome: 'cancel' as const }))])('moves a secondary Account switch to main with its source Home before acquisition ($journey, $outcome)', async ({ journey, outcome }) => {
+    await installStorageGlobals();
+    const fixture = createDirectoryHttpFixture();
+    const { homeA, homeB } = await adoptHomes(fixture);
+    const directoryJourney = journey === 'directory' || journey === 'oauth';
+    const previousToken = `hdr.${Buffer.from(JSON.stringify({ sub: 'outgoing-account' })).toString('base64')}.sig`;
+    const incomingToken = directoryJourney
+        ? `hdr.${Buffer.from(JSON.stringify({ sub: fixture.state.me.accountId })).toString('base64')}.sig`
+        : fixture.token;
+    const values = new Map<string, string>();
+    const callbacks = new Map<number, (event: { payload: unknown }) => void>();
+    const listeners = new Map<string, Map<number, (event: { payload: unknown }) => void>>();
+    let nextId = 0;
+    const order: string[] = [];
+    let persistenceAtTeardown: unknown;
+    const primaryWindow = browser!.window;
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+        if (command === 'desktop_secure_storage_read') return values.get(String(args?.key)) ?? null;
+        if (command === 'desktop_secure_storage_write') { values.set(String(args?.key), String(args?.value)); return; }
+        if (command === 'desktop_secure_storage_remove') { values.delete(String(args?.key)); return; }
+        if (command === 'plugin:event|listen') {
+            const event = String(args?.event);
+            const entries = listeners.get(event) ?? new Map();
+            const id = ++nextId;
+            entries.set(id, callbacks.get(Number(args?.handler))!);
+            listeners.set(event, entries);
+            return id;
+        }
+        if (command === 'plugin:event|unlisten') { listeners.get(String(args?.event))?.delete(Number(args?.eventId)); return; }
+        if (command === 'desktop_show_main_window') { order.push('main-focused'); return; }
+        if (command === 'desktop_app_windows_teardown') {
+            expect(args).toEqual({ scopes: [{ serverId: resolveServerProfileScopeId(homeB), accountId: 'outgoing-account' }] });
+            // Observe the native storage boundary without re-entering the
+            // Home writer's mutation authority through a TokenStorage getter.
+            const persisted = [...values.values()].some(raw => raw.includes(incomingToken));
+            persistenceAtTeardown = {
+                platform: Platform.OS, embed: isEmbedWindowContext(), storageKeys: Object.keys(primaryWindow.localStorage),
+                nativeKeys: [...values.keys()], nativeCommands: invoke.mock.calls.map(([name]) => name),
+            };
+            expect(persisted, JSON.stringify(persistenceAtTeardown)).toBe(true);
+            order.push('outgoing-closed');
+            return;
+        }
+        if (command === 'desktop_window_emit_action') {
+            expect(JSON.stringify(args?.payload)).not.toContain(previousToken);
+            expect(JSON.stringify(args?.payload)).not.toContain(incomingToken);
+            vi.stubGlobal('window', primaryWindow);
+            internals.metadata.currentWindow.label = 'main';
+            await setActiveServerId(homeA.id);
+            for (const callback of listeners.get('desktopWindow://action')?.values() ?? []) callback({ payload: args?.payload });
+        }
+        if (command === 'desktop_window_emit_action_result') {
+            for (const callback of listeners.get('desktopWindow://action-result')?.values() ?? []) callback({ payload: args?.payload });
+        }
+    });
+    const internals = { invoke, metadata: { currentWindow: { label: 'main' } },
+        transformCallback: (callback: (event: { payload: unknown }) => void) => { const id = ++nextId; callbacks.set(id, callback); return id; } };
+    vi.stubGlobal('__TAURI_INTERNALS__', internals);
+    Object.assign(primaryWindow, { __TAURI_INTERNALS__: internals, __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
+    if (directoryJourney) expect(await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: previousToken })).toBe(true);
+    else expect(await TokenStorage.setCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id }, { token: previousToken })).toBe(true);
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        const currentness = createPlainAccountEncryptionCurrentnessHttpResponse(path);
+        if (currentness) return currentness;
+        if (path === '/v1/auth/entry') return new Response('{}', { status: 404 });
+        if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: new Headers(init?.headers).get('authorization') === `Bearer ${previousToken}`
+            ? 'outgoing-account' : directoryJourney ? fixture.state.me.accountId : 'account-home' }));
+        if (path === (directoryJourney ? '/v1/auth/account-directory' : '/v1/auth')) {
+            expect(order).toEqual(['main-focused']);
+            expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeId(homeB));
+            order.push('acquired-in-main');
+            return outcome === 'failure' ? new Response('{}', { status: 503 }) : json({ token: incomingToken });
+        }
+        if (journey === 'home' && path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+        return answerCommonEndpointRequest(fixture, homeA, homeB.serverUrl, endpoint, path) ?? fixture.request(endpoint, path, init);
+    });
+    const primary = await renderScreen(<AuthProvider initialCredentials={null}><></></AuthProvider>);
+    let secondary: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+        await vi.waitFor(() => expect(listeners.get('desktopWindow://action')?.size).toBe(1));
+        await setActiveServerId(homeB.id);
+        internals.metadata.currentWindow.label = 'destination_auth_journey';
+        vi.stubGlobal('window', { location: { href: 'tauri://localhost/desktop/window?id=auth_journey' }, __TAURI_INTERNALS__: internals,
+            __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} } });
+        navigation.params = { teamId: 'team-auth-entry', serverId: homeB.id };
+        const target = { endpointUrl: homeB.serverUrl, canonicalServerUrl: homeB.serverUrl, addressAnchorUrl: homeB.serverUrl, serverId: homeB.id,
+            serverIdentityId: homeB.serverIdentityId!, requireKeyChallengeV2: true } satisfies EmailPasswordLoginTarget & SecretKeyLoginTarget;
+        secondary = await renderScreen(journey === 'directory'
+            ? <AuthenticatedAccountEntryRouteSurface request={{ service: fixture.service, intent: { kind: 'refresh' }, returnTo: '/settings/account' }} routeParams={{}} onExit={() => {}} />
+            : <AuthProvider initialCredentials={null}>{journey === 'team' ? <TeamSignInRoute />
+                : journey === 'direct_key' ? <SecretKeyLoginForm target={target} returnTo="/settings/account" onAuthenticated={() => {}} />
+                : journey === 'password' ? <EmailPasswordAuthPanel target={target} recoveryTarget={homeB.id} action="login" mode="either" returnTo="/settings/account" onAuthenticated={() => {}} />
+                : journey === 'oauth' ? <AccountServiceAuthenticationFlow service={{ authority: fixture.service, displayName: 'Directory', authenticationActions: [{
+                    method: { id: 'github', enabledActions: [{ id: 'login', mode: 'keyless' }] }, action: { id: 'login', mode: 'keyless' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyless' },
+                }] }} intent={{ kind: 'refresh' }} returnTo="/setup/wizard" accountEntryReturnTo="/settings/account" onResult={() => {}} onPostAuthContinuation={() => {}} onExternalAuthStarted={() => {}} onBack={() => {}} />
+                : <HomeRecoveryAuthenticationFlow profileRef={homeB.id} returnTo="/settings/account" onAuthenticated={() => {}} onBack={() => {}} />}</AuthProvider>);
+        if (journey === 'oauth') await secondary.pressByTestIdAsync('account-service-auth-github-login-keyless');
+        await vi.waitFor(() => expect(navigation.push, secondary?.getTextContent()).toHaveBeenCalledOnce());
+        expect(secondary.findByTestId('restore-manual-secret-input')).toBeNull();
+        expect(boundary.request.mock.calls.filter(([, path]) => path.includes('/auth/account-directory'))).toEqual([]);
+        expect(order).toEqual(['main-focused']);
+        expect(directoryJourney
+            ? await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })
+            : await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id })).toEqual({ token: previousToken });
+        if (journey === 'team') {
+            expect(navigation.push.mock.calls[0]![0]).toBe(`/teams/team-auth-entry/sign-in?serverId=${encodeURIComponent(homeB.id)}`);
+            expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeId(homeB));
+            return;
+        }
+        const href = navigation.push.mock.calls[0]![0] as { params: Record<string, string> };
+        expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeId(homeB));
+        if (directoryJourney) {
+            const request = parseAuthenticatedAccountEntryRoute(href.params);
+            expect(request).not.toBeNull();
+            screen = await renderScreen(<AuthProvider initialCredentials={null}><AuthenticatedAccountEntryRouteSurface request={request!} routeParams={href.params} onExit={() => {}} /></AuthProvider>);
+        } else {
+            expect(href.params).toMatchObject({ recoveryProfile: homeB.id, recoveryReturnTo: '/settings/account' });
+            screen = await renderScreen(<AuthProvider initialCredentials={null}><HomeRecoveryAuthenticationFlow profileRef={href.params.recoveryProfile!} returnTo={href.params.recoveryReturnTo!} onAuthenticated={() => {}} onBack={() => {}} /></AuthProvider>);
+        }
+        const keyAction = directoryJourney ? 'account-service-auth-key_challenge-login-keyed' : 'home-auth-key_challenge-login-keyed';
+        await vi.waitFor(() => expect(screen!.findByTestId(keyAction)).not.toBeNull());
+        if (outcome === 'cancel') {
+            if (directoryJourney) await screen.pressByTestIdAsync('authenticated-account-entry-wizard-back');
+            else await screen.pressByTestIdAsync('home-auth-back');
+            expect(order).toEqual(['main-focused']);
+        } else {
+            await screen.pressByTestIdAsync(keyAction);
+            await submitServiceKey();
+            if (outcome === 'success') await vi.waitFor(() => expect(order, JSON.stringify({ surface: screen?.getTextContent(), persistenceAtTeardown })).toEqual(
+                directoryJourney ? ['main-focused', 'acquired-in-main'] : ['main-focused', 'acquired-in-main', 'outgoing-closed']));
+            else expect(order).toEqual(['main-focused', 'acquired-in-main']);
+        }
+        if (outcome === 'success') await vi.waitFor(async () => expect(directoryJourney
+            ? await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })
+            : await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id })).toMatchObject({ token: incomingToken }));
+        if (outcome !== 'success') expect(directoryJourney
+            ? await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })
+            : await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id })).toEqual({ token: previousToken });
+    } finally {
+        vi.stubGlobal('window', primaryWindow);
+        await secondary?.unmount();
+        await primary.unmount();
+        await screen?.unmount();
+        screen = undefined;
+        const nativeWindow = primaryWindow as unknown as Record<string, unknown>;
+        delete nativeWindow.__TAURI_INTERNALS__;
+        delete nativeWindow.__TAURI_EVENT_PLUGIN_INTERNALS__;
+    }
+});
 
 it('exits the account-entry route when a key sign-in completion is acknowledged', async () => {
     // Settings › Account › Sign in with a key (intent `refresh`) ends on the

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AccountCredentialJourney } from './AccountCredentialJourney';
 import { useRouter } from 'expo-router';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol';
@@ -28,7 +29,7 @@ import {
 
 const homeActionTestId = ({ method, action }: HomeAuthenticationAction): string => `home-auth-${method.id}-${action.id}-${action.mode}`;
 
-export function HomeAuthenticationFlow(props: Readonly<{
+type HomeAuthenticationFlowProps = Readonly<{
     target: HomeTargetInput;
     actions: readonly HomeAuthenticationAction[];
     transport?: AccountDirectoryAuthTransport;
@@ -62,7 +63,16 @@ export function HomeAuthenticationFlow(props: Readonly<{
     }>) => void | Promise<void>;
     onExternalAuthStarted?: () => void | Promise<void>;
     onBack: () => void;
-}>): React.ReactElement {
+}>;
+
+export function HomeAuthenticationFlow(props: HomeAuthenticationFlowProps): React.ReactElement {
+    const target = resolveHomeAuthenticationTarget(props.target);
+    return <AccountCredentialJourney request={target && !props.accountContinuation && !props.nativeAdmission ? {
+        kind: 'home', profileRef: target.serverId, returnTo: props.returnTo,
+    } : null}><HomeAuthenticationFlowBody {...props} /></AccountCredentialJourney>;
+}
+
+function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.ReactElement {
     const auth = useAuth();
     const router = useRouter();
     const toRequest = ({ method, action, execution }: HomeAuthenticationAction): WelcomeAuthenticationMethod => ({
@@ -154,7 +164,7 @@ export function HomeAuthenticationFlow(props: Readonly<{
 
     if (keyRequest && resolvedTarget) {
         return <WelcomeActionList admission={admission}>
-            <SecretKeyLoginForm embedded target={{
+            <SecretKeyLoginForm embedded returnTo={props.returnTo} target={{
                 ...resolvedTarget,
                 ...(props.transport?.runtimeOrigin ? { runtimeOrigin: props.transport.runtimeOrigin } : {}),
                 ...(props.transport?.homeCarrier ? { homeCarrier: props.transport.homeCarrier } : {}),
@@ -178,6 +188,7 @@ export function HomeAuthenticationFlow(props: Readonly<{
         const execution = passwordRequest.execution;
         return <WelcomeActionList admission={admission}>
             <EmailPasswordAuthPanel
+                returnTo={props.returnTo}
                 target={{
                     ...resolvedTarget,
                     ...(props.transport?.runtimeOrigin ? { runtimeOrigin: props.transport.runtimeOrigin } : {}),

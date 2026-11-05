@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AccountCredentialJourney } from '@/components/account/auth/AccountCredentialJourney';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -29,6 +30,7 @@ export type SecretKeyLoginTarget = Readonly<Pick<AuthGetTokenAtEndpointParams,
 
 export type SecretKeyLoginFormProps = Readonly<{
     embedded?: boolean;
+    returnTo?: string;
     onSuccess?: () => void;
     submitTitle?: string;
 } & (
@@ -44,6 +46,12 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 export const SecretKeyLoginForm = React.memo(function SecretKeyLoginForm(props: SecretKeyLoginFormProps) {
+    return <AccountCredentialJourney request={props.target?.expectedAccountId ? null : {
+        kind: 'home', profileRef: props.target?.serverId ?? getActiveServerSnapshot().serverId, returnTo: props.returnTo ?? '/',
+    }}><SecretKeyLoginFormBody {...props} /></AccountCredentialJourney>;
+});
+
+const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props: SecretKeyLoginFormProps) {
     const styles = stylesheet;
     const auth = useAuth();
     const router = useRouter();

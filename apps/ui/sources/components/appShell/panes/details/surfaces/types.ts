@@ -71,12 +71,13 @@ export type DetailsSurfaceHostCallbacksV1 = Readonly<{
     /**
      * The canonical Details workspace overlay owner. A plugin destination is
      * qualified before this callback is reached; input/currentness stay in the
-     * mount-local navigation handoff rather than the workspace state.
+     * mount-local navigation handoff rather than the workspace state. Returns
+     * true only when the owner accepted this exact overlay selection.
      */
     openOverlay?: (input: Readonly<{
         destination: PluginUiDestinationReferenceV1;
         instanceKey?: PluginUiInstanceKeyV1;
-    }>) => void;
+    }>) => boolean;
     closeTab?: (tabKey: string) => void;
     pinTab?: (tabKey: string) => void;
     unpinTab?: (tabKey: string) => void;

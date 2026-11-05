@@ -11,6 +11,7 @@ import { t } from '@/text';
 import type { ActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import type { WorkspaceFileEditorState } from './useWorkspaceFileEditorState';
 import type { WorkspaceFileEditorHeaderModel } from './workspaceFileEditorHeaderModel';
+import { useDetailsTabNavigationKey } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 
 /** Mounted-owner, keyboard and departure adapters all call the same file hook. */
 export function useWorkspaceFileEditorCommands(input: Readonly<{
@@ -22,6 +23,7 @@ export function useWorkspaceFileEditorCommands(input: Readonly<{
     focused: boolean;
     onStart(at?: WorkspaceFileEditStart): void;
 }>): WorkspaceFileEditorHeaderModel {
+    const navigationKey = useDetailsTabNavigationKey(input.tabKey);
     // A pending Action or departure retains its admitted Home/Account binding.
     const latest = React.useMemo(() => ({ current: input }), [input.serverId, input.accountId, input.tabKey]);
     latest.current = input;
@@ -73,6 +75,7 @@ export function useWorkspaceFileEditorCommands(input: Readonly<{
     React.useEffect(notifyFileEditorActionOwnersChanged, [input.editor.editorDirty, input.editor.editorOriginalHash]);
     const guard = React.useMemo<ActiveUnsavedChangesGuard>(() => ({
         tag: 'workspace-file-editor', isDirtyRef: dirty,
+        preparePresentationTransfer: () => latest.current.editor.prepareEditorTransition(),
         prepareGuard: async () => {
             const editor = latest.current.editor;
             await editor.editorHandleRef.current?.flushPendingChange();
@@ -88,7 +91,7 @@ export function useWorkspaceFileEditorCommands(input: Readonly<{
         onDiscard: () => latest.current.editor.cancelEditingFile(),
         continueOnSave: false,
     }), [dirty, latest]);
-    useActiveUnsavedChangesGuard({ navigation: null, guard, tabId: input.tabKey, focused: input.focused, enabled: input.editor.isEditingFile });
+    useActiveUnsavedChangesGuard({ navigation: null, guard, tabId: navigationKey, focused: input.focused, enabled: input.editor.isEditingFile });
     return React.useMemo(() => ({ status: input.editor.editorStatus, saved: input.editor.savedAtMs !== null, savedAtMs: input.editor.savedAtMs,
         refusal: input.editor.refusal, conflict: input.editor.conflict, canSave: input.editor.editorDirty && !input.editor.isSavingEdits && !input.editor.conflict,
         shortcutLabel, draftPersistenceFailed: input.editor.draftPersistenceFailed, lineEndingNormalization: input.editor.lineEndingNormalization, onSave: save,

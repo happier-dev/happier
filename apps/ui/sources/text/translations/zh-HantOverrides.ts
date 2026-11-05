@@ -3083,6 +3083,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           minimizeWindow: "最小化視窗",
           maximizeWindow: "最大化視窗",
           restoreWindow: "還原視窗",
+          newWindow: '新增視窗',
           closeWindow: "關閉視窗",
           open: '開啟',
           done: '完成',

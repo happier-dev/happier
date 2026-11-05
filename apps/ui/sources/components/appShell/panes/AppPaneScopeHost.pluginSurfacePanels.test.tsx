@@ -436,7 +436,8 @@ describe('AppPaneScopeHost plugin destinations', () => {
 
     it('mounts the exact selected plugin bindings ahead of typed built-in adapters', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
-        const rightPlacement = createPlacement({ descriptorId: 'side', container: 'rightPane', instancePolicy: 'multiple' });
+        const rightPlacement = { ...createPlacement({ descriptorId: 'side', container: 'rightPane', instancePolicy: 'multiple' }),
+            display: { developerFallback: 'side', label: 'Inspector panel' } };
         const bottomPlacement = createPlacement({ descriptorId: 'bottom', container: 'bottomPane', instancePolicy: 'multiple' });
         const projection = projectionWith(rightPlacement, bottomPlacement);
         setPaneState({
@@ -481,6 +482,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
         );
 
         const hosts = screen.root.findAllByType(ActualSurfaceHost);
+        expect(screen.findByTestId('plugin-rightPane-header.title')?.props.children).toBe('Inspector panel');
         expect(hosts.find((host) => host.props.placement === rightPlacement)?.props).toEqual(expect.objectContaining({
             placement: rightPlacement,
             mountInstanceKey: 'instance-right',

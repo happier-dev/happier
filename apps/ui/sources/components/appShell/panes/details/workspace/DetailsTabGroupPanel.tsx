@@ -27,6 +27,7 @@ import { DetailsTabChromeProvider, useDetailsTabUnsavedKeys } from './detailsTab
 import { HeaderActionsScope, useStackHeaderActionsClaimed, useStackHeaderActionsPublisher } from '@/components/navigation/stackHeaderActions';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PopoverScope } from '@/components/ui/popover';
+import { DetailsTabLifetimeScope } from './detailsTabLifetime';
 
 type ScrollPropagationEvent = Readonly<{ stopPropagation?: () => void }>;
 
@@ -150,11 +151,14 @@ export type DetailsTabGroupPanelProps = Readonly<{
 }>;
 
 function DetailsTabBody(props: Readonly<{
+    scopeId: string;
     tab: DetailsTabState;
     active: boolean;
     renderTabContent: DetailsTabGroupPanelProps['renderTabContent'];
 }>) {
-    return props.renderTabContent(props.tab, { active: props.active });
+    return <DetailsTabLifetimeScope scopeId={props.scopeId} tabKey={props.tab.key}>
+        {props.renderTabContent(props.tab, { active: props.active })}
+    </DetailsTabLifetimeScope>;
 }
 
 export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps) => {
@@ -228,6 +232,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 {props.group.isFocused && mainColumnEdge === 'start' ? <PaneMainRestoreChip /> : null}
                 {!forceEmptyState ? (
                     <DetailsTabStrip
+                        paneScopeId={props.pane.scopeId}
                         sessionId={props.sessionId}
                         serverId={props.serverId}
                         pane={props.pane}
@@ -275,7 +280,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                     <DetailsTabChromeProvider value={chromeFor(tab.key)}>
                                         <HeaderActionsScope scopeKey={lendsControls ? headerActionsScopeKey : null}>
                                             <React.Suspense fallback={<PaneLoadingFallback />}>
-                                                <DetailsTabBody tab={tab} active={presented} renderTabContent={props.renderTabContent} />
+                                                <DetailsTabBody scopeId={props.pane.scopeId} tab={tab} active={presented} renderTabContent={props.renderTabContent} />
                                             </React.Suspense>
                                         </HeaderActionsScope>
                                     </DetailsTabChromeProvider>

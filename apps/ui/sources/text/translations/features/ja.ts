@@ -16345,7 +16345,7 @@ type WorkspaceBarTranslation = Shared_workspaceBarTranslations.WorkspaceBarTrans
 
 const en = Shared_workspaceBarTranslations.en;
 
-const workspaceBarTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zh-Hans' | 'zh-Hant', WorkspaceBarTranslation>>, "ja"> = { ja: { workspaceBar: { tabsLabel: '開いているタブ', tabMenuLabel: 'タブのオプション', pinTab: 'タブを固定', unpinTab: 'タブの固定を解除', splitRight: '右に分割', splitDown: '下に分割', maximizePane: 'ペインを最大化', restorePane: 'ペインを元に戻す', closeTab: 'タブを閉じる', closeOtherTabs: '他のタブを閉じる', closeTabsToLeft: '左側のタブを閉じる', closeAllTabs: 'すべてのタブを閉じる', closeTabsToRight: '右側のタブを閉じる', allTabs: 'すべてのタブ', searchTabs: 'タブを検索', splitPane: 'アクティブなペインを分割', openInNewTab: '新しいタブで開く', openToRight: '右に開く', openBelow: '下に開く', newTab: '新しいタブ' } } };
+const workspaceBarTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'pl' | 'pt' | 'ru' | 'zh-Hans' | 'zh-Hant', WorkspaceBarTranslation>>, "ja"> = { ja: { workspaceBar: { tabsLabel: '開いているタブ', tabMenuLabel: 'タブのオプション', pinTab: 'タブを固定', unpinTab: 'タブの固定を解除', splitRight: '右に分割', splitDown: '下に分割', maximizePane: 'ペインを最大化', restorePane: 'ペインを元に戻す', closeTab: 'タブを閉じる', closeOtherTabs: '他のタブを閉じる', closeTabsToLeft: '左側のタブを閉じる', closeAllTabs: 'すべてのタブを閉じる', closeTabsToRight: '右側のタブを閉じる', allTabs: 'すべてのタブ', searchTabs: 'タブを検索', splitPane: 'アクティブなペインを分割', openInNewTab: '新しいタブで開く', openInWindow: 'ウィンドウで開く', openToRight: '右に開く', openBelow: '下に開く', newTab: '新しいタブ' } } };
 
 return { workspaceBarTranslations };
 })();

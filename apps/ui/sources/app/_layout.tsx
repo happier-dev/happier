@@ -81,6 +81,8 @@ import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternal
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { resolveDesktopAppWindowBootCredentials, runDesktopAppWindowBootSequence } from '@/desktop/window/appWindowBoot';
+import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
@@ -725,6 +727,7 @@ function AppBoot() {
     const pathname = usePathname();
     const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
     const primaryRealm = desktopWindowContext.role === 'primary';
+    const fullChrome = desktopWindowContext.chrome === 'full';
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
     const [bootError, setBootError] = React.useState<Error | null>(null);
     const restartBugReportCheckedRef = React.useRef(false);
@@ -736,12 +739,15 @@ function AppBoot() {
 
     React.useEffect(() => {
         let cancelled = false;
-        void runAppBootSequence({
+        const runBoot = desktopWindowContext.role === 'secondary' ? runDesktopAppWindowBootSequence : runAppBootSequence;
+        void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
             onPhase: reportDesktopAppBootPhase,
             loadFonts,
             sodiumReady: sodium.ready,
-            resolveCredentials: () => resolveBootCredentials(Platform.OS),
+            resolveCredentials: () => desktopWindowContext.role === 'secondary'
+                ? resolveDesktopAppWindowBootCredentials(Platform.OS)
+                : resolveBootCredentials(Platform.OS),
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
             prepareTranslations: () => preloadTranslations(),
@@ -807,18 +813,17 @@ function AppBoot() {
     // Boot
     //
 
-    const routeContent = isDesktopOverlayWindow ? <SidebarNavigator /> : (
-        <RealtimeProvider>
-            <VoiceEnergyAppProvider>
-                <SidebarNavigator />
-            </VoiceEnergyAppProvider>
-        </RealtimeProvider>
+    const routeNavigation = isDesktopOverlayWindow ? <SidebarNavigator /> : (
+        <VoiceEnergyAppProvider>
+            <SidebarNavigator />
+        </VoiceEnergyAppProvider>
     );
+    const routeContent = primaryRealm ? <RealtimeProvider>{routeNavigation}</RealtimeProvider> : routeNavigation;
 
     const appShellWithRootDesktopDragSurface = (
         <RootShellChromeFrame
             isAuthenticated={initState.credentials != null}
-            isDesktopOverlayWindow={isDesktopOverlayWindow}
+            fullChrome={fullChrome}
             isTerminalConnectRoute={isTerminalConnectRoute}
         >
             {primaryRealm ? <PersonalHomeBootstrapRuntimeMount>{routeContent}</PersonalHomeBootstrapRuntimeMount> : routeContent}
@@ -893,7 +898,7 @@ function AppBoot() {
 
     return (
         <>
-            {!isTerminalConnectRoute ? <FaviconPermissionIndicator /> : null}
+            {primaryRealm && !isTerminalConnectRoute ? <FaviconPermissionIndicator /> : null}
             {providers}
         </>
     );
@@ -902,26 +907,27 @@ function AppBoot() {
 /** Breakpoint geometry updates this frame without rebuilding the boot/provider/route tree. */
 function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
     isAuthenticated: boolean;
-    isDesktopOverlayWindow: boolean;
+    fullChrome: boolean;
     isTerminalConnectRoute: boolean;
 }>>) {
+    const onContentLayout = useDesktopMainWindowContentReady();
     const chromeSafeArea = useChromeSafeAreaInsets();
     const isTablet = useIsTablet();
     const desktopHost = isDesktopHost();
-    const chromeHost = props.isDesktopOverlayWindow ? 'none' : resolveAppShellChromeHost({
+    const chromeHost = !props.fullChrome ? 'none' : resolveAppShellChromeHost({
         isAuthenticated: props.isAuthenticated,
         isDesktopHost: desktopHost,
         isTablet,
         isTerminalConnectRoute: props.isTerminalConnectRoute,
     });
-    const shell = <View style={{ flex: 1, position: 'relative' }}>
+    const shell = <View onLayout={onContentLayout} style={{ flex: 1, position: 'relative' }}>
         {chromeHost === 'narrow-desktop-fallback' ? <DesktopFallbackShellChrome chromeSafeArea={chromeSafeArea} /> : null}
         <View style={{ flex: 1 }}>{props.children}</View>
     </View>;
     return <DesktopMainContentDragSurface
         enabled={(chromeHost === 'unauth-shell' || chromeHost === 'narrow-desktop-fallback') && Platform.OS === 'web' && desktopHost}
         leftOffsetPx={0} style={{ flex: 1 }}>
-        {props.isDesktopOverlayWindow ? shell : <UpdatesSummaryProvider>{shell}</UpdatesSummaryProvider>}
+        {props.fullChrome ? <UpdatesSummaryProvider>{shell}</UpdatesSummaryProvider> : shell}
     </DesktopMainContentDragSurface>;
 }
 

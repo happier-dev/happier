@@ -20,6 +20,55 @@ vi.mock('@/track', () => ({
     tracking: null,
 }));
 
+const desktopEvents = new Map<string, Set<(event: { payload: unknown }) => void>>();
+
+// Exercise the real native SDK through the OS invoke/callback boundary. Dynamic
+// imports in the real Auth/Sync graph can execute outside Vitest's module mocks.
+function installDesktopBoundary(handle: (command: string, args?: Record<string, unknown>) => unknown = () => undefined) {
+    const callbacks = new Map<number, (event: { payload: unknown }) => void>();
+    const subscriptions = new Map<number, { event: string; callback: (event: { payload: unknown }) => void }>();
+    let nextId = 0;
+    const unregisterListener = (_event: string, id: number) => {
+        const subscription = subscriptions.get(id);
+        if (subscription) desktopEvents.get(subscription.event)?.delete(subscription.callback);
+        subscriptions.delete(id);
+    };
+    const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+        if (command === 'plugin:event|listen') {
+            const event = String(args?.event);
+            const callback = callbacks.get(Number(args?.handler));
+            if (!callback) throw new Error('Native callback is missing');
+            const id = ++nextId;
+            const listeners = desktopEvents.get(event) ?? new Set();
+            listeners.add(callback);
+            desktopEvents.set(event, listeners);
+            subscriptions.set(id, { event, callback });
+            return id;
+        }
+        if (command === 'plugin:event|unlisten') {
+            unregisterListener(String(args?.event), Number(args?.eventId));
+            return;
+        }
+        return await handle(command, args);
+    });
+    const internals = {
+        invoke, metadata: { currentWindow: { label: 'main' } },
+        transformCallback: (callback: (event: { payload: unknown }) => void) => {
+            const id = ++nextId;
+            callbacks.set(id, callback);
+            return id;
+        },
+    };
+    const primaryWindow = {
+        location: { href: 'tauri://localhost/' },
+        __TAURI_INTERNALS__: internals,
+        __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener },
+    };
+    vi.stubGlobal('__TAURI_INTERNALS__', internals);
+    vi.stubGlobal('window', primaryWindow);
+    return { invoke, internals, primaryWindow };
+}
+
 // Real Auth, Home profile, connection and Sync owners over the harness network/socket boundaries.
 await initializeAuthRouteRuntimeForTests();
 const { AuthProvider, getCurrentAuth, setCurrentAuth } = await import('./AuthContext');
@@ -150,6 +199,175 @@ describe('AuthContext.login', () => {
         await connection.disconnectActiveServerConnection();
         vi.restoreAllMocks();
         setCurrentAuth(null);
+        vi.unstubAllGlobals();
+        desktopEvents.clear();
+    });
+
+    it('closes outgoing Account windows after logout guards and before removing only the addressed Home credential', async () => {
+        const { a, b } = await prepareHomes('a', 'b');
+        const outgoing = { token: buildTokenWithSub('desktop-outgoing') };
+        const other = { token: buildTokenWithSub('desktop-outgoing') };
+        await storeCredentials(a, outgoing);
+        await storeCredentials(b, other);
+        await focusHome(a);
+        const directoryTarget = { endpoint: 'https://desktop-accounts.example.test', serverIdentityId: 'desktop-directory' };
+        await accountDirectoryCredentialStorage.set(directoryTarget, { token: buildTokenWithSub('directory-owner') });
+        const order: string[] = [];
+        const { invoke } = installDesktopBoundary(async (command, args) => {
+            if (command !== 'desktop_app_windows_teardown') return;
+            expect(args).toEqual({ scopes: [{ serverId: a.serverId, accountId: 'desktop-outgoing' }] });
+            order.push('teardown');
+        });
+        const screen = await mountAuth(outgoing);
+        try {
+            await act(async () => {
+                await getCurrentAuth()!.logout({
+                    target: a, expectedCredentials: outgoing,
+                    beforeMutation: () => { order.push('guarded-effect'); },
+                });
+            });
+            expect(order).toEqual(['guarded-effect', 'teardown']);
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(1);
+            expect(await readCredentials(a)).toBeNull();
+            expect(await readCredentials(b)).toEqual(other);
+            expect(await accountDirectoryCredentialStorage.get(directoryTarget)).toEqual({ token: buildTokenWithSub('directory-owner') });
+        } finally { await screen.unmount(); }
+    });
+
+    it('closes replaced Account windows once before publishing the new credential, with no teardown for token refresh or Home navigation', async () => {
+        const { a, b } = await prepareHomes('a', 'b');
+        const outgoing = { token: buildTokenWithSub('desktop-account-a') };
+        const incoming = { token: buildTokenWithSub('desktop-account-b') };
+        await storeCredentials(a, outgoing);
+        await storeCredentials(b, { token: buildTokenWithSub('desktop-home-b') });
+        await focusHome(a);
+        const { invoke } = installDesktopBoundary(async (command, args) => {
+            if (command !== 'desktop_app_windows_teardown') return;
+            expect(args).toEqual({ scopes: [{ serverId: a.serverId, accountId: 'desktop-account-a' }] });
+            expect(getCurrentAuth()?.credentials).toEqual(outgoing);
+        });
+        const screen = await mountAuth(outgoing);
+        try {
+            await act(async () => { await getCurrentAuth()!.loginWithCredentials(incoming); });
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(1);
+            expect(await readCredentials(a)).toEqual(incoming);
+            invoke.mockClear();
+            await act(async () => { await getCurrentAuth()!.loginWithCredentials({ token: `${incoming.token}-refreshed` }); });
+            await act(async () => { await focusHome(b); await getCurrentAuth()!.refreshFromActiveServer(); });
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
+    it('leaves Account windows interactive when the pre-mutation logout guard cancels', async () => {
+        const { home } = await prepareHomes('home');
+        const credentials = { token: buildTokenWithSub('desktop-cancelled') };
+        await storeCredentials(home, credentials);
+        await focusHome(home);
+        const { invoke } = installDesktopBoundary();
+        const screen = await mountAuth(credentials);
+        try {
+            await expect(getCurrentAuth()!.logout({ beforeMutation: () => { throw new Error('cancelled'); } })).rejects.toThrow('cancelled');
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(0);
+            expect(await readCredentials(home)).toEqual(credentials);
+        } finally { await screen.unmount(); }
+    });
+
+    it('retires every forgotten Account once in one native lifecycle operation for all-credentials logout', async () => {
+        const { a, b, c } = await prepareHomes('a', 'b', 'c');
+        const outgoing = { token: buildTokenWithSub('desktop-forget-all-a') };
+        await storeCredentials(a, outgoing);
+        await storeCredentials(b, { token: buildTokenWithSub('desktop-forget-all-b') });
+        await storeCredentials(c, outgoing);
+        await focusHome(a);
+        const { invoke } = installDesktopBoundary();
+        const screen = await mountAuth(outgoing);
+        try {
+            await act(async () => { await getCurrentAuth()!.logout({ scope: 'all-credentials' }); });
+            const teardownCalls = invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown');
+            expect(teardownCalls).toHaveLength(1);
+            expect(teardownCalls[0]?.[1]?.scopes).toEqual(expect.arrayContaining([
+                { serverId: a.serverId, accountId: 'desktop-forget-all-a' },
+                { serverId: b.serverId, accountId: 'desktop-forget-all-b' },
+                { serverId: c.serverId, accountId: 'desktop-forget-all-a' },
+            ]));
+            expect(await readCredentials(a)).toBeNull();
+            expect(await readCredentials(b)).toBeNull();
+            expect(await readCredentials(c)).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
+    it('refreshes stale primary auth from persisted credentials when native completes an Account teardown', async () => {
+        const { home } = await prepareHomes('home');
+        const outgoing = { token: buildTokenWithSub('desktop-stale-primary') };
+        await storeCredentials(home, outgoing);
+        await focusHome(home);
+        await connection.switchConnectionToActiveServer();
+        // Another realm completed the persisted mutation while main retained its in-memory auth.
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId });
+        installDesktopBoundary();
+        const screen = await mountAuth(outgoing);
+        try {
+            expect(getCurrentAuth()?.credentials).toEqual(outgoing);
+            expect(sync.getCredentials()).toEqual(outgoing);
+            await vi.waitFor(() => expect(desktopEvents.get('desktopAppWindow://account-teardown')?.size).toBe(1));
+            await act(async () => {
+                for (const listener of desktopEvents.get('desktopAppWindow://account-teardown') ?? []) {
+                    listener({ payload: { sourceWindowLabel: 'destination_other', mutations: [
+                        { kind: 'credentials_removed', serverId: home.serverId, serverUrl: home.serverUrl },
+                    ] } });
+                }
+                await vi.waitFor(() => expect(sync.getCredentials()).toBeNull());
+            });
+            expect(getCurrentAuth()?.credentials).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
+    it('routes secondary logout to the primary admitted mutation without sending a bearer or losing its guard ordering', async () => {
+        const { home } = await prepareHomes('home');
+        const outgoing = { token: buildTokenWithSub('desktop-secondary-account') };
+        await storeCredentials(home, outgoing);
+        await focusHome(home);
+        await connection.switchConnectionToActiveServer();
+        const order: string[] = [];
+        const { invoke, internals, primaryWindow } = installDesktopBoundary(async (command, args) => {
+            if (command === 'desktop_app_windows_teardown') order.push('teardown');
+            if (command === 'desktop_app_windows_auth_changed') {
+                // Native emit returns without awaiting renderer credential readers.
+                // The committed persisted outcome is asserted after logout settles below.
+                order.push('committed');
+                for (const listener of desktopEvents.get('desktopAppWindow://account-teardown') ?? []) {
+                    listener({ payload: { sourceWindowLabel: 'main', mutations: args?.mutations } });
+                }
+            }
+            const event = command === 'desktop_window_emit_action' ? 'desktopWindow://action'
+                : command === 'desktop_window_emit_action_result' ? 'desktopWindow://action-result' : null;
+            if (event) {
+                expect(JSON.stringify(args?.payload)).not.toContain(outgoing.token);
+                for (const listener of desktopEvents.get(event) ?? []) listener({ payload: args?.payload });
+            }
+        });
+        const primary = await mountAuth(outgoing);
+        let secondary: Awaited<ReturnType<typeof mountAuth>> | undefined;
+        try {
+            await vi.waitFor(() => expect(desktopEvents.get('desktopWindow://action')?.size).toBe(1));
+            internals.metadata.currentWindow.label = 'destination_test';
+            vi.stubGlobal('window', { ...primaryWindow, location: { href: 'tauri://localhost/desktop/window?id=test' } });
+            secondary = await mountAuth(outgoing);
+            await act(async () => {
+                await getCurrentAuth()!.logout({ beforeMutation: () => { order.push('guarded-effect'); } });
+            });
+            expect(order).toEqual(['guarded-effect', 'teardown', 'committed']);
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_window_emit_action')).toHaveLength(1);
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(1);
+            expect(await readCredentials(home)).toBeNull();
+            // The primary owner, rather than only the originating secondary, retired its auth.
+            expect(getCurrentAuth()?.credentials).toBeNull();
+            internals.metadata.currentWindow.label = 'main';
+            vi.stubGlobal('window', primaryWindow);
+            await secondary.unmount();
+            secondary = undefined;
+            expect(sync.getCredentials()).toBeNull();
+        } finally { await secondary?.unmount(); await primary.unmount(); }
     });
 
     it('keeps the session authenticated while a login-triggered server refresh is still rebinding credentials', async () => {

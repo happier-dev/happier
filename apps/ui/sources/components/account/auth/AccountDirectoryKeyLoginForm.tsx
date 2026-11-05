@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AccountCredentialJourney } from './AccountCredentialJourney';
 import { View } from 'react-native';
 
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
@@ -30,6 +31,7 @@ export type AccountDirectoryKeyLoginOutcome =
     | AccountPostAuthResult;
 
 export type AccountDirectoryKeyLoginFormProps = Readonly<{
+    returnTo?: string;
     service: VerifiedAccountServiceAuthority;
     serviceName: string;
     intent: AccountContinuationIntent;
@@ -59,7 +61,13 @@ export type AccountDirectoryKeyLoginFormProps = Readonly<{
     isCurrent?: () => boolean;
 }>;
 
-export const AccountDirectoryKeyLoginForm = React.memo(function AccountDirectoryKeyLoginForm(
+export const AccountDirectoryKeyLoginForm = React.memo(function AccountDirectoryKeyLoginForm(props: AccountDirectoryKeyLoginFormProps) {
+    return <AccountCredentialJourney request={{ kind: 'account_directory', request: {
+        service: props.service, intent: props.intent, returnTo: props.returnTo ?? '/',
+    } }}><AccountDirectoryKeyLoginFormBody {...props} /></AccountCredentialJourney>;
+});
+
+const AccountDirectoryKeyLoginFormBody = React.memo(function AccountDirectoryKeyLoginFormBody(
     props: AccountDirectoryKeyLoginFormProps,
 ) {
     const abortControllerRef = React.useRef<AbortController | null>(null);

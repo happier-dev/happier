@@ -5,6 +5,8 @@ import type { PluginUiDestinationReferenceV1, PluginUiInstanceKeyV1 } from '@hap
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import type { SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
+import { selectedPaneDestinationTabKey } from '@/components/appShell/panes/model/selectedPaneDestination';
+import { useOpenPaneDestinationWindow } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import type { PluginSurfaceOpenOutcome } from '@/components/plugins/surfaces/openPluginSurface';
 import {
     stagePluginSurfacePaneLaunch,
@@ -67,7 +69,9 @@ export function useOpenAppRightSidebarTab(): (destination: PluginUiDestinationRe
     const pane = useOptionalAppPaneContext(value => ({
         dispatch: value.dispatch,
         activeScopeId: value.state.activeScopeId,
+        getReadState: value.getReadState,
     }));
+    const openWindow = useOpenPaneDestinationWindow();
     const sidePanesAvailable = useDetailsPaneAvailable();
     // Read at press time, so the callback stays stable across navigation and pane changes.
     const latest = React.useRef({ router, pathname, pane, sidePanesAvailable });
@@ -76,6 +80,13 @@ export function useOpenAppRightSidebarTab(): (destination: PluginUiDestinationRe
         const facts = latest.current;
         const dispatch = facts.pane?.dispatch;
         if (!dispatch) return;
+        const scopeId = facts.pane?.activeScopeId;
+        if (scopeId && facts.pane?.getReadState().scopes[scopeId]?.right.presentation) {
+            fireAndForget(openWindow(scopeId, selectedPaneDestinationTabKey('right'), () => {
+                dispatch({ type: 'selectRightDestination', scopeId, destination: { kind: 'plugin', destination } });
+            }), { tag: 'openAppRightSidebarTab' });
+            return;
+        }
         openAppRightSidebarTab({
             destination,
             activeScopeId: facts.pane?.activeScopeId ?? null,
@@ -87,7 +98,7 @@ export function useOpenAppRightSidebarTab(): (destination: PluginUiDestinationRe
                 if (result !== true) fireAndForget(result, { tag: 'openAppRightSidebarTab' });
             },
         });
-    }, []);
+    }, [openWindow]);
 }
 
 /**
@@ -100,9 +111,9 @@ export function createAppScopeRightSidebarDestinationHandler(input: Readonly<{
     /** The app-lifetime pane handoff scope; absent means no bounded carrier. */
     store: PluginSurfacePaneLaunchStore | null;
     /** Opens the panel; absent outside an AppPane host. */
-    open: ((destination: PluginUiDestinationReferenceV1, instanceKey?: PluginUiInstanceKeyV1) => void) | null;
+    open: ((destination: PluginUiDestinationReferenceV1, instanceKey?: PluginUiInstanceKeyV1) => void | PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome>) | null;
 }>): PluginSurfaceDestinationContainerHandler {
-    return (resolution): PluginSurfaceOpenOutcome => {
+    return (resolution) => {
         if (resolution.placement.binding.container !== 'rightSidebarTab' || !input.open) {
             return {
                 ok: false,
@@ -119,25 +130,35 @@ export function createAppScopeRightSidebarDestinationHandler(input: Readonly<{
                 reason: 'plugin_surface_open_origin_unavailable',
             };
         }
-        input.open(resolution.placement.binding.destination, resolution.request.instanceKey);
-        return { ok: true };
+        return input.open(resolution.placement.binding.destination, resolution.request.instanceKey) ?? { ok: true };
     };
 }
 
 /** The sole React adapter binding that owner to the live pane state, device and router. */
-export function useAppScopeRightSidebarDestinationHandler(): PluginSurfaceDestinationContainerHandler {
+export function useAppScopeRightSidebarDestinationHandler(window = false): PluginSurfaceDestinationContainerHandler {
     const router = useRouter();
     const pathname = usePathname();
     const paneContext = useOptionalAppPaneContext(value => ({
         dispatch: value.dispatch,
         activeScopeId: value.state.activeScopeId,
+        getReadState: value.getReadState,
     }));
+    const openWindow = useOpenPaneDestinationWindow();
     const sidePanesAvailable = useDetailsPaneAvailable();
     const store = usePluginSurfacePaneLaunchScope()?.store ?? null;
     const dispatch = paneContext?.dispatch ?? null;
     const activeScopeId = paneContext?.activeScopeId ?? null;
     const open = React.useMemo(() => (dispatch
-        ? (destination: PluginUiDestinationReferenceV1, instanceKey?: PluginUiInstanceKeyV1) => openAppRightSidebarTab({
+        ? (destination: PluginUiDestinationReferenceV1, instanceKey?: PluginUiInstanceKeyV1) => {
+            const scopeId = paneContext?.getReadState().activeScopeId;
+            if (window || (scopeId && paneContext?.getReadState().scopes[scopeId]?.right.presentation)) {
+                if (!scopeId) return { ok: false as const, code: 'unavailable' as const, reason: 'desktop_window_pane_owner_unavailable' };
+                return openWindow(scopeId, selectedPaneDestinationTabKey('right'), () => dispatch({
+                    type: 'selectRightDestination', scopeId, destination: { kind: 'plugin', destination,
+                        ...(instanceKey === undefined ? {} : { instanceKey }) },
+                }));
+            }
+            return openAppRightSidebarTab({
             destination,
             ...(instanceKey === undefined ? {} : { instanceKey }),
             activeScopeId,
@@ -145,8 +166,9 @@ export function useAppScopeRightSidebarDestinationHandler(): PluginSurfaceDestin
             pathname,
             select: (scopeId, selected) => dispatch({ type: 'selectRightDestination', scopeId, destination: selected }),
             navigate: (href) => { router.push(href as Parameters<typeof router.push>[0]); },
-        })
+            });
+        }
         : null
-    ), [activeScopeId, dispatch, pathname, router, sidePanesAvailable]);
+    ), [activeScopeId, dispatch, openWindow, paneContext, pathname, router, sidePanesAvailable, window]);
     return React.useMemo(() => createAppScopeRightSidebarDestinationHandler({ store, open }), [open, store]);
 }

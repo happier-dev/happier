@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
-import { resolveWorkspaceOpenModeFromPointer, useWorkspaceOpenActions } from './useWorkspaceOpenActions';
+import { resolveWorkspaceOpenModeFromPointer, useWorkspaceOpenActions, type WorkspaceOpenActionsOptions } from './useWorkspaceOpenActions';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { isSecondaryEntityRowControl, useEntityDragDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
@@ -19,6 +19,7 @@ type WorkspaceDestinationRowProps = Readonly<{
     href: string | null;
     /** Handoff, not a copy: release this source only once the destination has opened. */
     onOpened?: () => void;
+    openOptions?: WorkspaceOpenActionsOptions;
     /** Document tabs handle middle click through their own close callback. Other rows open a tab. */
     middleClickBehavior?: 'open' | 'passthrough';
     /** Host-built qualified identity for destinations that also supply context. */
@@ -40,13 +41,13 @@ type WorkspaceDestinationRowProps = Readonly<{
 
 /** Destination gestures share one owner, without replacing the row's normal activation or anatomy. */
 export function WorkspaceDestinationRow(props: WorkspaceDestinationRowProps) {
-    if (!props.href && !props.entityItem && typeof props.children !== 'function') return props.style ? <View style={props.style}>{props.children}</View> : <>{props.children}</>;
+    if (!props.href && !props.entityItem && !props.openOptions?.windowTarget && typeof props.children !== 'function') return props.style ? <View style={props.style}>{props.children}</View> : <>{props.children}</>;
     return <WorkspaceDestinationRowDestination {...props} />;
 }
 
 function WorkspaceDestinationRowDestination(props: WorkspaceDestinationRowProps) {
     const { theme } = useUnistyles();
-    const actions = useWorkspaceOpenActions(props.href, props.onOpened);
+    const actions = useWorkspaceOpenActions(props.href, props.onOpened, props.openOptions);
     const workspace = useOptionalWorkspaceNavigation();
     const scope = useActiveServerAccountScope();
     const runtime = useEntityDragDropRuntime();

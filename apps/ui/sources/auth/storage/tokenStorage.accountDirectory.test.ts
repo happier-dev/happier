@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from './tokenStorage.testHelpers';
+import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import {
     installLocalStorageMock,
     installWebLockManagerMock,
@@ -69,6 +70,108 @@ describe('TokenStorage Account Directory namespaces', () => {
         restoreWebLocks = null;
         webLocks = null;
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it.each(['direct', 'oauth'] as const)('keeps Home windows when only Directory credentials are replaced (%s)', async (entry) => {
+        const target = { endpoint: 'https://desktop-directory.example.test', serverIdentityId: 'desktop-directory' };
+        const token = (sub: string, signature = 'sig') => `hdr.${Buffer.from(JSON.stringify({ sub })).toString('base64')}.${signature}`;
+        const previous = { token: token('outgoing-directory-account') };
+        const nativeValues = new Map<string, string>();
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            const key = String(args?.key ?? '');
+            if (command === 'desktop_secure_storage_read') return nativeValues.get(key) ?? null;
+            if (command === 'desktop_secure_storage_write') { nativeValues.set(key, String(args?.value)); return null; }
+            if (command === 'desktop_secure_storage_remove') { nativeValues.delete(key); return null; }
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'main' } } });
+        await expect(TokenStorage.accountDirectoryAuthCredentials.set(target, previous)).resolves.toBe(true);
+        if (entry === 'direct') {
+            await expect(TokenStorage.accountDirectoryAuthCredentials.set(target, { token: token('incoming-directory-account') })).resolves.toBe(true);
+        } else {
+            await expect(TokenStorage.setPendingAccountDirectoryAuth(bindCanonicalServerUrl({
+                ...target, credentialTarget: 'account_directory', purpose: 'account_directory', provider: 'github',
+                pending: 'desktop-oauth-return', createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+            }))).resolves.toBe(true);
+            const expectedPending = await TokenStorage.getPendingAccountDirectoryAuth(target);
+            expect(expectedPending).not.toBeNull();
+            await expect(TokenStorage.commitAccountDirectoryOAuthCredential({
+                expectedPending: expectedPending!, credentials: { token: token('incoming-directory-account') },
+            })).resolves.toEqual({ kind: 'committed' });
+        }
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get(target)).toEqual({ token: token('incoming-directory-account') });
+        expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(0);
+        invoke.mockClear();
+        await expect(TokenStorage.accountDirectoryAuthCredentials.set(target, { token: token('incoming-directory-account', 'refresh') })).resolves.toBe(true);
+        expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toHaveLength(0);
+    });
+
+    it.each(['direct', 'oauth'] as const)('keeps outgoing desktop Account windows when replacement storage fails (%s)', async (entry) => {
+        const target = { endpoint: 'https://desktop-failed-directory.example.test', serverIdentityId: 'desktop-failed-directory' };
+        const token = (sub: string) => `hdr.${Buffer.from(JSON.stringify({ sub })).toString('base64')}.sig`;
+        const previous = { token: token('outgoing-failed-account') };
+        const nativeValues = new Map<string, string>();
+        let rejectCredentialWrite = false;
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            const key = String(args?.key ?? '');
+            if (command === 'desktop_secure_storage_read') return nativeValues.get(key) ?? null;
+            if (command === 'desktop_secure_storage_write') {
+                if (rejectCredentialWrite && key.includes(ACCOUNT_DIRECTORY_AUTH_CREDENTIALS_STORAGE_KEY)) throw new Error('OS storage unavailable');
+                nativeValues.set(key, String(args?.value));
+            }
+            if (command === 'desktop_secure_storage_remove') nativeValues.delete(key);
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'main' } } });
+        expect(await TokenStorage.accountDirectoryAuthCredentials.set(target, previous)).toBe(true);
+        if (entry === 'oauth') expect(await TokenStorage.setPendingAccountDirectoryAuth(bindCanonicalServerUrl({
+            ...target, credentialTarget: 'account_directory', purpose: 'account_directory', provider: 'github',
+            pending: 'failed-oauth-return', createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+        }))).toBe(true);
+        const pending = entry === 'oauth' ? await TokenStorage.getPendingAccountDirectoryAuth(target) : null;
+        rejectCredentialWrite = true;
+        if (entry === 'direct') {
+            expect(await TokenStorage.accountDirectoryAuthCredentials.set(target, { token: token('incoming-failed-account') })).toBe(false);
+        } else {
+            expect(await TokenStorage.commitAccountDirectoryOAuthCredential({ expectedPending: pending!, credentials: { token: token('incoming-failed-account') } }))
+                .toEqual({ kind: 'storage_failed', accountCredentialCommitted: false });
+        }
+        expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toEqual([]);
+    });
+
+    it.each(['success', 'cancel'] as const)('closes outgoing windows only after credentialed Home adoption succeeds (%s)', async outcome => {
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        const { adoptHomeProfileWithCredentials } = await import('@/sync/domains/server/adoptHomeProfile');
+        const descriptor = { ...createDirectoryHttpFixture().home.connectionDescriptor,
+            homeServerIdentityId: 'srv_desktop_adoption_home', canonicalServerUrl: 'https://desktop-adoption-home.test',
+            endpoints: [{ kind: 'https' as const, url: 'https://desktop-adoption-home.test' }] };
+        const profile = await adoptHomeProfile({ descriptor, source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+        const token = (sub: string) => `hdr.${Buffer.from(JSON.stringify({ sub })).toString('base64')}.sig`;
+        const previous = { token: token('outgoing-adoption-account') };
+        const incoming = { token: token('incoming-adoption-account') };
+        const values = new Map<string, string>();
+        const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+            const key = String(args?.key ?? '');
+            if (command === 'desktop_secure_storage_read') return values.get(key) ?? null;
+            if (command === 'desktop_secure_storage_write') values.set(key, String(args?.value));
+            if (command === 'desktop_secure_storage_remove') values.delete(key);
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke, metadata: { currentWindow: { label: 'main' } } });
+        expect(await TokenStorage.setCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id }, previous)).toBe(true);
+        let cancellations = 0;
+        const adopting = adoptHomeProfileWithCredentials({ descriptor, source: 'account-directory',
+            descriptorAuthority: 'current_connection_observation', credentials: incoming,
+            shouldCancel: () => outcome === 'cancel' && ++cancellations === 2 });
+        if (outcome === 'cancel') {
+            await expect(adopting).rejects.toThrow(/cancelled/i);
+            expect(await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id })).toEqual(previous);
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toEqual([]);
+        } else {
+            await expect(adopting).resolves.toMatchObject({ id: profile.id });
+            expect(await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id })).toEqual(incoming);
+            expect(invoke.mock.calls.filter(([command]) => command === 'desktop_app_windows_teardown')).toEqual([
+                ['desktop_app_windows_teardown', { scopes: [{ serverId: profile.serverIdentityId ?? profile.id, accountId: 'outgoing-adoption-account' }] }],
+            ]);
+        }
     });
 
     it('serializes disjoint Account Service credential writes across fresh browser module instances', async () => {
