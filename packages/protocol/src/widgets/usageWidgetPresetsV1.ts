@@ -32,12 +32,12 @@ const w = (id: string, size: WidgetSizeV1, extra?: Omit<PresetWidget, 'id' | 'si
  * capacity (lab d2views-OV) — and a phone stacks the same children in reading order.
  */
 const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>> = {
-    // Daily shares its band with Capacity alone: beside a two-widget column its cell stood open under the legend.
-    overview: [{ width: 'full', widgets: [w('usage_period_summary', 'full'), w('usage_daily', 'tall'), w('usage_capacity', 'medium'),
-        // Efficiency's four figures are the compact one: the group's column packing stacks it over Rhythm
-        // beside the Projections list, so neither column ends in a half-empty cell (lab wgusage-CD).
-        w('usage_coach', 'full'), w('usage_projections', 'medium'), w('usage_efficiency', 'small'),
-        w('usage_rhythm', 'medium')] }],
+    // The daily bars run across the page. Half cells pair widgets that fill from the same facts, Capacity beside
+    // Projections (a connected subscription) and Efficiency beside Rhythm (sessions), so on a first run both
+    // partners are empty together and no one-line state stands under a taller neighbour.
+    overview: [{ width: 'full', widgets: [w('usage_period_summary', 'full'), w('usage_daily', 'full'),
+        w('usage_capacity', 'medium'), w('usage_projections', 'medium'), w('usage_coach', 'full'),
+        w('usage_efficiency', 'medium'), w('usage_rhythm', 'medium')] }],
     // Cost facts holds the money facts and the prices line behind them, so it takes the full band. The daily
     // cost bars sit beside Breakdowns over Efficiency (lab d2views-COST 2-up), so the chart's plot takes that
     // column's height rather than a short list's; Plan fit and Outcomes follow as their own bands.
