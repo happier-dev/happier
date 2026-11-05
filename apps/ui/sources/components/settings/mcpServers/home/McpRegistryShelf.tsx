@@ -2,8 +2,7 @@ import * as React from 'react';
 import { Image } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { RegistryShelf, type RegistryShelfCard } from '@/components/capabilities/add/RegistryShelf';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RegistryShelf, RegistryShelfAddControl, registryShelfProjection, type RegistryShelfCard } from '@/components/capabilities/add/RegistryShelf';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { t } from '@/text';
 
@@ -26,21 +25,24 @@ export const McpRegistryShelf = React.memo(function McpRegistryShelf(props: Read
         const origin = server.server.origin;
         return origin?.kind === 'registry' && origin.provenance.sourceId === card.sourceId && origin.provenance.itemId === card.itemId;
     })?.id ?? null, [servers]);
+    const open = React.useCallback((card: RegistryShelfCard) => {
+        const added = addedId(card);
+        if (added) onOpen(added);
+        else onAdd(card);
+    }, [addedId, onAdd, onOpen]);
     // The publisher, unless it only repeats the name ("Notion" by Notion).
     const where = React.useCallback((card: RegistryShelfCard) => (card.publisher && card.publisher.name !== card.title ? card.publisher.name : null), []);
     const glyph = React.useCallback((card: RegistryShelfCard) => (card.iconUrl
         ? <Image source={{ uri: card.iconUrl }} style={styles.mark} accessibilityIgnoresInvertColors />
         : null), []);
-    const action = React.useCallback((card: RegistryShelfCard) => {
-        const added = addedId(card);
-        return added ? (
-            <RoundButton testID={`mcp.home.shelf.${card.itemId}.open`} size="small" display="secondary" title={t('common.open')} onPress={() => onOpen(added)} />
-        ) : (
-            <RoundButton testID={`mcp.home.shelf.${card.itemId}.add`} size="small" display="secondary" title={t('capabilities.mcpHome.shelfAdd')} onPress={() => onAdd(card)} />
-        );
-    }, [addedId, onAdd, onOpen]);
+    const action = React.useCallback((card: RegistryShelfCard) => (
+        <RegistryShelfAddControl testID={`mcp.home.shelf.${card.itemId}`} state={addedId(card) ? 'added' : 'available'} title={card.title}
+            addLabel={t('capabilities.mcpHome.shelfAdd')} addedLabel={t('capabilities.add.added')} failedLabel={t('capabilities.mcpHome.shelfAdd')}
+            onAdd={() => onAdd(card)} />
+    ), [addedId, onAdd]);
     return (
         <RegistryShelf
+            projection={registryShelfProjection}
             testID="mcp.home.shelf"
             title={t('capabilities.mcpHome.shelfTitle')}
             {...(sourceTitle ? { description: t('capabilities.mcpHome.shelfFrom', { source: sourceTitle }) } : {})}
@@ -49,6 +51,7 @@ export const McpRegistryShelf = React.memo(function McpRegistryShelf(props: Read
             where={where}
             glyph={glyph}
             action={action}
+            onOpen={open}
             columnTitle={t('settings.mcpServers')}
         />
     );

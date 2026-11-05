@@ -1,15 +1,18 @@
 import * as React from 'react';
-import { RegistryShelf, registryShelfCardKey } from '@/components/capabilities/add/RegistryShelf';
+import { RegistryShelf, RegistryShelfAddControl, registryShelfCardKey, registryShelfProjection } from '@/components/capabilities/add/RegistryShelf';
 import type { RegistryItemSummaryV1 } from '@happier-dev/protocol/registries';
 import { findHeldSkillV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import type { SkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
 import { installSkills, retrySkillInstall, describeSkillInstallIncomplete, type SkillInstallAcknowledgment } from './add/skillInstall';
 import { useOpenSkillAddModal } from './add/useOpenSkillAddModal';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { skillHref } from './skillsCollectionModel';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 
 const SHELF_SIZE = 3;
@@ -66,6 +69,16 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
   const { retry } = library;
   // "Browse all" opens the same Add modal on Browse, on the registry these cards came from.
   const openAdd = useOpenSkillAddModal();
+  const router = useRouter();
+  const open = React.useCallback((card: ShelfCard) => {
+    const held = findHeldSkillV1(library.items, { registry: card });
+    if (!held) {
+      openAdd({ modeKey: 'browse', sourceId: card.sourceId, query: card.title });
+      return;
+    }
+    const result = runGuardedNavigation(() => router.push(skillHref(held.skillId) as never));
+    if (result !== true) fireAndForget(result, { tag: 'SkillsRegistryShelf.open' });
+  }, [library.items, openAdd, router]);
 
   const add = React.useCallback(
     async (card: ShelfCard) => {
@@ -114,29 +127,16 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
           title={describeSkillInstallIncomplete(state.outcome)}
           action={{ label: t('capabilities.skillAdd.partial.tryAgain'), onPress: () => add(card), busy: state.status === 'adding' }} />
       );
-      if (state?.status === 'added' || inLibrary(library.items, card))
-        return (
-          <RoundButton
-            testID={`skills.home.shelf.${card.itemId}.added`}
-            size="small"
-            display="inverted"
-            title={t('capabilities.skillsUpdates.shelf.inLibrary')}
-            disabled
-          />
-        );
       return (
-        <RoundButton
-          testID={`skills.home.shelf.${card.itemId}.add`}
-          size="small"
-          display="secondary"
-          title={
-            state?.status === 'failed'
-              ? t('capabilities.skillsUpdates.shelf.addFailed')
-              : t('capabilities.skillsUpdates.shelf.add')
-          }
-          loading={state?.status === 'adding'}
-          disabled={state?.status === 'adding'}
-          onPress={() => void add(card)}
+        <RegistryShelfAddControl
+          testID={`skills.home.shelf.${card.itemId}`}
+          state={state?.status === 'added' || inLibrary(library.items, card) ? 'added'
+            : state?.status === 'adding' ? 'adding' : state?.status === 'failed' ? 'failed' : 'available'}
+          title={card.title}
+          addLabel={t('capabilities.skillsUpdates.shelf.add')}
+          addedLabel={t('capabilities.skillsUpdates.shelf.inLibrary')}
+          failedLabel={t('capabilities.skillsUpdates.shelf.addFailed')}
+          onAdd={() => void add(card)}
         />
       );
     },
@@ -145,6 +145,7 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
 
   return (
     <RegistryShelf
+      projection={registryShelfProjection}
       testID="skills.home.shelf"
       title={
         props.brandNew
@@ -162,6 +163,7 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
       loading={shelf.loading}
       where={where}
       action={action}
+      onOpen={open}
       columnTitle={t('capabilities.skills.title')}
       browseAll={{ label: t('capabilities.skillsUpdates.shelf.browseAll'), onPress: () => openAdd({ modeKey: 'browse', ...(shelf.sourceId ? { sourceId: shelf.sourceId } : {}) }) }}
     />

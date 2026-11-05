@@ -18,6 +18,12 @@ export function describeRegistrySourceStatus(status: RegistrySourceStatusV1): st
 }
 
 export type RegistryFailureStatus = Exclude<RegistrySourceStatusV1, { state: 'ok' }>;
+
+/** Human-facing source identity and typed reason; transport exception text is never presentation input. */
+export function describeRegistrySourceFailure(status: RegistryFailureStatus | null, sourceTitle?: string | null): string {
+    const reason = status ? describeRegistrySourceStatus(status) : t('common.unavailable');
+    return sourceTitle ? `${sourceTitle} · ${reason}` : reason;
+}
 /** The registry owner's typed failure (rate limited, token rejected, …) as it crosses an Action failure's details. */
 export function readRegistryFailureStatus(details: unknown): RegistryFailureStatus | null {
     const status = details && typeof details === 'object'
