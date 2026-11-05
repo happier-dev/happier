@@ -7,7 +7,8 @@ import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactRevisionV1 } from '../artifacts/artifactRevisionV1.js';
 import { DeploymentChildExecutionProofV1Schema } from '../deployments/deploymentChildExecutionProofV1.js';
 import { DeploymentRestoreNativeAdmissionV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
-import { isDeploymentDomainChildActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
+  isDeploymentEnvironmentMetadataReadActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { deploymentPreparationOperationForActionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { isDeploymentPreparationActionIdV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { isDeploymentReadActionIdV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1103,6 +1104,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
+    /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
+    deploymentChildRoot: z.optional(z.literal(true)),
     deploymentCandidatePublication: z.optional(DeploymentCandidatePublicationV1Schema),
     deploymentNativeAdmission: z.optional(z.union([DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema])),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
@@ -1184,8 +1187,9 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['automationId'], message: 'Automation admission binds only run-now' });
   }
   if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
-    && !('authentication' in value && (isDeploymentChildRootActionIdV1(value.actionId) || value.actionId === 'deployments.teardown'
-      || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore')))
+    && !isDeploymentEnvironmentMetadataReadActionIdV1(value.actionId)
+    && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'
+      || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(value.actionId) || value.actionId === 'deployments.receipts.observe')))
     || value.target.kind !== 'machine')) {
     context.addIssue({ code: 'custom', path: ['environmentId'], message: 'Environment admission binds only CI deploy and operation reads on their admitted host' });
   }

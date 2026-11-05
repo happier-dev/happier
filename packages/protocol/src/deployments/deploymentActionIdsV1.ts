@@ -1,4 +1,12 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
+
+export const DEPLOYMENT_BACKUP_ACTION_IDS_V1 = [
+  'deployments.backups.inventory', 'deployments.backups.run', 'deployments.backups.verify', 'deployments.backups.prune',
+] as const;
+export type DeploymentBackupActionIdV1 = typeof DEPLOYMENT_BACKUP_ACTION_IDS_V1[number];
+export function isDeploymentBackupActionIdV1(value: string): value is DeploymentBackupActionIdV1 {
+  return (DEPLOYMENT_BACKUP_ACTION_IDS_V1 as readonly string[]).includes(value);
+}
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   'deployments.environments.create', 'deployments.environments.update', 'deployments.targets.link', 'deployments.deploy', 'deployments.rollback',
@@ -23,6 +31,12 @@ export type DeploymentRootOperationV1 = 'deploy' | 'rollback' | 'promote' | 'tea
 export type DeploymentDomainChildActionIdV1 = 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
 export function isDeploymentDomainChildActionIdV1(value: string): value is DeploymentDomainChildActionIdV1 {
   return value === 'deployments.domains.add' || value === 'deployments.domains.remove' || value === 'deployments.domains.verify';
+}
+/** Environment reads retain one Environment without admitting native child effects. */
+export function isDeploymentEnvironmentMetadataReadActionIdV1(value: string): value is
+  'deployments.domains.get' | 'deployments.domains.list' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.observation.get' {
+  return value === 'deployments.domains.get' || value === 'deployments.domains.list'
+    || value === 'deployments.receipts.get' || value === 'deployments.receipts.list' || value === 'deployments.observation.get';
 }
 /** Domain effects retain their own root; they are never deployment receipt operations. */
 export function deploymentChildEffectActionIdForRootV1(value: string, admission?: DeploymentPreparationAdmissionV1):
