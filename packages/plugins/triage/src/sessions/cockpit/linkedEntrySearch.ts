@@ -1,5 +1,5 @@
 import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { parseTriageSearchQuery, projectTriageEntrySearchText, triageEntryMatchesSearch } from '../../projection/entrySearch.js';
 import {
@@ -44,7 +44,8 @@ export async function linkTriageSessionEntry(
             input,
             options,
         ));
-    } catch {
+    } catch (error) {
+        if (isPluginError(error)) throw error;
         return Object.freeze({ v: 1, status: 'failed' });
     }
 }

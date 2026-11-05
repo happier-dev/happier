@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { testkitEntryRef, testkitObservation, TESTKIT_SOURCE_INSTANCE_ID } from '../../corpus/testkit/observations.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import { projectTriageSessionLinkedEntryCandidates, linkTriageSessionEntry } from './linkedEntrySearch.js';
@@ -39,5 +40,8 @@ describe('Session entry linking', () => {
             .toEqual({ v: 1, status: 'failed' });
         expect(await linkTriageSessionEntry({ executeAction: async () => { throw new Error('Account unreachable'); } }, 'session-1', entry))
             .toEqual({ v: 1, status: 'failed' });
+        const refusal = new PluginError({ code: 'channels_pr_link_binding_not_ready', retryable: false });
+        await expect(linkTriageSessionEntry({ executeAction: async () => { throw refusal; } }, 'session-1', entry))
+            .rejects.toBe(refusal);
     });
 });
