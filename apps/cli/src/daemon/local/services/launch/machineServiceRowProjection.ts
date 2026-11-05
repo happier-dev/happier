@@ -36,9 +36,16 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             const endpoint = readManagedServiceEndpointUrl(snapshot.baseUrl, {
                 hostPolicy: managedServiceEndpointHostPolicyForMode(snapshot.mode),
             });
+            // Happier's Compose project/generation hashes identify custody, not a human name.
+            const compose = handle.kind === 'environment'
+                || (handle.kind === 'workspace' && handle.nativeTool === 'compose')
+                || (handle.kind === 'adopted' && handle.instance.adapter.pluginId === 'happier.machine.services'
+                    && handle.instance.adapter.localId === 'compose');
+            const displayName = compose && snapshot.nativeDisplayName !== undefined
+                && /^happier-(?:g-)?[a-f0-9]{64}$/u.test(snapshot.nativeDisplayName) ? undefined : snapshot.nativeDisplayName;
             const native = snapshot.mode === 'native'
                 ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported',
-                    ...(snapshot.nativeDisplayName !== undefined ? { displayName: snapshot.nativeDisplayName } : {}) } as const
+                    ...(displayName !== undefined ? { displayName } : {}) } as const
                 : undefined;
             const facts = handle.readNativeRuntimeFacts?.();
             const freshness = facts?.freshness === 'current' ? 'current' : 'unavailable';

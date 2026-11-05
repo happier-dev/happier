@@ -23,6 +23,7 @@ import {
     type ProjectServiceDeclarationRefV1,
     type LocalServiceActionTargetV1,
 } from '@happier-dev/protocol/local/services/actions/v1';
+import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import {
     RequesterWorkAttributionV1Schema,
     type RequesterWorkAttributionV1,
@@ -142,6 +143,8 @@ export type WorkspaceProjectManagedServiceWitness = Readonly<{
     kind: 'workspace';
     workspace: WorkspaceRefV1;
     declaration: ProjectServiceDeclarationRefV1;
+    /** Resolved native source captured by the admitted Workspace producer. */
+    nativeTool?: Extract<ProjectNativeRefV1, { kind: 'native' }>['tool'];
     cwd: string;
     requester: RequesterWorkAttributionV1;
     serviceId: string;
@@ -4419,7 +4422,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 return fail('plugin_managed_service_unavailable', 'Project service provenance does not match its admitted Workspace');
             }
             witness = Object.freeze({ kind: 'workspace', workspace, declaration, requester, cwd: request.cwd,
-                serviceId: request.serviceId, ...(request.execution ? { execution: request.execution } : {}) });
+                serviceId: request.serviceId, ...(request.execution ? { execution: request.execution } : {}),
+                ...(request.nativeTool ? { nativeTool: request.nativeTool } : {}) });
             entryKey = JSON.stringify(['project-service', workspace.serverId, workspace.machineId, workspace.id, declaration, request.cwd]);
         }
         const existing = semanticEntries.get(entryKey);

@@ -151,7 +151,8 @@ describe('Machine Services exact demand cost', () => {
                 // Only the native lifecycle IO is substituted; materialization,
                 // supervision, disclosure and result parsing remain canonical.
                 processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
-                    async inspect() { inspections++; return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                    async inspect() { inspections++; return { phase: 'running', readiness: 'not_reported', endpoint: null,
+                        displayName: `happier-${composeService === 'web' ? '' : 'g-'}${'a'.repeat(64)}` }; },
                     runtimeFacts() { return facts; },
                     async readAccounting() {
                         samples++;
@@ -174,6 +175,9 @@ describe('Machine Services exact demand cost', () => {
                 { serviceId: 'instance/worker', accounting: { memoryBytes: 2097152, startedAtMs: 1700000000000 }, health: { observedAtMs: 41, freshness: 'current', since: 1700000001000 } },
             ] });
             expect(samples, 'one explicit list samples each visible service once').toBe(2);
+            if (listed.kind === 'snapshot') for (const service of listed.services) {
+                expect(service.native?.displayName, 'generated Compose identities are not presentation names').toBeUndefined();
+            }
             expect(JSON.stringify(listed)).not.toContain('/private/data');
             expect(JSON.stringify(listed)).not.toContain('runtimeFacts');
             if (listed.kind === 'snapshot') for (const service of listed.services) {
@@ -253,7 +257,8 @@ describe('Machine Services exact demand cost', () => {
         const supervise = (watch: MachineServiceWatchV1) => fixture.registry.projectManagedServices.superviseMachine({
             ...target, watch, isCurrent: () => true, releaseObservation: async () => {},
             lifecycle: {
-                async inspect() { nativeReads++; return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+                async inspect() { nativeReads++; return { phase: 'running', readiness: 'not_reported', endpoint: null,
+                    displayName: `happier-${'a'.repeat(64)}` }; },
                 async stop() { nativeStops++; return { status: 'stopped' }; },
             },
         });
@@ -266,6 +271,7 @@ describe('Machine Services exact demand cost', () => {
                 return value.services;
             };
             const first = await read();
+            expect(first[0]?.native?.displayName, 'non-Compose native names remain visible').toBe(`happier-${'a'.repeat(64)}`);
             const nativeAtRest = nativeReads;
             for (let index = 0; index < 10; index++) {
                 const equal = await read();

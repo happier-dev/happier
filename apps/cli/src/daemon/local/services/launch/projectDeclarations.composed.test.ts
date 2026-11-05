@@ -22,7 +22,7 @@ import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWork
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/services/managedServiceSpecNormalization';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
@@ -702,7 +702,7 @@ describe('accepted Project Service declaration starter', () => {
             serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true, operationRuntime, terminalSessions,
             workerAdmission: createProjectWorkerAdmission({ machineId: targetWorkspace.machineId, admissionDrain, readPolicy: async () => ({ status: 'ready', policy: { accepting: finiteAccepting, runAtMost: null }, source: 'stored', metadataVersion: 1 }) }),
             resolveWorkspaceExecutionConfig: async () => config, nativeIo: { resolveTool: async () => nativeTool },
-            environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+            environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
             platform: 'linux', arch: 'x64', hostEnvironment: {}, successHomeDir: join(targetRoot, 'success'),
             ...(workerExecution ? createWorkspaceSyncWorkerPreparation({ serverId: profileId, serverHttpBaseUrl: 'https://home.example',
                 targetMachineId: targetWorkspace.machineId, credentials,
@@ -1587,6 +1587,10 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
         expect(started).toMatchObject({ status: 'succeeded' });
         if (!started.currentTarget) throw new Error('Expected real managed Compose binding');
+        const handle = h.owner.listProjectServices()[0];
+        if (!handle) throw new Error('Expected the launched Workspace service');
+        expect(handle).toMatchObject({ declaration: { selection: { kind: 'manifest', name: 'worker' } } });
+        const machineRow = h.owner.machineServiceRows.read(handle);
         unavailable = true;
         const routes = createLocalServiceActionRoutes({ machineId: 'machine',
             inventoryRegistry: createLocalServiceInventoryRegistry(), projectManagedServices: h.owner,
@@ -1607,6 +1611,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             assertActionOutputContract('localServices.actions.stopManaged', recovered);
             expect(recovered).toMatchObject({ status: 'succeeded' });
             expect(h.owner.listProjectServices()).toHaveLength(0);
+            expect(machineRow.native?.displayName,
+                'manifest Compose services do not present generated custody names').toBeUndefined();
         } finally { unavailable = false; settled = true; }
     });
 
@@ -2161,7 +2167,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const environmentRoots = join(h.targetRoot, 'environment-roots.jsonl');
         // Substitute the installed native executable only. Its process,
         // invocation custody and complete-environment producer remain real.
-        Object.assign(h.runtime, { environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => ({
+        Object.assign(h.runtime, { environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => ({
             executablePath: process.execPath, version, args: ['-e',
                 'require("node:fs").appendFileSync("environment-roots.jsonl",JSON.stringify(process.cwd())+"\\n");process.stdout.write("SERVICE_NATIVE_ROOT="+process.cwd()+"\\0");', '--'],
         }) }) });
@@ -2504,7 +2510,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         onTestFailed(() => { console.error(`FX19 native fixture failed during ${phase}`, observation); });
         const flox = process.env.FX19_FLOX_PATH!;
         const h = await fixture(false, { kind: 'native', tool: 'flox', file: '.flox/env/manifest.toml', target: 'worker' });
-        const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => ({ executablePath: flox, version: '1.18.1-gf264cf2' }) });
+        const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => ({ executablePath: flox, version: '1.18.1-gf264cf2' }) });
         const env: Record<string, string> = {};
         for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
         Object.assign(h.runtime, { hostEnvironment: env, environmentIo: io });

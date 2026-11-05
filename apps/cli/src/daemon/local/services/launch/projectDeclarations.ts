@@ -782,6 +782,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             const releaseNativeLifecycle = current.releaseNativeLifecycle;
             context.operationProgress?.update({ phase: 'starting', label: 'Starting service' });
             const handle = await registry.projectManagedServices.superviseProject({ kind: 'workspace', workspace: current.plan.workspace, declaration: current.declaration,
+                ...(current.command.kind === 'native' ? { nativeTool: current.command.source.tool } : {}),
                 cwd: current.command.kind === 'literal' ? current.command.cwd : current.command.resolution.cwd,
                 requester: { serverId: current.runtime.serverId, accountId: ingress.machineAdmission!.actorAccountId,
                     machineId: ingress.machineAdmission!.machineId, installationId: ingress.machineAdmission!.installationId },
