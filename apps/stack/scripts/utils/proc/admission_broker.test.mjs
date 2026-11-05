@@ -155,6 +155,38 @@ function captureRecoveryClock(t) {
   } };
 }
 
+test('a failed memory pass retains oldest-first waiters and recovers on the existing catch-up', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  let availableMemoryKiB = 0;
+  let fail = false;
+  const { root, broker } = await fixture(t, { readMemory: () => {
+    if (fail) throw Object.assign(new Error('Memory read failed'), { code: 'EIO' });
+    return { availableMemoryKiB, totalMemoryKiB: 100 };
+  } });
+  const older = await acquire(root, 70, t);
+  const younger = await acquire(root, 40, t);
+  const barrier = async () => {
+    const reader = await request(root, { kind: 'sample' });
+    await reader.next();
+    reader.socket.destroy();
+  };
+  await barrier();
+  assert.equal(broker.status().waitingCount, 2);
+  fail = true;
+  await clock.tick();
+  assert.equal(broker.status().waitingCount, 2, 'an observation failure must not consume queued requests');
+  assert.equal(broker.status().unreservedMemoryKiB, 0, 'failed observations cannot authorize from stale capacity');
+  assert.equal(clock.active.size, 1, 'the existing catch-up must remain armed after a failed pass');
+  fail = false;
+  availableMemoryKiB = 100;
+  await clock.tick();
+  const held = await older.admit();
+  assert.equal(broker.status().waitingCount, 1, 'younger work cannot displace the head reservation');
+  assert.equal(broker.status().reservedMemoryKiB, 70);
+  await held.release();
+  await younger.admit();
+});
+
 test('queued filesystem notifications share one resource snapshot and still wake on release', linux, async t => {
   captureRecoveryClock(t);
   const { root, broker } = await fixture(t);

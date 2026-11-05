@@ -129,14 +129,11 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   const send = (socket, value) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...status(), ...value }) + '\n'); };
   function enqueue(run) {
-    serial = serial.then(async () => { if (!closing) await run(); }).catch(error => {
+    serial = serial.then(async () => { if (!closing) await run(); }).catch(() => {
       // A failed observation cannot authorize work from a stale capacity fact.
       sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
-      for (const item of [...waiting]) refuse(item, 'HSTACK_ADMISSION_UNAVAILABLE', error.code ?? error.name);
-      for (const watcher of watchers.values()) watcher.close();
-      watchers.clear();
-      clearTimeout(resourceCatchUp);
-      resourceCatchUp = undefined;
+      // The failed pass does not decide the fate of unrelated waiters. Keep
+      // their order, watchers and existing catch-up so the next pass can decide.
     });
     return serial;
   }
@@ -168,11 +165,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       // Retain this handle while queued/running. Rearm only after recovery
       // drains, so slow OS observations cannot accumulate ticks or run back-to-back.
       const timer = setTimeout(() => enqueue(async () => {
-        await resourcesChanged(waiting.filter(item => item.blocked),
-          waiting.some(item => !item.slot && !item.blocked));
-        if (resourceCatchUp === timer) {
-          resourceCatchUp = undefined;
-          refreshWatchers();
+        try {
+          await resourcesChanged(waiting.filter(item => item.blocked),
+            waiting.some(item => !item.slot && !item.blocked));
+        } finally {
+          if (resourceCatchUp === timer) {
+            resourceCatchUp = undefined;
+            refreshWatchers();
+          }
         }
       }), DEFAULT_FILE_CHANGE_CATCH_UP_MS);
       resourceCatchUp = timer;
