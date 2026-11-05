@@ -261,6 +261,129 @@ function createRoomAwareIo() {
 }
 
 describe("registerSocketRpcHandlers", () => {
+    describe('live approval origins', () => {
+        const method = `approval-origin.${'a'.repeat(43)}:approval.origin.decide`;
+        const receiverData = { clientType: 'user-scoped', authTokenKind: 'account', authAuthority: 'present_user' };
+
+        it('delivers only current unrestricted present-user decisions to the live CLI origin', async () => {
+            const effect = vi.fn(async () => ({ ok: true, status: 'completed' }));
+            const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+            for (const scenario of ['automation', 'api-token', 'session', 'machine', 'external', 'present-user'] as const) {
+                const socket = createFakeSocket({ id: `decider-${scenario}`, data: {
+                    ...receiverData,
+                    ...(scenario === 'automation' ? { authAuthority: 'account_automation' } : {}),
+                    ...(scenario === 'api-token' ? { authTokenKind: 'api_token', apiTokenPrincipal: {} } : {}),
+                    ...(scenario === 'session' ? { clientType: 'session-scoped', sessionId: 'sess_1' } : {}),
+                    ...(scenario === 'machine' ? { clientType: 'machine-scoped', machineId: 'machine-1' } : {}),
+                }, handshake: { auth: { token: await auth.createToken('user-1', undefined, {
+                    kind: 'account', authority: 'present_user',
+                }) } } });
+                registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+                const ack = vi.fn();
+                await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision',
+                    callerAuthority: 'present_user',
+                    ...(scenario === 'external' ? { externalActionExecution: { v: 1 } } : {}),
+                }, ack);
+                expect(ack).toHaveBeenCalledWith(scenario === 'present-user'
+                    ? expect.objectContaining({ ok: true, result: { ok: true, status: 'completed' } })
+                    : expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            }
+            expect(effect).toHaveBeenCalledOnce();
+            expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST,
+                expect.objectContaining({ method, params: 'sealed-decision', callerAuthority: 'present_user' }));
+        });
+
+        it('refuses distinct duplicate live origins even when one has newer UI focus', async () => {
+            const effect = vi.fn(async () => ({ ok: true }));
+            const targets = ['origin-a', 'origin-b'].map((id, index) => ({ id,
+                data: { ...receiverData, uiLastFocusedAt: index + 1 }, timeout: () => ({ emitWithAck: effect }) }));
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: targets,
+                ...Object.fromEntries(targets.map(target => [target.id, [target]])) });
+            // One local origin must not bypass a complete cross-node census.
+            io.sockets.sockets.set(targets[0]!.id, { ...targets[0], connected: true } as unknown as Socket);
+            io.sockets.adapter.rooms.set(`rpc:user-1:${method}`, new Set([targets[0]!.id]));
+            const socket = createFakeSocket({ id: 'decider', data: receiverData,
+                handshake: { auth: { token: await auth.createToken('user-1', undefined, {
+                    kind: 'account', authority: 'present_user',
+                }) } } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' }));
+            expect(effect).not.toHaveBeenCalled();
+        });
+
+        it('ignores unsuitable receivers and deduplicates the same ordinary CLI socket', async () => {
+            const effect = vi.fn(async () => ({ ok: true }));
+            const rejectedEffect = vi.fn(async () => ({ ok: false }));
+            const target = { id: 'live-cli-origin', data: { ...receiverData, authTokenKind: 'terminal', authAuthority: 'account_automation' },
+                timeout: () => ({ emitWithAck: effect }) };
+            const unsuitable = [
+                { ...receiverData, clientType: 'machine-scoped', machineId: 'machine-1' },
+                { ...receiverData, clientType: 'session-scoped', sessionId: 'sess_1' },
+                { ...receiverData, authTokenKind: 'api_token', apiTokenPrincipal: {} },
+            ].map((data, index) => ({ id: `unsuitable-${index}`, data, timeout: () => ({ emitWithAck: rejectedEffect }) }));
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target, target, ...unsuitable], [target.id]: [target] });
+            const socket = createFakeSocket({ id: 'decider', data: receiverData,
+                handshake: { auth: { token: await auth.createToken('user-1', undefined, {
+                    kind: 'account', authority: 'present_user',
+                }) } } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true, result: { ok: true } }));
+            expect(effect).toHaveBeenCalledOnce();
+            expect(rejectedEffect).not.toHaveBeenCalled();
+        });
+
+        it('rechecks the current caller credential after target discovery and before delivery', async () => {
+            const effect = vi.fn(async () => ({ ok: true }));
+            const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
+            const { io, fetchSockets } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+            fetchSockets.mockImplementation(async room => {
+                accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 4 });
+                return room === target.id || room === `rpc:user-1:${method}` ? [target] : [];
+            });
+            const socket = createFakeSocket({ id: 'decider', data: receiverData,
+                handshake: { auth: { token: await auth.createToken('user-1', undefined, {
+                    kind: 'account', authority: 'present_user',
+                }) } } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const ack = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, ack);
+            expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).not.toHaveBeenCalled();
+        });
+
+        it('uses fresh terminal credentials and preserves the original socket ceiling', async () => {
+            accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 3 });
+            const token = await auth.createToken('user-1', undefined, { kind: 'terminal', authority: 'account_automation' });
+            const effect = vi.fn(async () => ({ ok: true }));
+            const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+            const handshake: { auth: { token: string; authorityCeiling?: 'account_automation' } } = { auth: { token } };
+            const socket = createFakeSocket({ id: 'terminal-decider', data: { ...receiverData, authTokenKind: 'terminal' }, handshake });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const allowed = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, allowed);
+            expect(allowed).toHaveBeenCalledWith(expect.objectContaining({ ok: true, result: { ok: true } }));
+
+            accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 4 });
+            expect(await auth.verifyTokenForRoute(token)).toBeNull();
+            const revokedAuthority = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, revokedAuthority);
+            expect(revokedAuthority).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+
+            accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 3 });
+            handshake.auth.authorityCeiling = 'account_automation';
+            const narrowed = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, narrowed);
+            expect(narrowed).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(effect).toHaveBeenCalledOnce();
+        });
+    });
+
     it('joins ordinary client issuance through Home without adding cancellation custody', async () => {
         const log = vi.spyOn(logging, 'log').mockImplementation(() => {});
         try {

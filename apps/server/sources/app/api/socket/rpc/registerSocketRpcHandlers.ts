@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { cancelRpcTarget } from './cancelRpcTarget';
+import { createLiveApprovalOriginTargetGuard, isOrdinaryLiveApprovalOriginSocket, isPresentUserLiveApprovalOriginCaller } from './liveApprovalOrigin';
+import { isLiveCliApprovalOriginMethod } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import type { Server, Socket } from "socket.io";
 
@@ -920,6 +922,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 reject("Invalid method name", false);
                 return;
             }
+            if (isLiveCliApprovalOriginMethod(method) && (params.ephemeralRunnerAdmission != null
+                || !isOrdinaryLiveApprovalOriginSocket(params.socket)
+                || !await hasCurrentSocketCredential(params.userId, params.socket))) {
+                reject("Forbidden", false);
+                return;
+            }
+
 
             if (
                 params.ephemeralRunnerAdmission?.kind === "machine-runtime"
@@ -1187,6 +1196,15 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 return;
             }
             const rawTransferRouting = (data as { transferRouting?: unknown } | undefined)?.transferRouting;
+            const liveApprovalOrigin = isLiveCliApprovalOriginMethod(method);
+            if (liveApprovalOrigin && (params.ephemeralRunnerAdmission != null
+                || !isPresentUserLiveApprovalOriginCaller(params.socket)
+                || (data as { authorization?: unknown }).authorization !== undefined
+                || (data as { externalActionExecution?: unknown }).externalActionExecution !== undefined
+                || (data as { sessionActionOrigin?: unknown }).sessionActionOrigin !== undefined)) {
+                callback?.(buildForbiddenRpcResponse());
+                return;
+            }
             const reverseAutomationSeparator = method.indexOf(':');
             const reverseClientContinuation = reverseAutomationSeparator > 0
                 && isMachineVisibleClientRpcMethod(method.slice(reverseAutomationSeparator + 1));
@@ -2077,6 +2095,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     }) ? { status: 'current' as const, value: await operation() }
                         : { status: 'refused' as const, response: buildForbiddenRpcResponse() },
                 } satisfies RpcForwardTargetGuard] : []),
+                liveApprovalOrigin ? createLiveApprovalOriginTargetGuard({ userId: params.userId, socket: params.socket }) : null,
             ]);
             const verifiedCallerGrant = verifiedExternalAction && 'grant' in verifiedExternalAction.binding
                 ? verifiedExternalAction.binding.grant : viewer?.principal.grant;
@@ -2084,6 +2103,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             targetTraceId = diagnosticOnly ? `rpc_${randomUUID()}` : cancellation?.targetRequestId;
             if (callerTraceId) log({ module: 'websocket-rpc', event: 'rpc-call-admitted',
                 requestId: callerTraceId, targetRequestId: targetTraceId,
+                ...(liveApprovalOrigin ? { callerAuthority: 'present_user' as const } : {}),
                 callerSocketId: params.socket.id, method,
                 durationMs: forwardStartedAt - startedAt,
             }, 'RPC call admitted to target lookup');
@@ -2124,7 +2144,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ? { transportResponseEnvelopeVersion: 1 as const }
                     : {}),
                 callerSocketId: params.socket.id,
-                ...(answeringClient ? { answeringClient } : {}),
+                ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,
                 ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
                 ...((isTransitionRoot || verifiedExternalAction?.binding.sessionActionOrigin || verifiedExternalAction?.binding.workflowActionOrigin

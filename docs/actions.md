@@ -6125,6 +6125,15 @@ execution receipt; private result fields are returned only to the live person
 deciding. Actions requiring live-only input keep their existing retained-input
 custody instead of persisting that input for deferred replay.
 
+In 0.3 development, a standalone CLI approval whose live invocation owns the
+operands publishes an Account RPC origin before creating its approval Artifact.
+Another present-user client in that Account sends only the exact Artifact and
+Home identifiers and its decision. The server authenticates that decision; the
+original invocation validates the captured approval subject before its existing
+decision and execution owners resume. Ordinary Artifact writes cannot supply
+consent, and private operands stay in the original invocation. The origin closes
+with that invocation; an unavailable origin returns a typed refusal.
+
 In 0.3 development, a retained native plugin `discussion.post` or
 `discussion.reply` keeps its open person approval when its executable generation
 retires. The successor reconstructs the native operands from the existing

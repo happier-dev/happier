@@ -14,7 +14,7 @@ export type ApprovalExecutor =
   | Readonly<{ kind: 'live_invocation'; daemonMachineId?: string }>
   | Readonly<{ kind: 'unavailable'; reason: 'legacy_request' | 'invalid_input' | 'missing_machine' }>;
 
-function isTargetApproval(request: ApprovalRequest | TargetActionApprovalRequestV1): request is TargetActionApprovalRequestV1 {
+export function isTargetApproval(request: ApprovalRequest | TargetActionApprovalRequestV1): request is TargetActionApprovalRequestV1 {
   return 'kind' in request && request.kind === 'plugin_target_action';
 }
 

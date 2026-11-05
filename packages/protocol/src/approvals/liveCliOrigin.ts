@@ -1,30 +1,11 @@
-import { resolveApprovalExecutor } from './resolveApprovalExecutor.js';
-import { ActionIdSchema } from '../actions/actionIds.js';
-import { getActionSpec } from '../actions/actionSpecs.js';
-import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../actions/decisionAuthority.js';
 import { ExternalActionRequestIdV1Schema } from '../actions/externalActionApi.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import type { ApprovalRequest } from './approvalRequestV1.js';
+import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
+import { isTargetApproval, resolveApprovalExecutor } from './resolveApprovalExecutor.js';
 
 export const LIVE_CLI_APPROVAL_DECIDE_METHOD = 'approval.origin.decide';
 const prefix = 'approval-origin.';
-
-/** Private Account input remains with the live standalone terminal, not its daemon. */
-export function requiresLiveCliApprovalOrigin(request: ApprovalRequest): boolean {
-  if (request.v !== 2 || request.approval?.flow !== 'blocking' || request.requesterConfirmation) return false;
-  const origin = request.executionOriginV1;
-  const actionId = ActionIdSchema.safeParse(request.actionId);
-  if (!actionId.success || origin.surface !== 'cli' || origin.caller.kind !== 'host'
-    || !origin.accountId || !origin.serverIdentityId || origin.target || origin.sessionId
-    || origin.runId || origin.runOccurrenceId || origin.sessionInputSource
-    || origin.externalActionExecutionAuthorization || origin.externalActionInputSignature
-    || origin.originalActionEnvelope || origin.principalId || origin.credentialId) return false;
-  const spec = getActionSpec(actionId.data);
-  return spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody !== 'live_only'
-    && spec.executionPlacement === 'account' && spec.executionPlacementForInput === undefined
-    && spec.requiredAuthority === 'account_automation'
-    && !requiresPresentUserExecutionAuthorityForActionInputV1(spec, request.actionArgs);
-}
 
 export function liveCliApprovalOriginScope(requestId: string): string {
   // JSON preserves distinct lone surrogates; the existing digest bounds Unicode
@@ -33,17 +14,18 @@ export function liveCliApprovalOriginScope(requestId: string): string {
   return `${prefix}${computeCanonicalDomainSeparatedDigest('happier.approval.live-cli-origin.v1', [identity])}`;
 }
 
+/** Address published by the standalone terminal, never by a signed daemon invocation. */
+export function readLiveCliApprovalOriginScope(request: ApprovalRequest | TargetActionApprovalRequestV1): string | null {
+  if (!isTargetApproval(request) && request.v !== 2) return null;
+  const executor = resolveApprovalExecutor(request);
+  if (executor.kind !== 'live_invocation' || executor.daemonMachineId) return null;
+  const origin = request.executionOriginV1;
+  return origin?.surface === 'cli' && origin.caller.kind === 'host'
+    ? liveCliApprovalOriginScope(origin.requestId) : null;
+}
+
 export function isLiveCliApprovalOriginMethod(method: string): boolean {
   const suffix = `:${LIVE_CLI_APPROVAL_DECIDE_METHOD}`;
   return method.startsWith(prefix) && method.endsWith(suffix)
     && /^[A-Za-z0-9_-]{43}$/.test(method.slice(prefix.length, -suffix.length));
-}
-
-export function readLiveCliApprovalOriginScope(request: ApprovalRequest): string | null {
-  if (request.v !== 2) return null;
-  const executor = resolveApprovalExecutor(request);
-  if (executor.kind !== 'live_invocation' || executor.daemonMachineId) return null;
-  const origin = request.executionOriginV1;
-  return origin.surface === 'cli' && origin.caller.kind === 'host'
-    ? liveCliApprovalOriginScope(origin.requestId) : null;
 }

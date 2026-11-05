@@ -49,6 +49,25 @@ function approvalRequest(overrides: Partial<ApprovalRequestV2> = {}): ApprovalRe
 }
 
 describe('createBlockingApprovalCoordinator', () => {
+  it('refuses a live decision for a substituted confidential CLI subject without losing its original waiter', async () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const request = approvalRequest({ actionId: 'secrets.create', requestedSurface: 'cli',
+      actionArgs: { name: 'Original credential', kind: 'apiKey' }, approval: { flow: 'blocking', result: 'required' },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+        accountId: 'alice', serverId: 'server-1', serverIdentityId: 'stable-home',
+        actionId: 'secrets.create', requestId: 'private-request' } });
+    const pending = coordinator.waitForDecision({ artifactId: 'private-request', request });
+    const approved = { ...request, status: 'approved' as const, updatedAtMs: 2,
+      decision: { kind: 'approve' as const, decidedAtMs: 2, authority: 'present_user' as const } };
+    await expect(coordinator.resolveBlockingDecision({ artifactId: 'private-request', decision: 'approve',
+      decisionAuthority: 'present_user', request: { ...approved, actionArgs: { name: 'Substituted credential', kind: 'apiKey' } } }))
+      .rejects.toMatchObject({ code: 'approval_request_conflict' });
+    expect(coordinator.getLiveWaiterCount('private-request')).toBe(1);
+    await expect(coordinator.resolveBlockingDecision({ artifactId: 'private-request', decision: 'approve',
+      decisionAuthority: 'present_user', request: approved })).resolves.toEqual({ resolved: true });
+    await expect(pending).resolves.toEqual({ decision: 'approve', request: approved, decisionAuthority: 'present_user' });
+    coordinator.dispose();
+  });
   afterEach(() => vi.useRealTimers());
   it.each(['target', 'execution-run-host'] as const)('requires authenticated live consent for %s despite approved durable reads and notifications', async family => {
     const coordinator = createBlockingApprovalCoordinator();

@@ -26,6 +26,7 @@ import { createActionExecutionHookDeps } from './createActionExecutionHookDeps';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
+import { createLiveCliApprovalOrigin } from './approvals/liveOrigin';
 
 type MutableActionExecutorDeps = {
   -readonly [Key in keyof ActionExecutorDeps]: ActionExecutorDeps[Key];
@@ -99,6 +100,11 @@ export function createCliActionExecutorHarness(
   observeRecordedApprovalExecution(args: RecordedApprovalExecutionObservationArgs): Promise<ActionExecuteResult>;
 }> {
   const coordinator = getSharedBlockingApprovalCoordinator();
+  const liveOrigin = createLiveCliApprovalOrigin({ token: params.credentials?.token ?? params.token,
+    accountId: readAccountIdFromToken(params.credentials?.token ?? params.token),
+    serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+    decide: (input, context) => runOnCapturedHome(() => executor.execute('approval.request.decide', input, context)),
+  });
   const browserSessionId = params.sessionId;
   // Nested widget admission must see this host's final registry/transport
   // bindings, including the committed input-type dependencies installed below.
@@ -183,11 +189,16 @@ export function createCliActionExecutorHarness(
     approvalsWaitForDecision: async (args: ApprovalWaitForDecisionArgs) => {
       const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
       const lifetime = rawDeps.hostActionApprovalLifetime;
-      const result = await timeWebLatencyPhase('approval.wait', () => coordinator.waitForDecision({
+      const result = await timeWebLatencyPhase('approval.wait', async () => {
+        const notificationLifetime = new AbortController();
+        const signal = args.signal ? AbortSignal.any([args.signal, notificationLifetime.signal]) : notificationLifetime.signal;
+        const observerLifetime = new AbortController();
+        const observerSignal = args.signal ? AbortSignal.any([args.signal, observerLifetime.signal]) : observerLifetime.signal;
+        const pending = coordinator.waitForDecision({
         artifactId: args.artifactId,
         request: args.request,
         serverId: args.serverId,
-        signal: args.signal,
+        signal: observerSignal,
         subscribeChanges: (onChange, onError) => observeAccountChanges({
           // The Artifact store uses Account credentials; the Session transport
           // bearer cannot subscribe to the Account's decision invalidations.
@@ -202,7 +213,21 @@ export function createCliActionExecutorHarness(
             serverId: args.serverId ?? null,
           })) : null;
         },
-      }), undefined, () => ({ artifactId: args.artifactId,
+        });
+        try {
+          liveOrigin.waiterReady(args.artifactId);
+          // An external decision may settle while this terminal is prompting.
+          // End that prompt with the wait; a prompt/decision failure must also
+          // release the observer instead of leaving an invisible local waiter.
+          const notification = Promise.resolve().then(() => params.onApprovalRequested?.(args.artifactId, signal));
+          return await Promise.race([pending, notification.then(() => pending)]);
+        } catch (error) {
+          observerLifetime.abort();
+          throw error;
+        } finally {
+          notificationLifetime.abort();
+        }
+      }, undefined, () => ({ artifactId: args.artifactId,
         ...(args.request.v === 2 ? { executionRequestId: args.request.executionOriginV1.requestId } : {}),
         ...(lifetime && 'operationId' in lifetime ? { operationId: lifetime.operationId } : {}),
         signalMatchesHostLifetime: Boolean(lifetime && args.signal === lifetime.signal),
@@ -279,11 +304,15 @@ export function createCliActionExecutorHarness(
       return await installedRuntime(args);
     };
   }
+  const originalApprovalsGet = rawDeps.approvalsGet;
+  if (originalApprovalsGet) {
+    rawDeps.approvalsGet = async args => liveOrigin.validateRead(args.artifactId, await originalApprovalsGet(args));
+  }
   const originalApprovalsUpdate = rawDeps.approvalsUpdate;
   const originalApprovalsCreate = rawDeps.approvalsCreate;
   if (originalApprovalsCreate) {
     rawDeps.approvalsCreate = async (args: ApprovalCreateArgs) => {
-      const result = await originalApprovalsCreate(args);
+      const result = await liveOrigin.publish(args, () => originalApprovalsCreate(args));
       const artifactId = typeof (result as { artifactId?: unknown }).artifactId === 'string'
         ? (result as { artifactId: string }).artifactId
         : null;
@@ -400,15 +429,17 @@ export function createCliActionExecutorHarness(
       return result;
     },
     executor: {
-      prepare: (actionId, input, context) => runOnCapturedHome(async () => {
+      prepare: (actionId, input, context) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
-        const prepared = await executor.prepare(actionId, input, resolved);
-        return prepared.kind === 'ready' ? { ...prepared,
-          invocation: { run: async () => consumeDeferredApproval(await prepared.invocation.run(), resolved) } } : prepared;
+        return liveOrigin.prepare(resolved, async () => {
+          const prepared = await executor.prepare(actionId, input, resolved);
+          return prepared.kind === 'ready' ? { ...prepared,
+            invocation: { run: async () => consumeDeferredApproval(await prepared.invocation.run(), resolved) } } : prepared;
+        });
       }),
-      execute: (actionId, input, context) => runOnCapturedHome(async () => {
+      execute: (actionId, input, context) => runOnCapturedHome(() => {
         const resolved = resolveContext(context, actionId);
-        return await consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved);
+        return liveOrigin.run(resolved, async () => consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved));
       }),
       continueConfidentialApprovalRequest: (input, context) => runOnCapturedHome(() => executor.continueConfidentialApprovalRequest(input, resolveContext(context))),
       replayApprovedApprovalRequest: (args) => runOnCapturedHome(() => executor.replayApprovedApprovalRequest(args)),

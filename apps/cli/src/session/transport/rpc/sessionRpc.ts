@@ -44,6 +44,8 @@ type CallSessionRpcParams = Readonly<{
   /** Null delegates acknowledgement lifetime to the caller signal/server lifecycle. */
   timeoutMs?: number | null;
   signal?: AbortSignal;
+  /** Host-only observation after the transport actually issues its packet. */
+  onIssued?: () => void;
   /** Reissue only a read-only observation when the supervised transport reconnects. */
   reattachOnReconnect?: RpcObservationOptions;
   externalAction?: Readonly<{
@@ -102,7 +104,7 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
           requestId,
           timeoutMs,
           signal,
-          onIssued: () => { void timeWebLatencyPhase('session.rpc.issued', () => undefined); },
+          onIssued: () => { params.onIssued?.(); void timeWebLatencyPhase('session.rpc.issued', () => undefined); },
           ...(createExternalActionExecution ? { createExternalActionExecution } : {}),
         })), params.sessionId);
         return params.mode === 'plain' ? result ?? null : result;

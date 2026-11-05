@@ -1,5 +1,5 @@
 import { Socket } from "socket.io";
-import { auth } from "@/app/auth/auth";
+import { auth, type VerifiedAuthToken } from "@/app/auth/auth";
 import { isRestrictedAuthTokenKind } from "@/app/api/utils/apiTokenRouteAdmission";
 import type { RestrictedSocketAdmission } from "./restrictedSocketAdmission";
 import { rejectSocket, resolveSocketAuthUnavailableError } from "./socketAuthError";
@@ -24,24 +24,28 @@ import { rejectSocket, resolveSocketAuthUnavailableError } from "./socketAuthErr
  * machine-bound ordinary Session publishers use it at packet admission.
  * No new predicate, generation or ledger exists.
  */
-export async function hasCurrentSocketCredential(userId: string, socket: Socket): Promise<boolean> {
+export async function readCurrentSocketCredential(userId: string, socket: Socket): Promise<VerifiedAuthToken | null> {
     const token = (socket.handshake?.auth as { token?: unknown } | undefined)?.token;
-    if (typeof token !== "string" || token.length === 0) return false;
+    if (typeof token !== "string" || token.length === 0) return null;
     const verified = await auth.verifyTokenForRoute(token);
-    if (!verified || verified.userId !== userId) return false;
-    if (!isRestrictedAuthTokenKind(verified.authTokenKind)) return true;
+    if (!verified || verified.userId !== userId) return null;
+    if (!isRestrictedAuthTokenKind(verified.authTokenKind)) return verified;
     // Same rule as connect: a restricted credential requires an admitted composition.
     const admission = (socket.data as { ephemeralRunnerAdmission?: RestrictedSocketAdmission } | undefined)
         ?.ephemeralRunnerAdmission;
     if (admission?.kind === "api-token-session-viewer") {
         const principal = verified.apiTokenPrincipal;
         if (verified.authTokenKind !== "api_token" || !principal
-            || principal.credentialId !== admission.principal.credentialId) return false;
+            || principal.credentialId !== admission.principal.credentialId) return null;
         socket.data.apiTokenPrincipal = principal;
         socket.data.ephemeralRunnerAdmission = { ...admission, principal };
-        return true;
+        return verified;
     }
-    return admission !== undefined && admission !== null;
+    return admission !== undefined && admission !== null ? verified : null;
+}
+
+export async function hasCurrentSocketCredential(userId: string, socket: Socket): Promise<boolean> {
+    return await readCurrentSocketCredential(userId, socket) !== null;
 }
 
 /**

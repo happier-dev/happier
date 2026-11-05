@@ -67,7 +67,7 @@ import { createApprovalReplay } from './executor/approvalReplay.js';
 import { createBlockingApprovalDecisionResolver } from './executor/blockingApprovalDecision.js';
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
 import { readApprovalReplayResult } from './executor/approvalResults.js';
-import { requiresLiveCliApprovalOrigin } from '../approvals/liveCliOrigin.js';
+import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { readPluginPublicationApprovalSubject } from '../approvals/creation.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../projects/projectOrganizationV1.js';
 import { deriveWorkflowDiscussionReplyLocalIdV1, deriveWorkflowReplacementId } from '../workflows/workflowInvocationIdentityV1.js';
@@ -6653,7 +6653,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         // Authenticated live delivery has reached the process holding private
         // input. A durable approved label never takes this branch on its own.
-        const liveCliOrigin = requiresLiveCliApprovalOrigin(approvedRequest);
+        const liveCliOrigin = readLiveCliApprovalOriginScope(approvedRequest) !== null;
         if (liveCliOrigin && resolveHostStampedAuthority(ctx) === 'present_user') {
           const claimed = await resolveBlockingDecisionIfClaimed({ artifactId, decision: 'approve',
             decisionAuthority: 'present_user', request: approvedRequest, serverId: effectiveServerId });
