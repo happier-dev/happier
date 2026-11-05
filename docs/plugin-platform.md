@@ -2470,6 +2470,20 @@ opaque address: title, description and the declared `executeAction` or
 `openSurface` payload must stay equal. Updating other context details does not
 retire that command. Changing its meaning or removing it retires the old address;
 the existing mount, target and Account retirement rules still apply.
+In unreleased 0.3 source, a handled `ui.current_context.command.invoke` returns
+the current-UI owner's positive settlement. Its Action result is
+`{ ok: true, result: null }` when the command has no result value; commands with
+a JSON result retain that value. Native and external MCP serialize that payload
+with `isError: false`; their failure path carries the typed refusal with
+`isError: true`. CLI retains the Action settlement, and Voice retains `ok`
+while its provider-result redactor omits private command data. Null is therefore
+a successful empty payload, not an instruction to read the context again.
+Unknown or retired commands, disabled Actions and unavailable clients return
+their existing typed refusals; callers must inspect the transport's settlement.
+Read and invoke share the current-context reverse-RPC address and the socket/focus
+selection rule above. A Session caller does not select a different room. The
+answering App's command owner resolves the opaque id and refuses a retired
+command; a separate command registration does not decide client availability.
 UI picks use those same Actions and freshly admitted candidates. Calls without
 a contextual target read or change the answering device's current Account/Home
 preference, including Agent, MCP and CLI requests. They do not use Account CAS.

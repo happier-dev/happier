@@ -87,12 +87,16 @@ export function createClientActionReverseDispatcher(
     // Project only the address from the already-admitted full Action input.
     const address = isWorkflowAuthoringActionId(actionId) && input && typeof input === 'object'
       ? WorkflowDraftGetInputV1Schema.safeParse({ scope: Reflect.get(input, 'scope'), draftId: Reflect.get(input, 'draftId') }) : null;
+    // Read and invoke select the same App socket. The current-UI command owner
+    // decides whether the opaque command still exists; its separate registration
+    // must not re-decide the answering client's availability.
     const method = actionId === 'session.work.get' && input && typeof input === 'object'
       && typeof Reflect.get(input, 'sessionId') === 'string'
       ? mountedWorkReadClientRpcMethod(actionId, Reflect.get(input, 'sessionId'))
       : actionId === 'inbox.get' ? mountedWorkReadClientRpcMethod(actionId)
-      : actionId === 'ui.current_context.read' ? currentUiContextReadClientRpcMethod()
-      : (actionId === 'ui.current_context.command.invoke' || actionId === 'account.home_continuation.invoke')
+      : actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke'
+        ? currentUiContextReadClientRpcMethod()
+      : actionId === 'account.home_continuation.invoke'
         && input && typeof input === 'object'
         && typeof Reflect.get(input, 'commandId') === 'string'
         ? currentUiContextCommandClientRpcMethod(Reflect.get(input, 'commandId'))

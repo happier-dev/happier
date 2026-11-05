@@ -457,9 +457,7 @@ describe('client Action reverse delivery', () => {
     } },
     { actionId: 'ui.current_context.command.invoke', input: { commandId: 'current-ui:usage:period' }, result: null },
   ] as const)('delivers Usage mounted $actionId from CLI through its canonical answering client', async request => {
-    const expectedMethod = request.actionId === 'ui.current_context.read'
-      ? `${RPC_METHODS.UI_ACTION_EXECUTE}.current-context.read`
-      : `${RPC_METHODS.UI_ACTION_EXECUTE}.current-context.command.${encodeURIComponent(JSON.stringify(request.input.commandId))}`;
+    const expectedMethod = `${RPC_METHODS.UI_ACTION_EXECUTE}.current-context.read`;
     const client: ClientActionMachineRpc = {
       hasConnectedClientRpcHandler: method => method === expectedMethod,
       callConnectedClientRpc: async (method, payload, options) => {

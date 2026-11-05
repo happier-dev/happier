@@ -37,15 +37,24 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRouteParams';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
 import { createActionToolExecutorBridge } from '../../../../../cli/src/agent/tools/happierTools/createActionToolExecutorBridge';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { ClientActionReverseRuntime } from '@/components/appShell/runtime/ClientActionReverseRuntime';
+import { createMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import type { Socket } from 'socket.io-client';
+import { currentUiContextCommandClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+
+const currentRoute = vi.hoisted(() => ({ segments: ['(app)', 'settings', 'usage'], params: {} as Record<string, string> }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/settings/usage', segments: ['(app)', 'settings', 'usage'] }).module;
+    return createExpoRouterMock({ pathname: '/settings/usage',
+        segments: () => currentRoute.segments, params: () => currentRoute.params }).module;
 });
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -63,6 +72,7 @@ const accounting: UsageAnalyticsQueryResponse = { v: 1, totals, breakdowns: {
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 let reader: CurrentUiContextReader | null = null;
 let unregister: (() => void) | undefined;
+let socketBoundary: ReturnType<typeof installDisconnectedServerSocketBoundary> | undefined;
 
 // Existing filter journeys keep all cards in their measured viewport; viewport admission has its own journey below.
 const visibleContentGeometry = { measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, 0, 1000, 300) };
@@ -108,51 +118,91 @@ function RoutedUsagePage({ sessionId }: Readonly<{ sessionId?: string }>) {
 }
 
 afterEach(async () => {
+    currentRoute.segments = ['(app)', 'settings', 'usage'];
+    currentRoute.params = {};
+    vi.restoreAllMocks();
     standardCleanup(); unregister?.(); unregister = undefined; reader = null;
     retireActiveServerAccountScopeLifetime(); invalidateUsageQueryResources(); await home?.dispose(); home = undefined;
+    socketBoundary?.dispose(); socketBoundary = undefined;
 });
 
 describe('mounted Usage page scope commands', () => {
     it.each([
-        { entry: 'settings', sessionId: undefined, readFails: false },
-        { entry: 'Session', sessionId: 'session-usage-parity', readFails: false },
-        { entry: 'Session with failed document read', sessionId: 'session-usage-parity', readFails: true },
-    ])('publishes and executes view, range and scope commands from the mounted $entry Usage entry', async ({ sessionId, readFails }) => {
+        { entry: 'settings', sessionId: undefined, readFails: false, pendingCommandRegistration: false },
+        { entry: 'Session', sessionId: 'session-usage-parity', readFails: false, pendingCommandRegistration: false },
+        { entry: 'Session with failed document read', sessionId: 'session-usage-parity', readFails: true, pendingCommandRegistration: false },
+        { entry: 'Session with pending command registration', sessionId: 'session-usage-parity', readFails: false, pendingCommandRegistration: true },
+    ])('publishes and executes view, range and scope commands from the mounted $entry Usage entry', async ({ sessionId, readFails, pendingCommandRegistration }) => {
+        currentRoute.segments = sessionId ? ['(app)', 'session', '[id]', 'usage'] : ['(app)', 'settings', 'usage'];
+        currentRoute.params = sessionId ? { id: sessionId } : {};
+        const sockets: Socket[] = [];
+        socketBoundary = installDisconnectedServerSocketBoundary(socket => {
+            sockets.push(socket);
+            configureConnectedServerSocketBoundary(socket);
+        });
         const readGate = createDeferred<void>();
         let holdRead = false;
         let heldReads = 0;
+        const machine = createMachineFixture({ id: 'usage-command-machine', activeAt: Date.now() });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-entry-parity.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
                 ? Response.json(createRootLayoutFeaturesResponse())
+                : request.path === '/v1/machines' ? Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine })])
                 : request.path === '/v1/kv/bulk' ? Response.json({ values: [] })
                 : request.path === '/v2/usage/query' ? Response.json(accounting)
                 : request.path.startsWith('/v1/artifacts/') && holdRead
                     ? (heldReads++, readGate.promise.then(() => readFails
                         ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined))
-                : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+                : createPlainMachineReadHttpResponseFixture(request.path, { method: request.method, body: JSON.stringify(request.body) }, 'account-a')
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
         const server = home.homes.a!;
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const registered = new Set<string>();
+        const register = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
         // Both routes admit this same page; the Session route supplies its hydrated Session id.
         const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                <CurrentContextPort /><RoutedUsagePage sessionId={sessionId} />
+                <CurrentContextPort /><ClientActionReverseRuntime /><RoutedUsagePage sessionId={sessionId} />
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
         const { sync } = await import('@/sync/sync');
         await sync.awaitBootstrapForegroundAcquisition();
         await waitForHomeGovernance(() => expect(screen.findAllByType(WidgetSurface).length).toBeGreaterThan(0));
         await flushHookEffects({ cycles: 40 });
-        const receive = createUiClientActionReverseHandler({ serverId: server.id, accountId: 'account-a', isCurrent: () => true });
+        const socket = sockets.slice().reverse().find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
+        if (!socket) throw new Error('Mounted Usage has no reverse receiver');
+        for (const [machineId, method] of register.mock.calls) registered.add(`${machineId}:${method}`);
+        vi.spyOn(socket, 'emit').mockImplementation((event, ...args) => {
+            const payload: unknown = args[0];
+            if (payload && typeof payload === 'object' && 'method' in payload && typeof payload.method === 'string') {
+                if (event === SOCKET_RPC_EVENTS.REGISTER) registered.add(payload.method);
+                if (event === SOCKET_RPC_EVENTS.UNREGISTER) registered.delete(payload.method);
+            }
+            return socket;
+        });
         // Connected-client RPC is the wire boundary; native MCP argument binding,
         // CLI reverse dispatch and the answering App's Action executor remain real.
         const caller = createActionExecutor({ clientActionExecute: createClientActionReverseDispatcher(() => ({
-            hasConnectedClientRpcHandler: () => true,
-            callConnectedClientRpc: async (_method, payload, options) => {
+            hasConnectedClientRpcHandler: method => registered.has(`${machine.id}:${method}`),
+            callConnectedClientRpc: async (method, payload, options) => {
+                // reload112 seq55–60: this socket answers current-context reads while
+                // the command-specific room is unavailable. Hold only that network
+                // registration; the mounted publisher and reverse receiver stay real.
+                if (pendingCommandRegistration && reader!.readCurrentUiContext()!.commands.some(command =>
+                    method === currentUiContextCommandClientRpcMethod(command.id))) {
+                    return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+                }
+                if (!registered.has(`${machine.id}:${method}`)) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
                 options.onIssued();
-                return { ok: true, result: await receive(JSON.parse(JSON.stringify(payload)),
-                    { signal: options.signal ?? new AbortController().signal }) };
+                const result = await new Promise<unknown>(resolve => {
+                    for (const receive of socket.listeners(SOCKET_RPC_EVENTS.REQUEST)) {
+                        receive({ method: `${machine.id}:${method}`, params: JSON.parse(JSON.stringify(payload)) }, resolve);
+                    }
+                });
+                return { ok: true, result };
             },
         })) });
         const bridge = createActionToolExecutorBridge({ surface: 'mcp', isActionEnabled: () => true,
