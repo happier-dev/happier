@@ -13,6 +13,7 @@ import { rootCertificates } from 'node:tls';
 import { createServer } from 'node:http';
 import { createServer as createSocketServer } from 'node:net';
 import { resolveQaBrowserUrl, runQaBrowserSignin, runQaBrowserSession as runRealQaBrowserSession, runQaBrowserWorker, stopQaBrowsers, stopStackQaBrowsers } from './qa_browser.mjs';
+import { runQaBrowserSigninPage } from './qa_browser_signin_page.mjs';
 import { buildRemoteQaBrowserStopCommand, resolveRemoteStackStatePaths } from './remote_commands.mjs';
 import { runCaptureResult, spawnProc, killProcessTree } from '../proc/proc.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -1420,11 +1421,10 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
   test(`browser signin settles ${outcome} without exporting credentials or closing the browser`, async () => {
     const input = randomBytes(32).toString('base64url');
     const origin = new URL('http:' + '//127.0.0.1:1234');
-    const homeUrl = new URL('http:' + '//127.0.0.1:5678').href;
     const canonicalHomeUrl = new URL('http:' + '//qa-home.localhost:5678').href;
     let socketClosed = false;
     // CDP is an external browser boundary. The fixture implements its protocol,
-    // while stdin parsing, endpoint selection, transport and result handling stay real.
+    // while endpoint selection, transport and page-result handling stay real.
     class BrowserSocket extends EventTarget {
       evaluated = 0;
       navigations = 0;
@@ -1446,7 +1446,7 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
             this.evaluated++;
           }
           this.message({ id, result: method === 'Page.navigate' ? { frameId: 'main', loaderId: `document-${++this.navigations}` }
-            : method === 'Runtime.callFunctionOn' ? { result: { value: this.evaluated === 2 ? 'account-' : outcome } }
+            : method === 'Runtime.callFunctionOn' ? { result: { value: this.evaluated === 2 ? 'account' : outcome } }
             : method === 'Network.getResponseBody' ? { body: JSON.stringify({ id: params.requestId === 'profile' ? 'account-owner-id' : 'wrong-account' }) } : {} });
           if (method === 'Page.navigate') {
             this.loaded = false;
@@ -1454,7 +1454,8 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
             assert.equal(url.searchParams.get('server'), url.pathname === '/restore/manual' ? canonicalHomeUrl : null,
               'restore must select the Stack Home through the app gate before accepting stdin');
             this.message({ method: 'Network.responseReceived', params: {
-              requestId: 'previous', response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
+              requestId: 'previous', frameId: 'main', loaderId: 'previous',
+              response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
             } });
             this.message({ method: 'Network.loadingFinished', params: { requestId: 'previous' } });
             this.message({ method: 'Page.loadEventFired', params: {} });
@@ -1473,14 +1474,16 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
               requestId: 'foreign', request: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href },
             } });
             this.message({ method: 'Network.responseReceived', params: {
-              requestId: 'foreign', response: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href, status: 200 },
+              requestId: 'foreign', frameId: 'main', loaderId: `document-${this.navigations}`,
+              response: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href, status: 200 },
             } });
             this.message({ method: 'Network.loadingFinished', params: { requestId: 'foreign' } });
             this.message({ method: 'Network.requestWillBeSent', params: {
               requestId: 'profile', request: { url: new URL('/v1/account/profile', origin).href },
             } });
             this.message({ method: 'Network.responseReceived', params: {
-              requestId: 'profile', response: { url: new URL('/v1/account/profile', origin).href, status: 200 },
+              requestId: 'profile', frameId: 'main', loaderId: `document-${this.navigations}`,
+              response: { url: new URL('/v1/account/profile', canonicalHomeUrl).href, status: 200 },
             } });
             this.message({ method: 'Network.loadingFinished', params: { requestId: 'profile' } });
           }
@@ -1488,14 +1491,13 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
       }
       close() { socketClosed = true; }
     }
-    const result = await runQaBrowserSignin({ sessionName: 'existing', stackName: 'qa',
-      cdpHttpUrl: origin.href, input: Readable.from([input]),
+    const result = await runQaBrowserSigninPage({
+      urls: { uiUrl: origin.href, canonicalServerUrl: canonicalHomeUrl }, cdpHttpUrl: origin.href, key: input,
     }, {
       WebSocketImpl: BrowserSocket,
       fetchImpl: async () => ({ ok: true, json: async () => [
         { type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws:' + '//127.0.0.1:9999/devtools/page/fixture' },
       ] }),
-      readStackInfo: async () => ({ urls: { uiUrl: origin.href, internalServerUrl: homeUrl, canonicalServerUrl: canonicalHomeUrl } }),
     });
     assert.deepEqual(result, outcome === 'home' ? { ok: true, accountIdPrefix: 'account-' }
       : { ok: false, reason: outcome === 'disconnect' ? 'browser_unavailable' : outcome });
