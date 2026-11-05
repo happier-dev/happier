@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { listUiFeatureToggleDefinitions } from '@/sync/domains/features/featureRegistry';
@@ -22,6 +23,16 @@ describe('Features page search declarations', () => {
         expect(declaredTitleKeys).toEqual(expect.arrayContaining([
             'terminalEmbedded.settings.rendererTitle',
         ]));
+    });
+
+    it('places every shared feature anchor in the section selected by the feature registry', () => {
+        for (const definition of listUiFeatureToggleDefinitions()) {
+            const shared = readBuiltInSettingDeclarationV1(`features.${definition.featureId}`);
+            expect(shared, definition.featureId).toMatchObject({
+                sectionId: definition.isExperimental ? 'features.experiments' : 'features.optionalFeatures',
+                sectionTitleKey: definition.isExperimental ? 'settingsFeatures.experiments' : 'settingsFeatures.localTogglesTitle',
+            });
+        }
     });
 
     it('names the section of every declared setting, so a search result shows where it lives', () => {
