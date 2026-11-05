@@ -739,6 +739,7 @@ function accountPolicy<TSchema extends z.core.$ZodType>(schema: TSchema, default
     });
 }
 
+export const AvatarStyleSchema = z.enum(['pixelated', 'gradient', 'brutalist', 'planet']);
 export const SessionListIdentityDisplaySchema = z.enum([
     'auto', 'agentLogo', 'project', 'projectWithAgent', 'agentWithTrailingProject', 'avatar', 'none',
 ]);
@@ -931,7 +932,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     workspaceFaviconsEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     workspaceMachineSubtitlesEnabled: accountPreference(z.boolean(), true, 'session list presentation'),
     showFlavorIcons: accountPreference(z.boolean(), true, 'application chrome'),
-    avatarStyle: accountPreference(z.enum(['pixelated', 'gradient', 'brutalist']), 'brutalist', 'avatar presentation'),
+    avatarStyle: accountPreference(AvatarStyleSchema, 'brutalist', 'avatar presentation'),
     botFaceStyle: accountPreference(BotFaceStyleSchema, 'dither', 'Bot face presentation'),
     botMotion: accountPreference(BotMotionSchema, 'lively', 'Bot motion presentation'),
     hideInactiveSessions: accountPreference(z.boolean(), false, 'session list presentation'),
