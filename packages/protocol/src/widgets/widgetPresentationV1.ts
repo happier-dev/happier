@@ -102,6 +102,19 @@ export function resolveWidgetRowOwnerSizeV1(kind: WidgetSurfaceRefV1['owner']['k
   });
   return sibling ?? size;
 }
+/**
+ * A half-column compact card placed in a row of three (Home's smalls row) keeps its column and takes the row's
+ * regular height: a Small presents as its Medium, so its states have the room a card's states need.
+ */
+export function resolveWidgetRowOfThreeSizeV1(kind: WidgetSurfaceRefV1['owner']['kind'], size: WidgetSizeV1, declaration?: WidgetSizeDeclarationV1): WidgetSizeV1 {
+  const own = getWidgetSizeFootprintV1(kind, size);
+  if (!own || own.height !== 'compact' || own.columnSpan >= own.columns) return size;
+  const sibling = resolveWidgetSizeChoicesV1(kind, declaration).sizes.find(candidate => {
+    const footprint = getWidgetSizeFootprintV1(kind, candidate);
+    return footprint !== undefined && footprint.columnSpan === own.columnSpan && footprint.height === 'regular';
+  });
+  return sibling ?? size;
+}
 export function stepWidgetSizeV1(sizes: readonly WidgetSizeV1[], current: WidgetSizeV1 | undefined, step: -1 | 1): WidgetSizeV1 | undefined {
   const ordered = WIDGET_SIZE_ORDER_V1.filter(size => sizes.includes(size));
   if (!ordered.length) return undefined;

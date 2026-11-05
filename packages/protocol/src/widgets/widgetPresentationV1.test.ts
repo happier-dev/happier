@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getWidgetSupportedSizesV1, getWidgetSizeFootprintV1, getSessionBoardWidgetFootprintV1,
-  normalizeWidgetSizeForSurfaceV1, resolveSessionBoardWidgetSizeV1, resolveWidgetRowOwnerSizeV1, resolveWidgetSizeChoicesV1,
+  normalizeWidgetSizeForSurfaceV1, resolveSessionBoardWidgetSizeV1, resolveWidgetRowOwnerSizeV1, resolveWidgetRowOfThreeSizeV1, resolveWidgetSizeChoicesV1,
   stepWidgetSizeV1, WidgetSizeDeclarationV1Schema, WidgetSessionBoardWidthV1Schema, WidgetSurfacePresentationV1Schema, WidgetExpectedPresentationV1Schema, WIDGET_SIZE_ORDER_V1,
 } from './widgetPresentationV1.js';
 import type { WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
@@ -44,6 +44,11 @@ describe('portable widget size policy', () => {
     expect(resolveWidgetRowOwnerSizeV1('home', 'small', { sizes: ['small', 'medium'], defaultSize: 'small' })).toBe('small');
     expect(resolveWidgetRowOwnerSizeV1('home', 'medium', { sizes: ['small', 'medium', 'wide'], defaultSize: 'small' })).toBe('medium');
     expect(resolveWidgetRowOwnerSizeV1('project', 'small')).toBe('small');
+  });
+  it('presents a Small in a row of three at the regular height of its column (its Medium), when the widget declares one', () => {
+    expect(resolveWidgetRowOfThreeSizeV1('home', 'small')).toBe('medium');
+    expect(resolveWidgetRowOfThreeSizeV1('home', 'medium')).toBe('medium');
+    expect(resolveWidgetRowOfThreeSizeV1('home', 'small', { sizes: ['small', 'wide'], defaultSize: 'small' })).toBe('small');
   });
   it('steps through the same canonical order and clamps at the ends', () => {
     const choices = ['tall', 'small', 'full'] as const;
