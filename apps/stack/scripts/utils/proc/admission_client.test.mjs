@@ -11,7 +11,7 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { createAdmissionBroker } from './admission_broker.mjs';
+import { createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
 import { requestAdmissionSample } from './admission_client.mjs';
 
 // Finite cutover coverage consumes an explicitly selected pre-broker producer.
@@ -110,25 +110,37 @@ test('admission reports one waiting line with enqueue facts only when capacity q
     });
   });
 
-test('an admission observation failure retains its OS reason in the refusal line and never runs the payload',
+test('a transient admission observation failure retains the client until the next successful pass',
   { skip: process.platform !== 'linux' }, async t => {
     const fixture = await restartFixture(t);
     let failObservation = false;
+    let observed;
     const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
       oldLockPath: join(fixture.root, 'old-admission.lock'),
-      sampleResources: async () => {
-        if (failObservation) throw Object.assign(new Error('OS memory observation failed'), { code: 'EIO' });
+      sampleResources: ({ slots }) => readAdmissionMemorySample({ slots, readProcesses: () => new Map(), readMemory: async () => {
+        if (failObservation) {
+          observed?.();
+          throw Object.assign(new Error('OS memory observation failed'), { code: 'EIO' });
+        }
         return { availableMemoryKiB: 100, totalMemoryKiB: 100 };
-      } });
+      } }) });
     await broker.start();
     t.after(() => broker.close());
     failObservation = true;
-    const client = fixture.start('process.stdout.write("unexpected");');
-    assert.deepEqual(await client.closed, [75, null]);
-    assert.match(client.stderr(), /^\[preferred-execution\] heavyweight admission refused \(HSTACK_ADMISSION_UNAVAILABLE: EIO\)$/m);
-    assert.match(client.stderr(), /^HSTACK_ADMISSION_UNAVAILABLE:restart-client$/m);
+    const failed = new Promise(resolve => { observed = resolve; });
+    const client = fixture.start('process.stdout.write("entered");');
+    await failed;
+    const sample = await requestAdmissionSample(fixture.native.admissionRoot);
+    assert.equal(sample.waitingCount, 1);
     assert.equal(client.stdout(), '');
-    assert.equal(broker.status().waitingCount, 0);
+    // The brief replaces the old terminal-refusal contract: a fresh arrival
+    // is another natural pass, and must recover the original client once.
+    failObservation = false;
+    const next = fixture.start('process.stdout.write("next");');
+    assert.deepEqual(await client.closed, [0, null], client.stderr());
+    assert.deepEqual(await next.closed, [0, null], next.stderr());
+    assert.equal(client.stdout(), 'entered');
+    assert.doesNotMatch(client.stderr(), /admission refused/);
   });
 
 test('a pre-admission real socket reset reconnects through broker startup and launches the payload once',

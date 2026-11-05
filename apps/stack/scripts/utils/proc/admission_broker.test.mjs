@@ -177,10 +177,14 @@ test('a failed memory pass retains oldest-first waiters and recovers on the exis
   assert.equal(broker.status().waitingCount, 2, 'an observation failure must not consume queued requests');
   assert.equal(broker.status().unreservedMemoryKiB, 0, 'failed observations cannot authorize from stale capacity');
   assert.equal(clock.active.size, 1, 'the existing catch-up must remain armed after a failed pass');
+  assert.equal(broker.status().lastFailure?.code, 'EIO');
+  assert.match(broker.status().lastFailure?.source ?? '', /^admission_broker\.test\.mjs:\d+:\d+$/);
+  assert.doesNotMatch(JSON.stringify(broker.status().lastFailure), /Memory read failed/);
   fail = false;
   availableMemoryKiB = 100;
   await clock.tick();
   const held = await older.admit();
+  assert.equal(broker.status().lastFailure?.code, 'EIO', 'recovery must retain the failure evidence');
   assert.equal(broker.status().waitingCount, 1, 'younger work cannot displace the head reservation');
   assert.equal(broker.status().reservedMemoryKiB, 70);
   await held.release();

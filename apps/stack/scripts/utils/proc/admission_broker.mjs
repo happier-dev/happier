@@ -128,8 +128,18 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
   const send = (socket, value) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...status(), ...value }) + '\n'); };
+  function recordFailure(error) {
+    // Keep only a symbolic code and a source location, never exception text,
+    // resource paths or OS payloads. Retain this evidence after recovery.
+    const candidate = error?.code ?? error?.name;
+    const code = typeof candidate === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(candidate) ? candidate : 'Error';
+    const source = String(error?.stack ?? '').split('\n').slice(1)
+      .map(line => /^\s+at .*?([A-Za-z0-9_.-]+\.mjs:\d+:\d+)\)?$/.exec(line)?.[1]).find(Boolean);
+    sample = { ...sample, lastFailure: { code, ...(source ? { source } : {}) } };
+  }
   function enqueue(run) {
-    serial = serial.then(async () => { if (!closing) await run(); }).catch(() => {
+    serial = serial.then(async () => { if (!closing) await run(); }).catch(error => {
+      recordFailure(error);
       // A failed observation cannot authorize work from a stale capacity fact.
       sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
       // The failed pass does not decide the fate of unrelated waiters. Keep
@@ -138,7 +148,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return serial;
   }
   async function observe() {
-    sample = await sampleResources({ slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })) });
+    sample = { ...(sample.lastFailure ? { lastFailure: sample.lastFailure } : {}),
+      ...await sampleResources({ slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })) }) };
     sampleCount += 1;
   }
   function removeWaiting(item) {
