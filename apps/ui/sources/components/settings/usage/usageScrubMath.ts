@@ -35,28 +35,6 @@ export function scrubCellCenterX(index: number, layout: ScrubRowLayout): number 
     return layout.leadingPx + index * stride + layout.cellPx / 2;
 }
 
-/**
- * Clamp a floating lens/bubble of `lensWidth` so it stays inside
- * `[0, containerWidth]` while trying to center on `anchorX`.
- */
-export function clampLensLeft(anchorX: number, lensWidth: number, containerWidth: number): number {
-    const ideal = anchorX - lensWidth / 2;
-    return Math.min(Math.max(0, ideal), Math.max(0, containerWidth - lensWidth));
-}
-
-/**
- * Set a lens beside its crosshair (lab `kitstates` lens): after it while it fits, before it when it
- * would leave the plot, and clamped inside when neither side has room. The scrubbed bucket is never
- * covered by its own values.
- */
-export function placeLensBeside(anchorX: number, lensWidth: number, containerWidth: number, gapPx: number): number {
-    const after = anchorX + gapPx;
-    if (after + lensWidth <= containerWidth) return after;
-    const before = anchorX - gapPx - lensWidth;
-    if (before >= 0) return before;
-    return clampLensLeft(anchorX, lensWidth, containerWidth);
-}
-
 /** A row whose cells are given by their centres (a chart's own bucket positions), evenly spaced or not. */
 export type ScrubCenters = Readonly<{ centers: readonly number[] }>;
 

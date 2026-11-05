@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampLensLeft, placeLensBeside, resolveScrubIndex, resolveScrubIndexAt, scrubCellCenterX } from './usageScrubMath';
+import { resolveScrubIndex, resolveScrubIndexAt, scrubCellCenterX } from './usageScrubMath';
 
 const layout = { leadingPx: 4, cellPx: 42, gapPx: 10, count: 5 } as const;
 
@@ -34,14 +34,6 @@ describe('scrubMath', () => {
         }
     });
 
-    it('clamps the lens inside the container while centering on the anchor', () => {
-        expect(clampLensLeft(100, 80, 400)).toBe(60);
-        expect(clampLensLeft(10, 80, 400)).toBe(0);
-        expect(clampLensLeft(390, 80, 400)).toBe(320);
-        // Lens wider than container pins to 0.
-        expect(clampLensLeft(50, 500, 400)).toBe(0);
-    });
-
     it('finds the nearest of unevenly spaced bucket centres', () => {
         // A month axis: buckets are not the same width.
         const row = { centers: [0, 31, 59, 90] } as const;
@@ -50,14 +42,5 @@ describe('scrubMath', () => {
         expect(resolveScrubIndexAt(46, row)).toBe(2);
         expect(resolveScrubIndexAt(500, row)).toBe(3);
         expect(resolveScrubIndexAt(10, { centers: [] })).toBeNull();
-    });
-
-    it('sets the lens beside the crosshair so the scrubbed bucket stays visible', () => {
-        // Room on the right: it sits after the crosshair.
-        expect(placeLensBeside(100, 80, 400, 8)).toBe(108);
-        // No room on the right: it flips to the other side of the crosshair.
-        expect(placeLensBeside(360, 80, 400, 8)).toBe(272);
-        // Room on neither side (a narrow tile): it stays inside the plot.
-        expect(placeLensBeside(40, 380, 400, 8)).toBe(0);
     });
 });

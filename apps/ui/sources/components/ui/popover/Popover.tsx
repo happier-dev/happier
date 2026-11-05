@@ -282,6 +282,11 @@ type PopoverCommonProps = Readonly<{
     /** In-page controls participating in this popover's interaction, outside its portal. */
     interactionBoundaryRef?: React.RefObject<unknown>;
     /**
+     * A reading that follows the pointer (a chart's scrub lens): the popover never takes the pointer, so
+     * the surface under it keeps its hover and scrub while the popover floats above every clip.
+     */
+    passive?: boolean;
+    /**
      * Native-only bottom viewport occlusion supplied by a canonical keyboard source.
      *
      * When omitted, Popover falls back to React Native Keyboard events. Supplying this avoids
@@ -1859,7 +1864,7 @@ function AnchoredPopover(props: PopoverProps) {
         !overlayPresence.exiting
         && (!(shouldPortalWeb || shouldPortalNative) || portalOpacity !== 0);
     const contentPointerEvents = resolveOverlayPointerEvents(
-        overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0)
+        props.passive || overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0)
             ? 'none'
             : 'auto',
     );
@@ -2065,6 +2070,7 @@ function AnchoredPopover(props: PopoverProps) {
                                 disabled={portalOpacity === 0}
                                 kind="popover"
                                 direction={popoverMotionDirection}
+                                {...(props.passive ? { pointerEvents: 'none' as const } : {})}
                             >
                                 {renderedChildren}
                             </OverlayMotionFrame>
@@ -2076,6 +2082,7 @@ function AnchoredPopover(props: PopoverProps) {
                         disabled={portalOpacity === 0}
                         kind="popover"
                         direction={popoverMotionDirection}
+                        {...(props.passive ? { pointerEvents: 'none' as const } : {})}
                     >
                         {renderedChildren}
                     </OverlayMotionFrame>

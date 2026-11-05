@@ -1,8 +1,8 @@
 import * as React from 'react';
 import {
   Pressable,
+  ScrollView,
   View,
-  type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -17,9 +17,9 @@ import {
   instrumentSelectionTick,
   useMotionPreferences,
 } from '@/components/instrument';
+import { Popover } from '@/components/ui/popover';
 
 import {
-  placeLensBeside,
   resolveScrubIndex,
   resolveScrubIndexAt,
   scrubCellCenterX,
@@ -78,6 +78,7 @@ export type ScrubLensProps = Readonly<{
 
 const LENS_WIDTH = 184;
 const LENS_GAP = 8;
+const LENS_ANCHOR_WIDTH = 2;
 const LONG_PRESS_MS = 300;
 
 type Layout = ScrubRowLayout | ScrubCenters;
@@ -103,10 +104,11 @@ const styles = StyleSheet.create((theme) => ({
     width: 1,
     opacity: 0.85,
   },
-  lens: {
+  lensAnchor: {
     position: 'absolute',
-    top: 4,
-    width: LENS_WIDTH,
+    top: 0,
+    bottom: 0,
+    width: LENS_ANCHOR_WIDTH,
   },
   lensBody: {
     paddingHorizontal: theme.space.s12,
@@ -179,24 +181,18 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   const motion = useMotionPreferences();
   const [activeIndex, setActiveIndex] = React.useState<number | null>(null);
   const [heldIndex, setHeldIndex] = React.useState<number | null>(null);
-  const [containerWidth, setContainerWidth] = React.useState(0);
   const lastIndexRef = React.useRef<number | null>(null);
   // Read from gesture callbacks without re-creating the gestures.
   const layoutRef = React.useRef(layout);
   layoutRef.current = layout;
   const heldRef = React.useRef(heldIndex);
   heldRef.current = heldIndex;
-  const rowPressAtRef = React.useRef(0);
   const count = cellCount(layout);
 
   // A held bucket that no longer exists (a period change) is let go rather than pointing elsewhere.
   React.useEffect(() => {
     if (heldIndex !== null && heldIndex >= count) setHeldIndex(null);
   }, [heldIndex, count]);
-
-  const onContainerLayout = React.useCallback((event: LayoutChangeEvent) => {
-    setContainerWidth(event.nativeEvent.layout.width);
-  }, []);
 
   const hapticsEnabled = motion.hapticsEnabled;
   const follow = React.useCallback(
@@ -222,11 +218,18 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     lastIndexRef.current = null;
     setActiveIndex(null);
   }, []);
+  // The press that let a held lens go may be a tap on its own bucket: that tap is the letting go, not a new hold.
+  const letGoRef = React.useRef<{ index: number; at: number } | null>(null);
+  const letGo = React.useCallback(() => {
+    if (heldRef.current !== null) letGoRef.current = { index: heldRef.current, at: Date.now() };
+    setHeldIndex(null);
+  }, []);
   const hold = React.useCallback((x: number) => {
-    // A press on one of the held lens' own rows is that row's, not a new hold.
-    if (Date.now() - rowPressAtRef.current < 400) return;
     const index = cellAt(x, layoutRef.current);
     if (index === null) return;
+    const letGone = letGoRef.current;
+    letGoRef.current = null;
+    if (letGone?.index === index && Date.now() - letGone.at < 400) return;
     setHeldIndex(heldRef.current === index ? null : index);
   }, []);
 
@@ -269,11 +272,10 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   const held = shownIndex !== null && shownIndex === heldIndex;
   const anchorX =
     shownIndex !== null ? cellCenter(shownIndex, layout) : 0;
-  const lensLeft = placeLensBeside(
-    anchorX,
-    LENS_WIDTH,
-    containerWidth || anchorX + LENS_GAP + LENS_WIDTH,
-    LENS_GAP,
+  // The crosshair anchors the lens. Each bucket is a new anchor, so the popover re-places beside it.
+  const crosshairRef = React.useMemo(
+    () => React.createRef<View>(),
+    [shownIndex],
   );
 
   return (
@@ -282,7 +284,6 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
       <View
         testID={testID}
         style={[styles.container, style]}
-        onLayout={onContainerLayout}
       >
         {children}
         {shownIndex !== null && content ? (
@@ -294,15 +295,43 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                 { left: anchorX - 0.5, backgroundColor: accentColor },
               ]}
             />
-            {/* Passive while it follows the pointer; its rows take presses only once held. */}
+            {/* The popover's anchor: the crosshair's span (a 1px view is not a measurable anchor). */}
             <View
-              pointerEvents={held ? 'box-none' : 'none'}
-              style={[styles.lens, { left: lensLeft }]}
+              ref={crosshairRef}
+              collapsable={false}
+              pointerEvents="none"
+              style={[styles.lensAnchor, { left: anchorX - LENS_ANCHOR_WIDTH / 2 }]}
+            />
+            {/* Floats above every card and clip: beside the crosshair while it fits, before it otherwise,
+                inside the window always. Passive while it follows the pointer; its rows take presses
+                only once held. */}
+            <Popover
+              open
+              anchorRef={crosshairRef}
+              backdrop={false}
+              passive={!held}
+              // A held lens lets go on Escape or a press anywhere else; that press still lands (a bucket holds anew).
+              {...(held ? { onRequestClose: letGo, consumeOutsidePointerDown: false } : {})}
+              placement="right"
+              gap={LENS_GAP}
+              maxWidthCap={LENS_WIDTH}
+              minWidth={LENS_WIDTH}
+              edgePadding={{ vertical: LENS_GAP }}
+              portal={{
+                web: true,
+                native: true,
+                matchAnchorWidth: false,
+                anchorAlignVertical: 'start',
+                sizeToContent: true,
+              }}
             >
+              {({ maxHeight, maxWidth }) => (
               <InstrumentCard
                 variant="popover"
+                style={{ width: Math.min(LENS_WIDTH, maxWidth), maxHeight }}
                 testID={testID ? `${testID}-lens` : undefined}
               >
+                <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
                 <View style={styles.lensBody} accessibilityLiveRegion="polite">
                   <View style={styles.lensHead}>
                     <Text style={styles.lensTitle} numberOfLines={1}>
@@ -348,9 +377,6 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                         }
                         accessibilityRole="button"
                         accessibilityLabel={row.pressLabel ?? row.label}
-                        onPressIn={() => {
-                          rowPressAtRef.current = Date.now();
-                        }}
                         onPress={row.onPress}
                         style={(state) => [
                           styles.lensRow,
@@ -375,8 +401,10 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                     </Text>
                   ) : null}
                 </View>
+                </ScrollView>
               </InstrumentCard>
-            </View>
+              )}
+            </Popover>
           </>
         ) : null}
       </View>
