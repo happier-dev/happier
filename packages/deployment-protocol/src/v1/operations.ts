@@ -1,6 +1,6 @@
 // Storage transports are Protocol-owned to preserve its dependency direction.
 import { z } from 'zod/mini';
-import { DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
+import { DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineSecretGrantV1Schema } from '../secrets/machineSecretGrantV1.js';
 
 /** Private prepared installation envelopes accompany the single public binding intent. */
@@ -18,20 +18,7 @@ export const DeploymentEnvironmentUpdateStorageInputV1Schema = z.extend(Deployme
 });
 export type DeploymentEnvironmentUpdateStorageInputV1 = z.infer<typeof DeploymentEnvironmentUpdateStorageInputV1Schema>;
 
-export {
-    DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
-    DeploymentEnvironmentControllerSetInputV1Schema,
-    DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema,
-    DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema,
-    DeploymentReceiptResultV1Schema, DeploymentActionFailureV1Schema,
-    DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
-    DeploymentReceiptGetInputV1Schema, DeploymentReceiptGetResultV1Schema,
-    DeploymentEnvironmentListInputV1Schema, DeploymentReceiptListInputV1Schema,
-    DeploymentBindingsSetInputV1Schema,
-    DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
-    DeploymentTransitionInputV1Schema,
-    DeploymentCancelInputV1Schema, DeploymentCancelTransitionInputV1Schema,
-} from '@happier-dev/protocol';
+export { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentControllerSetInputV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentReceiptResultV1Schema, DeploymentActionFailureV1Schema, DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentEnvironmentListInputV1Schema, DeploymentReceiptListInputV1Schema, DeploymentBindingsSetInputV1Schema, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema, DeploymentTransitionInputV1Schema, DeploymentCancelInputV1Schema, DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 export type {
     DeploymentEnvironmentCreateInputV1, DeploymentTargetLinkInputV1,
     DeploymentEnvironmentControllerSetInputV1,

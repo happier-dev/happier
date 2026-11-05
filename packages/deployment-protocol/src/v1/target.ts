@@ -1,5 +1,8 @@
 import { z } from 'zod/mini';
-import { DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkMetadataV1Schema, DeploymentTargetLinkMemberV1Schema, DeploymentTargetSourceV1Schema, PluginActionIconV2Schema, PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from '@happier-dev/protocol';
+import { DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkMetadataV1Schema, DeploymentTargetLinkMemberV1Schema, DeploymentTargetSourceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { PluginActionIconV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -99,8 +102,7 @@ export function getDeploymentTargetLinkLineageV1(link: Readonly<{ id: string; en
     }
     return lineage;
 }
-export { DeploymentTargetScopeV1Schema, DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema,
-    DeploymentTargetLinkAlreadyLinkedResultV1Schema } from '@happier-dev/protocol';
+export { DeploymentTargetScopeV1Schema, DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema, DeploymentTargetLinkAlreadyLinkedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 export type { DeploymentTargetLinkHeaderV1, DeploymentTargetScopeV1, DeploymentTargetLinksListInputV1, DeploymentTargetLinksListResultV1,
     DeploymentTargetLinkAlreadyLinkedResultV1 } from '@happier-dev/protocol';
 /** Target-host capture only; Machine and installation identity stay on link membership. */

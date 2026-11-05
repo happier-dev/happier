@@ -1,6 +1,5 @@
 import { z } from 'zod/mini';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepV1Schema, DeploymentTeardownReasonV1Schema,
-    DeploymentTargetLinkMachineV1Schema } from '@happier-dev/protocol';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepV1Schema, DeploymentTeardownReasonV1Schema, DeploymentTargetLinkMachineV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './ids.js';
 
 export { DEPLOYMENT_TEARDOWN_STEPS_V1 };

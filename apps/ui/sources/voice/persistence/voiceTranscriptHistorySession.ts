@@ -1,9 +1,5 @@
-import {
-    buildSystemSessionMetadataV1,
-    readSystemSessionMetadataFromMetadata,
-    VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY,
-    VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
-} from '@happier-dev/protocol/sessions/control/contract';
+import { buildSystemSessionMetadataV1, readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protocol/voice/sessionBinding';
 
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 

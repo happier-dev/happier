@@ -1,4 +1,4 @@
-import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import {
     isVoiceConversationCustodySessionMetadata as isFullVoiceConversationCustodySessionMetadata,
 } from '@happier-dev/protocol/voice/sessionBinding';

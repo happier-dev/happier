@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol';
+import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { LocalServiceNativePrerequisiteV1Schema, type LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceEstablishmentFailureV1Schema, type LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';

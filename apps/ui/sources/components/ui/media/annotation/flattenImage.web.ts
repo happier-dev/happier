@@ -1,4 +1,4 @@
-import { stepNumbers, type ImageMarksDocumentV1, type ImageRectV1, type ImageMarkSizeV1 } from '@happier-dev/protocol';
+import { stepNumbers, type ImageMarksDocumentV1, type ImageRectV1, type ImageMarkSizeV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import type { ImageAnnotationSource } from './types';
 import type { FlattenImageResult } from './flattenImage.types';
 import { getMarkGeometry } from './markGeometry';

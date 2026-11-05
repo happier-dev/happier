@@ -1,5 +1,6 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { projectSessionSummaryV1, readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { projectSessionSummaryV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { composeSessionReadinessV1, isSessionReadinessNativeSelectionV1, readSessionOperationCredentialReadinessV1 } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';

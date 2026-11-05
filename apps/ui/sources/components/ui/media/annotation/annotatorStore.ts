@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import { applyImageMarksOperations, stepNumbers, type ImageMarksDocumentV1, type ImageMarksOperationV1 } from '@happier-dev/protocol';
+import { applyImageMarksOperations, stepNumbers, type ImageMarksDocumentV1, type ImageMarksOperationV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { randomUUID } from '@/platform/randomUUID';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';

@@ -1,6 +1,5 @@
-import { sameStrictJsonValue, type DeploymentTargetLinkAlreadyLinkedResultV1,
-    type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkHeaderV1,
-    type DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { type DeploymentTargetLinkAlreadyLinkedResultV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkHeaderV1, type DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTargetLinkArtifactV1, type DeploymentArtifactDocumentV1 } from './artifacts.js';
 import type { DeploymentNativeComposeOriginV1 } from './target.js';
 

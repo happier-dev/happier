@@ -11785,6 +11785,11 @@
       "types": "./dist/sessions/metadata/sessionWorkspaceLocationV1.d.ts",
       "default": "./dist/sessions/metadata/sessionWorkspaceLocationV1.js"
     },
+    "./sessions/metadata/systemSessionV1": {
+      "happier-source": "./src/sessions/metadata/systemSessionV1.ts",
+      "types": "./dist/sessions/metadata/systemSessionV1.d.ts",
+      "default": "./dist/sessions/metadata/systemSessionV1.js"
+    },
     "./sessions/metadata/terminalMetadata": {
       "happier-source": "./src/sessions/metadata/terminalMetadata.ts",
       "types": "./dist/sessions/metadata/terminalMetadata.d.ts",

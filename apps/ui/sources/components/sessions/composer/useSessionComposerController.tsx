@@ -261,7 +261,7 @@ import type { ComposerRefV1 } from "@happier-dev/protocol/plugins/ui/composerRef
 import type { ComposerSnapshotV1, ComposerTransactionResultV1 } from "@happier-dev/protocol/plugins/ui/composer";
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from "@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1";
 import type { ConnectedServiceQuotaSnapshotV1 } from "@happier-dev/protocol/connect/connected-service-schemas";
-import { isHiddenSystemSession } from "@happier-dev/protocol/sessions/control/contract";
+import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { readSessionProviderBindingMetadataV1 } from "@happier-dev/protocol/providers/sessions/bindingMetadataV1";
 import { removeSessionPendingQueueHoldV1FromMetadata, writeSessionPendingQueueHoldV1ToMetadata } from "@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1";
 import { SessionModelTransitionResultV1Schema } from "@happier-dev/protocol/sessions/control/modelTransitionV1";

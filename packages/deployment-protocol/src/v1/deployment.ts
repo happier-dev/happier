@@ -2,8 +2,10 @@ import { z } from 'zod/mini';
 import { DeploymentDataCreationReferenceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { DeploymentIngressV1Schema, DeploymentTemplateV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentStateV1Schema, DeploymentOwnServerTargetMachinesV1Schema,
-    DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, deploymentInProgressStates } from '@happier-dev/protocol';
+import { DeploymentIngressV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { DeploymentStateV1Schema, deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
+import { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 import { DeploymentDigestV1Schema, DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTextV1Schema as text } from './ids.js';
 import { EnvironmentSecretBindingV1Schema, OwnServerEnvironmentConfigurationV1Schema } from './environment.js';
@@ -13,7 +15,7 @@ import { DeploymentCorrelationV1Schema } from './correlations.js';
 import { DeploymentReviewRevisionV1Schema } from './review.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { DeploymentPreMigrationBackupV1Schema } from './backup.js';
-import { WorkspaceManifestEntrySchema } from '@happier-dev/protocol';
+import { WorkspaceManifestEntrySchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { DeploymentStepV1Schema,
     DeploymentTargetRoleResultV1Schema, DeploymentTargetRoleFailureV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
@@ -24,8 +26,7 @@ export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 export function projectDeploymentReceiptActivityV1(state: DeploymentStateV1): Readonly<{ running: boolean; failed: boolean }> {
     return { running: deploymentInProgressStates().includes(state), failed: state === 'failed' };
 }
-export { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, DeploymentPendingTriggerOccurrenceV1Schema,
-    DeploymentPendingDeployIntentV1Schema, DeploymentPendingDeployV1Schema } from '@happier-dev/protocol';
+export { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, DeploymentPendingTriggerOccurrenceV1Schema, DeploymentPendingDeployIntentV1Schema, DeploymentPendingDeployV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { DeploymentSourceIntentV1, DeploymentSourceMethodV1, DeploymentPendingTriggerOccurrenceV1,
     DeploymentPendingDeployIntentV1, DeploymentPendingDeployV1 } from '@happier-dev/protocol';
 export { DeploymentStepV1Schema };

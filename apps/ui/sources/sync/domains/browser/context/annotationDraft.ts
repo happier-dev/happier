@@ -2,7 +2,7 @@ import { type BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol/br
 import { stripBrowserDiagnosticUrlValues } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { BrowserSemanticAdapterKindV1 } from '@happier-dev/protocol/browser/adapters/kinds';
-import { applyImageMarksOperations, type ImageMarkColorV1, type ImageMarksDocumentV1, type ImageMarksOperationV1 } from '@happier-dev/protocol';
+import { applyImageMarksOperations, type ImageMarkColorV1, type ImageMarksDocumentV1, type ImageMarksOperationV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 import { BrowserContextAnnotationItemV2Schema } from '@happier-dev/protocol/browser/context/v1';
 import type { ImageAnnotationSource } from '@/components/ui/media/annotation/types';
 import type { BrowserAnnotationViewportCaptureResult } from './captureProvider';

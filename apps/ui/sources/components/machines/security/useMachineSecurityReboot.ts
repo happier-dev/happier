@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { MachineRebootResultV1Schema, type MachineRebootResultV1 } from '@happier-dev/protocol';
+import { MachineRebootResultV1Schema, type MachineRebootResultV1 } from '@happier-dev/protocol/actions/specs/machine/reboot';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';

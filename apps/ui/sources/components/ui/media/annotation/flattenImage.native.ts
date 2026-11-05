@@ -1,5 +1,5 @@
 import { AlphaType, ColorType, ImageFormat, Skia, type SkImage } from '@shopify/react-native-skia';
-import { stepNumbers, type ImageMarksDocumentV1, type ImageMarkSizeV1, type ImageRectV1 } from '@happier-dev/protocol';
+import { stepNumbers, type ImageMarksDocumentV1, type ImageMarkSizeV1, type ImageRectV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import { drawMarkGeometry } from './drawMarkSkia.native';
 import { annotationImageDataSource, decodeAnnotationImage } from './decodeAnnotationImage.native';

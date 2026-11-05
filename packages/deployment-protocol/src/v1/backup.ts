@@ -1,8 +1,11 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
-import { BackupDestinationContributionV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
-    DeploymentEnvironmentUpdateInputV1Schema, StrictJsonValueSchema, environmentSecretBindingIdentityV1,
-    compilePluginJsonSchema, isValidPluginJsonSchemaValue, type BackupDestinationContributionV1 } from '@happier-dev/protocol';
+import { BackupDestinationContributionV1Schema, type BackupDestinationContributionV1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
+import { DeploymentBackupDestinationBindingIdentityV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocolComposableSchema';
 
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTextV1Schema as text } from './ids.js';
 

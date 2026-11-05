@@ -1,6 +1,8 @@
 import { z } from 'zod/mini';
-import { DeploymentActionFailureV1Schema, DeploymentDomainPlacementV1Schema, computeCanonicalDomainSeparatedDigest,
-    EnvironmentDomainCredentialBindingV1Schema } from '@happier-dev/protocol';
+import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainPlacementV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { EnvironmentDomainCredentialBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from '../v1/ids.js';

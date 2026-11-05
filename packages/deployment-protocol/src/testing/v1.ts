@@ -3,7 +3,7 @@ import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetLinkHeade
 import { DeploymentReceiptHeaderV1Schema, DeploymentV1Schema, type DeploymentOwnServerContentV1, type DeploymentReceiptHeaderV1, type DeploymentV1 } from '../v1/deployment.js';
 import { DeploymentEnvironmentCollectionV1Schema, DeploymentEnvironmentDetailV1Schema, DeploymentReceiptDetailV1Schema, type DeploymentEnvironmentCollectionV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '../v1/details.js';
 import { z } from 'zod/mini';
-import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol';
+import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { DeploymentSecretBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, type EnvironmentVariableBindingV1 } from '../v1/environment.js';
 

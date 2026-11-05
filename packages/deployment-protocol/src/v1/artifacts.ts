@@ -1,14 +1,13 @@
 import { z } from 'zod/mini';
-import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeaderV1, readDeploymentArtifactJsonBodyV1,
-    DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol';
+import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeaderV1, readDeploymentArtifactJsonBodyV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DeploymentEnvironmentContentV1Schema } from './environment.js';
 import { DeploymentDomainContentV1Schema } from './domain.js';
 import { DeploymentTargetLinkContentV1Schema } from './target.js';
 import { DeploymentContentV1Schema, DeploymentStepV1Schema, type DeploymentContentV1, type DeploymentStepV1 } from './deployment.js';
 
-export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
-    DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
+export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 export const DeploymentEnvironmentArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1), title: z.string() });
 export const DeploymentTargetLinkArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1), title: z.string() });
 export const DeploymentReceiptArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1), title: z.string(),

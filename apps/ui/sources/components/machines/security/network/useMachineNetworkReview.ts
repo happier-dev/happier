@@ -1,11 +1,5 @@
 import * as React from 'react';
-import {
-  MachineReachabilityConfigureResultV1Schema,
-  MachineReachabilityInspectResultV1Schema,
-  type MachineReachabilityChangeV1,
-  type MachineReachabilityConfigureResultV1,
-  type MachineReachabilityPlanV1,
-} from '@happier-dev/protocol';
+import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityInspectResultV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 

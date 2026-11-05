@@ -1,14 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import {
-  stepNumbers,
-  type ImageMarkColorV1,
-  type ImageMarkSizeV1,
-  type ImageMarkV1,
-  type ImagePointV1,
-  type ImageRectV1,
-} from '@happier-dev/protocol';
+import { stepNumbers, type ImageMarkColorV1, type ImageMarkSizeV1, type ImageMarkV1, type ImagePointV1, type ImageRectV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import { HAPPIER_MOTION_V1, happierFocusRingStyle, isHappierFocusVisible } from '@happier-dev/plugin-ui/presentation';
 

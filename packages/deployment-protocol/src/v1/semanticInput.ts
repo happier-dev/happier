@@ -1,1 +1,1 @@
-export { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInputV1 } from '@happier-dev/protocol';
+export { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';

@@ -1,6 +1,8 @@
 import { z } from 'zod/mini';
-import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
-    DeploymentDigestV1Schema, DeploymentRevisionV1Schema } from '@happier-dev/protocol';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
 
 /** Private provenance only. Definition owns Compose; bindings own all credential references. */
 export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({

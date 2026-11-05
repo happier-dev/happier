@@ -3,4 +3,4 @@ export { createImageAnnotator } from './annotatorStore';
 export type { ImageAnnotator, ImageAnnotatorOptions, AnnotatorState, AnnotatorTool, ImageAnnotationSource, AnnotationChangeCause, ElementPicker, PickedElement } from './annotatorStore';
 export { flattenAnnotatedImage, rasterizeBlurPreview } from './flattenImage';
 export type { FlattenImageResult, FlattenAnnotatedImage } from './flattenImage.types';
-export { hasBlur, countBlurMarks, isEmptyEdit } from '@happier-dev/protocol';
+export { hasBlur, countBlurMarks, isEmptyEdit } from '@happier-dev/protocol/sessions/media/imageMarksV1';

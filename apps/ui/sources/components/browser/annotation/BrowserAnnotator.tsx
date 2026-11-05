@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Platform, ScrollView, View, type LayoutChange
 import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol';
+import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import {
     resolveAgentInputPanelBackedEdgeStyle,

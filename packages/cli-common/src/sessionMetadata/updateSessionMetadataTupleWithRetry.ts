@@ -1,5 +1,6 @@
 import { SessionSharedMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema, SessionSharedDisplayEnvelopeV1Schema, SessionOwnerDisplayEnvelopeV1Schema } from '@happier-dev/protocol';
+import { projectSessionDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplayProjectionV1';
+import { SessionDisplayProjectionV1Schema, SessionSharedDisplayEnvelopeV1Schema, SessionOwnerDisplayEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionMetadataTuplePatchV1, SessionMetadataOwnerMigrationPatchV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionSharedMetadataV1, SessionDisplayProjectionV1, SessionSharedDisplayV1, SessionOwnerDisplayV1, SessionSharedDisplayEnvelopeV1, SessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol';
 
 export type SessionMetadataOwnerTupleMutationValueV1<M, A> = Readonly<{

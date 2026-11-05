@@ -1,7 +1,11 @@
 import { z } from 'zod/mini';
-import { DeploymentIngressV1Schema, DeploymentTemplateV1Schema, ScmCommitOidSchema, DeploymentReviewServiceV1Schema, type DeploymentSourceIntentV1,
-  DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol';
-export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '@happier-dev/protocol';
+import { DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
+import { DeploymentReviewServiceV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
+import { type DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
+export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentDigestV1Schema as digest } from './ids.js';
 import { OwnServerEnvironmentConfigurationV1Schema } from './environment.js';

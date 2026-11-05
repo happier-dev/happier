@@ -19,7 +19,7 @@ import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { withShortcut } from '@/keyboard/withShortcut';
 import { t } from '@/text';
-import { isEmptyEdit } from '@happier-dev/protocol';
+import { isEmptyEdit } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import { AnnotatorColorPanel, AnnotatorColorRow } from './AnnotatorColorPopover';
 import { AnnotatorCropActions } from './AnnotatorCropActions';

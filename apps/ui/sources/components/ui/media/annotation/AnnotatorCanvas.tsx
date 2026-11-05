@@ -6,12 +6,7 @@ import { useKeyboardState } from 'react-native-keyboard-controller';
 import { runOnJS, useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
-import {
-  stepNumbers,
-  type ImageMarkV1,
-  type ImagePointV1,
-  type ImageRectV1,
-} from '@happier-dev/protocol';
+import { stepNumbers, type ImageMarkV1, type ImagePointV1, type ImageRectV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import { gestureTokens } from '@/components/ui/motion/gestureTokens';
 import { hapticsLight } from '@/components/ui/theme/haptics';

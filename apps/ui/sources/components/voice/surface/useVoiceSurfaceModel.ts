@@ -8,7 +8,7 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
-import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/control/contract';
+import { isHiddenSystemSession } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import {
     useVoiceAttemptControl,
     VOICE_ATTEMPT_IDLE_TARGET_GLOBAL,

@@ -1,9 +1,8 @@
 import { z } from 'zod/mini';
-import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema,
-    DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1,
-    DeploymentRetainPreviousDeploymentsV1Schema,
-    DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol';
-import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryComposeV1Schema, DeploymentPendingDeployV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
+import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { DeploymentTextV1Schema as text } from './ids.js';
 import { deploymentStoredContentV1Schema } from './storedContent.js';
@@ -12,21 +11,17 @@ import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema 
 import { DeploymentEnvironmentBackupV1Schema } from './backup.js';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema,
-    DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema,
-    StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol';
+export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentVariableBindingV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
-export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema,
-    EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol';
+export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentSecretBindingV1, EnvironmentSecretBindingInputV1, EnvironmentSecretBindingIdentityV1,
     EnvironmentDataRoleAddressV1 } from '@happier-dev/protocol';
-export { DeploymentCreationDefaultsV1Schema, ProjectDeploymentDefaultsV1Schema, ProjectDeploymentDefaultsPayloadV1Schema,
-    ProjectDeploymentDefaultsContentV1Schema, DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1,
-    ResolvedDeploymentCreationDefaultsV1Schema, DeploymentCreationDefaultSourceV1Schema } from '@happier-dev/protocol';
+export { DeploymentCreationDefaultsV1Schema, DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentCreationDefaultSourceV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
+export { ProjectDeploymentDefaultsV1Schema, ProjectDeploymentDefaultsPayloadV1Schema, ProjectDeploymentDefaultsContentV1Schema } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
 export type { DeploymentCreationDefaultsV1, ProjectDeploymentDefaultsV1, ProjectDeploymentDefaultsPayloadV1,
     ProjectDeploymentDefaultsContentV1, ResolvedDeploymentCreationDefaultsV1, DeploymentCreationDefaultSourceV1 } from '@happier-dev/protocol';
 export type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-export { DeploymentRepositoryComposeV1Schema } from '@happier-dev/protocol';
+export { DeploymentRepositoryComposeV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export const DeploymentEnvironmentDefinitionV1Schema = z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('repository'), ref: text, compose: z.optional(DeploymentRepositoryComposeV1Schema) }),
     DeploymentStoredDefinitionV1Schema,
