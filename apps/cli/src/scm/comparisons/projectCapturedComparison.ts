@@ -1,4 +1,4 @@
-import type { ScmComparisonCaptureInput, ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmComparisonCaptureInput, ScmComparisonCaptureOutput, ScmDiffSummaryGenerateOutput } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
@@ -29,6 +29,14 @@ export function projectCapturedComparisonFileIndex(file: ScmComparisonFile): Scm
 }
 
 const unavailable = (error: string): ScmComparisonCaptureOutput => ({ success: false, errorCode: 'DIFF_UNAVAILABLE', error });
+
+/** Saved output references need every occurrence; patch bodies use the same pinned file reader as live captures. */
+export function projectCapturedScmOutput(output: ScmDiffSummaryGenerateOutput): ScmDiffSummaryGenerateOutput {
+  if (!output.comparison) return output;
+  const comparison = output.comparison;
+  return { ...output, comparison: { ...comparison, inventory: { ...comparison.inventory,
+    files: comparison.inventory.files.map(projectCapturedComparisonFileIndex) } } };
+}
 
 /** Transport projection of retained evidence; storage remains owned by captureScmComparison. */
 export function projectCapturedComparison(captured: Pick<CapturedScmComparison, 'comparison' | 'metadata'>,

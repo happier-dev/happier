@@ -6,6 +6,8 @@ import { logger } from '@/ui/logger';
 import type { ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
 import { ScmDiffSummaryErrorCodeSchema, ScmDiffSummaryGenerateInputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummaryGenerateOutput } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultListInputSchema, ScmDiffSummaryResultReadInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
@@ -26,7 +28,7 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { createNonRepositoryScmSnapshotResponse, notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import { captureScmComparison, readCapturedScmComparison, readCapturedScmComparisonFile, readCapturedScmComparisonPage } from '@/scm/comparisons/captureScmComparison';
-import { findCapturedComparisonFile, projectCapturedComparison } from '@/scm/comparisons/projectCapturedComparison';
+import { findCapturedComparisonFile, projectCapturedComparison, projectCapturedScmOutput } from '@/scm/comparisons/projectCapturedComparison';
 import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
 import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
 import { executeScmDiffSummaryResultAction } from './executeScmDiffSummaryResultAction';
@@ -1221,6 +1223,14 @@ export async function executeScmActionOperation(
         ? result : spec.outputSchema.parse(result);
     if (settled && typeof settled === 'object' && !Array.isArray(settled)) {
         const response = settled as Record<string, unknown>;
+        // The Action schema above owns the result shape. Project only outward
+        // replies; model context, refinements and Undo retain complete evidence.
+        if (params.actionId.startsWith('scm.diffSummary.') && 'result' in response) {
+            const saved = response.result as ScmDiffSummaryResult;
+            settled = { ...response, result: { ...saved, output: projectCapturedScmOutput(saved.output) } };
+        } else if (params.actionId === 'scm.diffSummary.generate' || params.actionId === 'scm.diffSummary.draftPullRequest') {
+            settled = projectCapturedScmOutput(settled as ScmDiffSummaryGenerateOutput);
+        }
         // Prepared workspaces publish their closed currentness/verification result, not a Git operation outcome.
         if (!params.actionId.startsWith('scm.diffSummary.') && params.actionId !== 'scm.reviewWorkspace.materializePrepared'
             && spec.sideEffectClass !== 'read' && typeof response.success === 'boolean') {

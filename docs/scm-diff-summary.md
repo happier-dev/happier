@@ -201,6 +201,14 @@ The same per-Session owner retains the selected Review comparison for an
 untargeted reopen. Explicit comparison destinations take precedence. Pane
 presentation remains owned by the existing Details/cockpit navigation rule.
 
+Saved generated-result replies use the same deferred-evidence projection at the
+SCM Action output owner, including reads, edits, Undo and generation receipts.
+They keep the complete file and occurrence inventory required to validate
+Walkthrough, Review and commit-proposal references, without embedding patches.
+Opening a deferred file uses the same pinned capture index and per-file reads
+as live capture navigation. Internal saved records retain complete evidence for
+refinement and Undo; existing stored results use the same reader and projection.
+
 The capture storage owner writes a seekable record file atomically. Index pages
 start at their requested cursor, and a file destination reads only its index and
 evidence records; these reads do not parse unrelated retained patches. Existing

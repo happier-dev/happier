@@ -10,6 +10,8 @@ import { captureScmComparisonForSession, readCapturedScmFileForSession, getScmDi
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { CapturedScmRead } from '@/sync/domains/scm/diffSummary/state';
 import { scmComparisonKey } from './filesComparison';
+import { useCapturedFileByPath } from './useCapturedFileByPath';
+import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import { t } from '@/text';
 
 /** Active Files reads evidence from the machine owner; a pinned identity is never recaptured. */
@@ -29,14 +31,22 @@ export function useCapturedScmComparison(params: Readonly<{
     // only the current credential binding may issue a refresh.
     const scope = resolution.kind === 'bound' ? resolution.scope : null;
     const { machine, identity } = params;
-    const basePath = identity.basePath;
+    const basePath = params.comparison.savedResult?.cwd ?? identity.basePath;
     const sessionId = params.host.sessionId ?? null;
     const sourceAvailable = Boolean(sessionId) || (params.comparison.kind !== 'session' && params.comparison.kind !== 'turnCheckpoint');
     const { comparisonId, ...unpinnedComparison } = params.comparison;
     const known = params.knownComparison && (!comparisonId || params.knownComparison.id === comparisonId)
         && params.knownComparison.repository.rootPath === basePath
         && scmReviewComparisonMatchesSource(params.comparison, params.knownComparison.source, params.knownComparison) ? params.knownComparison : null;
-    const selectorKey = scmComparisonKey(params.comparison);
+    const knownFileByPath = useCapturedFileByPath(params.filePath ? known : null);
+    const knownPath = known && params.filePath ? resolvePathRelativeToRoot({ path: params.filePath,
+        root: known.repository.rootPath, preservePathSpelling: true }) : null;
+    const knownFileNeedsHydration = knownPath !== null && knownFileByPath?.get(knownPath)?.evidence.state === 'deferred';
+    // A saved index is sufficient for the list, but an opened deferred file follows
+    // the same pinned index/file read as a capture opened without a saved result.
+    const readyKnown = knownFileNeedsHydration ? null : known;
+    const pinnedComparisonId = comparisonId ?? known?.id;
+    const selectorKey = scmComparisonKey(pinnedComparisonId ? { ...params.comparison, comparisonId: pinnedComparisonId } : params.comparison);
     const selectedKey = JSON.stringify([scope?.serverId, scope?.accountId, sessionId, identity.machineId, basePath, selectorKey, params.filePath]);
     const requestLifetime = React.useRef<AbortController | null>(null);
     // Navigation pins the identity returned by this capture before changing views.
@@ -46,8 +56,8 @@ export function useCapturedScmComparison(params: Readonly<{
     const getSnapshot = React.useCallback(() => {
         const reads = getScmDiffSummaryState().capturedReadsByKey;
         const unpinned = reads?.[unpinnedKey]?.value;
-        return comparisonId && unpinned?.comparison?.id === comparisonId ? unpinned : reads?.[selectedKey]?.value ?? null;
-    }, [selectedKey, unpinnedKey, comparisonId]);
+        return pinnedComparisonId && unpinned?.comparison?.id === pinnedComparisonId ? unpinned : reads?.[selectedKey]?.value ?? null;
+    }, [selectedKey, unpinnedKey, pinnedComparisonId]);
     const subscribe = React.useCallback((listener: () => void) => scope
         ? subscribeScmDiffSummaryHostState(sessionId ? { sessionId } : { machineId: params.host.machineId!, cwd: basePath ?? '' },
             serverAccountScopeKeySuffix(scope), listener) : () => {},
@@ -55,7 +65,7 @@ export function useCapturedScmComparison(params: Readonly<{
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     // A saved record may rediscover the same identity with only its first index page.
     // It must not replace the pages this owner already read for that capture.
-    const knownOnly = known && known.id !== state?.comparison?.id ? known : null;
+    const knownOnly = readyKnown && readyKnown.id !== state?.comparison?.id ? readyKnown : null;
     const key = state?.key ?? selectedKey;
     const setState = React.useCallback((update: React.SetStateAction<CapturedScmRead | null>) => {
         if (binding) retainCapturedScmRead(binding, { ...params.host, cwd: basePath ?? '' }, key,
@@ -89,9 +99,9 @@ export function useCapturedScmComparison(params: Readonly<{
             try {
                 const result = await captureScmComparisonForSession({ ...params.host, serverId: scope.serverId,
                     scope, signal: abort.signal, shouldContinue: current,
-                    input: { cwd: machine.basePath, source: scmComparisonSourceOf(selected, sessionId ?? ''),
+                    input: { cwd: selected.savedResult?.cwd ?? machine.basePath, source: scmComparisonSourceOf(selected, sessionId ?? ''),
                         projection: { kind: 'index', ...(params.filePath ? { path: params.filePath } : {}) },
-                        ...(selected.comparisonId ? { comparisonId: selected.comparisonId } : {}) } });
+                        ...(pinnedComparisonId ? { comparisonId: pinnedComparisonId } : {}) } });
                 if (!current()) return;
                 if (result.success) {
                     let comparison = result.comparison;

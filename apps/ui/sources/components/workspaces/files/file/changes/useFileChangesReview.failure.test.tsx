@@ -149,6 +149,60 @@ describe('File changes dependency settlement', () => {
         ]);
         expect(review?.unifiedDiff).toContain('+new');
     });
+    it.each(['session', 'workspace'] as const)('hydrates a saved deferred file through the %s host without reading sibling patches', async hostKind => {
+        const requests: { method: string; payload: unknown }[] = [];
+        const captured = ScmComparisonSchema.parse({ ...comparison, source: { kind: 'workingTree' } });
+        const saved = ScmComparisonSchema.parse({ ...captured, inventory: { ...captured.inventory,
+            files: ['a.ts', 'b.ts'].map(path => ({ ...fileAtPath(path),
+                evidence: { state: 'deferred', reason: 'Read the captured file diff' } })) } });
+        const availableSaved = ScmComparisonSchema.parse({ ...saved, inventory: { ...saved.inventory,
+            files: [captured.inventory.files[0], saved.inventory.files[1]] } });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            requests.push(request);
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return {
+                success: true, comparison: { ...saved, inventory: { ...saved.inventory, files: [saved.inventory.files[0]] } },
+                metadata: { sourceKey: saved.id, source: saved.source }, page: { totalFiles: 2, nextCursor: null },
+            };
+            if (request.method === RPC_METHODS.SCM_DIFF_FILE) return { success: true,
+                diff: captured.inventory.files[0]!.evidence.unifiedDiff, capturedFile: captured.inventory.files[0] };
+            return undefined;
+        } });
+        const currentFixture = fixture;
+        let capture!: ReturnType<typeof useCapturedScmComparison>;
+        let hydrate!: () => void;
+        function Probe() {
+            const [known, setKnown] = React.useState(availableSaved);
+            hydrate = () => setKnown(saved);
+            capture = useCapturedScmComparison({
+                host: hostKind === 'session' ? { sessionId: 's1' } : { machineId: currentFixture.scope.machineId },
+                serverId: currentFixture.scope.serverId,
+                machine: { machineId: currentFixture.scope.machineId, basePath: '/repo' },
+                identity: { machineId: currentFixture.scope.machineId, basePath: '/repo' },
+                comparison: { kind: 'workingTree', ...(hostKind === 'session' ? { comparisonId: saved.id } : {}) },
+                knownComparison: known, filePath: '/repo/a.ts',
+            });
+            return null;
+        }
+        await fixture.render(<Probe />);
+        await vi.waitFor(() => expect(capture.comparison).toBe(availableSaved));
+        expect(requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+            || request.method === RPC_METHODS.SCM_DIFF_FILE)).toHaveLength(0);
+        await act(async () => hydrate());
+        await vi.waitFor(() => expect(capture.comparison?.inventory.files[0]?.evidence.state).toBe('available'));
+        expect(capture.comparison?.inventory.files).toEqual(captured.inventory.files);
+        const scmReads = requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+            || request.method === RPC_METHODS.SCM_DIFF_FILE);
+        expect(scmReads).toMatchObject([
+            { method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, payload: {
+                cwd: '/repo', source: captured.source, comparisonId: saved.id, projection: { kind: 'index', path: '/repo/a.ts' },
+                ...(hostKind === 'session' ? { sessionId: 's1' } : {}),
+            } },
+            { method: RPC_METHODS.SCM_DIFF_FILE, payload: { cwd: '/repo',
+                captured: { comparisonId: saved.id, source: captured.source, path: 'a.ts',
+                    ...(hostKind === 'session' ? { sessionId: 's1' } : {}) } } },
+        ]);
+        expect(capture).toMatchObject({ loading: false, error: null });
+    });
     it.each(['RPC_OUTCOME_UNKNOWN', 'FORBIDDEN'])('settles capture failure %s and retries once through the real capture owner', async errorCode => {
         const pending = createDeferred<void>();
         let captures = 0;

@@ -1,4 +1,4 @@
-import type { ScmComparison, ScmComparisonSource, ScmComparisonView, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs } from '@happier-dev/protocol/scm';
+import type { ScmComparison, ScmComparisonSource, ScmComparisonView, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResultReadInput } from '@happier-dev/protocol/scm';
 import type { ScmDiffSummaryState } from './state';
 import { scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
 
@@ -23,7 +23,11 @@ export type ScmReviewComparisonSelector = (
     | Readonly<{ kind: 'branch'; head: string; base: string }>
     | Readonly<{ kind: 'commit'; commit: string; parent?: string }>
     | Pick<Extract<ScmComparisonSource, { kind: 'pullRequest' }>, 'kind' | 'locator'>
-) & Readonly<{ comparisonId?: string }>;
+) & Readonly<{
+    comparisonId?: string;
+    /** Exact cold-open address; later publications still follow the comparison's normal selection. */
+    savedResult?: ScmDiffSummaryResultReadInput;
+}>;
 
 /** The captured-comparison source a comparison view asks the machine for (one mapping for every caller). */
 export function scmComparisonSourceOf(comparison: ScmReviewComparisonSelector, sessionId: string): ScmComparisonSource {

@@ -72,7 +72,7 @@ export type ScmDiffSummaryResultStore = Readonly<{
   read(scope: ScmDiffSummaryResultScope): Promise<ScmDiffSummaryResultResponse>;
   prepareInvestigation(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ beforeDirectory: string; afterDirectory: string }>>;
   readStoredScope(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string;
-    reviewFindingCitations?: ReviewFindingCitations; pullRequestDraftEvidence?: string }> | null>;
+    result: ScmDiffSummaryResult; reviewFindingCitations?: ReviewFindingCitations; pullRequestDraftEvidence?: string }> | null>;
   edit(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number; edit: ScmDiffSummaryResultEdit }>): Promise<ScmDiffSummaryResultResponse>;
   undo(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number }>): Promise<ScmDiffSummaryResultResponse>;
   delete(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number }>): Promise<ScmDiffSummaryResultDeleteResponse>;
@@ -314,6 +314,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       const source = stored?.result.output.comparison?.source;
       const sourceSessionId = typeof source?.sessionId === 'string' ? source.sessionId : undefined;
       return stored ? { cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
+        result: { ...stored.result, output: generationOutput(stored) },
         ...(sourceSessionId ? { sourceSessionId } : {}),
         ...(stored.pullRequestDraftEvidence !== undefined ? { pullRequestDraftEvidence: stored.pullRequestDraftEvidence } : {}),
         ...(stored.reviewFindingCitations ? { reviewFindingCitations: stored.reviewFindingCitations } : {}) } : null;

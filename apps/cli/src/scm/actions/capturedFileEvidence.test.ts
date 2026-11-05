@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
-import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { ScmDiffFileActionRequestSchema, ScmDiffFileRequestSchema, ScmDiffFileResponseSchema } from '@happier-dev/protocol/scm';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
@@ -17,6 +18,7 @@ import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
 import { deleteCapturedScmComparison, readCapturedScmComparison } from '../comparisons/captureScmComparison';
 import { readStoredScmComparison } from '../comparisons/comparisonStorage';
 import { executeScmActionOperation } from './executeScmActionOperation';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 
 describe('captured file Action evidence', () => {
   it('reads a staged rename through an explicit selector that legacy file readers refuse', async () => {
@@ -47,6 +49,56 @@ describe('captured file Action evidence', () => {
       expect(reply).toMatchObject({ success: true, diff: expect.stringContaining('-Fixture line 11\n+Fixture edited rename line') });
       expect(reply.diff).not.toContain('+Fixture line 1\n');
     } finally { await rm(fixture.rootPath, { recursive: true, force: true }); }
+  });
+
+  it('restores and edits saved results without transferring patches, retaining exact file evidence for pinned reads and undo', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-saved-capture-' });
+    const sessionId = randomUUID();
+    let comparisonId: string | undefined;
+    let resultId: string | undefined;
+    let revision = 0;
+    try {
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'saved captured bytes\n');
+      const captured = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+        actionId: 'scm.diffSummary.capture', workingDirectory: fixture.rootPath, authorizeSession: async () => true,
+        input: { cwd: fixture.rootPath, sessionId, source: { kind: 'workingTree' } },
+      }));
+      if (!captured.success) throw new Error(captured.error);
+      comparisonId = captured.comparison.id;
+      const refs = captured.comparison.inventory.files.flatMap(file => file.occurrences.map(occurrence => occurrence.id));
+      const output = ScmDiffSummaryGenerateOutputSchema.parse({ ...captured, sourceKey: comparisonId,
+        requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
+          title: 'Saved walkthrough', intro: 'Pinned evidence', stops: [], otherChangeRefs: refs,
+        } } }, analysis: { suppliedChangeRefs: refs, analysedChangeRefs: refs, remainingChangeRefs: [] } });
+      const saved = await scmDiffSummaryResultStore.create({ cwd: fixture.rootPath, sessionId, output });
+      resultId = saved.resultId;
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'later live bytes\n');
+      for (const actionId of ['scm.diffSummary.result.read', 'scm.diffSummary.result.edit', 'scm.diffSummary.result.undo'] as const) {
+        const reply = ScmDiffSummaryResultResponseSchema.parse(await executeScmActionOperation({ actionId,
+          workingDirectory: fixture.rootPath, sessionId, authorizeSession: async () => true,
+          input: { cwd: fixture.rootPath, resultId, ...(actionId === 'scm.diffSummary.result.read' ? {} : { expectedRevision: revision }),
+            ...(actionId === 'scm.diffSummary.result.edit' ? { edit: { kind: 'renameWalkthrough', title: 'Edited title' } } : {}) },
+        }));
+        expect(reply.success).toBe(true);
+        if (!reply.success) throw new Error(reply.error);
+        revision = reply.result.revision;
+        expect(reply.result.output.comparison?.inventory.files.map(file => file.occurrences)).toEqual(captured.comparison.inventory.files.map(file => file.occurrences));
+        expect(reply.result.output.comparison?.inventory.files.every(file => file.evidence.state === 'deferred')).toBe(true);
+        expect(JSON.stringify(reply)).not.toContain('saved captured bytes');
+      }
+      const internal = await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, sessionId, resultId });
+      expect(internal?.result.output.comparison).toEqual(captured.comparison);
+      const opened = ScmDiffFileResponseSchema.parse(await executeScmActionOperation({ actionId: 'scm.diff.file',
+        workingDirectory: fixture.rootPath, sessionId, authorizeSession: async () => true,
+        input: { cwd: fixture.rootPath, captured: { comparisonId, sessionId, source: captured.comparison.source, path: fixture.trackedPath } },
+      }));
+      expect(opened).toMatchObject({ success: true, diff: expect.stringContaining('+saved captured bytes') });
+      expect(opened.diff).not.toContain('later live bytes');
+    } finally {
+      if (resultId) await scmDiffSummaryResultStore.delete({ cwd: fixture.rootPath, sessionId, resultId, expectedRevision: revision });
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId, sessionId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
   });
 
   it('admits repository-scoped captured bytes through the retained-scope owner', async () => {
