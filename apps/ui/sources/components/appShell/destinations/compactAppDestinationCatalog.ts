@@ -1191,6 +1191,15 @@ function isSessionTitleRef(ref: DestinationRef): boolean {
         && matchWorkspaceDestinationRoute(ref.params.workspacePathname ?? '')?.routeKey === 'session/[id]/info');
 }
 
+/** Session-owned destinations keep the same privacy address across chat and detail panes. */
+export function readDestinationSessionAddress(ref: DestinationRef): Readonly<{ sessionId: string; serverId: string | null }> | null {
+    const sessionOwned = ref.kind === 'session' || ref.kind === 'sessionDetails'
+        || (ref.kind === SESSIONS_DESTINATION_ID
+            && matchWorkspaceDestinationRoute(ref.params.workspacePathname ?? '')?.routeKey.startsWith('session/[id]/'));
+    return sessionOwned && ref.params.id
+        ? { sessionId: ref.params.id, serverId: ref.params.serverId ?? null } : null;
+}
+
 function isApprovalInstanceRef(ref: DestinationRef): boolean {
     return ref.kind === 'inbox'
         && matchWorkspaceDestinationRoute(ref.params.workspacePathname ?? '')?.routeKey === 'inbox/approvals/[id]';

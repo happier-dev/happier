@@ -1,8 +1,14 @@
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
+import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type RecentWorkspaceFiles = Readonly<Record<string, string[]>>;
 // The approved recent-list length; the oldest path drops when another file opens.
 const RECENT_WORKSPACE_FILE_COUNT = 20;
+
+/** Opening history belongs to an Account, not merely an accessible workspace address. */
+export function recentWorkspaceFilesKey(scope: ServerAccountScope, workspaceKey: string): string {
+    return serverAccountScopedResourceKey(scope, 'recent-workspace-files', workspaceKey);
+}
 
 export function parseRecentWorkspaceFiles(value: unknown): Record<string, string[]> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
