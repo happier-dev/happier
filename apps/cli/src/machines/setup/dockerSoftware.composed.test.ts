@@ -255,7 +255,7 @@ it.each([{ configured: false, installed: false, refreshFails: false }, { configu
         requestStop() { throw new Error('No terminal expected'); }, observeOutput() { throw new Error('No terminal expected'); } },
       environmentIo: { resolveTool: async () => null, run: async request => {
         if (request.command !== 'docker') throw new Error('Unexpected engine inspector');
-        if (!installed) throw Object.assign(new Error('Docker absent'), { code: 'ENOENT' });
+        if (!installed) throw Object.assign(new Error('Docker absent'), { code: 'plugin_exec_system_tool_unavailable' });
         return { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker socket' };
       } },
       operation });

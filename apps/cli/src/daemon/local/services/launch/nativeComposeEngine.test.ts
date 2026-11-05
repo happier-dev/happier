@@ -52,18 +52,18 @@ describe('canonical Compose discovery lookup profile', () => {
 });
 
 describe('canonical Compose engine observation', () => {
-    it('admits installing a missing engine while preserving unavailable-engine ambiguity', async () => {
+    it('uses Machine-wide exclusion for unreadable engines and retains observed engine coordinates', async () => {
         const input = { command: 'docker', prefix: [], cwd: '/release', env: {},
             io: { async run() { throw Object.assign(new Error('missing executable'), { code: 'ENOENT' }); } } };
-        await expect(readNativeDockerEffectEngines(input)).resolves.toEqual([]);
+        await expect(readNativeDockerEffectEngines(input)).resolves.toEqual({ dockerEngineIds: [], allNative: true });
         await machineNativeEffectAdmission.run({ operation: { operationId: 'known-engine', kind: 'deploy' },
             keys: [{ kind: 'dockerEngine', dockerEndpoint: 'retained-engine' }] }, async () => {
-            await expect(readNativeDockerEffectEngines(input)).resolves.toEqual(['retained-engine']);
+            await expect(readNativeDockerEffectEngines(input)).resolves.toEqual({ dockerEngineIds: ['retained-engine'] });
         });
         for (const code of ['EACCES', 'ECONNREFUSED']) {
             await expect(readNativeDockerEffectEngines({ ...input,
                 io: { async run() { throw Object.assign(new Error('unavailable'), { code }); } } }))
-                .rejects.toMatchObject({ code: 'native_engine_impact_ambiguous' });
+                .resolves.toEqual({ dockerEngineIds: [], allNative: true });
         }
     });
     it('uses the engine identity from structured Docker facts in one finite read', async () => {

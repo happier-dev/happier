@@ -8,6 +8,8 @@ export type MachineNativeEffectKey =
 
 export type MachineNativeEffectOperation = Readonly<{ operationId: string; kind: string; signal?: AbortSignal }>;
 
+export type MachineNativeEffectScope = Readonly<{ keys: readonly MachineNativeEffectKey[]; allNative?: true }>;
+
 export type MachineNativeEffectStageOptions = Readonly<{
     /** O-DEPLOY 2026-10-31: swap through verify-or-undo is one natural boundary. */
     protected: true;
@@ -30,11 +32,11 @@ export type MachineNativeEffectContext = Readonly<{
 }>;
 
 export class MachineNativeEffectAdmissionError extends Error {
-    readonly code: 'effect_in_progress' | 'admission_unavailable' | 'plan_changed' | 'native_engine_impact_ambiguous';
+    readonly code: 'effect_in_progress' | 'admission_unavailable' | 'plan_changed';
     readonly actionOperationId: string | undefined;
     readonly details: Readonly<{ actionOperationId: string }> | undefined;
-    constructor(code: MachineNativeEffectAdmissionError['code'], actionOperationId?: string, message: string = code) {
-        super(message);
+    constructor(code: MachineNativeEffectAdmissionError['code'], actionOperationId?: string) {
+        super(code);
         this.name = 'MachineNativeEffectAdmissionError';
         this.code = code;
         this.actionOperationId = actionOperationId;
@@ -63,7 +65,7 @@ type ProtectedStage = {
     pending: Set<Promise<void>>;
     onStopPending: (status: 'stop_pending') => void;
 };
-type StageScope = Readonly<{ entry: ActiveEffect; protectedStage?: ProtectedStage }>;
+type StageScope = Readonly<{ entry: ActiveEffect; protectedStage?: ProtectedStage; admission?: true }>;
 const cancelled = () => Object.assign(new Error('cancelled'), { code: 'cancelled' });
 
 function keyIdentity(key: MachineNativeEffectKey): string {
@@ -89,6 +91,16 @@ export function createMachineNativeEffectAdmission() {
     // Async scope distinguishes children of the protected boundary from an
     // unstarted sibling using the SAME context. It grants no new admission.
     const stages = new AsyncLocalStorage<StageScope>();
+    const changed = new Set<() => void>();
+    const notifyChanged = () => { for (const notify of [...changed]) notify(); };
+    const waitForChange = (signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+        const finish = () => { changed.delete(onChange); signal?.removeEventListener('abort', onAbort); };
+        const onChange = () => { finish(); resolve(); };
+        const onAbort = () => { finish(); reject(cancelled()); };
+        changed.add(onChange);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+    });
     const read = (context: MachineNativeEffectContext) => {
         const entry = contexts.get(context);
         const scope = stages.getStore();
@@ -100,6 +112,7 @@ export function createMachineNativeEffectAdmission() {
         entry.borrowLogMasking = undefined;
         entry.state = 'retired';
         active.delete(entry);
+        notifyChanged();
     };
     const reconcile = async (entry: ActiveEffect, observe: (signal?: AbortSignal) => Promise<boolean>, signal?: AbortSignal) => {
         signal?.throwIfAborted();
@@ -201,24 +214,32 @@ export function createMachineNativeEffectAdmission() {
         async run<T>(input: Readonly<{
             operation: MachineNativeEffectOperation;
             keys: readonly MachineNativeEffectKey[];
-            /** Reboot closes this same owner, including effects with no coordinates. */
+            /** Unknown setup impact and reboot cover effects with no coordinates too. */
             allNative?: true;
             /** Existing process/container custody, not a server receipt ACK. */
             settleNative?: () => Promise<void>;
         }>, effect: (context: MachineNativeEffectContext) => Promise<T>): Promise<T> {
             if (input.operation.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
             const keys = input.keys.map(key => Object.freeze({ ...key }));
-            for (const incumbent of active) if (incumbent.state === 'unknown' && incumbent.originalFinalized && incumbent.observeNativeSettlement
-                && (input.allNative === true || incumbent.allNative
-                    || keys.some(key => incumbent.keys.some(other => conflicts(key, other))))) {
-                await reconcile(incumbent, incumbent.observeNativeSettlement, input.operation.signal);
-            }
-            input.operation.signal?.throwIfAborted();
-            // No await between conflict inspection and acquisition: the entire
-            // rendered set is admitted atomically, with no partial acquisition.
-            for (const incumbent of active) if (input.allNative === true || incumbent.allNative
-                || keys.some(key => incumbent.keys.some(other => conflicts(key, other)))) {
-                throw new MachineNativeEffectAdmissionError('effect_in_progress', incumbent.context.operation.operationId);
+            while (true) {
+                for (const incumbent of active) if (incumbent.state === 'unknown' && incumbent.originalFinalized && incumbent.observeNativeSettlement
+                    && (input.allNative === true || incumbent.allNative
+                        || keys.some(key => incumbent.keys.some(other => conflicts(key, other))))) {
+                    await reconcile(incumbent, incumbent.observeNativeSettlement, input.operation.signal);
+                }
+                input.operation.signal?.throwIfAborted();
+                // No await between conflict inspection and acquisition: the entire
+                // rendered set is admitted atomically, with no partial acquisition.
+                const incumbent = [...active].find(incumbent => input.allNative === true || incumbent.allNative
+                    || keys.some(key => incumbent.keys.some(other => conflicts(key, other))));
+                if (!incumbent) break;
+                // Broad setup impact is safe through serialization. Uncertain native
+                // custody still needs its producer's proof; nested work cannot wait on itself.
+                if (!(input.allNative === true || incumbent.allNative) || incumbent.state === 'unknown' && incumbent.originalFinalized
+                    || stages.getStore()?.entry === incumbent) {
+                    throw new MachineNativeEffectAdmissionError('effect_in_progress', incumbent.context.operation.operationId);
+                }
+                await waitForChange(input.operation.signal);
             }
             // This is the admitted owner's forwarding signal, always linked to
             // the real job. It is never a consumer-created recovery signal.
@@ -226,7 +247,7 @@ export function createMachineNativeEffectAdmission() {
             const immediateSignal = input.operation.signal ? AbortSignal.any([input.operation.signal, cancellation.signal]) : cancellation.signal;
             const context = Object.freeze({ operation: Object.freeze({ ...input.operation, get signal() {
                 const scope = stages.getStore();
-                return scope?.entry === entry && !scope.protectedStage?.active ? immediateSignal : cancellation.signal;
+                return scope?.entry === entry && !scope.admission && !scope.protectedStage?.active ? immediateSignal : cancellation.signal;
             } }) }) as MachineNativeEffectContext;
             const entry: ActiveEffect = { context, keys, cancellation, parentSignal: input.operation.signal,
                 allNative: input.allNative === true, pending: new Set(), state: 'running', originalFinalized: false };
@@ -237,7 +258,7 @@ export function createMachineNativeEffectAdmission() {
             input.operation.signal?.addEventListener('abort', onAbort, { once: true });
             contexts.set(context, entry);
             active.add(entry);
-            try { return await effect(context); }
+            try { return await stages.run({ entry, admission: true }, () => effect(context)); }
             finally {
                 if (entry.state !== 'unknown') entry.state = 'settling';
                 try {
@@ -254,6 +275,7 @@ export function createMachineNativeEffectAdmission() {
                     // drains. A retry stays busy until that finally has exited;
                     // its native proof may then reconcile a failed drain too.
                     entry.originalFinalized = true;
+                    if (entry.state === 'unknown') notifyChanged();
                     input.operation.signal?.removeEventListener('abort', onAbort);
                 }
             }

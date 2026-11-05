@@ -3450,6 +3450,19 @@ initiating rejection.
 The field is optional: earlier issues remain valid, and older readers can ignore
 this diagnostic projection without changing lifecycle or recovery authority.
 
+## Machine native effect admission
+
+In 0.3 development, `machineSetupNativeEffects.ts` resolves setup's native scope
+before effects or credential delivery. When Docker identity cannot be read,
+including missing executables, permission failures and unreachable engines, it
+reserves `allNative` in `machineNativeEffectAdmission.ts`. This serializes setup
+against all native work on the Machine, including effects with empty keys.
+A broad effect waits for running effects; later native work waits until it
+settles. Waiting honors cancellation. Unknown native settlement still requires
+the incumbent producer's proof. Docker installers and repairs can therefore run
+before Docker is readable and report their own execution failures. Known engine
+coordinates retain the existing conflict behavior.
+
 ## Rules for changes
 
 - Extend the owning host path and migrate its callers together. Do not add another Agent registry, lifecycle loop, prompt queue, permission owner, thinking flag or whole-metadata state writer.

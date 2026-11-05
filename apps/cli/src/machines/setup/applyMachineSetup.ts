@@ -12,7 +12,7 @@ import { selectMachineSetupRecipeItemsV1,
   machineSetupItemKeyV1, projectMachineSetupSourceChangeExecutionV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
-import { resolveMachineSetupNativeEffectKeys } from './machineSetupNativeEffects';
+import { resolveMachineSetupNativeEffects } from './machineSetupNativeEffects';
 import { readMachineSetupSessionRefreshRequirement, describeMachineSetupSessionRefresh,
   type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -191,7 +191,7 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
   if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   if (!operationId) return { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' };
   try {
-    const keys = await resolveMachineSetupNativeEffectKeys({ ...input, signal,
+    const scope = await resolveMachineSetupNativeEffects({ ...input, signal,
       ...(input.setup.scripts ? { scripts: input.setup.scripts } : {}) });
     const execute = async (context: MachineNativeEffectContext) => {
       try {
@@ -213,12 +213,12 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
       if (input.nativeEffectContext.operation.operationId !== operationId) throw new MachineNativeEffectAdmissionError('admission_unavailable');
       return await execute(input.nativeEffectContext);
     }
-    return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machine_setup', signal }, keys,
+    return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machine_setup', signal }, ...scope,
       ...(input.settleNative ? { settleNative: input.settleNative } : {}) }, execute);
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code : signal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
-    return { ok: false, errorCode: code, error: error instanceof MachineNativeEffectAdmissionError ? error.message : code,
+    return { ok: false, errorCode: code, error: code,
       ...(error instanceof MachineNativeEffectAdmissionError && error.details ? { details: error.details } : {}) };
   }
 }

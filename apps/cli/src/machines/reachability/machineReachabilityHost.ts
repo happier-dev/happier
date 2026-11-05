@@ -31,7 +31,7 @@ import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { prepareMachineSetupPlanV1 } from '@/machines/setup/prepareMachineSetupPlan';
-import { resolveMachineSetupNativeEffectKeys, type MachineSetupNativeEffectsInput } from '@/machines/setup/machineSetupNativeEffects';
+import { resolveMachineSetupNativeEffects, type MachineSetupNativeEffectsInput } from '@/machines/setup/machineSetupNativeEffects';
 import { checkElevatedMachineSetupPlan, runElevatedEffect,
   type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { createReachabilityProviderHost } from './reachabilityProviderHost';
@@ -280,10 +280,10 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
         { run: deps.runNative, signal: deps.context.signal });
       if (observed.status !== 'ready') return refuse(observed.reason, observed.details);
       bindings = observed.bindings;
-      dockerEngineIds = [...await readNativeDockerEffectEngines({ io: deps.nativeEffects.environmentIo,
+      dockerEngineIds = [...(await readNativeDockerEffectEngines({ io: deps.nativeEffects.environmentIo,
         command: 'docker', prefix: [], cwd: deps.nativeEffects.userHomeDirectory,
         env: Object.fromEntries(Object.entries(deps.nativeEffects.hostEnvironment ?? process.env)
-          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')), signal: deps.context.signal })].sort();
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')), signal: deps.context.signal })).dockerEngineIds].sort();
     }
     const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
       signal: deps.context.signal, caddy: bindings,
@@ -341,12 +341,14 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       errorCode: 'plan_changed', error: 'plan_changed', effectAttempted: false };
   const operationId = deps.context.operationAcceptance?.operationId;
   if (!operationId || deps.context.operationAcceptance?.actionId !== 'machines.reachability.configure') return refuse('operation_unavailable');
-  const readKeys = async () => [...await resolveMachineSetupNativeEffectKeys({ ...deps.nativeEffects,
-    plans: plan.basis.recipePlans.map(entry => entry.plan), signal: deps.context.signal }),
-    ...(plan.basis.firewallTransition?.dockerEngineIds ?? []).map(dockerEndpoint => ({ kind: 'dockerEngine' as const, dockerEndpoint }))];
   try {
-  const keys = await readKeys();
-  return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machines.reachability.configure', signal: deps.context.signal }, keys,
+  const scope = await resolveMachineSetupNativeEffects({ ...deps.nativeEffects,
+    plans: plan.basis.recipePlans.map(entry => entry.plan), signal: deps.context.signal,
+    ...(plan.basis.firewallTransition ? { includeDockerEngine: true } : {}) });
+  const keys = [...scope.keys, ...(plan.basis.firewallTransition?.dockerEngineIds ?? [])
+    .map(dockerEndpoint => ({ kind: 'dockerEngine' as const, dockerEndpoint }))];
+  return await machineNativeEffectAdmission.run({ operation: { operationId, kind: 'machines.reachability.configure', signal: deps.context.signal },
+    ...scope, keys,
     ...(deps.settleNative ? { settleNative: deps.settleNative } : {}) }, async native => {
     let currentState = prepared.state;
     const current = deps.isCurrent;
@@ -682,7 +684,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
   });
   } catch (error) {
     if (!(error instanceof MachineNativeEffectAdmissionError)) throw error;
-    return { ok: false as const, errorCode: error.code, error: error.message, effectAttempted: false,
+    return { ok: false as const, errorCode: error.code, error: error.code, effectAttempted: false,
       ...(error.details ? { details: error.details } : {}) };
   }
 }
