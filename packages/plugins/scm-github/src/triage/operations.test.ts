@@ -394,11 +394,15 @@ function verifyWorkspaceInput(input: Readonly<{
   }>>;
   repositoryPath?: string;
   pullRequest?: unknown;
+  acceptedCheckout?: boolean;
 }> = {}) {
   const prepared = prepareWorkspaceInput({ observed: input.observed });
   return {
     ...prepared,
-    prepared: {
+    prepared: input.acceptedCheckout ? {
+      kind: 'acceptedCheckout' as const,
+      repositoryPath: input.repositoryPath ?? '/selected/repository',
+    } : {
       repositoryPath: input.repositoryPath
         ?? '/selected/repository/.happier/review/review-from-fork',
       pullRequest: input.pullRequest ?? { number: 1284 },
@@ -738,6 +742,92 @@ describe('GitHub Triage source operations', () => {
       { now: fixedClock(1_700_000_000_000) },
     )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
     expect(verifier.execute).not.toHaveBeenCalled();
+  });
+
+  it('verifies an accepted checkout against the reread source tip without preparing or creating a workspace', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => new URL(request.url).pathname.endsWith('/pulls/1284')
+        ? { status: 200, body: GITHUB_FORK_PULL_REQUEST_RESPONSE }
+        : undefined,
+    });
+    const verifier = withReviewWorkspaceMaterializer(stub.context, {
+      success: true,
+      verification: {
+        targetPath: '/selected/repository',
+        sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      },
+    });
+
+    const result = TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput({ acceptedCheckout: true }),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    ));
+
+    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284 } });
+    expect(stub.requests.filter(request => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(stub.requests.every(request => request.method === 'GET')).toBe(true);
+    expect(verifier.execute.mock.calls).toEqual([[
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/repository',
+        displayName: 'review-from-fork',
+        sourceTip: {
+          repository: { kind: 'github', deployment: 'https://github.com', repository: 'fork-user/fork-app' },
+          cloneUrl: 'https://github.com/fork-user/fork-app.git',
+          branch: 'review-from-fork',
+          sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+          fetchRef: 'refs/heads/review-from-fork',
+        },
+        verification: { targetPath: '/selected/repository' },
+      },
+      { signal: verifier.context.signal },
+    ]]);
+  });
+
+  it.each(['source', 'pullRequest', 'head'] as const)(
+    'refuses an accepted checkout when the selected %s authorization no longer matches', async (changed) => {
+      const stub = createStubGithubTransport({
+        respond: (request) => new URL(request.url).pathname.endsWith('/pulls/1284')
+          ? { status: 200, body: changed === 'pullRequest'
+            ? { ...GITHUB_FORK_PULL_REQUEST_RESPONSE, number: 999 }
+            : GITHUB_FORK_PULL_REQUEST_RESPONSE }
+          : undefined,
+      });
+      const verifier = withReviewWorkspaceMaterializer(stub.context);
+      const input = verifyWorkspaceInput({ acceptedCheckout: true,
+        ...(changed === 'head' ? { observed: { headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } } : {}),
+      });
+
+      await expect(verifyGithubTriageReviewWorkspace(
+        changed === 'source' ? { ...input, entryRef: { ...input.entryRef,
+          source: { ...input.entryRef.source, pluginId: 'another.source' } } } : input,
+        verifier.context,
+        { now: fixedClock(1_700_000_000_000) },
+      )).resolves.toEqual({ kind: 'refused', reason: changed === 'head' ? 'observedHeadMoved' : 'pullRequestMoved' });
+      expect(verifier.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [{ targetPath: '/another/checkout', sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29' },
+      { kind: 'workspaceMismatch' }],
+    [{ targetPath: '/selected/repository', sourceHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+      { kind: 'refused', reason: 'observedHeadMoved' }],
+  ] as const)('refuses an accepted checkout whose native path or HEAD differs', async (verification, expected) => {
+    const stub = createStubGithubTransport({
+      respond: (request) => new URL(request.url).pathname.endsWith('/pulls/1284')
+        ? { status: 200, body: GITHUB_FORK_PULL_REQUEST_RESPONSE }
+        : undefined,
+    });
+    const verifier = withReviewWorkspaceMaterializer(stub.context, { success: true, verification });
+
+    await expect(verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput({ acceptedCheckout: true }),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual(expected);
+    expect(verifier.execute).toHaveBeenCalledTimes(1);
   });
 
   it.each([

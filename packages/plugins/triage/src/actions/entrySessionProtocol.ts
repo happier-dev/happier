@@ -1,3 +1,4 @@
+import { ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
@@ -10,6 +11,7 @@ import {
     defineProtocolString,
     defineProtocolUnion,
     ProtocolLaunchProfileIdV2Schema,
+    ProtocolWorkspaceAddressV1Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -25,6 +27,20 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
+
+export const TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 = 'entries/verify-existing-review-workspace-v1';
+/** Read-only proof, not another Session selection or creation entry point. */
+export const TriageVerifyExistingReviewWorkspaceInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1), session: ActionSessionAddressV1Schema,
+    entryRef: TriageEntryRefV1Schema, sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema, observed: TriageReviewWorkspaceObservedRevisionV1Schema,
+}, { policy: 'closed' });
+export type TriageVerifyExistingReviewWorkspaceInputV1 = ReturnType<typeof TriageVerifyExistingReviewWorkspaceInputV1Schema.parse>;
+export const TriageVerifyExistingReviewWorkspaceResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({ kind: defineProtocolLiteral('verified'), checkout: ProtocolWorkspaceAddressV1Schema }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+]);
+export type TriageVerifyExistingReviewWorkspaceResultV1 = ReturnType<typeof TriageVerifyExistingReviewWorkspaceResultV1Schema.parse>;
 
 /**
  * The strict contract of the two Session Actions the common header presses.

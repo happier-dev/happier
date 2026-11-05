@@ -14,11 +14,13 @@ import {
     CORPUS_SESSION_LINKS_COLLECTION_ID,
     CORPUS_SESSION_LINKS_INDEX_ID,
     CORPUS_SOURCE_INSTANCES_COLLECTION_ID,
+    CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
+import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { administerConfiguredSourceInstance } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     TESTKIT_SOURCE_INSTANCE_ID,
     testkitEntryRef,
@@ -36,6 +38,7 @@ import {
     TESTKIT_SELECTED_WORKSPACE,
     createTestkitPrepareReviewWorkspace,
     testkitConfiguredInstance,
+    testkitSourceInstanceDraft,
     testkitReadOnlySourceSnapshot,
     createTestkitActionInvoker,
     spawnSuccess,
@@ -50,6 +53,8 @@ import {
     TriageStartEntrySessionResultV1Schema,
     TriageStartEntrySessionSettledDraftV1Schema,
     TriageStartPullRequestReviewInputV1Schema,
+    TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1,
+    TriageVerifyExistingReviewWorkspaceInputV1Schema,
 } from './entrySessionProtocol.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
@@ -87,6 +92,7 @@ function registeredHandler(localId: string): ActionHandler<JsonValue, JsonValue>
             },
         },
         composerAttachments: { register: () => {} },
+        resources: { registerDynamicResource: () => {} },
     } as unknown as PluginApi & PluginAccountApi;
 
     activate(api);
@@ -98,11 +104,24 @@ function registeredHandler(localId: string): ActionHandler<JsonValue, JsonValue>
     return handler;
 }
 
-function createContext(
+async function createContext(
     collections: CorpusCollectionsV1,
     invoker?: TestkitActionInvoker,
     executeOverride?: (actionId: unknown, input: unknown) => Promise<unknown>,
-): PluginInvocationContext {
+    configureSource = true,
+): Promise<PluginInvocationContext> {
+    if (configureSource) {
+        const { instance } = testkitConfiguredInstance();
+        const draft = testkitSourceInstanceDraft();
+        await administerConfiguredSourceInstance({
+            collections,
+            source: instance.source,
+            declaredPurpose: draft.binding.purpose,
+            request: { kind: 'create', draft },
+            nowMs: 1,
+            mintSourceInstanceId: () => instance.sourceInstanceId,
+        });
+    }
     return {
         signal: new AbortController().signal,
         services: {
@@ -339,6 +358,59 @@ const REVIEW_COMPARISON = {
 };
 
 describe('the Session-start Action a mounted header can actually press', () => {
+    it.each(['verified', 'otherPlugin', 'wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure', 'workspaceMismatch', 'sourceRetired', 'cancelled'] as const)(
+        'verifies an existing PR checkout through the selected source without preparing it (%s)', async (mode) => {
+            const { collections, control } = createTestkitCorpusCollections();
+            const instance = testkitConfiguredInstance();
+            const stored = { instanceTag: 'a'.repeat(43), sourceQualifiedId: `${instance.instance.source.pluginId}/${instance.instance.source.localId}`,
+                lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1, configured: instance };
+            const row = control.sourceInstances.seed(toCorpusStoredValue(stored));
+            const requests: Array<{ id: unknown; input: unknown }> = [];
+            const checkout = { serverId: 'server-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/workspaces/existing-pr' };
+            const snapshot = testkitReadOnlySourceSnapshot();
+            const base = await createContext(collections, undefined, undefined, false);
+            const controller = new AbortController();
+            const context = { ...base, signal: controller.signal, surface: 'plugin', caller: { kind: 'plugin', pluginId: mode === 'otherPlugin' ? 'example.other-plugin' : 'happier.triage' }, services: { ...base.services,
+                targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: snapshot.contributions.map((source) => ({
+                    ...source, operations: { verifyReviewWorkspace: { handle: 'source-existing-checkout-verifier' } },
+                })) }), dispose() {} }) },
+                actions: {
+                    execute: async (id: unknown, input: unknown) => {
+                        requests.push({ id, input });
+                        if (id !== 'session.status.get') throw new Error(`Unexpected write ${String(id)}`);
+                        if (mode === 'statusFailure') throw new Error('Exact Session metadata unavailable');
+                        return { session: { id: mode === 'wrongSession' ? 'another-session' : 'session-a',
+                            createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null },
+                            ...(mode === 'missingCheckout' ? {} : { acceptedWorkspace: { checkout: { ...checkout,
+                                serverId: mode === 'wrongHome' ? 'another-home' : checkout.serverId } } }) };
+                    },
+                    executeAdmittedTargetedOperation: async (operation: unknown, input: unknown) => {
+                        requests.push({ id: operation, input });
+                        if (mode === 'sourceRetired') control.sourceInstances.tombstone(row.rowId);
+                        if (mode === 'cancelled') controller.abort();
+                        return mode === 'workspaceMismatch' ? { kind: 'workspaceMismatch' } : { kind: 'verified', pullRequest: { number: 17 } };
+                    },
+                },
+            } } as unknown as PluginInvocationContext; // Exact Session metadata, admitted source and persistence are host boundaries.
+            const action = declaredAction(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1);
+            expect(action.readOnly).toBe(true);
+            const input = TriageVerifyExistingReviewWorkspaceInputV1Schema.parse({ v: 1,
+                session: { serverId: 'server-a', sessionId: 'session-a' }, entryRef: testkitEntryRef(),
+                sourceInstanceId: instance.instance.sourceInstanceId, lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION });
+            const result = await registeredHandler(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1)(input, context);
+            // Finite verification keeps its admitted source; withdrawal applies at the next request.
+            expect(result).toEqual(['verified', 'otherPlugin', 'sourceRetired'].includes(mode) ? { kind: 'verified', checkout } : { kind: 'unavailable' });
+            expect(requests[0]).toEqual({ id: 'session.status.get', input: { sessionId: 'session-a', includeAcceptedWorkspace: true } });
+            expect(requests).toHaveLength(['wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure'].includes(mode) ? 1 : 2);
+            if (requests.length === 2) expect(requests[1]).toMatchObject({ id: { handle: 'source-existing-checkout-verifier' },
+                input: { instance, workspace: { serverId: checkout.serverId, machineId: checkout.machineId, rootPath: checkout.rootPath },
+                    prepared: { kind: 'acceptedCheckout', repositoryPath: checkout.rootPath } } });
+            if (mode === 'sourceRetired') {
+                await expect(registeredHandler(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1)(input, context))
+                    .resolves.toEqual({ kind: 'unavailable' });
+                expect(requests).toHaveLength(3); // Status read only; the withdrawn source is not admitted again.
+            }
+        });
     it('carries issue orchestration through the registered start Action and its same-key recovery', async () => {
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [
@@ -375,9 +447,9 @@ describe('the Session-start Action a mounted header can actually press', () => {
                 idempotencyKey: 'orchestrate-delivery', attachments: [{ entryRef,
                     display: START_INPUT_BASE.display, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, title: 'Issue 17' }] },
         });
-        expect(await handler(input, createContext(collections, invoker)))
+        expect(await handler(input, await createContext(collections, invoker)))
             .toMatchObject({ type: 'creationPending', outcome: 'accepted' });
-        const result = await handler({ ...input, resume: { phase: 'creationPending' } }, createContext(collections, invoker));
+        const result = await handler({ ...input, resume: { phase: 'creationPending' } }, await createContext(collections, invoker));
         expect(result).toMatchObject({ type: 'opened', disposition: 'rejoined', delivery: 'accepted' });
         const spawns = invoker.callsFor('session.spawn_new');
         expect(spawns[1]?.input).toEqual(spawns[0]?.input);
@@ -453,7 +525,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
                 }],
                 idempotencyKey: 'delivery-key-a',
             },
-        }, createContext(collections, invoker));
+        }, await createContext(collections, invoker));
 
         expect(result).toEqual({
             v: 1,
@@ -491,7 +563,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             ...START_INPUT_BASE,
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
-        }, createContext(collections, undefined, async () => ({
+        }, await createContext(collections, undefined, async () => ({
             kind: 'approval_request_created',
             artifactId: 'approval-artifact-1',
             actionId: 'session.spawn_new',
@@ -555,7 +627,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
             resume: { phase: 'openPending', sessionId: 'session-a', disposition: 'created' },
-        }, createContext(collections, invoker));
+        }, await createContext(collections, invoker));
 
         expect(result).toEqual({
             v: 1,
@@ -577,7 +649,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             ...START_INPUT_BASE,
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
-        }, createContext(collections, invoker));
+        }, await createContext(collections, invoker));
 
         expect(result).toEqual({
             v: 1,
@@ -615,7 +687,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
         // No invoker at all: any host Action call here throws rather than being
         // asserted away afterwards.
-        const context = createContext(collections);
+        const context = await createContext(collections);
 
         expect(await handler({
             ...START_INPUT_BASE,
@@ -640,7 +712,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             ...START_INPUT_BASE,
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
-        }, createContext(collections, invoker))).toEqual({
+        }, await createContext(collections, invoker))).toEqual({
             v: 1,
             type: 'creationPending',
             outcome: 'accepted',
@@ -659,7 +731,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             ...START_INPUT_BASE,
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
-        }, createContext({
+        }, await createContext({
             ...collections,
             sessionLinks: {
                 ...collections.sessionLinks,
@@ -702,7 +774,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             entryRef,
             workspaceMode: 'reference_only',
             destination: NEW_DESTINATION,
-        }, createContext({
+        }, await createContext({
             ...collections,
             sessionLinks: {
                 ...collections.sessionLinks,
@@ -1020,7 +1092,7 @@ describe('the explicit unlink Action', () => {
             v: 1,
             sessionId: 'session-b',
             entryRef,
-        }, createContext(collections))).toEqual({ v: 1, status: 'unlinked' });
+        }, await createContext(collections))).toEqual({ v: 1, status: 'unlinked' });
 
         expect(control.sessionLinks.inspect(linkToB)?.deleted).toBe(true);
         // The same entry's other relationship is untouched: the link address is
@@ -1036,7 +1108,7 @@ describe('the explicit unlink Action', () => {
             v: 1,
             sessionId: 'session-a',
             entryRef: testkitEntryRef(),
-        }, createContext(collections))).toEqual({ v: 1, status: 'unlinked' });
+        }, await createContext(collections))).toEqual({ v: 1, status: 'unlinked' });
     });
 });
 
@@ -1209,7 +1281,7 @@ describe('the Session-start wire', () => {
             role: 'prepareReviewWorkspace',
         } };
         let prepared = false;
-        const context = createContext(collections, invoker);
+        const context = await createContext(collections, invoker);
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
         const result = await handler(TriageStartEntrySessionInputV1Schema.parse({ ...base,
             destination: { ...base.destination, materialization: { kind: 'reviewWorkspace', request } },

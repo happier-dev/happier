@@ -1893,7 +1893,7 @@ describe('Azure DevOps final review-workspace verification', () => {
     });
   }
 
-  it('rereads the exact PR and asks the canonical SCM owner to verify the prepared local HEAD', async () => {
+  it.each([false, true])('rereads the exact PR and asks the canonical SCM owner to verify the local HEAD (accepted checkout: %s)', async (acceptedCheckout) => {
     const recorder = createRecorder((request) => {
       if (!request.url.includes('/pullrequests/17?')) throw new Error(`unexpected request: ${request.url}`);
       return { body: providerRow() };
@@ -1909,7 +1909,10 @@ describe('Azure DevOps final review-workspace verification', () => {
 
     const result = await runAzureTriageVerifyReviewWorkspace({
       services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
-      request: input(),
+      request: input(acceptedCheckout ? { prepared: {
+        kind: 'acceptedCheckout',
+        repositoryPath: '/selected/workspace/.happier/worktrees/feature',
+      } } : {}),
       signal,
     });
 

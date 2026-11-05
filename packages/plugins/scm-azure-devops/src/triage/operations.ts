@@ -1030,7 +1030,7 @@ export async function runAzureTriageVerifyReviewWorkspace(input: Readonly<{
   });
   if (proof.kind !== 'current') return proof;
   const pullRequest = { number: proof.row.pullRequestId };
-  if (!pluginJsonValuesEqual(request.prepared.pullRequest, pullRequest)) {
+  if (!('kind' in request.prepared) && !pluginJsonValuesEqual(request.prepared.pullRequest, pullRequest)) {
     return { kind: 'refused', reason: 'pullRequestMoved' };
   }
 

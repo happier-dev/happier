@@ -669,7 +669,10 @@ export async function verifyGithubTriageReviewWorkspace(
 
   const authorized = await authorizeGithubReviewWorkspace(verification, context, dependencies);
   if (authorized.kind !== 'authorized') return authorized;
-  if (!pluginJsonValuesEqual(authorized.pullRequest, verification.prepared.pullRequest)) {
+  if (
+    !('kind' in verification.prepared)
+    && !pluginJsonValuesEqual(authorized.pullRequest, verification.prepared.pullRequest)
+  ) {
     return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
   }
 

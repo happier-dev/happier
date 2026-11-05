@@ -1,6 +1,7 @@
 import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import {
     TriageConfiguredSourceInstanceV1Schema,
+    TriageSourceInstanceDraftV1Schema,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     type TriageConfiguredSourceInstanceV1,
     type TriagePrepareReviewWorkspaceInputV1,
@@ -169,6 +170,16 @@ export function testkitConfiguredInstance(
         },
         localInstanceKey: 'example/repository',
         configuration: { v: 1, token: 'routing-token' },
+    });
+}
+
+/** Discovery metadata required by the lifecycle writer, unlike a retained configured context. */
+export function testkitSourceInstanceDraft() {
+    const { instance: _identity, ...scope } = testkitConfiguredInstance();
+    return TriageSourceInstanceDraftV1Schema.parse({
+        ...scope,
+        keyStability: 'stable',
+        locator: { v: 1, displayLabel: scope.localInstanceKey },
     });
 }
 

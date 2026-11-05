@@ -267,7 +267,7 @@ export async function verifyBitbucketReviewWorkspace(
   ) {
     return { kind: 'refused', reason: 'observedHeadMoved' };
   }
-  if (!pluginJsonValuesEqual(input.prepared.pullRequest, current.pullRequest)) {
+  if (!('kind' in input.prepared) && !pluginJsonValuesEqual(input.prepared.pullRequest, current.pullRequest)) {
     return { kind: 'refused', reason: 'pullRequestMoved' };
   }
 

@@ -93,6 +93,7 @@ function verificationInput(input: Readonly<{
   lastKnownLocator?: Readonly<{ v: 1; routingToken?: string }>;
   repositoryPath?: string;
   pullRequest?: unknown;
+  acceptedCheckout?: boolean;
 }> = {}) {
   const prepared = preparationInput({
     ...(input.observed === undefined ? {} : { observed: input.observed }),
@@ -104,7 +105,10 @@ function verificationInput(input: Readonly<{
   return TriageVerifyReviewWorkspaceInputV1Schema.parse({
     ...prepared,
     workspace: prepared.workspace,
-    prepared: {
+    prepared: input.acceptedCheckout ? {
+      kind: 'acceptedCheckout',
+      repositoryPath: input.repositoryPath ?? '/selected/repository/.happier/review/fork-tools',
+    } : {
       repositoryPath: input.repositoryPath ?? '/selected/repository/.happier/review/fork-tools',
       pullRequest: input.pullRequest ?? { number: 42 },
     },
@@ -415,7 +419,7 @@ describe('Bitbucket final review workspace verification', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('rereads the exact PR and verifies the prepared path through the canonical SCM Action', async () => {
+  it.each([false, true])('rereads the exact PR and verifies the path through the canonical SCM Action (accepted checkout: %s)', async (acceptedCheckout) => {
     const execute = vi.fn(async () => ({
       success: true as const,
       verification: {
@@ -426,7 +430,7 @@ describe('Bitbucket final review workspace verification', () => {
     const signal = new AbortController().signal;
     const seam = workspaceRuntime({ execute, signal });
 
-    const result = await verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime);
+    const result = await verifyBitbucketReviewWorkspace(verificationInput({ acceptedCheckout }), seam.runtime);
 
     expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).toEqual({
       kind: 'verified',

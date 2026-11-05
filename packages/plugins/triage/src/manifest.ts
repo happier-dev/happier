@@ -91,17 +91,21 @@ import {
   createTriageStartEntrySessionActionHandler,
   createTriageStartPullRequestReviewActionHandler,
   createTriageUnlinkEntryFromSessionActionHandler,
+  createTriageVerifyExistingReviewWorkspaceActionHandler,
 } from './actions/entrySession.js';
 import {
   TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
   TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
+  TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1,
   TriageStartEntrySessionInputV1Schema,
   TriageStartEntrySessionResultV1Schema,
   TriageStartPullRequestReviewInputV1Schema,
   TriageStartPullRequestReviewResultV1Schema,
   TriageUnlinkEntryFromSessionActionInputV1Schema,
   TriageUnlinkEntryFromSessionActionResultV1Schema,
+  TriageVerifyExistingReviewWorkspaceInputV1Schema,
+  TriageVerifyExistingReviewWorkspaceResultV1Schema,
 } from './actions/entrySessionProtocol.js';
 import { createTriageLinkEntryToSessionActionHandler, createTriageReadSourceSessionLinksActionHandler } from './actions/sessionLinks.js';
 import {
@@ -491,6 +495,19 @@ function createTriagePlugin() {
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageReadSourceSessionLinksActionHandler(),
         observeRead: observeTriageSourceSessionLinks,
+      },
+      [TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1]: {
+        title: 'Verify an existing review workspace',
+        description: 'Checks the accepted Session checkout against the currently authorized pull request without preparing or changing it.',
+        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
+        placementBindings: [],
+        readOnly: true,
+        sessionTarget: { field: 'session.sessionId', cardinality: 'one' },
+        inputSchema: TriageVerifyExistingReviewWorkspaceInputV1Schema,
+        resultSchema: TriageVerifyExistingReviewWorkspaceResultV1Schema,
+        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        hostAccess: ['account-storage'],
+        run: createTriageVerifyExistingReviewWorkspaceActionHandler(),
       },
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',

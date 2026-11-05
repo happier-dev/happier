@@ -359,7 +359,10 @@ export async function verifyGitlabReviewWorkspace(
     return { kind: 'refused', reason: 'pullRequestMoved' };
   }
   if (authorized.kind !== 'authorized') return authorized;
-  if (!pluginJsonValuesEqual(input.prepared.pullRequest, authorized.pullRequest)) {
+  if (
+    !('kind' in input.prepared)
+    && !pluginJsonValuesEqual(input.prepared.pullRequest, authorized.pullRequest)
+  ) {
     return { kind: 'refused', reason: 'pullRequestMoved' };
   }
 

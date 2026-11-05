@@ -224,21 +224,27 @@ export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
 >;
 
 /**
- * Final source-owned verification of an already prepared review workspace.
+ * Final source-owned verification of a prepared workspace or accepted checkout.
  * It repeats the exact selected source, provider revision and saved-workspace
- * scope, while `prepared` carries only the source's own prior materialization
- * result. Triage cannot substitute a path or provider reference from another
- * source.
+ * scope. A prior preparation carries its opaque provider reference; an accepted
+ * checkout carries only its path and obtains that reference from the source's
+ * authoritative reread. Both require canonical native checkout verification.
  */
 const triageVerifyReviewWorkspaceInputFieldsV1 = {
     entryRef: TriageEntryRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
     workspace: TriageSelectedWorkspaceScopeV1Schema,
-    prepared: defineProtocolObject({
-        repositoryPath: TriageLocationV1ProtocolSchema,
-        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
-    }, { policy: 'closed' }),
+    prepared: defineProtocolUnion([
+        defineProtocolObject({
+            repositoryPath: TriageLocationV1ProtocolSchema,
+            pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+        }, { policy: 'closed' }),
+        defineProtocolObject({
+            kind: defineProtocolLiteral('acceptedCheckout'),
+            repositoryPath: TriageLocationV1ProtocolSchema,
+        }, { policy: 'closed' }),
+    ]),
 } as const;
 export const TriageVerifyReviewWorkspaceInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),

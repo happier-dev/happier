@@ -62,6 +62,23 @@ describe('Triage final review workspace verification', () => {
         }).success).toBe(false);
     });
 
+    it('admits an accepted checkout without accepting a caller-supplied pull-request reference', () => {
+        const acceptedCheckout = {
+            ...input,
+            prepared: { kind: 'acceptedCheckout', repositoryPath: input.workspace.rootPath },
+        } as const;
+        expect(TriageVerifyReviewWorkspaceInputV1Schema.parse(acceptedCheckout)).toEqual(acceptedCheckout);
+        for (const prepared of [
+            { ...acceptedCheckout.prepared, pullRequest: input.prepared.pullRequest },
+            { ...acceptedCheckout.prepared, replacementPath: '/other' },
+            { kind: 'acceptedCheckout' },
+            { repositoryPath: input.workspace.rootPath },
+            { kind: 'unknownCheckout', repositoryPath: input.workspace.rootPath },
+        ]) {
+            expect(TriageVerifyReviewWorkspaceInputV1Schema.safeParse({ ...input, prepared }).success).toBe(false);
+        }
+    });
+
     it('keeps verified, mismatch, unavailable and revision-refusal outcomes closed', () => {
         for (const result of [
             { kind: 'verified', pullRequest: input.prepared.pullRequest },

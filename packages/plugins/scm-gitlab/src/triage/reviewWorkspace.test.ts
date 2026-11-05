@@ -549,6 +549,45 @@ describe('GitLab prepared review workspace', () => {
 });
 
 describe('GitLab final review-workspace verification', () => {
+  it.each([OBSERVED_HEAD, ADVANCED_HEAD])(
+    'verifies an accepted checkout only when its read-only native HEAD agrees (%s)', async (sourceHeadSha) => {
+      const transport = createStubGitlabTransport({
+        respond: respondWith({ mergeRequest: mergeRequestBody() }),
+      });
+      const repositoryPath = '/workspaces/selected-repository';
+      const execute = vi.fn(async () => ({
+        success: true as const,
+        verification: { targetPath: repositoryPath, sourceHeadSha },
+      }));
+      const context = withMaterializer(transport.context, execute);
+
+      await expect(verifyGitlabReviewWorkspaceAction(verifyInput({
+        prepared: { kind: 'acceptedCheckout', repositoryPath },
+      }), context)).resolves.toEqual(sourceHeadSha === OBSERVED_HEAD
+        ? { kind: 'verified', pullRequest: { number: 7 } }
+        : { kind: 'refused', reason: 'observedHeadMoved' });
+
+      expect(transport.requests.map(request => request.url)).toEqual([REVIEW_ITEM_URL, SOURCE_PROJECT_URL]);
+      expect(transport.requests.every(request => request.method === 'GET')).toBe(true);
+      expect(execute.mock.calls).toEqual([[
+        'scm.reviewWorkspace.materializePrepared',
+        {
+          cwd: repositoryPath,
+          displayName: 'feature/from-fork',
+          sourceTip: {
+            repository: { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'contributor/repository' },
+            cloneUrl: 'https://gitlab.com/contributor/repository.git',
+            branch: 'feature/from-fork',
+            sourceHeadSha: OBSERVED_HEAD,
+            fetchRef: 'refs/heads/feature/from-fork',
+          },
+          verification: { targetPath: repositoryPath },
+        },
+        { signal: context.signal },
+      ]]);
+    },
+  );
+
   it('verifies only after the provider reread and canonical local HEAD agree', async () => {
     const transport = createStubGitlabTransport({
       respond: respondWith({ mergeRequest: mergeRequestBody() }),
@@ -626,7 +665,7 @@ describe('GitLab final review-workspace verification', () => {
     )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
   });
 
-  it('authoritatively rereads GitLab and refuses a moved source head before local verification', async () => {
+  it.each([false, true])('authoritatively refuses a moved source head before local verification (accepted=%s)', async (accepted) => {
     const transport = createStubGitlabTransport({
       respond: respondWith({
         mergeRequest: mergeRequestBody({
@@ -638,7 +677,9 @@ describe('GitLab final review-workspace verification', () => {
     const execute = vi.fn();
 
     await expect(verifyGitlabReviewWorkspaceAction(
-      verifyInput(),
+      verifyInput(accepted ? {
+        prepared: { kind: 'acceptedCheckout', repositoryPath: '/workspaces/selected-repository' },
+      } : {}),
       withMaterializer(transport.context, execute),
     )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
 

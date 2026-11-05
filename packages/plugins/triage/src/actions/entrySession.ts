@@ -9,8 +9,11 @@ import {
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
+import { SessionStatusActionResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import { renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
@@ -37,7 +40,38 @@ import type {
     TriageStartPullRequestReviewResultV1,
     TriageUnlinkEntryFromSessionActionInputV1,
     TriageUnlinkEntryFromSessionActionResultV1,
+    TriageVerifyExistingReviewWorkspaceInputV1,
+    TriageVerifyExistingReviewWorkspaceResultV1,
 } from './entrySessionProtocol.js';
+
+/** Verifies an existing accepted checkout through the selected source's one native verifier. */
+export function createTriageVerifyExistingReviewWorkspaceActionHandler(): TriageDataActionHandler<
+    TriageVerifyExistingReviewWorkspaceInputV1, TriageVerifyExistingReviewWorkspaceResultV1
+> {
+    return async (input, context) => {
+        const unavailable = { kind: 'unavailable' as const };
+        const options = { signal: context.signal };
+        const status = SessionStatusActionResultV1Schema.safeParse(await context.services.actions.execute(
+            'session.status.get', { sessionId: input.session.sessionId, includeAcceptedWorkspace: true }, options).catch(() => null));
+        if (!status.success || status.data.ok === false || status.data.session.id !== input.session.sessionId) return unavailable;
+        const accepted = status.data.acceptedWorkspace;
+        if (accepted === undefined || accepted.checkout.serverId !== input.session.serverId) return unavailable;
+        const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
+        const row = await findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, options);
+        if (row === null || row.value.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
+            || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source)) return unavailable;
+        const operation = await readCurrentVerifyReviewWorkspaceOperation(input.entryRef.source, context);
+        if (operation === undefined) return unavailable;
+        const instance = row.value.configured;
+        const verified: TriageVerifyReviewWorkspaceResultV1 = await context.services.actions.executeAdmittedTargetedOperation(operation, {
+            v: 1, instance, entryRef: input.entryRef, lastKnownLocator: input.lastKnownLocator, observed: input.observed,
+            workspace: { serverId: accepted.checkout.serverId, machineId: accepted.checkout.machineId, rootPath: accepted.checkout.rootPath },
+            prepared: { kind: 'acceptedCheckout', repositoryPath: accepted.checkout.rootPath },
+        }, { ...options, ...('account' in instance.binding ? { expectedSelectedConnectedAccountRef: instance.binding.account } : {}) });
+        if (context.signal.aborted || verified.kind !== 'verified') return unavailable;
+        return { kind: 'verified', checkout: accepted.checkout };
+    };
+}
 
 /**
  * The registered Session-start and unlink transport.
@@ -367,7 +401,9 @@ async function readCurrentPrepareReviewWorkspace(
 /** Reads the selected source's exact final workspace verifier. */
 async function readCurrentVerifyReviewWorkspaceOperation(
     source: TriageStartPullRequestReviewInputV1['review']['entryRef']['source'],
-    context: PluginInvocationContext,
+    context: Pick<PluginInvocationContext, 'signal'> & Readonly<{
+        services: Pick<PluginInvocationContext['services'], 'targetedContributions'>;
+    }>,
 ) {
     const observation = context.services.targetedContributions.observeForSelf(
         TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
