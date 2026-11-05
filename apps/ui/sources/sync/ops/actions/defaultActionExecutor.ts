@@ -2205,7 +2205,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           }) : {}),
         });
         accountContext.assertCurrent();
-        if (resumed.type === 'error') return { ok: false, errorCode: resumed.rpcErrorCode ?? resumed.errorCode, error: resumed.errorMessage };
+        if (resumed.type === 'error') return { ok: false, errorCode: resumed.rpcErrorCode ?? resumed.errorCode, error: resumed.errorMessage,
+          ...(resumed.errorDetail ? { details: { errorDetail: resumed.errorDetail } } : {}) };
         if (intent === 'resume') return { ok: true, status: 'opened', sessionId, serverId, address: { serverId, sessionId } };
       }
       if ((tabId || destination) && workspace) {

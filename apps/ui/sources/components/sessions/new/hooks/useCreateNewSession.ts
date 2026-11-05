@@ -131,6 +131,7 @@ import {
     type ManualSessionSpawnNewActionCustody,
     type SessionSpawnNewActionResult,
 } from '@/sync/ops/actions/sessionSpawnNewAction';
+import { presentSessionCredentialReconnectFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import {
     captureNewSessionDraftLaunchCurrentness,
     captureNewSessionDraftWorkflowCurrentness,
@@ -1839,16 +1840,10 @@ export function useCreateNewSession(params: Readonly<{
                         current.setIsCreating(false);
                         return;
                     }
-                    if (actionResult.result.code === 'spawn_failed' && actionResult.result.launchError?.code === 'connected_service_credential_reconnect_required') {
-                        Modal.alert(
-                            t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required'),
-                            resolveSessionSpawnNewResultFailureMessage(actionResult.result),
-                            [
-                                { text: t('common.cancel'), style: 'cancel' },
-                                { text: t('connectedServices.detail.actions.reconnect'),
-                                    onPress: () => current.router.push('/(app)/settings/connected-services') },
-                            ],
-                        );
+                    if (presentSessionCredentialReconnectFailure({
+                        errorCode: actionResult.result.code === 'spawn_failed' ? actionResult.result.launchError?.code : undefined,
+                        message: resolveSessionSpawnNewResultFailureMessage(actionResult.result),
+                    }, () => current.router.push('/(app)/settings/connected-services'), Modal.alert)) {
                         current.setIsCreating(false);
                         return;
                     }

@@ -54,4 +54,14 @@ describe('Machine RPC refusal admission before Action output validation', () => 
       }));
   });
 
+  it('retains the typed spawn refusal and remedy through Action classification', () => {
+    const errorDetail = { kind: 'connected_service_ux_diagnostic', uxDiagnostic: {
+      code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
+      source: 'spawn_resume', retryable: false, suggestedActions: ['reconnect_profile'],
+    } };
+    expect(readActionFailureEnvelope({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+      errorMessage: 'Validation refused', errorDetail })).toMatchObject({
+      ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', details: { errorDetail },
+    });
+  });
 });

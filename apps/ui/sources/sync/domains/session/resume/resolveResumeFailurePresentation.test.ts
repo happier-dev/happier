@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveResumeFailurePresentation } from './resolveResumeFailurePresentation';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 describe('session resume failure presentation', () => {
     it('offers the exact disabled plugin instead of repeating Resume, including configured Agents', () => {
@@ -22,6 +23,18 @@ describe('session resume failure presentation', () => {
         expect(resolveResumeFailurePresentation({
             errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'Private validation details',
         }, 'Resume failed')).toEqual({ kind: 'alert', message: 'Resume failed', errorCode: 'SPAWN_VALIDATION_FAILED' });
+    });
+
+    it('uses fresh-start recovery guidance for a typed reconnect refusal without disclosing private diagnostics', () => {
+        const code = 'connected_service_credential_reconnect_required';
+        const freshMessage = resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code, message: 'Private validation detail' } });
+        expect(resolveResumeFailurePresentation({ errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'Private validation detail',
+            details: { errorDetail: { kind: 'connected_service_ux_diagnostic', uxDiagnostic: {
+                code, failurePhase: 'materialization', source: 'spawn_resume', retryable: false, suggestedActions: ['reconnect_profile'],
+            } } },
+        }, 'Resume failed')).toEqual({ kind: 'alert', message: freshMessage, errorCode: code });
+        expect(freshMessage).not.toContain('Private validation detail');
     });
 
     it('retains the original Action refusal code for deliberate Technical details', () => {

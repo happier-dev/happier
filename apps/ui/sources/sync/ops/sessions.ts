@@ -67,6 +67,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
+import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
 import { isSocketIoAckTimeoutError, readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { readRpcFailureCode } from './actions/rpcFailureCode';
@@ -476,6 +477,8 @@ async function runResumeSession(
             })();
             result = execution ? execution.ok ? execution.result : {
                 type: 'error', errorCode: execution.errorCode, errorMessage: execution.error,
+                errorDetail: execution.details && typeof execution.details === 'object'
+                    ? normalizeSpawnSessionErrorDetail(Reflect.get(execution.details, 'errorDetail')) : undefined,
             } : await machineRpcWithServerScope<unknown, ResumeHappySessionRpcParams>({
                 machineId,
                 method: providerSafeRpcRequired

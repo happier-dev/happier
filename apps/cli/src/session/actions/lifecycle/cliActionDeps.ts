@@ -101,7 +101,8 @@ export function createCliSessionLifecycleActionDeps(
             serverId: exactServerId,
             address: { serverId: exactServerId, sessionId: transport.sessionId },
           }
-        : { ok: false, errorCode: resumed.code, error: resumed.message };
+        : { ok: false, errorCode: resumed.code, error: resumed.message,
+            ...(resumed.errorDetail ? { details: { errorDetail: resumed.errorDetail } } : {}) };
     },
     sessionFork: async ({
       sessionId,

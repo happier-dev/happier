@@ -1,6 +1,6 @@
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
@@ -39,6 +39,7 @@ export type InactiveSessionResumeResult =
       ok: false;
       code: 'session_archived' | 'held_by_person' | 'authority_unavailable' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'timeout' | 'SESSION_DIRECTORY_MISSING' | 'machine_target_not_current' | 'plugin_disabled';
       message: string;
+      errorDetail?: SpawnSessionErrorDetail;
     }>;
 
 function readNonEmptyString(value: unknown): string | null {
@@ -289,7 +290,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
         : response && typeof response === 'object'
         && (response as { errorCode?: unknown }).errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING
         ? SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING : 'resume_failed';
-      return refuse({ ok: false, code, message }, response && typeof response === 'object'
+      return refuse({ ok: false, code, message, ...(detail ? { errorDetail: detail } : {}) }, response && typeof response === 'object'
         ? Reflect.get(response, 'errorCode') : undefined);
     }
     // The daemon reuses an existing runner without admitting this request's
@@ -348,15 +349,20 @@ export async function requestInactiveSessionResume(params: Readonly<{
         message: ready.type === 'error'
           ? ready.errorMessage
           : 'Inactive session readiness resolved to a different session',
+        ...(ready.type === 'error' && ready.errorDetail ? { errorDetail: ready.errorDetail } : {}),
       }, ready.type === 'error' ? ready.errorCode : 'session_identity_mismatch');
     }
     return { ok: true };
   } catch (error) {
     const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' ? Reflect.get(error, 'code') : null);
+    const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
+    const errorDetail = details && typeof details === 'object'
+      ? normalizeSpawnSessionErrorDetail(Reflect.get(details, 'errorDetail')) : undefined;
     return refuse({
       ok: false,
       code: resolveThrownResumeFailureCode(error, code),
       message: error instanceof Error ? error.message : 'Inactive session resume failed; pending custody was retained',
+      ...(errorDetail ? { errorDetail } : {}),
     }, code);
   }
 }

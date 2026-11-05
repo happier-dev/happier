@@ -129,6 +129,20 @@ export type SessionSpawnConnectedAccountRecoveryAction =
     | Readonly<{ kind: 'reconnect'; serviceId: string; profileId: string }>
     | Readonly<{ kind: 'select'; serviceId: string }>;
 
+/** Shared recovery for fresh-start and Resume credential refusals. */
+export function presentSessionCredentialReconnectFailure(
+    failure: Readonly<{ errorCode?: string; message: string }>,
+    onReconnect: () => void,
+    alert: typeof import('@/modal').Modal.alert,
+): boolean {
+    if (failure.errorCode !== 'connected_service_credential_reconnect_required') return false;
+    alert(t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required'), failure.message, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('connectedServices.detail.actions.reconnect'), onPress: onReconnect },
+    ]);
+    return true;
+}
+
 /** Present the producer's exclusions; account eligibility is never re-evaluated here. */
 export function resolveSessionSpawnNewConnectedAccountFailure(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,

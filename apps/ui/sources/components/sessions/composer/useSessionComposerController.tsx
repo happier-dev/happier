@@ -47,6 +47,7 @@ import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabi
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
 import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding } from "@/sync/ops/connectedServices/sessionAuthSwitch";
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
+import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
 import { resolvePortableServerIdentityForRoutingId } from "@/sync/domains/server/resolvePortableServerIdentityForRoutingId";
 import { alertActionFailure } from "@/utils/errors/alertActionFailure";
@@ -4634,7 +4635,7 @@ export function useSessionComposerController({
             });
 
             if (!result.ok) {
-                const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error },
+                const presentation = resolveResumeFailurePresentation({ errorCode: result.errorCode, errorMessage: result.error, details: result.details },
                     t('session.resumeFailed'), resolveSessionActionDefaultTarget(sessionActionDefaultBackend));
                 if (presentation.kind === 'directory_missing') {
                     setDirectoryRecovery({ scopeKey: sessionAccountScopeKey, busy: false });
@@ -4651,7 +4652,10 @@ export function useSessionComposerController({
                             } },
                     });
                 } else {
-                    maybeAlert(presentation.message, presentation.errorCode ?? null);
+                    if (!silent && !presentSessionCredentialReconnectFailure(presentation,
+                        () => router.push('/(app)/settings/connected-services'), Modal.alert)) {
+                        maybeAlert(presentation.message, presentation.errorCode ?? null);
+                    }
                 }
                 return false;
             }

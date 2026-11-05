@@ -1,4 +1,4 @@
-import { SpawnSessionErrorCodeSchema } from '../../sessions/spawnSession.js';
+import { normalizeSpawnSessionErrorDetail, SpawnSessionErrorCodeSchema } from '../../sessions/spawnSession.js';
 import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
@@ -27,6 +27,8 @@ export function readMachineActionRpcResult<T>(result: T): T {
 export function readFailureEnvelopeDetails(record: Readonly<Record<string, unknown>>): unknown | undefined {
   if (Object.prototype.hasOwnProperty.call(record, 'details')) return record.details;
   const details: Record<string, unknown> = {};
+  const errorDetail = normalizeSpawnSessionErrorDetail(record.errorDetail);
+  if (errorDetail) details.errorDetail = errorDetail;
   for (const key of ['field', 'surface'] as const) {
     if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
     const value = record[key];

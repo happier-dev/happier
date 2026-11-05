@@ -20,6 +20,7 @@ import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWeb
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { clearSessionExplicitStopIntentAfterResume } from './sessionExplicitStopIntent';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 
 const machineKey = new Uint8Array(32).fill(1);
 const credentials = {
@@ -323,6 +324,23 @@ describe('requestInactiveSessionResume', () => {
       errorDetail: { kind: 'launch_error', code: 'plugin_disabled', message: 'Plugin disabled' } });
     await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'disabled-agent',
       rawSession: rawSession(), metadata, waitForReady: true })).resolves.toMatchObject({ ok: false, code: 'plugin_disabled' });
+    expect(callMachineRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['returned', 'thrown'] as const)('retains the credential refusal and remedy from a %s spawn without waiting for readiness', async transport => {
+    const refusal = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error: {
+      name: 'ConnectedServiceCredentialResolutionError', kind: 'missing_credential',
+      serviceId: 'happier.agent.codex/openai-codex', profileId: 'codex3',
+    } });
+    expect(refusal?.errorDetail).toBeDefined();
+    if (transport === 'returned') callMachineRpc.mockResolvedValue(refusal);
+    else callMachineRpc.mockRejectedValue(Object.assign(new RpcError('Validation refused', 'SPAWN_VALIDATION_FAILED'), {
+      details: { errorDetail: refusal?.errorDetail },
+    }));
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'reconnect-agent',
+      rawSession: rawSession(), metadata, waitForReady: true })).resolves.toMatchObject({
+      ok: false, code: 'resume_failed', errorDetail: refusal?.errorDetail,
+    });
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
   });
 
