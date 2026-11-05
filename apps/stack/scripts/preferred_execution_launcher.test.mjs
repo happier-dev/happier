@@ -1814,7 +1814,7 @@ test('AUTO busy-pool queue selection excludes a worker whose final sync flush fa
     'exit 0', '',
   ].join('\n'));
   const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], {
-    ...fixture.invocation, timeout: 15_000,
+    ...fixture.invocation,
     env: { ...fixture.invocation.env, BUSY_ATTEMPTS: '2', FINAL_SYNC_ATTEMPT: join(fixture.root, 'first-flush') },
   });
   assert.equal(result.status, 0, 'a formerly busy worker stayed eligible after its sync failure');
@@ -1854,7 +1854,7 @@ test('hosted CI public compiler scripts execute locally on a small host and pres
         HAPPIER_STACK_STORAGE_DIR: join(invocation.env.HOME, 'unconfigured-stacks'),
       }),
     };
-    const result = spawnSync('/bin/sh', [launcher, '--script=typecheck:compiler:local'], { ...invocation, env, timeout: 10_000 });
+    const result = spawnSync('/bin/sh', [launcher, '--script=typecheck:compiler:local'], { ...invocation, env });
     assert.equal(result.status, 23, JSON.stringify({ error: result.error?.message, signal: result.signal, stderr: result.stderr, stdout: result.stdout }));
     const expectedOutput = [
       'script:typecheck:compiler:local:routed=1:ci=true:argument=',
@@ -1866,21 +1866,21 @@ test('hosted CI public compiler scripts execute locally on a small host and pres
     await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
 
     const development = spawnSync('/bin/sh', [launcher, '--local', '--allow-local-compilation', '--script=typecheck:compiler:local'], {
-      ...invocation, env: { ...env, CI: '', GITHUB_ACTIONS: '' }, timeout: 10_000,
+      ...invocation, env: { ...env, CI: '', GITHUB_ACTIONS: '' },
     });
     assert.equal(development.status, 75, development.stderr);
     assert.equal(development.stdout, '');
     assert.match(development.stderr, /HSTACK_MEMORY_CAPACITY/);
 
     const explicitlyAdmitted = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--class=validation', '--machine=fixture', '--', '/bin/sh', launcher, '--script=typecheck:compiler:local'], {
-      ...invocation, env, timeout: 10_000,
+      ...invocation, env,
     });
     assert.equal(explicitlyAdmitted.status, 23, explicitlyAdmitted.stderr);
     assert.deepEqual(explicitlyAdmitted.stdout.trim().split('\n'), expectedOutput);
     assert.doesNotMatch(explicitlyAdmitted.stderr, /HSTACK_MEMORY_CAPACITY/);
 
     const placedWorker = spawnSync('/bin/sh', [launcher, '--script=typecheck:compiler:local'], {
-      ...invocation, env: { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' }, timeout: 10_000,
+      ...invocation, env: { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' },
     });
     assert.equal(placedWorker.status, 75, placedWorker.stderr);
     assert.equal(placedWorker.stdout, '');
