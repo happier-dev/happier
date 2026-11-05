@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -12,6 +12,8 @@ import {
     type SelectionListHeightBehavior,
     type SelectionListOption,
 } from '@/components/ui/selectionList';
+import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
@@ -22,15 +24,12 @@ import type {
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { OptionPickerPaneRow, OptionPickerPaneRowContent, optionPickerPaneRowStyles } from './OptionPickerPaneRow';
+import { OptionPickerPaneSlotsContext } from './optionPickerPaneSlots';
 import { useOptionPickerSections } from './optionPickerSections';
 import { OptionPickerSelectedControls } from './OptionPickerSelectedControls';
-import { OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
-
-type WebHoverablePressableState = Readonly<{
-    pressed: boolean;
-    hovered?: boolean;
-}>;
+import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
 const CUSTOM_EDITOR_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.modal + 1;
 
@@ -120,6 +119,7 @@ export type OptionPickerSection<TValue = string> = Readonly<{
 export type OptionPickerProbeState = Readonly<{
     phase: 'idle' | 'loading' | 'refreshing';
     failed?: boolean;
+    refreshErrorMessage?: string;
     onRefresh?: () => void;
     refreshAccessibilityLabel?: string;
     loadingAccessibilityLabel?: string;
@@ -156,6 +156,8 @@ type CustomValueCompatibility<TValue> = TValue extends string
 
 export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     title: string;
+    /** Before the title (the way back while one source is browsed). */
+    titleLeading?: React.ReactNode;
     effectiveLabel?: string;
     notes?: ReadonlyArray<string>;
     summary?: React.ReactNode;
@@ -309,8 +311,15 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             : new Set(props.selectedValues.map((value) => getValueKey(value))),
         [getValueKey, props.selectedValues],
     );
-    const notes = props.probe?.failed
-        ? [...(props.notes ?? []), t('agentInput.model.unavailable')]
+    // A filling picker scrolls as one pane: its title, search, options and status all travel together.
+    const wholePaneScrolls = props.fillAvailableSpace === true;
+    const paneSlots = React.useContext(OptionPickerPaneSlotsContext);
+    const probeFailureMessage = props.probe?.failed
+        ? props.probe.refreshErrorMessage ?? t('agentInput.model.unavailable')
+        : null;
+    // The state line is the failure's one voice in a whole pane: it has the retry a note cannot carry.
+    const notes = probeFailureMessage !== null && !wholePaneScrolls
+        ? [...(props.notes ?? []), probeFailureMessage]
         : props.notes ?? [];
     const headerNotes = multiColumn ? [] : notes;
     const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
@@ -480,6 +489,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         sections: selectionSections,
     }), [props.searchPlaceholder, selectionSections, totalOptionCount]);
 
+    // Clear synchronously before the callback: the owner may unmount
+    // this picker inside onSelect, before passive effects can refresh.
+    const settleCustomEditorBeforeSelect = useEventCallback(() => {
+        abandonCustomDraft();
+        setCustomEditorIntent(selectedCustomValue.length > 0
+            ? { scopeKey: customValueScopeKey, kind: 'dismissed' }
+            : null);
+    });
     const controlsContextValue = React.useMemo(() => ({
         controls: props.selectedOptionControls,
         onSelect: props.onSelectOptionControlValue,
@@ -519,23 +536,8 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         if (!pending.visible) return;
         pending.commit(pending.value);
     }, []);
-    const customEntryHeader = (
-        <View style={styles.customEntryHeader}>
-            <View style={styles.customEntryTextBlock}>
-                <Text style={[styles.optionCardTitle, customEditorVisible ? styles.optionCardTitleSelected : null]}>
-                    {props.customLabel ?? t('modelPickerOverlay.customTitle')}
-                </Text>
-                {props.customDescription ? <Text style={styles.optionCardDescription}>{props.customDescription}</Text> : null}
-            </View>
-            {customEditorVisible ? <Icon name="check" size={14} color={theme.colors.text.primary} /> : null}
-        </View>
-    );
-
-    // The title, status and search stay pinned above the one scroll owner that
-    // carries the options and custom entry (D13 engine pane): scrolling to the
-    // selected card never scrolls away what the pane is or how to search it.
-    // Grid status has a reserved footer so arriving notices cannot move the
-    // cards' origin; ordinary lists retain their header notices.
+    // In a filling pane the title, status and search scroll with the options (0.2's engine pane):
+    // no band of the pane is fixed. A content-sized list keeps them pinned above its own scroll.
     const headerNode = (
         props.showTitle !== false
                 || props.summary
@@ -544,9 +546,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                 || probeHintText
                 || props.headerAccessory
                 || shouldRenderProbeControl ? (
-            <View testID="model-picker-overlay-title-row" style={styles.titleRowContainer}>
+            <View testID="model-picker-overlay-title-row" style={[styles.titleRowContainer, multiColumn ? null : styles.listTextEdge]}>
                 <View style={styles.titleRow}>
-                    {props.showTitle !== false ? <Text style={styles.title}>{props.title}</Text> : null}
+                    {props.showTitle !== false ? (
+                        <View style={styles.titleLine}>
+                            {props.titleLeading}
+                            <Text numberOfLines={1} style={styles.title}>{props.title}</Text>
+                        </View>
+                    ) : null}
                     {props.summary ? (
                         <View testID={props.summaryTestID ?? 'model-picker-overlay-summary'} style={styles.effectiveBlock}>
                             {typeof props.summary === 'string' ? <Text style={styles.noteText}>{props.summary}</Text> : props.summary}
@@ -577,10 +584,8 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                                 size={HEADER_GLYPH_BOX_PX}
                                 iconSize={HEADER_GLYPH_SIZE_PX}
                                 interactiveTargetGapPx={TITLE_ROW_ACTION_GAP_PX}
-                                // While the catalog loads the same glyph stays put, held still:
-                                // the user's loading-style spinner (a dot grid) read as a
-                                // different control on the phone sheet.
-                                disabled={probe.phase !== 'idle'}
+                                // Press, the loader takes the glyph's place, and it settles back.
+                                busy={probe.phase !== 'idle'}
                                 onPress={() => probe.onRefresh?.()}
                             />
                         ) : null}
@@ -589,14 +594,20 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             </View>
             ) : null
     );
+    const customLabel = props.customLabel ?? t('modelPickerOverlay.customTitle');
     const customNode = (
         props.canEnterCustomValue ? (
                 customEditorVisible ? (
                     <View
                         testID="model-picker-overlay-custom"
-                        style={[styles.customEntryRow, styles.customEntrySelected]}
+                        style={[optionPickerPaneRowStyles.row, multiColumn ? null : optionPickerPaneRowStyles.rowInList, optionPickerPaneRowStyles.selected]}
                     >
-                        {customEntryHeader}
+                        <OptionPickerPaneRowContent
+                            title={customLabel}
+                            titleSelected
+                            description={props.customDescription}
+                            trailing={<Icon name="check" size={14} color={theme.colors.text.primary} />}
+                        />
                         <View style={styles.customEditor}>
                             <TextInput
                                 ref={customInputRef}
@@ -622,44 +633,65 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         </View>
                     </View>
                 ) : (
-                    <Pressable
+                    <OptionPickerPaneRow
                         ref={customTriggerRef}
                         testID="model-picker-overlay-custom"
-                        accessibilityRole="button"
-                        accessibilityLabel={props.customLabel ?? t('modelPickerOverlay.customTitle')}
+                        accessibilityLabel={customLabel}
+                        title={customLabel}
+                        description={props.customDescription}
                         onPress={() => {
                             selectionPressPendingRef.current = false;
                             focusCustomInputOnOpenRef.current = true;
                             setCustomDraft({ scopeKey: customValueScopeKey, value: selectedCustomValue });
                             setCustomEditorIntent({ scopeKey: customValueScopeKey, kind: 'manual' });
                         }}
-                        style={(state) => [
-                            styles.customEntryRow,
-                            (state as WebHoverablePressableState).hovered === true ? styles.customEntryHovered : null,
-                            state.pressed ? styles.customEntryPressed : null,
-                        ]}
-                    >
-                        {customEntryHeader}
-                    </Pressable>
+                    />
                 )
             ) : null
     );
-    // A grid shows its status line below the scroll area only while it has something to say. Notices can
-    // wrap without moving the cards' starting position or clipping the message; with none, the rows
-    // fill the pane down to its edge instead of stopping above an empty reserved band.
-    const hasFooterStatus = (multiColumn && notes.length > 0) || Boolean(props.footerContent);
-    const notesNode = hasFooterStatus ? (
+    // A grid shows its status line after the options only while it has something to say. In a content-sized
+    // grid it sits below the scroll area, so notices can wrap without moving the cards' starting position.
+    const hasFooterStatus = (multiColumn && notes.length > 0) || Boolean(props.footerContent) || probeFailureMessage !== null;
+    const noteLines = wholePaneScrolls && (probeFailureMessage !== null || (multiColumn && notes.length > 0)) ? (
+        <HappierBodyEdgeContext.Provider value>
+            <View style={[styles.paneLines, multiColumn ? null : styles.listTextEdge]}>
+                {probeFailureMessage !== null ? (
+                    <SurfaceStateCard
+                        testID="model-picker-overlay-probe-failure"
+                        size="line"
+                        kind="error"
+                        title={probeFailureMessage}
+                        action={probe?.onRefresh ? { label: t('common.retry'), onPress: probe.onRefresh } : undefined}
+                    />
+                ) : null}
+                {multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+            </View>
+        </HappierBodyEdgeContext.Provider>
+    ) : null;
+    const notesBody = hasFooterStatus ? (
+        <>
+            {wholePaneScrolls ? noteLines : multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+            {props.footerContent}
+        </>
+    ) : null;
+    const notesNode = notesBody === null ? null : (
         <View
             testID="model-picker-overlay-notes"
-            style={styles.notesFooter}
+            style={wholePaneScrolls ? styles.notesInPane : styles.notesFooter}
             accessibilityLiveRegion="polite"
         >
-            <View style={styles.notesFooterBody}>
-                {multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
-                {props.footerContent}
-            </View>
+            {wholePaneScrolls ? notesBody : <View style={styles.notesFooterBody}>{notesBody}</View>}
         </View>
+    );
+    // Empty is a settled verdict: while the catalog loads, the header's loading line is the only status,
+    // and a failure says itself in its own state line rather than as an empty catalog.
+    const emptyStateNode = !props.canEnterCustomValue && probeInFlightLabel === null && probeFailureMessage === null ? (
+        <SurfaceStateCard testID="model-picker-overlay-empty" size="line" kind="empty" title={props.emptyText} />
     ) : null;
+    const paneLeading = wholePaneScrolls ? paneSlots?.leading : null;
+    const paneTrailing = wholePaneScrolls ? paneSlots?.trailing : null;
+    const paneHeader = wholePaneScrolls ? <View style={styles.paneHeader}>{paneLeading}{headerNode}</View> : undefined;
+    const paneFooter = wholePaneScrolls ? <View style={styles.paneFooter}>{customNode}{paneTrailing}{notesNode}</View> : undefined;
 
     return (
         <OptionPickerSelectedControlsContext.Provider value={controlsContextValue}>
@@ -667,11 +699,15 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             testID="model-picker-overlay"
             style={[styles.section, props.fillAvailableSpace ? styles.sectionFill : null]}
         >
-            {totalOptionCount > 0 ? headerNode : null}
+            {totalOptionCount > 0 && !wholePaneScrolls ? headerNode : null}
             {totalOptionCount > 0 ? (
                 <SelectionList
                     testID="model-picker-overlay-selection-list"
-                    bodyFooter={customNode === null ? null : <View style={styles.bodyFooter}>{customNode}</View>}
+                    bodyHeader={paneHeader}
+                    bodyFooter={wholePaneScrolls
+                        ? paneFooter
+                        : customNode === null ? null : <View style={styles.bodyFooter}>{customNode}</View>}
+                    inputPlacement={wholePaneScrolls ? 'body' : undefined}
                     inputTestID="model-picker-overlay-search"
                     rootStep={selectionRootStep}
                     listAccessibilityLabel={props.title}
@@ -682,12 +718,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     onSelect={(id) => {
                         const option = optionByKey.get(id);
                         if (!option || option.disabled) return;
-                        // Clear synchronously before the callback: the owner may unmount
-                        // this picker inside onSelect, before passive effects can refresh.
-                        abandonCustomDraft();
-                        setCustomEditorIntent(selectedCustomValue.length > 0
-                            ? { scopeKey: customValueScopeKey, kind: 'dismissed' }
-                            : null);
+                        settleCustomEditorBeforeSelect();
                         if (option.onActivate) {
                             option.onActivate();
                             return;
@@ -733,14 +764,20 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     // `multiColumn` off, where nothing else can force the grid.
                     optionsHostInlineControls={props.onSelectOptionControlValue !== undefined}
                 />
+            ) : wholePaneScrolls ? (
+                <ScrollView style={styles.sectionFill} keyboardShouldPersistTaps="handled">
+                    {paneHeader}
+                    {emptyStateNode}
+                    {paneFooter}
+                </ScrollView>
             ) : (
                 <>
                     {headerNode}
-                    {!props.canEnterCustomValue ? <Text style={styles.emptyText}>{props.emptyText}</Text> : null}
+                    {emptyStateNode}
                     {customNode}
                 </>
             )}
-            {notesNode}
+            {wholePaneScrolls ? null : notesNode}
         </View>
         </OptionPickerSelectedControlsContext.Provider>
     );
@@ -748,21 +785,28 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
 
 const styles = StyleSheet.create((theme) => ({
     section: { gap: theme.space.s6 },
+    /** The pane's own top and bottom inset travel with its content, so nothing stands fixed at either edge. */
+    paneHeader: { gap: theme.space.s6, paddingTop: theme.space.s16, paddingBottom: theme.space.s8 },
+    paneFooter: { gap: theme.space.s12, paddingTop: theme.space.s12, paddingBottom: theme.space.s16 },
     /** The "Custom…" entry keeps the pane's gap from the last row when it scrolls with them. */
     bodyFooter: { marginTop: theme.space.s6 },
     sectionFill: {
         flex: 1,
         minHeight: 0,
     },
-    titleRowContainer: { flexDirection: 'row', alignItems: 'flex-start', paddingLeft: theme.space.s6 },
-    titleRow: { flex: 1, minWidth: 0 },
+    /** Title and status start on the cards' text edge; the refresh glyph ends on their trailing one. */
+    titleRowContainer: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX },
+    /** A list's rows (a phone sheet) keep their text further in than a card's. */
+    listTextEdge: { paddingHorizontal: OPTION_PICKER_LIST_TEXT_INSET_PX },
+    titleRow: { flex: 1, minWidth: 0, gap: theme.space.s2 },
+    titleLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minHeight: HEADER_GLYPH_BOX_PX },
     titleRowActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexShrink: 0, gap: TITLE_ROW_ACTION_GAP_PX, marginLeft: theme.space.s8 },
     headerAccessory: { flexShrink: 0 },
     /**
      * The pane's own name ("Model"), in sentence case: it heads the pane beside its favourite and
      * refresh controls, so it reads as a title (primary ink, semibold), not as an eyebrow.
      */
-    title: { flex: 1, ...Typography.variant('body', 'semiBold'),   color: theme.colors.text.primary },
+    title: { flex: 1, minWidth: 0, ...Typography.variant('body', 'semiBold'), color: theme.colors.text.primary },
     effectiveBlock: { gap: 0 },
     /**
      * The status footer closes the pane the way the search header opens it: a divider, then the line
@@ -777,14 +821,14 @@ const styles = StyleSheet.create((theme) => ({
         borderTopColor: theme.colors.border.default,
     },
     notesFooterBody: { minHeight: Typography.variant('meta').lineHeight },
-    noteText: { fontSize: 11, color: theme.colors.text.tertiary },
+    notesInPane: { gap: theme.space.s10 },
+    /** Status lines stand on the cards' text edge. */
+    paneLines: { gap: theme.space.s4, paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX },
+    noteText: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
     optionCardIconSlot: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
     optionSelectionStatus: { alignItems: 'center', justifyContent: 'flex-start', gap: theme.space.s2 },
     optionSelectionMark: { width: 20, height: 14, alignItems: 'center', justifyContent: 'center' },
     optionCardStatusIcon: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
-    optionCardTitle: { fontSize: 14, color: theme.colors.text.primary },
-    optionCardTitleSelected: { ...Typography.default('semiBold') },
-    optionCardDescription: { fontSize: 12, color: theme.colors.text.secondary },
     optionCardIndicator: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s6, zIndex: 2, elevation: 2 },
     /**
      * Card presentation: the selection mark sits ABOVE the favourite star.
@@ -792,13 +836,6 @@ const styles = StyleSheet.create((theme) => ({
      * overlay rather than in the row's flow.
      */
     optionCardIndicatorStacked: { alignItems: 'flex-end', justifyContent: 'flex-start', gap: theme.space.s6 },
-    customEntryRow: { borderRadius: 12, paddingHorizontal: theme.space.s6, paddingVertical: theme.space.s6, backgroundColor: theme.colors.surface.base },
-    customEntrySelected: { backgroundColor: theme.colors.surface.selected },
-    customEntryHovered: { backgroundColor: theme.colors.surface.pressed },
-    customEntryPressed: { opacity: motionTokens.press.opacitySubtle },
-    customEntryHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space.s12 },
-    customEntryTextBlock: { flex: 1, minWidth: 0 },
     customEditor: { paddingTop: theme.space.s4 },
     customEditorInput: { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.default, paddingHorizontal: theme.space.s10, paddingVertical: theme.space.s6, fontSize: 12, color: theme.colors.text.primary },
-    emptyText: { fontSize: 11, color: theme.colors.text.secondary, paddingHorizontal: theme.space.s6, paddingVertical: theme.space.s8 },
 }));

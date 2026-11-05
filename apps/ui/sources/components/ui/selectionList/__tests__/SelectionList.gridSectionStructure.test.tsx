@@ -41,7 +41,8 @@ vi.mock('react-native', async () => {
 // never reach it, so the capturing mock is inert for them.
 const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 
@@ -235,12 +236,11 @@ describe('SelectionList — a columned grid owns nothing but rows', () => {
 
         expectHeaderIsAnExposedGridRow(screen, 'favorites', 2);
         expectHeaderIsAnExposedGridRow(screen, 'models', 2);
-        // Two sections of two options at two columns: header, row, header, row.
+        // Two sections of two options at two columns: each header, then a row per card.
         const gridRows = rows(screen);
-        expect(gridRows).toHaveLength(4);
-        expect(directRoleChildren(gridRows[1]!)).toEqual(['gridcell', 'gridcell']);
-        expect(findAllHostTestInstances(gridRows[1]!, (node) => node.props.role === 'gridcell')
-            .map((node) => node.props['aria-selected']))
+        expect(gridRows).toHaveLength(6);
+        expect(directRoleChildren(gridRows[1]!)).toEqual(['gridcell']);
+        expect([gridRows[1]!, gridRows[2]!].map((row) => findAllHostTestInstances(row, (node) => node.props.role === 'gridcell')[0]?.props['aria-selected']))
             .toEqual([true, false]);
         expectContiguousRowNumbering(screen);
     });

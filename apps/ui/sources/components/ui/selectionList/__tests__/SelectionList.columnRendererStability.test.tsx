@@ -39,7 +39,8 @@ vi.mock('react-native', async () => {
 
 const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 
@@ -144,7 +145,7 @@ describe('SelectionList — the measured column count may not pick the body rend
         // the measurement, which is correct. The component identity may not.
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
         expect(mountedBodyRenderer(screen)).toEqual(opened);
-        expect(columnRows(screen)).toHaveLength(3);
+        expect(columnRows(screen)).toHaveLength(1);
 
         await measureContainer(screen, ONE_COLUMN_WIDTH_PX);
         expect(mountedBodyRenderer(screen)).toEqual(opened);
@@ -203,7 +204,7 @@ describe('SelectionList — a width change that crosses no breakpoint changes no
     it('does not re-render for a sub-pixel width change inside one column count', async () => {
         const { screen, commits } = await renderProfiled();
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
-        expect(columnRows(screen)).toHaveLength(3);
+        expect(columnRows(screen)).toHaveLength(1);
         // One notification to drain the pending update the real resize left on
         // the hook — React can only take its eager same-value bailout with an
         // empty queue, so the FIRST equal write after a real change still costs
@@ -220,7 +221,7 @@ describe('SelectionList — a width change that crosses no breakpoint changes no
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX + 0.75);
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX + 2);
         expect(commits()).toBe(settled);
-        expect(columnRows(screen)).toHaveLength(3);
+        expect(columnRows(screen)).toHaveLength(1);
     });
 
     it('still re-renders when a width change does cross the breakpoint', async () => {

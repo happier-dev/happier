@@ -193,12 +193,12 @@ function AgentInputChipPickerOptionButton(
     const rowHovered = hovered || stateHovered;
     return [
       styles.optionRow,
+      Platform.OS === "web" && !disabled ? styles.optionRowInteractive : null,
       props.compact ? props.transientStyles.optionRowCompact : null,
       Platform.OS === "web"
         && rowHovered
         && !props.focused
         && !disabled
-        && !props.option.muted
         ? props.transientStyles.optionRowHovered
         : null,
       props.focused ? props.transientStyles.optionRowFocused : null,
@@ -358,7 +358,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   // Sentence-case group label ("Favorites", "Agents"): the same anatomy as every picker group.
   sectionTitle: {
-    paddingHorizontal: theme.space.s6,
+    // On the rows' own text edge.
+    paddingHorizontal: theme.space.s8,
     ...Typography.variant('meta', 'medium'),
     color: theme.colors.text.secondary,
   },
@@ -376,6 +377,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.space.s8,
     backgroundColor: "transparent",
+  },
+  // A rail row is a plain clickable View on web, which would otherwise keep the text cursor's arrow.
+  optionRowInteractive: {
+    cursor: "pointer",
   },
   optionRowContainer: {
     position: "relative",

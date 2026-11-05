@@ -46,10 +46,11 @@ export type HappierActionFieldPresentation<OptionValue = unknown> =
 /** The most choices a fixed single choice shows as one segmented control. */
 export const HAPPIER_SEGMENTED_CHOICES_MAX = 4;
 /**
- * The most steps a short ordinal scale (Low · Medium · High · XHigh · Max) shows as one segmented row: one
- * more than the general cap, because ordered steps read as one scale (owner ruling 2026-11-04, lab rpicker-MP1).
+ * The most steps a short ordinal scale (Low · Medium · High · XHigh · Max · Ultra, Codex's six) shows as one
+ * segmented row: more than the general cap, because ordered steps read as one scale (owner rulings 2026-11-04
+ * and 2026-11-05). A row too narrow for them still falls back to the field select, by measure.
  */
-const HAPPIER_SEGMENTED_ORDINAL_CHOICES_MAX = 5;
+const HAPPIER_SEGMENTED_ORDINAL_CHOICES_MAX = 6;
 /**
  * The longest label a segment carries ("API equivalent"): longer ones would squeeze four segments past
  * a row's control column, so the choice stays a list ("long labels: bordered field select").

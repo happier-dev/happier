@@ -166,8 +166,9 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
      * `'equal'` (default): segments share the row width evenly.
      * `'content'`: each segment hugs its label so short labels never
      * ellipsize (e.g. a "Tokens/Cost" metric toggle).
+     * `'equal-or-label'`: an even share while the widest label fits one, else each segment its label's width.
      */
-    segmentSizing?: 'equal' | 'content';
+    segmentSizing?: 'equal' | 'content' | 'equal-or-label';
     /** Optional active-label style override for specific consumers */
     activeLabelStyle?: StyleProp<TextStyle>;
     /**
@@ -345,6 +346,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         // sideways (see the horizontal budget where it is computed), so the two boxes share an edge.
         alignItems: 'stretch',
         justifyContent: 'center',
+    },
+    /** Each segment its own label's width, sharing whatever the track has left. */
+    tabFrameLabel: {
+        flexBasis: 'auto',
     },
     tabFrameContent: {
         // Hug the label so a short 6-char label ("Tokens") never ellipsizes
@@ -578,13 +583,19 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
         const width = event.nativeEvent.layout.width;
         setMeasured((current) => (current[key] === width ? current : { ...current, [key]: width }));
     }, []);
+    // A scale of short steps (Codex's six effort tiers) stays one row while its labels fit, even when
+    // the widest would not fit an equal share: each segment then takes its own label's width.
+    const labelWidths = props.tabs.map((tab) => measured[`l:${tab.id}`]);
+    const labelSized = props.segmentSizing === 'equal-or-label' && rowWidth !== null
+        && labelWidths.every((width) => width !== undefined)
+        && Math.max(...(labelWidths as number[])) * labelWidths.length > rowWidth - (plain ? 0 : SEGMENT_TRACK_PADDING_PX * 2);
     const fit = React.useMemo(() => {
         if (!hasOverflow) return { icons: true, counts: true, visibleCount: props.tabs.length };
         const complete = props.tabs.every((tab) => measured[`i:${tab.id}`] !== undefined && measured[`l:${tab.id}`] !== undefined
             && (!tab.count || measured[`b:${tab.id}`] !== undefined))
             && measured.more !== undefined;
         // An equal-width value row gives every choice the same share, so it fits only while its widest choice does.
-        const segmentWidths = (widths: readonly number[]) => equalValueRow ? widths.map(() => Math.max(...widths)) : widths;
+        const segmentWidths = (widths: readonly number[]) => equalValueRow && !labelSized ? widths.map(() => Math.max(...widths)) : widths;
         return resolveSegmentedTabFit({
             // The track's own padding is not room for segments: counting it let a row that "fit" squeeze
             // every label ("Overvi…") instead of dropping the glyphs first.
@@ -596,7 +607,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
             more: measured.more ?? 0,
             reserveMore,
         });
-    }, [equalValueRow, hasOverflow, measured, plain, props.tabs, reserveMore, rowWidth]);
+    }, [equalValueRow, hasOverflow, labelSized, measured, plain, props.tabs, reserveMore, rowWidth]);
     const showIcons = plain && fit.icons;
     const glyphOnly = plain && resolveHappierTabGlyphOnly({ labels: props.labels, tabs: props.tabs });
     const visibleTabs = React.useMemo(() => (hasOverflow ? props.tabs.slice(0, fit.visibleCount) : props.tabs), [fit.visibleCount, hasOverflow, props.tabs]);
@@ -783,6 +794,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             style={[
                                 styles.tabFrame,
                                 contentSized ? styles.tabFrameContent : null,
+                                labelSized ? styles.tabFrameLabel : null,
                                 HAPPIER_FOCUS_RING_DELEGATED_STYLE,
                             ]}
                             {...(iconOnly || glyphOnly ? ({ title: tab.label } as object) : !fit.counts && tab.count ? ({ title: baseName } as object) : {})}
@@ -801,6 +813,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                                     compact ? styles.tabSurfaceCompact : null,
                                     iconOnly ? (compact ? styles.tabSurfaceIconCompact : styles.tabSurfaceIcon) : null,
                                     contentSized ? (iconOnly ? styles.tabSurfaceIconContent : styles.tabSurfaceContent) : null,
+                                    labelSized ? styles.tabSurfaceTight : null,
                                     showOwnActiveSurface && !pills && !plain ? (inherited ? styles.thumbOutlined : styles.tabActive) : null,
                                     plain ? styles.plainSurface : null,
                                     plain && showOwnActiveSurface ? styles.plainActive : null,

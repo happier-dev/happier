@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { OptionPickerPaneSlotsContext } from '@/components/sessions/pickers/optionPickerPaneSlots';
 import { OptionPickerOverlay, type OptionPickerOption } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { HappierPressable, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -73,38 +74,47 @@ export function RolesRailDetailView(props: RolesRailDetailProps & Readonly<{ rol
         ? joinHappierFacts(selected.name, selected.engineLabel)
         : undefined;
 
+    // The pane scrolls as one: its way to manage roles travels with the cards.
+    const { footer } = props;
+    const paneSlots = React.useMemo(() => ({ trailing: (
+                <>
+                    {footer ? <View testID="roles-rail-detail.footer">{footer}</View> : null}
+                    <View style={styles.footer}>
+                        <Text style={styles.footerText}>{t('roles.rail.footer')}</Text>
+                        {onManageRoles ? (
+                            <HappierPressable
+                                testID="roles-rail-manage"
+                                accessibilityRole="link"
+                                onPress={onManageRoles}
+                                style={styles.manage}
+                            >
+                                <Text style={styles.manageText}>{t('roles.rail.manage')}</Text>
+                                <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
+                            </HappierPressable>
+                        ) : null}
+                    </View>
+                </>
+    ) }), [footer, onManageRoles, theme.colors.text.tertiary]);
+
     return (
         <View testID="roles-rail-detail" style={styles.container}>
-            <OptionPickerOverlay
-                title={t('roles.rail.title')}
-                effectiveLabel={effectiveLabel}
-                options={options}
-                selectedValue={value ?? ''}
-                onSelect={onChange}
-                // No roles at all is an empty state that says how to add one, never "no match" (DESIGN-9 N50).
-                emptyText={t(props.status === 'loading' ? 'common.loading' : props.status === 'failed' ? 'roles.settings.loadFailed'
-                    : props.onManageRoles ? 'roles.rail.emptyWithManage' : 'roles.rail.empty')}
-                searchPlaceholder={t('roles.rail.searchPlaceholder')}
-                optionTestIDPrefix="roles-rail-option"
-                canEnterCustomValue={false}
-                multiColumn
-                fillAvailableSpace
-            />
-            {props.footer ? <View testID="roles-rail-detail.footer">{props.footer}</View> : null}
-            <View style={styles.footer}>
-                <Text style={styles.footerText}>{t('roles.rail.footer')}</Text>
-                {props.onManageRoles ? (
-                    <HappierPressable
-                        testID="roles-rail-manage"
-                        accessibilityRole="link"
-                        onPress={props.onManageRoles}
-                        style={styles.manage}
-                    >
-                        <Text style={styles.manageText}>{t('roles.rail.manage')}</Text>
-                        <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
-                    </HappierPressable>
-                ) : null}
-            </View>
+            <OptionPickerPaneSlotsContext.Provider value={paneSlots}>
+                <OptionPickerOverlay
+                    title={t('roles.rail.title')}
+                    effectiveLabel={effectiveLabel}
+                    options={options}
+                    selectedValue={value ?? ''}
+                    onSelect={onChange}
+                    // No roles at all is an empty state that says how to add one, never "no match" (DESIGN-9 N50).
+                    emptyText={t(props.status === 'loading' ? 'common.loading' : props.status === 'failed' ? 'roles.settings.loadFailed'
+                        : props.onManageRoles ? 'roles.rail.emptyWithManage' : 'roles.rail.empty')}
+                    searchPlaceholder={t('roles.rail.searchPlaceholder')}
+                    optionTestIDPrefix="roles-rail-option"
+                    canEnterCustomValue={false}
+                    multiColumn
+                    fillAvailableSpace
+                />
+            </OptionPickerPaneSlotsContext.Provider>
         </View>
     );
 }

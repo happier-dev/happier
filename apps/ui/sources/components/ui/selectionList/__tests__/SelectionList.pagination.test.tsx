@@ -15,7 +15,8 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
     renderItemLimit: 20,
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 

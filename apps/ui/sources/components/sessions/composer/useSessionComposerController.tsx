@@ -4396,6 +4396,7 @@ export function useSessionComposerController({
                     ?? selectedModelId;
                 return (
                     <SessionModelPicker
+                        fillAvailableSpace
                         multiColumn
                         agentTargetKey={modelPickerAgentTargetKey}
                         declarationContext={declarationContext}

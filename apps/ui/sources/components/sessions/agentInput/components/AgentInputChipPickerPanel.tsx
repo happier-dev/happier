@@ -289,11 +289,20 @@ export function AgentInputChipPickerPanel(
               )
             ) : null}
             {focusedOption && !sheetShowsList ? (
-              <View style={[detailContainerStyle, sheet ? styles.sheetDetail : null]}>
+              <View style={[
+                detailContainerStyle,
+                sheet ? styles.sheetDetail : null,
+                detailedLayout === "stacked" && props.detailContentOwnsScroll === true ? styles.detailScrollContentFlush : null,
+              ]}>
                 <View
                   style={[
                     styles.detailPane,
                     detailedLayout === "split" ? styles.detailScrollContent : null,
+                    // A detail that owns its scroll carries its own top and bottom inset,
+                    // so its content reaches both edges of the pane as it scrolls.
+                    props.detailContentOwnsScroll === true
+                      ? styles.detailScrollContentFlush
+                      : null,
                     // `detailContentOwnsScroll` also switches the surrounding
                     // popover's own scroll OFF, on every platform. The split
                     // column bounds the pane through `detailScrollContent`;
@@ -468,6 +477,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 15,
     flex: 1,
     minHeight: 0,
+  },
+  detailScrollContentFlush: {
+    paddingVertical: 0,
   },
   detailPaneHeaderAccessoryRow: {
     position: 'absolute',

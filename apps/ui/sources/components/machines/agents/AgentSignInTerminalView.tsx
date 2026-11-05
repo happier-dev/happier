@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierBodyEdgeContext, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import type { MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
@@ -82,22 +82,21 @@ function SidePanel(props: AgentSignInTerminalViewProps) {
                 {props.mark}
                 <Text style={styles.title}>{t('machineAgents.signInTitle', { agent: props.agentTitle })}</Text>
             </View>
-            <Text style={styles.lead}>{t('machineAgents.panelLead')}</Text>
+            {/* A failed start opened no browser; a failed check after one did. */}
+            {session.phase !== 'failed' || session.authUrl ? <Text style={styles.lead}>{t('machineAgents.panelLead')}</Text> : null}
             {session.authUrl ? <AuthUrl url={session.authUrl} onOpen={handlers.onOpenUrl} testID={testID} /> : null}
             {session.phase === 'failed' ? (
-                <AttentionBanner
-                    testID={`${testID}.failure`}
-                    title={session.failure ?? t('machineAgents.unknown')}
-                    action={{ label: t('machineAgents.checkAgain'), onPress: handlers.onCheckAgain }}
-                />
+                <SignInFailureLine failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
             ) : (
-                <WaitingLine startedAtMs={session.startedAtMs} />
+                <>
+                    <WaitingLine startedAtMs={session.startedAtMs} />
+                    <View style={styles.grow} />
+                    <View style={styles.actions}>
+                        <Text style={styles.quiet}>{t('machineAgents.signedInAlready')}</Text>
+                        <RoundButton testID={`${testID}.checkAgain`} size="small" display="inverted" title={t('machineAgents.checkAgain')} onPress={handlers.onCheckAgain} />
+                    </View>
+                </>
             )}
-            <View style={styles.grow} />
-            <View style={styles.actions}>
-                <Text style={styles.quiet}>{t('machineAgents.signedInAlready')}</Text>
-                <RoundButton testID={`${testID}.checkAgain`} size="small" display="inverted" title={t('machineAgents.checkAgain')} onPress={handlers.onCheckAgain} />
-            </View>
         </>
     );
 }
@@ -131,13 +130,9 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
                     {session.authUrl ? (
                         <RoundButton testID={`${testID}.openUrl`} title={t('machineAgents.openSignInPage')} onPress={() => handlers.onOpenUrl(session.authUrl!)} />
                     ) : null}
-                    {session.phase === 'failed' ? (
-                        <AttentionBanner
-                            testID={`${testID}.failure`}
-                            title={session.failure ?? t('machineAgents.unknown')}
-                            action={{ label: t('machineAgents.checkAgain'), onPress: handlers.onCheckAgain }}
-                        />
-                    ) : <WaitingLine startedAtMs={session.startedAtMs} />}
+                    {session.phase === 'failed'
+                        ? <SignInFailureLine failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
+                        : <WaitingLine startedAtMs={session.startedAtMs} />}
                 </>
             )}
             <ExpandableItem
@@ -152,6 +147,21 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
                 <View style={styles.sheetTerminal}>{terminalShown ? props.terminal : null}</View>
             </ExpandableItem>
         </View>
+    );
+}
+
+/** One cause, one line, one next step, on the panel's own text edge. */
+function SignInFailureLine(props: Readonly<{ failure: string | null | undefined; onCheckAgain: () => void; testID: string }>) {
+    return (
+        <HappierBodyEdgeContext.Provider value>
+            <SurfaceStateCard
+                testID={`${props.testID}.failure`}
+                size="line"
+                kind="error"
+                title={props.failure ?? t('machineAgents.unknown')}
+                action={{ label: t('machineAgents.checkAgain'), onPress: props.onCheckAgain, testID: `${props.testID}.checkAgain` }}
+            />
+        </HappierBodyEdgeContext.Provider>
     );
 }
 

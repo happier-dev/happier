@@ -127,15 +127,13 @@ describe('SelectionList — columns variant', () => {
         );
         // 2 * 250 + 12 gutter = 512.
         await fireContainerLayout(screen.findByTestId('sl') as unknown as TestNode, 546);
-        expect(countColumnRows(screen as never)).toBe(2);
+        expect(countColumnRows(screen as never)).toBe(1);
         for (const id of ['m-0', 'm-1', 'm-2', 'm-3']) {
             expect(screen.findByTestId(`sl:root:option:${id}`)).not.toBeNull();
         }
         // Two dimensions of movement is a grid, whether or not any row carries
-        // inline controls — the visual rows ARE the grid's rows.
+        // inline controls; each card is one of its rows.
         expect((screen.findByTestId('sl:body') as unknown as TestNode).props.role).toBe('grid');
-        expect(findColumnRows(screen as never).map((row) => row.props.role))
-            .toEqual(['row', 'row']);
     });
 
     it('collapses back to one column when the pane is measured narrower', async () => {
@@ -145,7 +143,7 @@ describe('SelectionList — columns variant', () => {
         );
         const root = screen.findByTestId('sl') as unknown as TestNode;
         await fireContainerLayout(root, 546);
-        expect(countColumnRows(screen as never)).toBe(2);
+        expect(countColumnRows(screen as never)).toBe(1);
         await fireContainerLayout(root, 380);
         expect(countColumnRows(screen as never)).toBe(0);
     });
@@ -162,7 +160,7 @@ describe('SelectionList — columns variant', () => {
         // hand every column 10px more than the caller asked the resolver for.
         await fireContainerLayout(screen.findByTestId('sl') as unknown as TestNode, 546);
         const rows = findColumnRows(screen as never);
-        expect(rows).toHaveLength(2);
+        expect(rows).toHaveLength(1);
         for (const row of rows) {
             expect(flattenRowStyle(row.props.style).columnGap).toBe(32);
         }

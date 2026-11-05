@@ -10,7 +10,8 @@ vi.mock('react-native', async () => {
 });
 
 const { module: capturedLegendList } = createCapturingLegendListMock({ renderItems: true });
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 

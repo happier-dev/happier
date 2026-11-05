@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc';
 
-import { presentProviderConnection } from './presentation';
+import { presentProviderConnection, presentProviderConnectionIdentity } from './presentation';
 import { providerModelConnectionTitle } from '@/providers/models/providerModelConnectionTitle';
 
 const base = DaemonProviderConnectionViewV1Schema.parse({
@@ -16,6 +16,14 @@ const base = DaemonProviderConnectionViewV1Schema.parse({
 });
 
 describe('provider connection presentation', () => {
+    it('names a source once when its connection name already says its provider', () => {
+        const identity = (displayName: string) => presentProviderConnectionIdentity({
+            providerName: 'Vercel AI Gateway', displayName, role: 'named', displayNameMode: 'custom',
+        }).sourceLabel;
+        expect(identity('Work Vercel AI Gateway')).toBe('Work Vercel AI Gateway');
+        expect(identity('Work')).toBe('Vercel AI Gateway · Work');
+    });
+
     it.each([
         { accountEnabled: true, enabledMachineIds: [] },
         { accountEnabled: false, enabledMachineIds: ['another-machine'] },

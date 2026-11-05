@@ -82,15 +82,21 @@ describe('SessionModelPicker header and selected-model choices', () => {
     await screen.unmount();
   });
 
-  it('draws six thinking levels as one field select showing the chosen level, and selects through it', async () => {
+  it('draws Codex\'s six thinking levels as one segmented row (owner, 2026-11-05: never behind a click)', async () => {
+    const screen = await renderScreen(picker(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']));
+    expect(screen.findByTestId(`${OPTION}:ultra`)).not.toBeNull();
+    expect(screen.findByTestId(`${OPTION}:select`)).toBeNull();
+    await screen.unmount();
+  });
+
+  it('draws a longer scale as one field select showing the chosen level, and selects through it', async () => {
     const onChange = vi.fn();
-    const screen = await renderScreen(
-      picker(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], onChange),
-    );
+    const levels = ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+    const screen = await renderScreen(picker(levels, onChange));
     expect(screen.findByTestId(`${OPTION}:select`)).not.toBeNull();
     expect(screen.findByTestId(`${OPTION}:low`)).toBeNull();
     const menu = screen.root.findByType(DropdownMenu);
-    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(levels);
     expect(menu.props.selectedId).toBe('medium');
     act(() => {
       menu.props.onSelect('ultra');

@@ -58,6 +58,8 @@ export const MachineAgentSetupPane = React.memo(function MachineAgentSetupPane(p
     serverId: string;
     machineId: string;
     machineName: string;
+    /** The form is about to take the person to another page. */
+    onLeave?: () => void;
 }>) {
     return (
         <MachineAgentSetupPaneView
@@ -72,6 +74,7 @@ export const MachineAgentSetupPane = React.memo(function MachineAgentSetupPane(p
                     agentId={props.agent.agentId}
                     definitionId={props.agent.definitionId}
                     layout="compact"
+                    {...(props.onLeave ? { onLeave: props.onLeave } : {})}
                 />
             )}
         />
@@ -82,7 +85,9 @@ const styles = StyleSheet.create((theme) => ({
     pane: {
         gap: theme.space.s12,
         paddingHorizontal: theme.space.s4,
-        paddingTop: theme.space.s2,
+        // The engine pane leaves its top and bottom inset to its detail, which scrolls.
+        paddingTop: theme.space.s16,
+        paddingBottom: theme.space.s16,
     },
     head: {
         gap: 1,

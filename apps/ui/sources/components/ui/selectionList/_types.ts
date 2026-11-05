@@ -872,9 +872,11 @@ export type SelectionListProps = Readonly<{
      * same input — one query, one ref, one `aria-controls`/`aria-activedescendant`
      * relationship, one scroll owner — beneath the results, for keyboard-seated
      * surfaces where the field must stay directly above the software keyboard.
-     * It never creates a second TextInput or a second query state.
+     * `'body'` seats it after `bodyHeader`, inside the scroll body, as a bordered
+     * field, for a pane that scrolls as one. No placement creates a second
+     * TextInput or a second query state.
      */
-    inputPlacement?: 'top' | 'bottom';
+    inputPlacement?: 'top' | 'bottom' | 'body';
     /**
      * `'check'` (default): the current choice of a single-choice list carries a trailing check (the
      * picker anatomy). `'none'`: the options draw their own selection state — a list of per-group

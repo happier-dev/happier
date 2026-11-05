@@ -30,6 +30,8 @@ export type AgentSetupFormProps = Readonly<{
     onSetUpAnother?: () => void;
     /** A connected service to connect first (the surface's own connect flow: Settings → Connected services, the Home panel). */
     onConnectService?: (serviceId: string) => void;
+    /** A surface floating over the page closes before the form routes away from it. */
+    onLeave?: () => void;
     testID: string;
 }>;
 
@@ -95,7 +97,10 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         onConnectService: (serviceId) => {
             // Connecting is the connected-services owner's flow; surfaces with it in place pass it in.
             if (props.onConnectService) props.onConnectService(serviceId);
-            else router.push(`${SETTINGS_ROUTES.connectedServices}/${encodeURIComponent(serviceId)}` as never);
+            else {
+                props.onLeave?.();
+                router.push(`${SETTINGS_ROUTES.connectedServices}/${encodeURIComponent(serviceId)}` as never);
+            }
         },
         onOpenNativeSignIn: () => {
             fireAndForget((async () => {
@@ -108,7 +113,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         onCancelSignIn: () => { fireAndForget(signIn.cancel(), { tag: 'AgentSetupForm.cancelSignIn' }); },
         ...(props.onStartSession ? { onStartSession: () => { if (agentRef.current) props.onStartSession?.(agentRef.current); } } : {}),
         ...(props.onSetUpAnother ? { onSetUpAnother: props.onSetUpAnother } : {}),
-    }), [credentialFailure, install, installJob, openTerminal, props.onConnectService, props.onSetUpAnother, props.onStartSession, router, selectCredential, signIn]);
+    }), [credentialFailure, install, installJob, openTerminal, props.onConnectService, props.onLeave, props.onSetUpAnother, props.onStartSession, router, selectCredential, signIn]);
 
     if (!agent) return null;
     return (

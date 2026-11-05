@@ -167,8 +167,8 @@ export function buildNewSessionAgentPickerOptions(
                         muted: setup.placement.group !== 'onMachine',
                         ...(setup.placement.group === 'onMachine' ? {} : {
                             section: setup.placement.group === 'notOnMachine'
-                                ? { id: 'notOnMachine', label: t('machineAgents.notOnMachineYet', { machine: params.selectedMachineName ?? '' }), rank: 1 }
-                                : { id: 'cantRun', label: t('machineAgents.cantRunOn', { machine: params.selectedMachineName ?? '' }), rank: 2 },
+                                ? { id: 'notOnMachine', label: t('machineAgents.notOnThisMachineYet'), rank: 1 }
+                                : { id: 'cantRun', label: t('machineAgents.cantRunOnThisMachine'), rank: 2 },
                         }),
                         statusMarker: <MachineAgentPickerMarker marker={setup.placement.marker} />,
                     };

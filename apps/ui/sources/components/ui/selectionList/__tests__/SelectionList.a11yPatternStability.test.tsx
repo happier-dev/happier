@@ -259,7 +259,7 @@ describe('SelectionList — selection and filtering cannot move the pattern', ()
 });
 
 describe('SelectionList — the grid describes the columns it actually paints', () => {
-    it('gives a trailing partial row a real empty cell so every row fills aria-colcount', async () => {
+    it('numbers each card as a row of its own when a column runs shorter', async () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
             <SelectionList
@@ -277,25 +277,18 @@ describe('SelectionList — the grid describes the columns it actually paints', 
 
         const body = screen.findByTestId('sl:body');
         expect(body?.props['aria-colcount']).toBe(2);
-        // The section header row plus the two painted option rows.
-        expect(body?.props['aria-rowcount']).toBe(3);
-        expect(bodyRows(screen).map((row) => row.props['aria-rowindex'])).toEqual([1, 2, 3]);
+        // The section header row plus one row per card: columns stack independently.
+        expect(body?.props['aria-rowcount']).toBe(4);
+        // Reading order numbers the cards; the DOM holds them column by column.
+        expect(bodyRows(screen).map((row) => row.props['aria-rowindex'])).toEqual([1, 2, 4, 3]);
 
-        // Three options at two columns: row 2 holds one card and one spacer.
-        // The spacer is what keeps that card at column width instead of letting
-        // it stretch across the pane, so it occupies a real column and must say
-        // so — an empty cell, never an `aria-colspan` on its neighbour, because
-        // the card visibly does not stretch.
+        // Every card's row holds its one cell, whose index names its column. Three options at two
+        // columns leave the second column shorter, with no cell to pad it out.
         const rows = optionRows(screen);
-        expect(rows).toHaveLength(2);
-        const cellsPerRow = rows.map(
-            (row) => row.findAll((node) => hasHostRole(node, 'gridcell')).length,
-        );
-        expect(cellsPerRow).toEqual([2, 2]);
         expect(
             rows.map((row) => row
                 .findAll((node) => hasHostRole(node, 'gridcell'))
                 .map((cell) => cell.props['aria-colindex'])),
-        ).toEqual([[1, 2], [1, 2]]);
+        ).toEqual([[1], [1], [2]]);
     });
 });

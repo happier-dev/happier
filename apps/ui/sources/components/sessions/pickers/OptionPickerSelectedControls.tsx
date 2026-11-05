@@ -11,7 +11,7 @@ import { isBooleanConfigOptionType, resolveBooleanConfigOptionNextValue, resolve
     type SessionConfigOptionControl, type SessionConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
-import { OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
+import { OPTION_PICKER_LIST_TEXT_INSET_PX, OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
 const NO_CONTROLS: readonly SessionConfigOptionControl[] = [];
 
@@ -63,9 +63,10 @@ export function OptionPickerSelectedControls() {
                     // for the whole option by the shared choice-control rule. Thinking effort is an ordinal scale, so
                     // Low · Medium · High · XHigh · Max stays one segmented row (owner ruling 2026-11-04).
                     const groups = option.groups?.length ? option.groups : [{ id: null, name: null, options: option.options ?? [] }];
+                    const ordinal = option.id === PROVIDER_REASONING_EFFORT_OPTION_ID;
                     const asSelect = resolveHappierChoiceControl({ kind: 'select', value: highlightedValue, multiple: false },
                         groups.flatMap(group => group.options.map(choice => ({ label: choice.name }))),
-                        { ordinal: option.id === PROVIDER_REASONING_EFFORT_OPTION_ID }) === 'list';
+                        { ordinal }) === 'list';
                     return (
                         <View key={option.id} testID={`${idBase}:${option.id}`} style={styles.group}>
                             <Text style={styles.title}>{option.name}</Text>
@@ -87,6 +88,7 @@ export function OptionPickerSelectedControls() {
                                                 accessibilityLabel={groupAccessibilityLabel} testID={`${testIDPrefix}:select`} />
                                         ) : (
                                             <SegmentedTabBar role="radiogroup" tabs={tabs}
+                                                segmentSizing={ordinal ? 'equal-or-label' : undefined}
                                                 activeTabId={highlightedValue} disabled={control.disabled === true}
                                                 onSelectTab={selectTab}
                                                 testIDPrefix={testIDPrefix}
@@ -108,9 +110,9 @@ export function OptionPickerSelectedControls() {
 
 const styles = StyleSheet.create(theme => ({
     // Match the selected row's existing inset; the card owns its background in grid mode.
-    panel: { paddingHorizontal: 14, paddingBottom: theme.space.s10 },
+    panel: { paddingHorizontal: OPTION_PICKER_LIST_TEXT_INSET_PX, paddingBottom: theme.space.s10 },
     // On a card the controls start on the card title's edge, not a list row's.
-    panelCard: { paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX },
+    panelCard: { paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX, paddingTop: theme.space.s6 },
     panelFill: { backgroundColor: theme.colors.surface.selected },
     controls: { gap: theme.space.s10 },
     group: { gap: 3 },

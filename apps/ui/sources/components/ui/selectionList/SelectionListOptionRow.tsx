@@ -13,7 +13,7 @@
  */
 
 import * as React from 'react';
-import { Platform, Pressable, View, type ViewProps } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
@@ -37,7 +37,7 @@ import {
   SELECTION_LIST_CARD_INSET_PX,
 } from './_constants';
 import {
-  chunkIntoColumnRows,
+  chunkIntoColumnBlocks,
   resolveSelectionListCardRowGapPx,
   SelectionListColumnRow,
 } from './SelectionListColumnRow';
@@ -59,6 +59,7 @@ import { resolveSelectionListOptionDomId } from './resolveSelectionListOptionDom
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { SelectionListInputAttentionContext } from './SelectionListInputAttentionContext';
 import { SelectionListPointerFocusContext } from './SelectionListPointerFocusContext';
+import { SelectionListExplicitRowFocusContext } from './SelectionListOptionStateContext';
 import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
 import { selectionListTestId } from './_shared';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
@@ -197,14 +198,12 @@ export function PlanOptionRow(
      */
     measureMode?: boolean;
     /**
-     * Placement inside a MULTI-COLUMN grid row. When present this wrapper is
-     * the row's cell rather than the row itself (`SelectionListColumnRow` owns
+     * Placement inside a MULTI-COLUMN block. When present this wrapper is
+     * the card's cell rather than the row itself (`SelectionListColumnRow` owns
      * the row). Absent for every single-column list, which keeps the exact
      * markup it has always emitted.
      */
     cellPlacement?: SelectionListGridCellPlacement | null;
-    /** Multi-column grid row layout style; applied to the gridcell itself so rows own cells directly. */
-    columnCellStyle?: ViewProps['style'];
   }>,
 ): React.ReactElement {
   // Current by the list's selection, or because the option's owner says so (one choice per group).
@@ -356,6 +355,8 @@ export function PlanOptionRow(
     SelectionListOptionPresentationContext,
   );
   const isCard = optionPresentation === 'card';
+  const explicitRowFocus = React.useContext(SelectionListExplicitRowFocusContext);
+  const paintsFocus = props.isFocused && (!isCard || explicitRowFocus);
   // The pointer moves the list's one highlight to this row (a card has no focus fill to duplicate).
   const handlePointerHighlight = () => {
     if (!isCard) focusOptionFromPointer?.(props.option.id);
@@ -397,7 +398,6 @@ export function PlanOptionRow(
   const isMenu = optionPresentation === 'menu';
   const isSection = optionPresentation === 'section';
   const wrapperStyle = [
-    props.columnCellStyle,
     isMenu ? menuStyles.container : null,
     isSection ? menuStyles.section : null,
     ...(isCard
@@ -409,7 +409,7 @@ export function PlanOptionRow(
       : []),
   ];
   const cardWrapperProps =
-    props.columnCellStyle !== undefined || isCard || isMenu || isSection
+    isCard || isMenu || isSection
       ? { style: wrapperStyle }
       : {};
   // In card mode the trailing accessory leaves the row's flow entirely and
@@ -564,7 +564,7 @@ export function PlanOptionRow(
             !isCard && rightAccessoryOutsidePressable
           }
           selected={isSelected}
-          focused={props.isFocused}
+          focused={paintsFocus}
           disabled={props.option.disabled === true}
           loading={props.option.loading === true}
           showChevron={Boolean(props.option.openStep)}
@@ -663,7 +663,7 @@ export function PlanOptionRow(
         }}
         onPress={handlePress}
         selected={isSelected}
-        focused={props.isFocused}
+        focused={paintsFocus}
         // The list has one highlight and the pointer moves it; a hover fill of its own would show a second row selected.
         hoverFill={false}
         disabled={props.option.disabled === true}
@@ -783,26 +783,31 @@ export function PlanSuccessRows(
   const rowOffset = props.rowOffset;
   return (
     <>
-      {chunkIntoColumnRows(options, sectionColumnCount).map(
-        (rowOptions, rowIndex) => (
-          <SelectionListColumnRow
-            // Keyed by the row's LEADING option so a row keeps its
-            // identity when the list above it grows or shrinks.
-            key={`column-row:${rowOptions[0]?.id ?? rowIndex}`}
-            columnCount={sectionColumnCount}
-            columnGapPx={props.columnGapPx}
-            rowIndex={(rowOffset?.rowIndex ?? 0) + rowIndex + 1}
-            optionRowIndex={(rowOffset?.optionRowIndex ?? 0) + rowIndex + 1}
-          >
-            {rowOptions.map((option, columnIndex) =>
-              renderOption(
-                option,
-                rowIndex * sectionColumnCount + columnIndex,
-                { columnIndex: columnIndex + 1, columnSpan },
-              ),
-            )}
-          </SelectionListColumnRow>
-        ),
+      {chunkIntoColumnBlocks(options, sectionColumnCount).map(
+        (blockOptions, blockIndex, blocks) => {
+          const firstOptionIndex = blocks
+            .slice(0, blockIndex)
+            .reduce((sum, block) => sum + block.length, 0);
+          return (
+            <SelectionListColumnRow
+              // Keyed by the block's LEADING option so a block keeps its
+              // identity when the list above it grows or shrinks.
+              key={`column-row:${blockOptions[0]?.id ?? blockIndex}`}
+              columnCount={sectionColumnCount}
+              columnGapPx={props.columnGapPx}
+              rowIndex={(rowOffset?.rowIndex ?? 0) + firstOptionIndex + 1}
+              optionRowIndex={(rowOffset?.optionRowIndex ?? 0) + blockIndex + 1}
+            >
+              {blockOptions.map((option, cellIndex) =>
+                renderOption(
+                  option,
+                  firstOptionIndex + cellIndex,
+                  { columnIndex: (cellIndex % sectionColumnCount) + 1, columnSpan },
+                ),
+              )}
+            </SelectionListColumnRow>
+          );
+        },
       )}
     </>
   );

@@ -156,6 +156,20 @@ function optionIdsByColumnRow(
     }));
 }
 
+/** Option ids stacked in each column of the first block. */
+function optionIdsByColumn(
+    screen: Screen,
+    optionIds: ReadonlyArray<string>,
+): ReadonlyArray<ReadonlyArray<string>> {
+    const [block] = columnRows(screen);
+    return block.children
+        .filter((child): child is ReactTestInstance => typeof child !== 'string')
+        .map((column) => optionIds.filter((id) => {
+            const wrapper = screen.findByTestId(`sl:root:option-wrapper:${id}`);
+            return wrapper !== null && isDescendantOf(wrapper, column);
+        }));
+}
+
 beforeEach(() => {
     legendListState.reset();
 });
@@ -173,10 +187,10 @@ describe('SelectionList — columned rows through the virtualized body', () => {
         expect(screen.findByTestId('sl:bodyVirtualizedList')).not.toBeNull();
         expect(screen.findByTestId('sl:bodyScroll')).toBeNull();
 
-        // One virtualized item per VISUAL row is the whole point of grouping
-        // above the backend — it is what keeps `estimatedItemSize` meaningful.
-        const expectedRows = Math.ceil(optionCount / 2);
-        expect(columnRows(screen)).toHaveLength(expectedRows);
+        // A long catalog is cut into blocks of the virtualization threshold: the backend
+        // windows blocks, and inside one each column stacks on its own.
+        const expectedBlocks = Math.ceil(optionCount / SELECTION_LIST_VIRTUALIZATION_THRESHOLD);
+        expect(columnRows(screen)).toHaveLength(expectedBlocks);
 
         // …and the rows are really rendered, each option exactly once.
         for (let index = 0; index < optionCount; index += 1) {
@@ -184,11 +198,11 @@ describe('SelectionList — columned rows through the virtualized body', () => {
         }
 
         // The trailing odd option keeps its column width rather than stretching
-        // across the pane (the row is padded with a spacer cell).
-        const lastRow = columnRows(screen)[expectedRows - 1];
+        // across the pane: its block still lays out both columns.
+        const lastBlock = columnRows(screen)[expectedBlocks - 1];
         const lastWrapper = screen.findByTestId(`sl:root:option-wrapper:m-${optionCount - 1}`);
-        expect(isDescendantOf(lastWrapper!, lastRow)).toBe(true);
-        expect(lastRow.children.filter((child) => typeof child !== 'string')).toHaveLength(2);
+        expect(isDescendantOf(lastWrapper!, lastBlock)).toBe(true);
+        expect(lastBlock.children.filter((child) => typeof child !== 'string')).toHaveLength(2);
     });
 
     it('keeps the flat virtualized host shrinkable below its normal four-row height', async () => {
@@ -202,15 +216,23 @@ describe('SelectionList — columned rows through the virtualized body', () => {
         expect(hostStyle.maxHeight).toBe('100%');
     });
 
-    it('pairs the options row-major and keeps a section header full width', async () => {
+    it('stacks each column on its own, so an open card reserves nothing beside it', async () => {
+        const options = makeOptions(5).map((option) => (option.id === 'm-1'
+            ? { ...option, expandedContent: <View testID="inline-controls" /> }
+            : option));
         const screen = await renderColumnedVirtualizedList({
-            rootStep: makeStep(makeOptions(5), 'force'),
+            rootStep: makeStep(options, 'force'),
+            selectedOptionId: 'm-1',
         });
 
+        // Reading order still alternates (m-0, m-1, ...), but m-2 follows m-0 in the first
+        // column whatever height m-1 grows to: no row ties them together.
         expect(optionIdsByColumnRow(screen, ['m-0', 'm-1', 'm-2', 'm-3', 'm-4'])).toEqual([
-            ['m-0', 'm-1'],
-            ['m-2', 'm-3'],
-            ['m-4'],
+            ['m-0', 'm-1', 'm-2', 'm-3', 'm-4'],
+        ]);
+        expect(optionIdsByColumn(screen, ['m-0', 'm-1', 'm-2', 'm-3', 'm-4'])).toEqual([
+            ['m-0', 'm-2', 'm-4'],
+            ['m-1', 'm-3'],
         ]);
 
         // The header is its own full-width item, never a cell of a grid row.
@@ -240,7 +262,7 @@ describe('SelectionList — columned rows through the virtualized body', () => {
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
         expect(screen.findByTestId('sl:bodyVirtualizedList')).not.toBeNull();
         expect(screen.findByTestId('sl:section:models:virtualized')).toBeNull();
-        expect(columnRows(screen)).toHaveLength(3);
+        expect(columnRows(screen)).toHaveLength(1);
     });
 });
 
@@ -256,6 +278,11 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
     // exactly what this block needs — a second identical local helper would be
     // one more place to keep in step.
     const visualRows = columnRows;
+    const gridRows = (screen: Screen): ReadonlyArray<ReactTestInstance> => screen.tree.root.findAll(
+        (node) => typeof node.type === 'string' && node.props?.role === 'row'
+            && node.props?.['aria-rowindex'] !== undefined
+            && node.findAll((cell) => cell.props?.role === 'gridcell').length > 0,
+    );
 
     it('numbers visual rows and columns across the flattened list', async () => {
         const options = makeOptions(5).map((option, index) => (index === 1
@@ -268,9 +295,9 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
 
         const body = screen.findByTestId('sl:body');
         expect(body?.props.role).toBe('grid');
-        // Five options in two columns are three painted rows, not five — plus
-        // the section header, which is a row of the grid in its own right.
-        expect(body?.props['aria-rowcount']).toBe(4);
+        // Columns stack independently, so no painted row holds two cards: each card is
+        // one row of the grid, and the section header is a row in its own right.
+        expect(body?.props['aria-rowcount']).toBe(6);
         expect(body?.props['aria-colcount']).toBe(2);
         expect(screen.findByTestId('sl:section:models:header')?.props.role).toBe('columnheader');
         // A columned pane is a grid: the option-only `aria-posinset`/`aria-setsize`
@@ -278,9 +305,8 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
         expect(screen.findByTestId('sl:root:option:m-4')?.props['aria-posinset']).toBeUndefined();
         expect(screen.findByTestId('sl:root:option:m-4')?.props['aria-setsize']).toBeUndefined();
 
-        const rows = visualRows(screen);
-        expect(rows.map((row) => row.props.role)).toEqual(['row', 'row', 'row']);
-        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 3, 4]);
+        const rows = gridRows(screen);
+        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 4, 6, 3, 5]);
 
         // Cells are the option wrappers, indexed left to right, and the open
         // panel lives inside its own option's cell rather than adding a third.
@@ -291,23 +317,18 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
         expect(expanded).not.toBeNull();
         expect(isDescendantOf(expanded!, screen.findByTestId('sl:root:option-wrapper:m-1')!))
             .toBe(true);
-        // Every row carries at least one cell and never more than the declared
-        // column count, and each cell's index is inside that count. `<= 2` alone
-        // passed for a row that emitted NOTHING, which is the one shape a
-        // grouping bug would actually produce.
+        // Every row carries exactly one cell, whose index names its column.
         for (const row of rows) {
             const cells = row.findAll((node) => typeof node.type === 'string'
                 && node.props?.role === 'gridcell');
-            expect(cells.length).toBeGreaterThanOrEqual(1);
-            expect(cells.length).toBeLessThanOrEqual(2);
-            expect(cells.map((cell) => cell.props['aria-colindex']))
-                .toEqual(cells.map((_cell, index) => index + 1));
+            expect(cells).toHaveLength(1);
+            expect([1, 2]).toContain(cells[0].props['aria-colindex']);
         }
     });
 
-    it('gives every grid row child the equal-column share, so a long card cannot widen its column', async () => {
+    it('gives every column the equal share, so a long card cannot widen its column', async () => {
         // Live 1440 engine pane (2026-11-03): a long Vercel model id sized its cell to its content,
-        // pushing the second card past the pane's edge. Equal columns are the row's direct children.
+        // pushing the second card past the pane's edge. Equal columns are the block's direct children.
         const options = makeOptions(4).map((option, index) => (index === 1
             ? { ...option, label: 'A very long model name that would otherwise size its own column', expandedContent: <View /> }
             : option));
@@ -365,11 +386,11 @@ describe('SelectionList — grid ARIA through a virtualized columned list', () =
         expect(recoveryCell?.props['aria-colspan']).toBe(2);
         expect(screen.findByTestId('sl:root:option-wrapper:m-0')?.props['aria-colspan'])
             .toBeUndefined();
-        // 1 full-width row + 2 rows of two, plus ONE header row: the recovery
-        // section's title is empty, so it renders no header and takes no index,
-        // while `MODELS` renders one and does.
-        expect(screen.findByTestId('sl:body')?.props['aria-rowcount']).toBe(4);
-        expect(visualRows(screen).map((row) => row.props['aria-rowindex'])).toEqual([1, 3, 4]);
+        // 1 full-width row + 4 cards, plus ONE header row: the recovery section's
+        // title is empty, so it renders no header and takes no index, while
+        // `MODELS` renders one and does.
+        expect(screen.findByTestId('sl:body')?.props['aria-rowcount']).toBe(6);
+        expect(gridRows(screen).map((row) => row.props['aria-rowindex'])).toEqual([1, 3, 5, 4, 6]);
     });
 });
 
@@ -395,7 +416,7 @@ describe('SelectionList — card presentation inside a virtualized columned list
 
     it('wraps each virtualized grid cell in the card envelope', async () => {
         const screen = await renderCards();
-        expect(columnRows(screen)).toHaveLength(2);
+        expect(columnRows(screen)).toHaveLength(1);
 
         for (const id of ['m-0', 'm-1', 'm-2', 'm-3']) {
             const wrapper = screen.findByTestId(`sl:root:option-wrapper:${id}`);
@@ -435,12 +456,6 @@ describe('SelectionList — card presentation inside a virtualized columned list
                 .toBe(true);
         }
 
-        // Each card stays within its own visual row.
-        const [firstRow, secondRow] = columnRows(screen);
-        expect(isDescendantOf(screen.findByTestId('sl:root:option-card-accessory:m-1')!, firstRow))
-            .toBe(true);
-        expect(isDescendantOf(screen.findByTestId('sl:root:option-card-accessory:m-2')!, secondRow))
-            .toBe(true);
     });
 
     it('adds no card treatment to the same virtualized grid by default', async () => {
@@ -451,7 +466,7 @@ describe('SelectionList — card presentation inside a virtualized columned list
 
         // Control for the two tests above: without the opt-in, the identical
         // virtualized columned list carries no card surface and no overlay.
-        expect(columnRows(screen)).toHaveLength(2);
+        expect(columnRows(screen)).toHaveLength(1);
         expect(screen.findByTestId('sl:root:option-wrapper:m-1')?.props.style).toBeUndefined();
         expect(screen.findAllByTestId('sl:root:option-card-accessory:m-1')).toHaveLength(0);
     });

@@ -286,10 +286,11 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         [modelProbe.failed, modelProbe.phase, preflightModels?.unavailable, props.modelSummary],
     );
     const configNotes = React.useMemo(
-        () => configOptionsUnavailable
+        // The machine that could not list its models could not list these either: one cause, one line.
+        () => configOptionsUnavailable && !modelProbe.failed && preflightModels?.unavailable !== true
             ? [t('agentInput.acp.optionsUnavailable')]
             : [],
-        [configOptionsUnavailable],
+        [configOptionsUnavailable, modelProbe.failed, preflightModels?.unavailable],
     );
 
     const configControls = React.useMemo(

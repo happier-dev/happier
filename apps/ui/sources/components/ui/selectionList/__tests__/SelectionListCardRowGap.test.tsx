@@ -39,7 +39,8 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
     renderItems: true,
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 
@@ -103,9 +104,15 @@ function wrapperStyle(screen: Screen, optionId: string): Record<string, unknown>
  * column wrapper when there is one, the leading card's own envelope when there
  * is not.
  */
+function columnStackGapPx(block: ReactTestInstance): unknown {
+    const column = block.findAll((node) => typeof node.type === 'string'
+        && flattenStyle(node.props.style).rowGap !== undefined)[0];
+    return column === undefined ? undefined : flattenStyle(column.props.style).rowGap;
+}
+
 function secondRowLeadingGapPx(screen: Screen, leadingOptionId: string): unknown {
     const rows = columnRows(screen);
-    if (rows.length > 0) return flattenStyle(rows[1]?.props.style).marginTop;
+    if (rows.length > 0) return columnStackGapPx(rows[0]);
     return wrapperStyle(screen, leadingOptionId).marginTop;
 }
 
@@ -180,7 +187,7 @@ describe('SelectionList cards — the row gap survives a single column', () => {
                     widthPx: TWO_COLUMN_WIDTH_PX,
                     virtualization,
                 });
-                expect(columnRows(wide)).toHaveLength(2);
+                expect(columnRows(wide)).toHaveLength(1);
                 // The comparison the user actually sees: the same separation
                 // either way, so widening the pane re-flows the grid without
                 // changing how far apart the cards sit.
@@ -209,7 +216,7 @@ describe('SelectionList cards — the row gap survives a single column', () => {
                 expect(wrapperStyle(screen, 'm-3').marginTop).toBe(SELECTION_LIST_CARD_ROW_GAP_PX);
             });
 
-            it('lets the visual row own the gap once there are two columns, beside the caller gutter', async () => {
+            it('lets the column own the gap once there are two columns, beside the caller gutter', async () => {
                 // 2 × 250 + 32 still fits the pane, so the caller's gutter is what sized the columns.
                 const screen = await renderList({
                     presentation: 'card',
@@ -224,11 +231,10 @@ describe('SelectionList cards — the row gap survives a single column', () => {
                 }
                 expect(flattenStyle(columnRows(screen)[0]?.props.style).marginTop)
                     .toBeUndefined();
-                expect(flattenStyle(columnRows(screen)[1]?.props.style).marginTop)
-                    .toBe(SELECTION_LIST_CARD_ROW_GAP_PX);
+                expect(columnStackGapPx(columnRows(screen)[0])).toBe(SELECTION_LIST_CARD_ROW_GAP_PX);
                 // The caller's gutter beats the tighter card default, and the vertical gap is not a
                 // caller concern: it survives the override.
-                expect(columnRows(screen).map((row) => flattenStyle(row.props.style).columnGap)).toEqual([32, 32]);
+                expect(columnRows(screen).map((row) => flattenStyle(row.props.style).columnGap)).toEqual([32]);
             });
         });
     }

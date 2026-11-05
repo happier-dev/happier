@@ -12,3 +12,9 @@ export type SelectionListOptionState = Readonly<{
 
 export const SelectionListOptionStateContext =
   React.createContext<SelectionListOptionState | null>(null);
+
+/**
+ * Whether the keyboard has moved onto a row. Until it has, a card grid paints no highlight: the row the list
+ * merely starts on would read as a second selection beside the card that is selected.
+ */
+export const SelectionListExplicitRowFocusContext = React.createContext(false);

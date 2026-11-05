@@ -69,9 +69,11 @@ export type MachineAgentsTranslation = Readonly<{
     signInTitle: (params: Readonly<{ agent: string }>) => string;
     readyTitle: (params: Readonly<{ agent: string }>) => string;
     notOnMachineYet: (params: Readonly<{ machine: string }>) => string;
+    notOnThisMachineYet: string;
     onMachine: (params: Readonly<{ machine: string }>) => string;
     installingOn: (params: Readonly<{ machine: string }>) => string;
     cantRunOn: (params: Readonly<{ machine: string }>) => string;
+    cantRunOnThisMachine: string;
 
     terminalTab: (params: Readonly<{ agent: string }>) => string;
     panelLead: string;
@@ -190,9 +192,11 @@ export const en: MachineAgentsTranslation = {
     signInTitle: ({ agent }) => `Sign in to ${agent}`,
     readyTitle: ({ agent }) => `${agent} is ready`,
     notOnMachineYet: ({ machine }) => `Not on ${machine} yet`,
+    notOnThisMachineYet: 'Not on this machine yet',
     onMachine: ({ machine }) => `On ${machine}`,
     installingOn: ({ machine }) => `Installing on ${machine}`,
     cantRunOn: ({ machine }) => `Can’t run on ${machine}`,
+    cantRunOnThisMachine: 'Can’t run on this machine',
 
     terminalTab: ({ agent }) => `Sign in · ${agent}`,
     panelLead: 'Finish in the browser that opened. On a different device? Open the link from there.',

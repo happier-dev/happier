@@ -22,7 +22,8 @@
  * What counts as a row:
  *  - a section header that renders (a header with no title renders nothing, so
  *    it is not a row);
- *  - one `option` item (single column) or one `option-row` item (columned).
+ *  - one `option` item (single column), or each card of an `option-row` block
+ *    (columned): columns stack independently, so no painted row holds two cards.
  *
  * What does not: skeletons, error / not-found / empty-hint rows. They are
  * section-level status content, not options, and they are unreachable in grid
@@ -39,11 +40,13 @@ import type { SelectionListBodyVirtualizedItem } from './SelectionListVirtualize
  * `rowIndex` is `aria-rowindex`: a position among ALL grid rows, header rows
  * included, which is what the ARIA vocabulary means by a row.
  *
- * `optionRowIndex` is a position among the PAINTED OPTION rows only, and it
- * answers the card spacing question — a card is separated from the card above
- * it, and a section header is not a card. Feeding the ARIA index into that
- * decision opens an 8px hole under the first section header, because the first
- * card row stops being row 1 the moment the header takes that index.
+ * `optionRowIndex` is a position among the OPTION items only (a block counts
+ * once), and it answers the card spacing question — a card is separated from the
+ * card above it, and a section header is not a card. Feeding the ARIA index into
+ * that decision opens an 8px hole under the first section header, because the
+ * first card row stops being row 1 the moment the header takes that index.
+ *
+ * For a block, `rowIndex` is its first card's; the cards after it follow on.
  */
 export type SelectionListGridRowPlacement = Readonly<{
     rowIndex: number;
@@ -89,12 +92,12 @@ export function buildSelectionListGridRowModel(
                 optionRowIndex: optionRowCount,
             });
         }
-        rowCount += 1;
         optionRowCount += 1;
         optionRowPlacementByRowKey.set(item.rowKey, {
-            rowIndex: rowCount,
+            rowIndex: rowCount + 1,
             optionRowIndex: optionRowCount,
         });
+        rowCount += item.kind === 'option-row' ? item.options.length : 1;
     }
     return {
         rowCount,

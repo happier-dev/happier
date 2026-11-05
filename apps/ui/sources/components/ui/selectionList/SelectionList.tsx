@@ -20,6 +20,7 @@ import { SelectionListBody } from './SelectionListBody';
 import { SelectionListFooter } from './SelectionListFooter';
 import { SelectionListInputAttentionContext } from './SelectionListInputAttentionContext';
 import { SelectionListPointerFocusContext } from './SelectionListPointerFocusContext';
+import { SelectionListExplicitRowFocusContext } from './SelectionListOptionStateContext';
 import { SelectionListOptionTabBehaviorContext } from './SelectionListOptionTabBehaviorContext';
 import { createSelectionListKeyPressHandler } from './SelectionListKeyboardInput';
 import { SelectionListMeasureHost } from './SelectionListMeasureHost';
@@ -84,6 +85,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
     },
     bareSurface: { backgroundColor: 'transparent' },
+    /** The search as a bordered field among a pane's scrolling content, rather than a band across its top. */
+    bodySearchField: {
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        borderRadius: 12,
+        paddingHorizontal: theme.space.s10,
+        paddingVertical: theme.space.s6,
+        marginBottom: theme.space.s8,
+        backgroundColor: 'transparent',
+    },
     contentWithDetail: { flexDirection: 'row', flex: 1, minHeight: 0 },
     contentBesideDetail: { flex: 1, minWidth: 0, minHeight: 0 },
     // The detail column reads as part of the same surface: a hairline, never a second card.
@@ -1242,8 +1253,9 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         ? {}
         : { onKeyDown: handleKeyPress };
 
-    // One canonical input node, positioned by `inputPlacement`. Both placements
-    // render the SAME element — same query state, ref, key handler, listbox id
+    const seatInputInBody = props.inputPlacement === 'body';
+    // One canonical input node, positioned by `inputPlacement`. Every placement
+    // renders the SAME element — same query state, ref, key handler, listbox id
     // and active-descendant wiring — so a keyboard-seated surface cannot drift
     // into a second input or a second query owner.
     const searchHeaderZone = showSearchHeader ? (
@@ -1253,7 +1265,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onLayout={measureNativeHeight ? measuredPopoverHeight.onHeaderLayout : undefined}
         >
             <SelectionListSearchHeader
-                style={surface === 'none' ? styles.bareSurface : undefined}
+                style={[surface === 'none' ? styles.bareSurface : null, seatInputInBody ? styles.bodySearchField : null]}
                 testID={selectionListTestId(resolvedTestId, 'header')}
                 inputTestID={props.inputTestID}
                 value={inputValue}
@@ -1329,7 +1341,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             optionPresentation={props.optionPresentation}
             selectionMark={rowSelectionMark}
             a11yPattern={popupA11yPattern}
-            bodyHeader={props.bodyHeader}
+            bodyHeader={seatInputInBody ? <>{props.bodyHeader}{searchHeaderZone}</> : props.bodyHeader}
             bodyFooter={props.bodyFooter}
             onBodySlotLayout={handleBodySlotLayout}
         />
@@ -1409,6 +1421,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         <ListPresentationProvider value="grouped">
         <SelectionListInputAttentionContext.Provider value={requestInputAttention}>
         <SelectionListPointerFocusContext.Provider value={focusOptionFromPointer}>
+        <SelectionListExplicitRowFocusContext.Provider value={focus.hasExplicitRowFocus}>
         <SelectionListOptionTabBehaviorContext.Provider value={showSearchHeader ? 'input-owned' : 'roving'}>
         <View
             testID={resolvedTestId}
@@ -1432,7 +1445,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 transitionKey={String(statusAnnouncement?.eventId ?? 'idle')}
                 statusTestID={selectionListTestId(resolvedTestId, 'status')}
             />
-            {seatInputAtBottom ? null : searchHeaderZone}
+            {seatInputAtBottom || seatInputInBody ? null : searchHeaderZone}
             {detailPaneActive ? (
                 <View style={styles.contentWithDetail}>
                     <View style={styles.contentBesideDetail}>{contentZone}</View>
@@ -1448,6 +1461,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             {seatInputAtBottom ? searchHeaderZone : null}
         </View>
         </SelectionListOptionTabBehaviorContext.Provider>
+        </SelectionListExplicitRowFocusContext.Provider>
         </SelectionListPointerFocusContext.Provider>
         </SelectionListInputAttentionContext.Provider>
         </ListPresentationProvider>

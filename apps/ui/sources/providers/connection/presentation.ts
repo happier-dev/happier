@@ -36,7 +36,9 @@ export function presentProviderConnectionIdentity(connection: Pick<DaemonProvide
     const title = collapsesToProvider ? connection.providerName : connection.displayName;
     const subtitle = title.trim().toLocaleLowerCase() === connection.providerName.trim().toLocaleLowerCase()
         ? '' : connection.providerName;
-    return { title, subtitle, sourceLabel: subtitle ? `${subtitle} · ${title.trim()}` : connection.providerName };
+    // A name that already says its provider ("Work Vercel AI Gateway") identifies the source alone.
+    const nameSaysProvider = title.trim().toLocaleLowerCase().includes(connection.providerName.trim().toLocaleLowerCase());
+    return { title, subtitle, sourceLabel: !subtitle ? connection.providerName : nameSaysProvider ? title.trim() : `${subtitle} · ${title.trim()}` };
 }
 
 export function presentProviderConnection(connection: DaemonProviderConnectionViewV1): Readonly<{

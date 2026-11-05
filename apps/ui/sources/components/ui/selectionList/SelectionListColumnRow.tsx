@@ -1,43 +1,36 @@
 /**
- * One VISUAL row of the SelectionList `columns` variant.
+ * One BLOCK of the SelectionList `columns` variant: its options laid out as
+ * independent column stacks (0.2's model grid, approved by the owner).
  *
  * Shared by the mapped row path (`PlanSuccessRows`) and the virtualized path
- * (`SelectionListVirtualizedBody`) so a grid row is laid out identically no
- * matter which renderer produced it.
+ * (`SelectionListVirtualizedBody`) so a block is laid out identically no matter
+ * which renderer produced it.
  *
- * Three choices worth stating:
+ * Choices worth stating:
  *
- *  - `alignItems: 'flex-start'`. DELIBERATE, and re-examined: the open card
- *    sets its row's height, its idle neighbour keeps its own and sits against
- *    the row's top edge with empty pane below it, and every row after this one
- *    is pushed down by the full height of the expanded panel. Stretching
- *    instead would drag the neighbour to the open card's height and make an
- *    idle card look like it were also open — a worse lie, and the shift below
- *    would be identical either way. What the user sees when they select a card
- *    is: that card grows in place, its neighbour stays the size it was, and the
- *    rows underneath slide down together. Only one card is ever open, so the
- *    ragged bottom edge exists on exactly one row at a time.
+ *  - Columns, never rows. An option goes to column `index % columnCount`, so
+ *    reading order still alternates while each column stacks on its own: the
+ *    open card grows its own column and reserves nothing beside it. A row-based
+ *    grid made the card's idle neighbour sit above empty pane (owner, 11-05).
  *
- *  - Trailing spacers. A last row that is not full keeps its cards at column
- *    width instead of letting a lone card stretch across the pane and read as
- *    a different, wider kind of row. A section too SHORT to fill a row is a
- *    different case and is resolved before this component sees it — see
+ *  - A last column that is shorter keeps its width: the block always lays out
+ *    every column. A section too SHORT to fill a row is a different case and is
+ *    resolved before this component sees it — see
  *    `resolveSelectionListSectionColumnCount`, which hands such a section a
  *    `columnCount` of 1 so its card genuinely spans the pane.
  *
  *  - Spacing follows the option PRESENTATION, not the column count. A `card`
- *    grid separates its cards — a tight gutter sideways and a larger leading
- *    margin between stacked rows, since horizontal neighbours are already held
- *    apart by two card edges while vertical ones meet flush. A `row` grid keeps
- *    the shared list gutter and no vertical gap at all, because its rows are
- *    divided by an `ItemGroup` divider that a gap would tear open.
+ *    grid separates its cards — a tight gutter sideways and a larger gap between
+ *    stacked cards, since horizontal neighbours are already held apart by two
+ *    card edges while vertical ones meet flush. A `row` grid keeps the shared
+ *    list gutter and no vertical gap at all, because its rows are divided by an
+ *    `ItemGroup` divider that a gap would tear open.
  *
- *  - The row's ARIA role follows the popup pattern. In `listbox` mode the
- *    visual row is pure layout and removes itself with `role="presentation"`.
- *    In `grid` mode it IS the row — `role="row"` plus its `aria-rowindex` —
- *    because a grid row holding several options is the only truthful reading
- *    of what is on screen. (A single-column list has no `SelectionListColumnRow`
- *    at all; there the option wrapper is still the row.)
+ *  - In `grid` mode each card is one `role="row"` holding its one gridcell,
+ *    numbered in reading order, since no painted row holds two cards. In
+ *    `listbox` mode the wrappers are pure layout and remove themselves with
+ *    `role="presentation"`. (A single-column list has no
+ *    `SelectionListColumnRow` at all; there the option wrapper is still the row.)
  */
 
 import * as React from 'react';
@@ -50,6 +43,7 @@ import { buildSelectionListRowA11yProps } from './buildSelectionListOptionA11yPr
 import {
     SELECTION_LIST_CARD_COLUMN_GAP_PX,
     SELECTION_LIST_CARD_ROW_GAP_PX,
+    SELECTION_LIST_VIRTUALIZATION_THRESHOLD,
 } from './_constants';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { SelectionListOptionPresentationContext } from './SelectionListOptionPresentationContext';
@@ -60,7 +54,7 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'row',
         alignItems: 'flex-start',
     },
-    cell: {
+    column: {
         // Equal columns regardless of intrinsic content width. `minWidth: 0`
         // is what actually lets a long model name ellipsize instead of forcing
         // its column wider than its share.
@@ -68,35 +62,36 @@ const stylesheet = StyleSheet.create(() => ({
         flexGrow: 1,
         minWidth: 0,
     },
+    cardColumn: {
+        rowGap: SELECTION_LIST_CARD_ROW_GAP_PX,
+    },
 }));
 
 export const selectionListColumnRowStyles = stylesheet;
 
 /**
- * The leading gap that separates one CARD row from the row above it.
+ * The leading gap that separates one CARD block from the block above it.
  *
  * It lives in a function rather than inline below because a card row is not
  * always this component. At one column — every phone, every narrow pane, and
  * every frame before a pane has been measured, since the column resolver falls
  * to one until a width arrives — there is no column wrapper at all and the
  * option's own card envelope IS the row. Both nodes ask this one function, so
- * the single-column stack cannot drift apart from the two-column grid; that
- * drift is exactly the defect this replaced, where the gap belonged to the
- * wrapper and simply vanished wherever the wrapper did.
+ * the single-column stack cannot drift apart from the two-column grid.
  *
  * The gap is a LEADING margin rather than a trailing one, and rather than a
- * `rowGap` on some parent: the mapped renderer returns rows as siblings of a
+ * `rowGap` on some parent: the mapped renderer returns blocks as siblings of a
  * fragment while the virtualized renderer hands each one to the list as its own
  * item, so no single parent spaces both.
  *
- * `rowIndex` is the row's 1-based position among the popup's OPTION rows (at
+ * `rowIndex` is the block's 1-based position among the popup's OPTION blocks (at
  * one column, the option's position in the set) — never its `aria-rowindex`,
- * which also counts section header rows. Row 1 leads the popup and has
+ * which also counts section header rows. Block 1 leads the popup and has
  * nothing above it to separate from. Popup-wide numbering is deliberate: a
- * section's first row is correctly still separated from the section above it.
- * A row with no index — a story surface or a unit harness building one
+ * section's first block is correctly still separated from the section above it.
+ * A block with no index — a story surface or a unit harness building one
  * directly — cannot know whether it leads, and guessing would strand 8px above
- * a lone row.
+ * a lone block.
  *
  * A `row` presentation always gets nothing: its rows are divided by an
  * `ItemGroup` divider that a gap would tear open.
@@ -111,23 +106,23 @@ export function resolveSelectionListCardRowGapPx(params: Readonly<{
 }
 
 export function SelectionListColumnRow(props: Readonly<{
-    /** Cell contents in reading order. Never longer than `columnCount`. */
+    /** Cell contents in reading order. */
     children: ReadonlyArray<React.ReactNode>;
     columnCount: number;
     /** Defaults to the shared list-column gutter. */
     columnGapPx?: number;
     /**
-     * 1-based index of this visual row among ALL the popup's grid rows, section
-     * header rows included. Required in the `grid` pattern (it becomes
-     * `aria-rowindex`); ignored in `listbox` mode, where the row is
-     * presentational.
+     * 1-based `aria-rowindex` of this block's first card among ALL the popup's
+     * grid rows, section header rows included; the cards after it follow in
+     * reading order. Required in the `grid` pattern; ignored in `listbox` mode,
+     * where the wrappers are presentational.
      */
     rowIndex?: number;
     /**
-     * 1-based index among the popup's OPTION rows only — what the card row gap
+     * 1-based index among the popup's OPTION blocks only — what the card gap
      * asks about, because the gap separates a card from the card above it and a
      * section header is not a card. Defaults to `rowIndex` for a harness that
-     * builds a row directly and has no headers to skip.
+     * builds a block directly and has no headers to skip.
      */
     optionRowIndex?: number;
 }>): React.ReactElement {
@@ -143,11 +138,8 @@ export function SelectionListColumnRow(props: Readonly<{
         isCard,
         rowIndex: props.optionRowIndex ?? props.rowIndex,
     });
-    const spacerCount = Math.max(0, props.columnCount - props.children.length);
     const pattern = React.useContext(SelectionListA11yPatternContext);
-    const rowAria = props.rowIndex === undefined
-        ? null
-        : buildSelectionListRowA11yProps({ pattern, rowIndex: props.rowIndex });
+    const columnCount = Math.max(1, Math.floor(props.columnCount));
     return (
         <SelectionListScrollOffsetFrame
             style={[
@@ -155,66 +147,56 @@ export function SelectionListColumnRow(props: Readonly<{
                 { columnGap: gapPx },
                 rowGapPx === undefined ? null : { marginTop: rowGapPx },
             ]}
-            role={rowAria === null ? 'presentation' : rowAria.role}
-            {...(rowAria === null
-                ? {}
-                : { ariaProps: { 'aria-rowindex': rowAria['aria-rowindex'] } })}
+            role={pattern === 'grid' ? undefined : 'presentation'}
         >
-            {props.children.map((cell, index) => {
-                if (rowAria !== null && React.isValidElement(cell)) {
-                    return React.cloneElement(cell, {
-                        key: cell.key ?? `cell-${index}`,
-                        columnCellStyle: styles.cell,
-                    } as Record<string, unknown>);
-                }
-                return (
-                    <View key={`cell-${index}`} style={styles.cell}>
-                        {cell}
-                    </View>
-                );
-            })}
-            {/*
-              * A trailing spacer holds a real column of the row — it is the
-              * reason the last card keeps its column width instead of stretching
-              * across the pane. Leaving it role-free made the row declare fewer
-              * cells than `aria-colcount`, so "3 options at 2 columns" announced
-              * a second row containing one cell of a two-column grid. It is an
-              * EMPTY CELL rather than an `aria-colspan` on the neighbour: the
-              * card visibly does not stretch, and a colspan would describe a
-              * layout that is not on screen.
-              */}
-            {Array.from({ length: spacerCount }, (_, index) => (
+            {Array.from({ length: columnCount }, (_, column) => (
                 <View
-                    key={`spacer-${index}`}
-                    style={styles.cell}
-                    {...(rowAria === null
-                        ? {}
-                        : ({
-                            role: 'gridcell',
-                            'aria-colindex': props.children.length + index + 1,
-                        } as unknown as Record<string, never>))}
-                />
+                    key={`column-${column}`}
+                    role={pattern === 'grid' ? undefined : 'presentation'}
+                    style={[styles.column, isCard ? styles.cardColumn : null]}
+                >
+                    {props.children.flatMap((cell, index) => {
+                        if (index % columnCount !== column) return [];
+                        const rowAria = props.rowIndex === undefined
+                            ? null
+                            : buildSelectionListRowA11yProps({ pattern, rowIndex: props.rowIndex + index });
+                        return [(
+                            <SelectionListScrollOffsetFrame
+                                key={`cell-${index}`}
+                                style={null}
+                                role={rowAria === null ? 'presentation' : rowAria.role}
+                                {...(rowAria === null
+                                    ? {}
+                                    : { ariaProps: { 'aria-rowindex': rowAria['aria-rowindex'] } })}
+                            >
+                                {cell}
+                            </SelectionListScrollOffsetFrame>
+                        )];
+                    })}
+                </View>
             ))}
         </SelectionListScrollOffsetFrame>
     );
 }
 
 /**
- * Chunk items ROW-MAJOR (`1 2 | 3 4 | 5 6`).
+ * Cut one section's options into column blocks, in reading order.
  *
- * Row-major, not the column-major fill a masonry layout would use: linear
- * arrow roving and `aria-posinset` both follow reading order, and this repo's
- * `ItemGroup` already refuses to combine column-major stacks with roving focus
- * for exactly that reason.
+ * Each block is one virtualized item, so a long catalog stays windowed: a window
+ * mounts at most the blocks it overlaps. The block size is the threshold at which
+ * a section virtualizes at all, rounded down to whole rows, so every list a mapped
+ * renderer would have mounted whole is one block with no boundary in it. At a
+ * boundary the columns realign below the taller one.
  */
-export function chunkIntoColumnRows<T>(
+export function chunkIntoColumnBlocks<T>(
     items: ReadonlyArray<T>,
     columnCount: number,
 ): ReadonlyArray<ReadonlyArray<T>> {
     const count = Math.max(1, Math.floor(columnCount));
-    const rows: T[][] = [];
-    for (let index = 0; index < items.length; index += count) {
-        rows.push(items.slice(index, index + count));
+    const size = Math.max(count, Math.floor(SELECTION_LIST_VIRTUALIZATION_THRESHOLD / count) * count);
+    const blocks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+        blocks.push(items.slice(index, index + size));
     }
-    return rows;
+    return blocks;
 }

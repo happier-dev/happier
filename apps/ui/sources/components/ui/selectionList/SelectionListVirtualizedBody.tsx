@@ -10,8 +10,11 @@
  */
 
 import * as React from 'react';
-import { View, type ViewProps } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
@@ -30,7 +33,8 @@ import {
     SelectionListResultHintRow,
     selectionListDynamicRowStyles,
 } from './SelectionListDynamicSectionRows';
-import { SelectionListColumnRow } from './SelectionListColumnRow';
+import { chunkIntoColumnBlocks, SelectionListColumnRow } from './SelectionListColumnRow';
+import { resolveSelectionListOptionDomId } from './resolveSelectionListOptionDomId';
 import {
     resolveSelectionListSectionColumnCount,
     resolveSelectionListSectionColumnSpan,
@@ -74,6 +78,7 @@ const styles = StyleSheet.create(() => ({
         flexGrow: 1,
     },
     virtualizedHost: {
+        position: 'relative',
         // RV-9: a four-row fallback for a caller that declares no bound; a
         // declared `maxHeight` replaces it (`viewportHeight`). No minimum, so a
         // short modal/keyboard/rotation viewport remains authoritative.
@@ -122,18 +127,17 @@ export type SelectionListBodyVirtualizedItem =
       }>
     | SelectionListBodyVirtualizedOptionItem
     /**
-     * Lane G — one VISUAL row of the `columns` variant. Grouping the options
-     * here (rather than teaching the virtualized backend about columns) keeps
-     * the neutral virtualized-list seam free of backend-only escape hatches
-     * like `numColumns` / `overrideItemLayout`, and makes `estimatedItemSize`
-     * MORE accurate, because a grid row's height IS a row height.
+     * One BLOCK of the `columns` variant: options laid out as independent
+     * column stacks. Grouping the options here (rather than teaching the
+     * virtualized backend about columns) keeps the neutral virtualized-list seam
+     * free of backend-only escape hatches like `numColumns` / `overrideItemLayout`.
      */
     | Readonly<{
           kind: 'option-row';
           rowKey: string;
           sectionId: string;
           options: ReadonlyArray<SelectionListBodyVirtualizedOptionItem>;
-          /** Columns this row lays out — 1 for a full-width short section. */
+          /** Columns this block lays out — 1 for a full-width short section. */
           columnCount: number;
           /** Grid columns each of its cells occupies. */
           columnSpan: number;
@@ -318,8 +322,8 @@ export function flattenRenderPlanForVirtualizedList(
 }
 
 /**
- * Lane G — fold consecutive option rows of ONE section into visual rows of up
- * to `columnCount` cells.
+ * Fold consecutive option rows of ONE section into column blocks
+ * (`chunkIntoColumnBlocks`).
  *
  * Headers, skeletons, error / not-found / empty-hint rows are deliberately
  * left alone: they are full-width by nature and span the pane for free.
@@ -329,7 +333,7 @@ export function flattenRenderPlanForVirtualizedList(
  * owned by `resolveSelectionListSectionColumnCount` so the mapped renderer,
  * this one, and the arrow geometry cannot disagree.
  *
- * Grouping decides WHAT a row is; it does not number the rows.
+ * Grouping decides WHAT a block is; it does not number the rows.
  * `buildSelectionListGridRowModel` walks this output to assign every
  * `aria-rowindex`, because header rows take indices from the same sequence and
  * only one walk may own it.
@@ -350,8 +354,7 @@ export function groupVirtualizedItemsIntoColumnRows(
         if (pending.length === 0) return;
         const sectionColumnCount = resolveSelectionListSectionColumnCount(pending.length, count);
         const columnSpan = resolveSelectionListSectionColumnSpan(pending.length, count);
-        for (let index = 0; index < pending.length; index += sectionColumnCount) {
-            const cells = pending.slice(index, index + sectionColumnCount);
+        for (const cells of chunkIntoColumnBlocks(pending, sectionColumnCount)) {
             grouped.push({
                 kind: 'option-row',
                 rowKey: `${cells[0].rowKey}::row`,
@@ -443,18 +446,13 @@ function renderVirtualizedOptionCell(
     return <VirtualizedOptionCellFrame key={item.rowKey} stale={item.isStale === true}>{optionRow}</VirtualizedOptionCellFrame>;
 }
 
-/**
- * The retained parent of a virtualized option. Inside a grid row it IS the row's flex child, so it
- * takes the equal-column share `SelectionListColumnRow` hands its cells; without it a long card sized
- * its own column and pushed its neighbour past the pane's edge.
- */
+/** The retained parent of a virtualized option. */
 function VirtualizedOptionCellFrame(props: Readonly<{
     stale: boolean;
-    columnCellStyle?: ViewProps['style'];
     children: React.ReactNode;
 }>): React.ReactElement {
     return (
-        <View style={[props.columnCellStyle, props.stale ? selectionListDynamicRowStyles.staleSection : undefined]}>
+        <View style={props.stale ? selectionListDynamicRowStyles.staleSection : undefined}>
             {props.children}
         </View>
     );
@@ -481,8 +479,8 @@ function renderVirtualizedListRow(
                 rowIndex={placement?.rowIndex}
                 optionRowIndex={placement?.optionRowIndex}
             >
-                {item.options.map((cell, columnIndex) => renderVirtualizedOptionCell(cell, ctx, {
-                    columnIndex: columnIndex + 1,
+                {item.options.map((cell, cellIndex) => renderVirtualizedOptionCell(cell, ctx, {
+                    columnIndex: (cellIndex % item.columnCount) + 1,
                     columnSpan: item.columnSpan,
                 }))}
             </SelectionListColumnRow>
@@ -697,6 +695,11 @@ export function SelectionListBodyVirtualized(props: SelectionListBodyVirtualized
     return <SelectionListBodyFlattenedVirtualized {...props} />;
 }
 
+function SelectionListPaneEdgeFades(props: Readonly<{ edges: React.ComponentProps<typeof ScrollEdgeFades>['edges'] }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <ScrollEdgeFades color={theme.colors.surface.base} size={theme.space.s16} edges={props.edges} />;
+}
+
 function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualizedProps): React.ReactElement {
     const reducedMotion = useReducedMotionPreference();
     const columnCount = props.columnCount ?? 1;
@@ -726,7 +729,7 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                 continue;
             }
             if (item.kind !== 'option-row') continue;
-            // Row-major grouping means reading order and set position agree.
+            // A block's cells are in reading order, so reading order and set position agree.
             for (const cell of item.options) {
                 position += 1;
                 byId.set(cell.option.id, position);
@@ -753,7 +756,7 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
     const focusedItemIndex = React.useMemo(
         () => focusedOptionId === null ? -1 : flatItems.findIndex((row) => {
             if (row.kind === 'option') return row.option.id === focusedOptionId;
-            // A focused cell brings its whole visual row into view.
+            // A focused cell brings its block into view; `revealFocusedCell` then narrows to the cell.
             if (row.kind === 'option-row') {
                 return row.options.some((cell) => cell.option.id === focusedOptionId);
             }
@@ -761,14 +764,30 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
         }),
         [focusedOptionId, flatItems],
     );
+    const focusedCell = focusedOptionId === null ? undefined : (() => {
+        const row = flatItems[focusedItemIndex];
+        return row?.kind === 'option-row' ? row.options.find((cell) => cell.option.id === focusedOptionId) : undefined;
+    })();
     const { onViewportLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
         focusedItemIndex,
         focusedKey: focusedOptionId,
+        focusedCellDomId: focusedCell === undefined ? null : resolveSelectionListOptionDomId({
+            option: focusedCell.option,
+            rootTestID: props.rootTestID,
+            stepId: props.stepId,
+        }),
         reducedMotion,
     });
 
     const measureMode = props.measureMode === true;
+    // A pane that scrolls whole has no fixed band to clip its content against, so its edges fade instead.
+    const paneFades = useScrollEdgeFades({
+        enabledEdges: { top: true, bottom: true },
+        overflowThreshold: 1,
+        edgeThreshold: 4,
+    });
+    const paneScrollsWhole = !measureMode && props.bodyHeader != null;
     const { onEndReached, footer: paginationFooter } = useSelectionListVirtualizedPagination({
         pagination: props.pagination,
         measureMode,
@@ -838,7 +857,16 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                 recycleItems={false}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-                onLayout={measureMode ? undefined : onViewportLayout}
+                onLayout={measureMode ? undefined : (event) => {
+                    onViewportLayout(event);
+                    if (paneScrollsWhole) paneFades.onViewportLayout(event);
+                }}
+                {...(paneScrollsWhole ? {
+                    onContentSizeChange: paneFades.onContentSizeChange,
+                    onScroll: paneFades.onScroll,
+                    onMomentumScrollEnd: paneFades.onMomentumScrollEnd,
+                    scrollEventThrottle: 16,
+                } : {})}
                 onEndReached={onEndReached}
                 onEndReachedThreshold={props.pagination ? 0.35 : undefined}
                 ListHeaderComponent={props.bodyHeader ?? undefined}
@@ -847,6 +875,9 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                     : paginationFooter}
                 ListEmptyComponent={props.emptyContent ?? undefined}
             />
+            {paneScrollsWhole ? (
+                <SelectionListPaneEdgeFades edges={paneFades.visibility} />
+            ) : null}
         </View>
     );
 }

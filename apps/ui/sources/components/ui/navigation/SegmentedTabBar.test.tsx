@@ -1141,6 +1141,35 @@ describe('SegmentedTabBar value choice that no longer fits', () => {
   });
 });
 
+describe('SegmentedTabBar value row sized by its labels', () => {
+  const STEPS: ReadonlyArray<SegmentedTab<'order' | 'balance' | 'least' | 'most'>> = [
+    { id: 'order', label: 'In order' },
+    { id: 'balance', label: 'Balance' },
+    { id: 'least', label: 'Least used' },
+    { id: 'most', label: 'Most left' },
+  ];
+
+  it('keeps a scale segmented while its labels fit, even when an equal share would not', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const screen = await renderScreen(
+      <SegmentedTabBar role="radiogroup" segmentSizing="equal-or-label" overflow={{ label: 'More' }} tabs={STEPS}
+        activeTabId="balance" onSelectTab={() => {}} testIDPrefix="step" />,
+    );
+    // The widest label needs 102 of each of four equal shares: 408 plus the track's padding.
+    layOut(screen, 420);
+    expect(flattenStyle(requireTab(screen, 'step:least').props.style).flexBasis).toBe(0);
+    // 380 holds the labels' sum (360) though not four equal shares: each segment takes its own label's width.
+    layOut(screen, 380);
+    expect(screen.findHostByTestId('step:select')).toBeNull();
+    expect(flattenStyle(requireTab(screen, 'step:least').props.style).flexBasis).toBe('auto');
+    // Too narrow even for the labels' sum: the one field select.
+    layOut(screen, 300);
+    expect(screen.findHostByTestId('step:least')).toBeNull();
+    expect(screen.findHostByTestId('step:select')).toBeTruthy();
+    await screen.unmount();
+  });
+});
+
 describe('SegmentedTabBar measured overflow on the track', () => {
     it('fits the segments inside the track padding, dropping glyphs before any label is cut short', async () => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');

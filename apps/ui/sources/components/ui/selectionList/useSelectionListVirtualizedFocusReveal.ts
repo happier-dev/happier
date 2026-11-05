@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import type {
     VirtualizedListProps,
@@ -18,15 +19,29 @@ export function useSelectionListVirtualizedFocusReveal(args: Readonly<{
     focusedItemIndex: number;
     /** The focused row's identity; a reveal follows a change of identity, not of index. */
     focusedKey: string | null;
+    /**
+     * The focused card's DOM id when its virtual row is a column block. A block can be taller than
+     * the viewport, so centring the block would not show the card: a mounted card is revealed itself.
+     */
+    focusedCellDomId?: string | null;
     reducedMotion: boolean;
 }>): Readonly<{
     onViewportLayout: NonNullable<VirtualizedListProps<unknown>['onLayout']>;
 }> {
     const focusedItemIndexRef = React.useRef(args.focusedItemIndex);
     focusedItemIndexRef.current = args.focusedItemIndex;
+    const focusedCellDomIdRef = React.useRef(args.focusedCellDomId ?? null);
+    focusedCellDomIdRef.current = args.focusedCellDomId ?? null;
     const revealFocusedItem = React.useCallback(() => {
         const index = focusedItemIndexRef.current;
         if (index < 0) return;
+        const cell = Platform.OS === 'web' && focusedCellDomIdRef.current !== null
+            ? document.getElementById(focusedCellDomIdRef.current)
+            : null;
+        if (cell) {
+            cell.scrollIntoView({ block: 'nearest' });
+            return;
+        }
         const ref = args.listRef.current;
         if (!ref || typeof ref.scrollToIndex !== 'function') return;
         ref.scrollToIndex({

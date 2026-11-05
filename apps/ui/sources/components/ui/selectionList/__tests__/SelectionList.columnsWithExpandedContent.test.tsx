@@ -227,29 +227,27 @@ describe('SelectionList — columns and expandedContent together', () => {
     it('numbers rows and columns by what is painted, not by option count', async () => {
         const screen = await renderTwoColumnGrid();
 
-        // Four options in two columns are THREE things to a sighted user: a
-        // header and two rows — and all three are rows of the grid, because the
-        // header renders text and a grid may not own text outside a row.
-        // Counting OPTIONS here (the defect) announced four rows and no columns
-        // at all.
+        // Columns stack independently, so each card is a row of its own: the header
+        // and four cards. The header renders text, and a grid may not own text
+        // outside a row.
         const body = screen.findByTestId('sl:body');
-        expect(body?.props['aria-rowcount']).toBe(3);
+        expect(body?.props['aria-rowcount']).toBe(5);
         expect(body?.props['aria-colcount']).toBe(2);
 
-        const rows = columnRows(screen);
-        expect(rows.map((row) => row.props.role)).toEqual(['row', 'row']);
-        // Row 1 is the section header, so the option rows are 2 and 3.
-        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 3]);
+        const rows = screen.tree.root.findAll((node) => typeof node.type === 'string'
+            && node.props?.role === 'row' && node.props?.['aria-rowindex'] !== undefined
+            && node.findAll((child) => child.props?.role === 'gridcell').length > 0);
+        // Row 1 is the section header; the cards follow in reading order, column by column in the DOM.
+        expect(rows.map((row) => row.props['aria-rowindex'])).toEqual([2, 4, 3, 5]);
 
-        // Exactly `aria-colcount` cells per row, each with its own index — the
-        // expanded panel included, since it belongs to m-1's cell.
-        for (const row of rows) {
-            const cells = row.findAll((node) => typeof node.type === 'string'
-                && node.props?.role === 'gridcell');
-            expect(cells.map((cell) => cell.props['aria-colindex'])).toEqual([1, 2]);
-            // A full-width span is for short sections only; these rows are full.
-            expect(cells.every((cell) => cell.props['aria-colspan'] === undefined)).toBe(true);
-        }
+        // One cell per row, whose index names its column — the expanded panel
+        // included, since it belongs to m-1's cell.
+        const cellsOf = (row: ReactTestInstance) => row.findAll((node) => typeof node.type === 'string'
+            && node.props?.role === 'gridcell');
+        expect(rows.map((row) => cellsOf(row).map((cell) => cell.props['aria-colindex'])))
+            .toEqual([[1], [1], [2], [2]]);
+        // A full-width span is for short sections only; these cards have a neighbour.
+        expect(rows.every((row) => cellsOf(row)[0].props['aria-colspan'] === undefined)).toBe(true);
 
         // Nothing keeps the option-level row markup the fix replaced.
         expect(screen.findByTestId('sl:root:option-wrapper:m-0')?.props['aria-rowindex'])
@@ -275,6 +273,27 @@ describe('SelectionList — columns and expandedContent together', () => {
         expect(isDescendantOf(expanded!, firstRow)).toBe(true);
         expect(isDescendantOf(expanded!, secondRow)).toBe(false);
         expect(isDescendantOf(expanded!, screen.findByTestId('sl:root:option-wrapper:m-0')!)).toBe(false);
+    });
+
+    it('paints a card as focused only once the keyboard has moved onto it', async () => {
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList {...defaultProps({
+                rootStep: makeStep(FOUR_MODELS),
+                optionPresentation: 'card',
+            })} />,
+        );
+        await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
+        const paintedFocus = (label: string) => screen.tree.root.find((node) => typeof node.type === 'function'
+            && node.props.title === label).props.focused;
+
+        // The list merely starts on the first card: painting it would read as a selection.
+        expect(focusedOptionId(screen)).toBe('sl:root:option:m-0');
+        expect(paintedFocus('Model 0')).toBe(false);
+
+        await pressKey(screen, 'ArrowDown');
+        expect(focusedOptionId(screen)).toBe('sl:root:option:m-2');
+        expect(paintedFocus('Model 2')).toBe(true);
     });
 
     it('moves focus across the grid, including onto and off the expanded card', async () => {
@@ -341,9 +360,7 @@ describe('SelectionList — real keys against the real grid geometry', () => {
     it('renders the disabled option as a real grid cell', async () => {
         const screen = await renderMixedGrid();
         expect(optionIdsByColumnRow(screen, ['m-0', 'm-1', 'locked', 'm-3', 'm-4', 'm-5'])).toEqual([
-            ['m-0', 'm-1'],
-            ['locked', 'm-3'],
-            ['m-4', 'm-5'],
+            ['m-0', 'm-1', 'locked', 'm-3', 'm-4', 'm-5'],
         ]);
     });
 

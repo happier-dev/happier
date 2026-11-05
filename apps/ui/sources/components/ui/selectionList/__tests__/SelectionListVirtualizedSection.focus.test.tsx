@@ -25,7 +25,8 @@ const { module: capturedLegendList, state: legendListState } = createCapturingLe
     refHandle: { scrollToIndex, scrollToOffset },
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
     LegendList: capturedLegendList.LegendList,
 }));
 

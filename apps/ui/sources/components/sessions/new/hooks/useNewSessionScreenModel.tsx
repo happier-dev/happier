@@ -330,6 +330,7 @@ import {
 } from '@/components/sessions/new/navigation/settleMaterializedTemporaryComputerSession';
 import { resolveAgentSessionStartBlockLine } from '@/components/machines/agents/agentSessionStartBlockLine';
 import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { showAgentSetupSheet } from '@/components/machines/agents/AgentSetupSheet';
 
 
 // Configuration constants
@@ -3881,9 +3882,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const agentStartBlock = React.useMemo(() => selectedMachineId ? resolveAgentSessionStartBlockLine({
         agent: selectedCredentialMachineAgent ?? null,
         machineName: selectedMachineSentenceName ?? selectedMachineId,
-        onSetUp: targetServerId === null ? undefined : () => router.push(machineCollectionHref({ machineId: selectedMachineId, serverId: targetServerId }) as never),
+        onSetUp: targetServerId === null ? undefined : (agent) => showAgentSetupSheet({ agent, serverId: targetServerId, machineId: selectedMachineId, machineName: selectedMachineSentenceName ?? selectedMachineId }),
         connectedServicesRecoveryAction,
-    }) : null, [selectedMachineId, selectedCredentialMachineAgent, selectedMachineSentenceName, targetServerId, router, connectedServicesRecoveryAction]);
+    }) : null, [selectedMachineId, selectedCredentialMachineAgent, selectedMachineSentenceName, targetServerId, connectedServicesRecoveryAction]);
     const agentLaunchBlockedReason = resolveAgentLaunchBlockedReasonForNewSession({
         backendTarget, selectedBackendEntry, projectionPhase: daemonMergedProjection.phase,
         acpCatalog: acpCatalog?.catalog ?? null, agentLabel, selectedCredentialMachineAgent,

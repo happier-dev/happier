@@ -1,10 +1,10 @@
 /**
- * Lane G5 — grouping virtualized option rows into visual grid rows.
+ * Grouping virtualized options into column blocks.
  *
  * The grouping happens ABOVE the virtualized backend on purpose: the neutral
  * virtualized-list seam excludes backend-only escape hatches such as
- * `numColumns` / `overrideItemLayout`, and grouping keeps `estimatedItemSize`
- * meaningful because one virtualized item is one visual row.
+ * `numColumns` / `overrideItemLayout`. One virtualized item is one block, inside
+ * which each column stacks on its own.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -56,14 +56,19 @@ describe('groupVirtualizedItemsIntoColumnRows', () => {
         expect(groupVirtualizedItemsIntoColumnRows(items, Number.NaN)).toBe(items);
     });
 
-    it('folds consecutive options into rows of columnCount, row-major', () => {
+    it('folds a section into one block in reading order', () => {
         const items = flattenRenderPlanForVirtualizedList([makeSection('models', 5)]);
         expect(describeItems(groupVirtualizedItemsIntoColumnRows(items, 2))).toEqual([
             'section-header',
-            'row[models-0,models-1]',
-            'row[models-2,models-3]',
-            'row[models-4]',
+            'row[models-0,models-1,models-2,models-3,models-4]',
         ]);
+    });
+
+    it('cuts a long catalog into blocks of the virtualization threshold, so a window stays bounded', () => {
+        const items = flattenRenderPlanForVirtualizedList([makeSection('models', 120)]);
+        const blocks = groupVirtualizedItemsIntoColumnRows(items, 2)
+            .flatMap((item) => (item.kind === 'option-row' ? [item.options.length] : []));
+        expect(blocks).toEqual([50, 50, 20]);
     });
 
     it('keeps headers full-width and never spans a row across two sections', () => {
@@ -73,8 +78,7 @@ describe('groupVirtualizedItemsIntoColumnRows', () => {
         ]);
         expect(describeItems(groupVirtualizedItemsIntoColumnRows(items, 2))).toEqual([
             'section-header',
-            'row[fast-0,fast-1]',
-            'row[fast-2]',
+            'row[fast-0,fast-1,fast-2]',
             'section-header',
             'row[deep-0,deep-1]',
         ]);
@@ -115,14 +119,13 @@ describe('groupVirtualizedItemsIntoColumnRows', () => {
         ))).toEqual([
             'section-header',
             'loading-skeleton',
-            'row[m-0,m-1]',
-            'row[m-2]',
+            'row[m-0,m-1,m-2]',
         ]);
     });
 
-    it('gives each visual row a stable key derived from its leading cell', () => {
+    it('gives each block a stable key derived from its leading cell', () => {
         const grouped = groupVirtualizedItemsIntoColumnRows(
-            flattenRenderPlanForVirtualizedList([makeSection('models', 4)]),
+            flattenRenderPlanForVirtualizedList([makeSection('models', 60)]),
             2,
         );
         const rowKeys = grouped
@@ -131,7 +134,7 @@ describe('groupVirtualizedItemsIntoColumnRows', () => {
         expect(new Set(rowKeys).size).toBe(rowKeys.length);
         expect(rowKeys).toEqual([
             'models::option::models-0::row',
-            'models::option::models-2::row',
+            'models::option::models-50::row',
         ]);
     });
 
