@@ -23,10 +23,11 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
+import { describeConnectedAccountsNeedingSignIn, listConnectedAccountsNeedingSignIn, projectSignInFacts } from '@/sync/domains/connectedServices/connectedAccountsNeedingSignIn';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useProfile } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
 import { describeUpdatesSettingsSubtitle } from '@/components/updates/describeUpdatesSummary';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
@@ -109,7 +110,15 @@ function useAgentsNeedingSignIn(): AttentionItem[] {
 function useConnectedAccountsNeedingSignIn(): AttentionItem[] {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const profile = useProfile();
+    // The sign-in need, not the Profile: refresh flaps and quota fields move the Profile far more often.
+    const selectFacts = React.useMemo(() => {
+        let facts: ReturnType<typeof projectSignInFacts> | undefined;
+        return (state: ReturnType<typeof storage.getState>) => {
+            facts = retainDeep(facts, projectSignInFacts(state.profile));
+            return facts;
+        };
+    }, []);
+    const profile = storage(selectFacts, { profile: ['connectedServicesV2', 'connectedAccountsV4'] });
     const accountTransport = resolveConnectedAccountUiNegotiation(useServerFeaturesRuntimeSnapshot());
     const registry = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();

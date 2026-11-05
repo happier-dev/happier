@@ -3,6 +3,7 @@ import {
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiJsonValueV1,
     type PluginUiOpenConnectedAccountsRequestV1,
+    type PluginUiOpenConnectedAccountsResultV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -12,7 +13,7 @@ import {
 
 export type PluginOpenConnectedAccountsHandler = (
     request: PluginUiOpenConnectedAccountsRequestV1,
-) => void | Promise<void>;
+) => Exclude<PluginUiOpenConnectedAccountsResultV1, undefined> | Promise<Exclude<PluginUiOpenConnectedAccountsResultV1, undefined>>;
 
 /**
  * Strict mounted adapter for Happier-owned Connected Accounts navigation.
@@ -34,7 +35,6 @@ export function createPluginOpenConnectedAccountsHostApiHandler(
                 ['plugin_connected_accounts_open_payload_invalid'],
             );
         }
-        await open(parsed.data);
-        return null;
+        return open(parsed.data);
     };
 }

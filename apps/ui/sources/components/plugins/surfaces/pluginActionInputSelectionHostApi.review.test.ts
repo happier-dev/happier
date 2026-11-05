@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PluginUiHostApiRequestEnvelopeV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { Modal } from '@/modal';
+// Load the real Run body during collection; module transformation is outside selector settlement.
+import '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection';
 import { createDeferred } from '@/dev/testkit';
 
 import { createPluginActionInputSelectionHostApiHandler } from './pluginActionInputSelectionHostApi';

@@ -29,8 +29,8 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
 }>) {
     const { request } = input;
     const viewer = useActiveServerAccountScope();
-    const profile = useProfile(profile => ({ id: profile.id, connectedAccountsV4: profile.connectedAccountsV4,
-        connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }));
+    const profile = useProfile(profile => request ? ({ id: profile.id, connectedAccountsV4: profile.connectedAccountsV4,
+        connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }) : null);
     const { catalog: purposeCatalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults(undefined,
         { enabled: Boolean(request) && !input.onSelected });
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer]);
@@ -107,19 +107,19 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
     };
     const selected = input.onSelected ? input.selectedTarget ?? null
         : request ? purposeCatalog.value?.bindings.find(binding => qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(request.purpose))?.target ?? null : null;
-    const reconnectAccounts = input.onSelected && declaration ? profile.connectedAccountsV4.filter(account => account.status === 'needs_reauth'
+    const reconnectAccounts = input.onSelected && declaration && profile ? profile.connectedAccountsV4.filter(account => account.status === 'needs_reauth'
         || account.status === 'refresh_failed_retryable').filter(account => declaration.serviceRefs.some(service =>
             service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId)) : [];
-    const profileRead = typeof profile.id === 'string' && profile.id.trim() === viewer?.accountId;
+    const profileRead = typeof profile?.id === 'string' && profile.id.trim() === viewer?.accountId;
     const hasTargetsToChoose = (service: PluginContributionIdentityV1) => {
         if (selected !== null || !profileRead) return true;
-        const targets = connectedAccountPurposeServiceTargets(profile.connectedAccountsV4 ?? [], profile.connectedAccountGroupsV4 ?? [], service);
+        const targets = connectedAccountPurposeServiceTargets(profile?.connectedAccountsV4 ?? [], profile?.connectedAccountGroupsV4 ?? [], service);
         return targets.accounts.length > 0 || targets.groups.length > 0;
     };
     const filterCatalog = <Entry extends Readonly<{ service: PluginContributionIdentityV1 }>>(catalog: readonly Entry[]): Entry[] => catalog.filter(entry => !request ||
         declaration?.serviceRefs.some(service => service.pluginId === entry.service.pluginId && service.localId === entry.service.localId));
     const unavailableReason = !request ? null
-        : profile.id !== request.scope.accountId ? 'profile_account_mismatch' as const
+        : profile?.id !== request.scope.accountId ? 'profile_account_mismatch' as const
         : !declaration ? 'purpose_unavailable' as const
         : declaration.consumerKind === 'machineProvisioner' && !input.onSelected ? 'purpose_requires_selection' as const
         : null;

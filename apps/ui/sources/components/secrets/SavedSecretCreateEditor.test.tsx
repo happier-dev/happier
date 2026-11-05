@@ -330,6 +330,21 @@ describe('SavedSecretCreateEditor', () => {
         expect(confirmDisclosure).not.toHaveBeenCalled();
     });
 
+    it('asks for the value before the name, and saves under the suggested name when none is typed', async () => {
+        const onCreatePersonal = vi.fn(async () => 'personal-new');
+        const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
+        const screen = await renderScreen(
+            <SavedSecretCreateEditor scope={scopeA} onCreatePersonal={onCreatePersonal} approvalPending={false}
+                requestApproval={vi.fn()} onCancel={vi.fn()} onCreated={vi.fn(async () => {})} initialName="ElevenLabs key" />,
+        );
+        const inputs = screen.tree.findAll((node) => node.type === ('TextInput' as never)).map((node) => node.props.testID);
+        expect(inputs.indexOf('saved-secret-create-value')).toBeLessThan(inputs.indexOf('saved-secret-create-name'));
+        screen.changeTextByTestId('saved-secret-create-value', 'sk-123');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        expect(onCreatePersonal).toHaveBeenCalledWith({ name: 'ElevenLabs key', value: 'sk-123' }, expect.anything());
+    });
+
     it('adds a personal secret through the personal writer unless Shared is chosen', async () => {
         const onCreatePersonal = vi.fn(async () => 'personal-new');
         const onCreated = vi.fn(async () => {});

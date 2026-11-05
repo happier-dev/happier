@@ -72,6 +72,35 @@ describe('machine administration target demand', () => {
             await hook.unmount();
         } finally { storage.setState(previous); await removeServerProfile(profile.id); }
     });
+    it('uses an available route target transiently and persists only an explicit selection', async () => {
+        const previous = storage.getState();
+        const saved = { serverIdentityId: 'srv_route_transient', machineId: 'chosen-machine' };
+        const requested = { ...saved, machineId: 'route-machine' };
+        const chosen = { ...saved, machineId: 'next-machine' };
+        const { createSecretSettingsTestHarness } = await import('@/components/settings/secrets/secretSettingsTestHarness');
+        const account = await createSecretSettingsTestHarness({ accountId: 'route-transient-account', serverIdentityId: saved.serverIdentityId,
+            settings: settingsParse({ machineAdministrationTargetsLocalV1: { agents: saved } }) });
+        try {
+            storage.setState({
+                settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: { agents: saved } },
+                machineListByServerId: { [account.scope.serverId]: [saved, requested, chosen].map(target =>
+                    createMachineFixture({ id: target.machineId, activeAt: Date.now() })) },
+                machineListStatusByServerId: { [account.scope.serverId]: 'idle' },
+            });
+            const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents', { initialTarget: requested }));
+            try {
+                expect(hook.getCurrent().selectedTarget).toEqual(requested);
+                expect(hook.getCurrent().resolveExecutionTarget()?.target).toEqual(requested);
+                expect(storage.getState().settings.machineAdministrationTargetsLocalV1.agents).toEqual(saved);
+                await act(async () => hook.getCurrent().selectTarget(chosen));
+                expect(hook.getCurrent().selectedTarget).toEqual(chosen);
+                expect(storage.getState().settings.machineAdministrationTargetsLocalV1.agents).toEqual(chosen);
+            } finally { await hook.unmount(); }
+            const reopened = await renderHook(() => useMachineAdministrationTargetSelection('agents'));
+            try { expect(reopened.getCurrent().selectedTarget).toEqual(chosen); }
+            finally { await reopened.unmount(); }
+        } finally { standardCleanup(); await account.dispose(); storage.setState(previous); }
+    });
     it('keeps an unavailable explicit route target instead of borrowing the saved Machine on another Home', async () => {
         const previous = storage.getState();
         const saved = { serverIdentityId: 'srv_saved', machineId: 'same-machine' };

@@ -7,7 +7,10 @@ import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServ
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { buildConnectedServiceSetupRoute } from '../setup/connectMoreBlocks';
+import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
+import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
+import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
@@ -36,6 +39,8 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
     props: Omit<QualifiedPoolDetailViewProps, 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenAccount' | 'now'>,
 ) {
     const router = useRouter();
+    const scope = useActiveServerAccountScope();
+    const [settled, setSettled] = React.useState<QualifiedConnectedAccountRef | null>(null);
     const { present } = useConnectedAccountIdentityPrivacy();
     const { group } = props;
     const refs = React.useMemo(() => group.members.map((member) => ({ ref: member.ref })), [group.members]);
@@ -91,6 +96,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
         <ConnectedAccountActionApprovalNotice execution={agentDefaults.execution} testID="connected-pool-default-approval-pending" />
         <QualifiedPoolDetailView
             {...props}
+            settled={settled ? <PoolConnectedAccountSettled account={settled} onDismiss={() => setSettled(null)} /> : null}
             memberQuotaByAccountId={memberQuotaByAccountId}
             presentIdentity={present}
             agentDefaults={agentDefaults}
@@ -99,8 +105,18 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             onOpenGateway={openGateway}
             onOpenAccount={openAccount}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
-            onConnectAccount={() => router.push(buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: buildQualifiedPluginContributionKey(service) }))}
+            onConnectAccount={() => {
+                fireAndForget(presentConnectSheet({ scope, service }).then(result => {
+                    if (result.kind !== 'dismissed') setSettled(result.account);
+                }), { tag: 'QualifiedPoolDetail.connect' });
+            }}
         />
         </>
     );
 });
+
+function PoolConnectedAccountSettled(props: Readonly<{ account: QualifiedConnectedAccountRef; onDismiss: () => void }>) {
+    const index = useConnectedServicesIndex({ agents: 'cached', serviceKey: buildQualifiedPluginContributionKey(props.account.service) });
+    return <ConnectedAccountSettled {...props} model={index.indexModel} agents={index.agentEntries}
+        machineId={index.appShellProjection.machineId ?? undefined} />;
+}

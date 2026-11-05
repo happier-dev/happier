@@ -3,7 +3,7 @@ import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererAr
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { usePluginSurfaceActionApproval } from './usePluginSurfaceActionApproval';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { useFindSurfaceRegistrationHost } from '@/keyboard/KeyboardShortcutProvider';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceStore, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
@@ -285,7 +285,7 @@ import { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeader
 import { resolvePluginUiFrameworkTranslations } from './pluginUiFrameworkTranslations';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/headerBand';
-import { buildConnectedAccountsSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 
 type PluginSurfaceHostDescriptor = PluginUiPhysicalSurfacePlacementProjection | PluginUiSettingsPageProjection;
 
@@ -3285,11 +3285,21 @@ function PluginSurfaceHostMount(props: Readonly<(
             ? ephemeralMount?.binding
         : mountedComposerBinding
             ?? (targetedBinding ? undefined : props.binding);
-    const openConnectedAccounts = React.useCallback((request: PluginUiOpenConnectedAccountsRequestV1): void => {
-        router.push(buildConnectedAccountsSettingsRoute(request, accountLifetime && machineId ? {
-            scope: accountLifetime.scope, machineId,
-        } : undefined));
-    }, [router, accountLifetime, machineId]);
+    const openConnectedAccounts = React.useCallback(async (request: PluginUiOpenConnectedAccountsRequestV1) => {
+        return presentConnectSheet({
+            scope: accountLifetime?.scope ?? null,
+            ...(machineId && serverId ? { initialMachineTarget: {
+                serverIdentityId: captureServerProfileScopeResolver()(serverId), machineId,
+            } } : {}),
+            ...('purpose' in request && request.purpose && accountLifetime ? {
+                purpose: request.purpose,
+                purposeSettlement: 'resourceDefault',
+                purposeRequest: { scope: accountLifetime.scope, purpose: request.purpose, ...(machineId ? { machineId } : {}) },
+            } : {}),
+            ...(request.service ? { service: request.service,
+                ...(request.accountId ? { account: { service: request.service, accountId: request.accountId } } : {}) } : {}),
+        });
+    }, [accountLifetime, machineId, serverId]);
     const controllerBindingWithConnectedAccounts = React.useMemo<BoundPluginSurfaceBinding>(() => Object.freeze({
         ...(controllerBinding ?? {}),
         openConnectedAccounts,

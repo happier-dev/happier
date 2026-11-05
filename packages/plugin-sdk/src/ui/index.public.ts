@@ -105,7 +105,7 @@ export type {
     PluginDeclarativeDocumentV1,
 } from './declarativeDocument.js';
 export type { OpenSurfaceOptions } from './hostApi.js';
-export type { OpenConnectedAccountsRequest } from './hostApi.js';
+export type { OpenConnectedAccountsRequest, OpenConnectedAccountsResult } from './hostApi.js';
 export type { OpenableContentBody } from './hostApi.js';
 export type { OpenableContentReadRequest } from './hostApi.js';
 export type { OpenableContentReadResult } from './hostApi.js';

@@ -5270,6 +5270,11 @@ setup as Resources. The Action projection carries its declared qualified purpose
 scopes from the existing registry authorization owner. A plugin's
 `openConnectedAccounts` request can include that qualified `purpose`; the host
 captures the invoking Account and machine and opens the existing chooser.
+In 0.3 development source, it resolves with `{ kind: 'connected' | 'selected',
+account }` or `{ kind: 'dismissed' }`. The account contains only its qualified
+service and account id, never credential material. Existing plugins may ignore
+the result. An older host's empty acknowledgement resolves to `undefined` so
+the caller can re-read its existing account options.
 `connectedServices.purposes.default.set` admits either installed consumer and
 writes the canonical purpose catalog under the existing approval policy, also
 serving agent/MCP/CLI callers. Creating an account does not bind a purpose, and

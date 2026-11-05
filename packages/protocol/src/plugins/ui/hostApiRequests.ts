@@ -509,6 +509,17 @@ export const PluginUiOpenConnectedAccountsRequestV1Schema = lazyZodSchema(() => 
 export type PluginUiOpenConnectedAccountsRequestV1 =
   z.infer<typeof PluginUiOpenConnectedAccountsRequestV1Schema>;
 
+/** Account references only. Older hosts acknowledge navigation without a result. */
+export const PluginUiOpenConnectedAccountsResultV1Schema = lazyZodSchema(() => z.pipe(
+  z.transform(value => value === null ? undefined : value),
+  z.optional(z.union([
+    z.strictObject({ kind: z.enum(['connected', 'selected']), account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
+    z.strictObject({ kind: z.literal('dismissed') }),
+  ])),
+));
+export type PluginUiOpenConnectedAccountsResultV1 =
+  z.infer<typeof PluginUiOpenConnectedAccountsResultV1Schema>;
+
 /**
  * Same-page location replacement, and the one page-internal Back step it may
  * declare.
@@ -595,9 +606,14 @@ const PluginUiSelectActionInputReviewHostActionV1Schema = lazyZodSchema(() => z.
   action: z.literal('review.start'),
   projection: z.literal('executionRunLaunch'),
 }));
+const PluginUiSelectActionInputSessionAddressHostActionV1Schema = lazyZodSchema(() => z.strictObject({
+  action: z.literal('session.transcript.get'),
+  projection: z.literal('sessionAddress'),
+}));
 export const PluginUiSelectActionInputHostActionV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   PluginUiSelectActionInputSessionHostActionV1Schema,
   PluginUiSelectActionInputReviewHostActionV1Schema,
+  PluginUiSelectActionInputSessionAddressHostActionV1Schema,
 ]));
 export type PluginUiSelectActionInputHostActionV1 =
   z.infer<typeof PluginUiSelectActionInputHostActionV1Schema>;
@@ -800,6 +816,9 @@ export type PluginUiPreparedReviewWorkspaceResultV1 = z.infer<
 
 export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
+    hostAction: PluginUiSelectActionInputSessionAddressHostActionV1Schema,
+  }),
+  z.strictObject({
     hostAction: PluginUiSelectActionInputSessionHostActionV1Schema,
     draft: zMini.optional(PluginUiJsonObjectV1Schema),
   }),
@@ -873,6 +892,7 @@ const PluginUiSelectActionInputExecutionRunLaunchV1Schema = lazyZodSchema(() => 
 
 /** Exact no-invoke settlements, targeted submission, or cancellation. */
 export const PluginUiSelectActionInputResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('sessionAddress'), session: ActionSessionAddressV1Schema }),
   PluginUiSelectActionInputTargetedSubmittedV1Schema,
   PluginUiSelectActionInputServerStartDraftV1Schema,
   PluginUiSelectActionInputExecutionRunLaunchV1Schema,

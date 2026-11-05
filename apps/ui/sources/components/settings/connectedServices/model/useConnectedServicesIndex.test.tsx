@@ -5,14 +5,16 @@ import { AccountProfileSchema, PluginProjectionV2Schema } from '@happier-dev/pro
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRowMutationV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { renderHook } from '@/dev/testkit';
+import { useConnectAccountSheetModel } from '../setup/useConnectAccountSheetModel';
+import { useAgentSignInTargets } from '../defaults/useAgentSignInTargets';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
-import { resetConnectedAccountCatalogEngineForTests } from '@/sync/engine/settings/connectedAccountCatalogEngine';
-import { resetConnectedAccountCatalogSnapshotsForTests } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { refreshConnectedAccountCatalog, resetConnectedAccountCatalogEngineForTests } from '@/sync/engine/settings/connectedAccountCatalogEngine';
+import { getConnectedAccountCatalogValue, resetConnectedAccountCatalogSnapshotsForTests } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowMutationV1Schema,
@@ -21,6 +23,7 @@ import { resetProviderCatalogEngineForTests } from '@/sync/engine/settings/provi
 import { applyProviderCatalogSnapshot, beginProviderCatalogLoad, resetProviderCatalogSnapshotsForTests } from '@/sync/store/settings/providerCatalogSnapshot';
 import { installConnectedServicesCommonModuleMocks } from '../connectedServicesTestHelpers';
 import { useConnectedServicesIndex } from './useConnectedServicesIndex';
+import { useConnectedServicesAgentUses } from './useConnectedServicesAgents';
 import { t } from '@/text';
 
 installConnectedServicesCommonModuleMocks();
@@ -103,11 +106,10 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 
-async function mount(mode: 'load' | 'cached', machineId: string | null, retiredProjectionLifetime = false, gateways = false,
-    projectionServerId = runtime.serverId) {
+function createIndexWrapper(machineId: string | null, retiredProjectionLifetime = false, projectionServerId = runtime.serverId) {
     const scope = { serverId: runtime.serverId, accountId: 'account-a' };
     storage.setState({ profileScope: scope, settingsScope: scope, profile: AccountProfileSchema.parse({ id: scope.accountId }) });
-    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() })], true, { sourceServerId: scope.serverId });
+    storage.getState().applyMachines(machineId ? [createMachineFixture({ id: machineId, activeAt: Date.now() })] : [], true, { sourceServerId: scope.serverId });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected real captured index Account');
     if (retiredProjectionLifetime) {
@@ -125,10 +127,79 @@ async function mount(mode: 'load' | 'cached', machineId: string | null, retiredP
     const Wrapper = ({ children }: React.PropsWithChildren) => <runtime.Wrapper>
         <AppShellPluginUiProjectionValueProvider value={value}>{children}</AppShellPluginUiProjectionValueProvider>
     </runtime.Wrapper>;
-    return renderHook(() => useConnectedServicesIndex({ agents: mode, gateways }), { wrapper: Wrapper });
+    return Wrapper;
 }
 
+async function mount(mode: 'load' | 'cached', machineId: string | null, retiredProjectionLifetime = false, gateways = false,
+    projectionServerId = runtime.serverId) {
+    return renderHook(() => useConnectedServicesIndex({ agents: mode, gateways }), {
+        wrapper: createIndexWrapper(machineId, retiredProjectionLifetime, projectionServerId),
+    });
+}
+
+const readPurposeCatalog = () => getConnectedAccountCatalogValue(runtime.accountScope, 'purposes');
+const filterActionNoop = () => {};
+
 describe('Connected Services index purpose source admission', () => {
+    it('does no Agent sign-in receipt render work on account health changes and publishes changed purpose defaults', async () => {
+        const scope = runtime.accountScope;
+        if (!scope) throw new Error('The fixture requires an active Account scope');
+        rowStatus = 'present';
+        content = { t: 'plain', v: { key: 'purposes', value: purposeValue } };
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useAgentSignInTargets(); }, {
+            wrapper: createIndexWrapper(null),
+        });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().some(row => row.agent === 'Codex')).toBe(true));
+            const heldRenders = renders;
+            const held = hook.getCurrent();
+            for (const status of ['connected', 'needs_reauth', 'refresh_failed_retryable']) {
+                await act(async () => storage.getState().applyProfile(AccountProfileSchema.parse({ ...storage.getState().profile,
+                    connectedAccountsV4: [{ ref: { service, accountId: 'work' }, status,
+                        authenticationModeId: 'oauth', revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+                        configurationReady: true, configurationRevision: null }],
+                })));
+            }
+            expect(renders).toBe(heldRenders);
+            expect(hook.getCurrent()).toBe(held);
+            content = { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } };
+            await act(async () => refreshConnectedAccountCatalog(scope, 'purposes'));
+            expect(hook.getCurrent().some(row => row.agent === 'Codex')).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps a single-service sheet idle on another service health change and updates its own saved accounts', async () => {
+        rowStatus = 'present';
+        content = { t: 'plain', v: { key: 'purposes', value: purposeValue } };
+        const request = { service };
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useConnectAccountSheetModel(request, filterActionNoop); }, {
+            wrapper: createIndexWrapper(null),
+        });
+        const otherService = { pluginId: 'acme.ledger', localId: 'ledger' };
+        const ownAccount = { ref: { service, accountId: 'work' }, status: 'connected',
+            authenticationModeId: 'oauth', revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+            configurationReady: true, configurationRevision: null };
+        const apply = (status: string, ownStatus = 'connected') => storage.getState().applyProfile(AccountProfileSchema.parse({
+            ...storage.getState().profile, connectedAccountsV4: [
+                { ...ownAccount, status: ownStatus }, { ...ownAccount, ref: { service: otherService, accountId: 'other' }, status },
+            ],
+        }));
+        try {
+            await vi.waitFor(() => expect(readPurposeCatalog().status).toBe('ready'));
+            await act(async () => { apply('connected'); });
+            const heldRenders = renders;
+            const held = hook.getCurrent().savedAccounts;
+            for (const status of ['needs_reauth', 'connected', 'refresh_failed_retryable']) {
+                await act(async () => { apply(status); });
+            }
+            expect(renders).toBe(heldRenders);
+            expect(hook.getCurrent().savedAccounts).toBe(held);
+            await act(async () => { apply('connected', 'needs_reauth'); });
+            expect(hook.getCurrent().savedAccounts).toEqual([expect.objectContaining({ status: 'needs_reauth' })]);
+        } finally { await hook.unmount(); }
+    });
     it('retains the Gateway place and exact refusal on a fresh catalog failure, then recovers Add', async () => {
         let releaseRead!: () => void;
         catalogReadGate = new Promise<void>(resolve => { releaseRead = resolve; });
@@ -152,16 +223,22 @@ describe('Connected Services index purpose source admission', () => {
         const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
         const readStarted = new Promise<void>(resolve => { markReadStarted = resolve; });
         beforeNextPurposeRead = async () => { markReadStarted(); await readGate; };
-        const generic = await mount('cached', null);
-        let selected: Awaited<ReturnType<typeof mount>> | undefined;
+        const mountAgentUses = (mode: 'load' | 'cached', machineId: string | null) =>
+            renderHook(() => useConnectedServicesAgentUses({ agents: mode }), { wrapper: createIndexWrapper(machineId) });
+        const generic = await mountAgentUses('cached', null);
+        let selected: Awaited<ReturnType<typeof mountAgentUses>> | undefined;
         try {
             await readStarted;
-            selected = await mount('load', 'm1');
+            selected = await mountAgentUses('load', 'm1');
             releaseRead();
-            await vi.waitFor(() => expect(selected!.getCurrent().purposeCatalog.status).toBe('ready'));
-            expect(selected.getCurrent().purposeCatalog.value).toEqual(purposeValue);
+            const expectedDefault = purposeValue.bindings[0]!.target;
+            await vi.waitFor(() => expect(selected!.getCurrent().agentUses).toContainEqual(expect.objectContaining({
+                title: 'Codex', defaults: [expectedDefault],
+            })));
             expect(mutations).toEqual([expect.objectContaining({ expectedRevision: 'absent', sourceSettingsVersion: 7 })]);
-            await vi.waitFor(() => expect(generic.getCurrent().purposeCatalog.value).toEqual(purposeValue));
+            await vi.waitFor(() => expect(generic.getCurrent().agentUses).toContainEqual(expect.objectContaining({
+                title: 'Codex', defaults: [expectedDefault],
+            })));
         } finally {
             releaseRead();
             await selected?.unmount();
@@ -273,7 +350,7 @@ describe('Connected Services index purpose source admission', () => {
         content = { t: 'plain', v: { key: 'purposes', value: purposeValue } };
         const hook = await mount('load', null);
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().purposeCatalog.status).toBe('ready'));
+            await vi.waitFor(() => expect(readPurposeCatalog().status).toBe('ready'));
             expect(hook.getCurrent().agentsKnown).toBe(true);
             expect(hook.getCurrent().agentEntries).toEqual(expect.arrayContaining([
                 expect.objectContaining({ identity: consumer, connectedAccounts: expect.arrayContaining([
@@ -287,7 +364,7 @@ describe('Connected Services index purpose source admission', () => {
     it('does not activate retained defaults with a retired Machine admission from the same Account id', async () => {
         const hook = await mount('load', 'm1', true);
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().purposeCatalog.status).toBe('unavailable'));
+            await vi.waitFor(() => expect(readPurposeCatalog().status).toBe('unavailable'));
             expect(mutations).toEqual([]);
         } finally { await hook.unmount(); }
     });
@@ -298,9 +375,9 @@ describe('Connected Services index purpose source admission', () => {
     ])('admits ordinary predecessor defaults only with its explicitly demanded scoped Machine: %j', async ({ mode, machineId, status }) => {
         const hook = await mount(mode, machineId);
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().purposeCatalog.status).toBe(status));
+            await vi.waitFor(() => expect(readPurposeCatalog().status).toBe(status));
             if (status === 'ready') {
-                expect(hook.getCurrent().purposeCatalog.value).toEqual(purposeValue);
+                expect(readPurposeCatalog().value).toEqual(purposeValue);
                 expect(mutations).toEqual([expect.objectContaining({ expectedRevision: 'absent', sourceSettingsVersion: 7 })]);
             } else {
                 expect(mutations).toEqual([]);
@@ -313,8 +390,8 @@ describe('Connected Services index purpose source admission', () => {
         content = { t: 'plain', v: { key: 'purposes', value: purposeValue } };
         const hook = await mount('cached', 'm1');
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().purposeCatalog.status).toBe('ready'));
-            expect(hook.getCurrent().purposeCatalog.value).toEqual(status === 'present' ? purposeValue : { v: 1, bindings: [] });
+            await vi.waitFor(() => expect(readPurposeCatalog().status).toBe('ready'));
+            expect(readPurposeCatalog().value).toEqual(status === 'present' ? purposeValue : { v: 1, bindings: [] });
             expect(mutations).toEqual([]);
             expect(machineRpc).not.toHaveBeenCalled();
         } finally { await hook.unmount(); }

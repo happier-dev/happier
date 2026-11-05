@@ -1,6 +1,4 @@
-import { normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
-
-import { deriveAccountHealth } from './deriveAccountHealth';
+import { parseDisplayableCredentialHealthStatus } from './parseDisplayableCredentialHealthStatus';
 import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 import {
     getLegacyConnectedServiceRegistryEntry,
@@ -34,16 +32,13 @@ export type ConnectedAccountNeedingSignIn = Readonly<{
     accountId: string | null;
 }>;
 
-function needsSignIn(status: unknown): boolean {
-    return deriveAccountHealth({
-        status: normalizeConnectedServiceCredentialHealthStatus(status),
-        capacityPct: null,
-    }) === 'error';
+export function connectedAccountNeedsSignIn(status: unknown): boolean {
+    return parseDisplayableCredentialHealthStatus(status) === 'needs_reauth';
 }
 
 /**
  * The connected accounts whose sign-in has expired, read from the Account profile the app already
- * holds. Health comes from `deriveAccountHealth`, the owner the Connected services page uses, and the
+ * holds. Only an explicit displayable sign-in need is claimed, and the
  * account transport from the server's negotiation: while that is unknown nothing is claimed.
  */
 export function listConnectedAccountsNeedingSignIn(params: Readonly<{
@@ -53,7 +48,7 @@ export function listConnectedAccountsNeedingSignIn(params: Readonly<{
 }>): ConnectedAccountNeedingSignIn[] {
     if (params.accountTransport === 'advertised-v4') {
         return (params.profile.connectedAccountsV4 ?? []).flatMap((account) => {
-            if (!needsSignIn(account.status)) return [];
+            if (!connectedAccountNeedsSignIn(account.status)) return [];
             const { service, accountId } = account.ref;
             const entry = params.entries.find((candidate) => (
                 candidate.service?.pluginId === service.pluginId && candidate.service.localId === service.localId
@@ -63,7 +58,7 @@ export function listConnectedAccountsNeedingSignIn(params: Readonly<{
     }
     if (params.accountTransport === 'legacy') {
         return params.profile.connectedServicesV2.flatMap((legacyService) => {
-            if (!legacyService.profiles.some((profile) => needsSignIn(profile.status))) return [];
+            if (!legacyService.profiles.some((profile) => connectedAccountNeedsSignIn(profile.status))) return [];
             const entry = getLegacyConnectedServiceRegistryEntry(legacyService.serviceId);
             if (!entry.service) return [];
             return [{ key: `legacy/${legacyService.serviceId}`, entry, service: entry.service, accountId: null }];
@@ -126,4 +121,27 @@ export function describeConnectedAccountsNeedingSignIn(params: Readonly<{
         return { need, service: serviceTitle,
             account: repeated && name.identityLabel ? `${name.primaryLabel} · ${name.identityLabel}` : name.primaryLabel };
     });
+}
+
+/**
+ * Only what decides "needs sign-in" and names the account from a Profile: each account's identity and name
+ * facts, and its status when that is a sign-in need (otherwise a neutral `connected`). Quota, refresh and other
+ * status flaps that are not an error stay out, so a summary built from this changes only when a sign-in need
+ * appears or goes, or an account is renamed.
+ */
+export function projectSignInFacts(profile: Readonly<{
+    connectedServicesV2: ProfileAccounts['connectedServicesV2'];
+    connectedAccountsV4?: ProfileAccounts['connectedAccountsV4'];
+}>): ProfileAccounts {
+    return {
+        connectedServicesV2: profile.connectedServicesV2.map((service) => ({
+            serviceId: service.serviceId,
+            profiles: service.profiles.map((entry) => ({ profileId: entry.profileId, status: connectedAccountNeedsSignIn(entry.status) ? entry.status : 'connected' })),
+        })),
+        ...(profile.connectedAccountsV4 ? { connectedAccountsV4: profile.connectedAccountsV4.map((account) => ({
+            ref: account.ref, status: connectedAccountNeedsSignIn(account.status) ? account.status : 'connected',
+            displayName: account.displayName ?? null,
+            providerIdentity: account.providerIdentity ?? null,
+        })) } : null),
+    };
 }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -78,6 +79,25 @@ describe('createProfileDomain scoped profiles', () => {
         expect(api.getState().profile.connectedAccountsV4).toBe(previous.profile.connectedAccountsV4);
         expect(api.getState().profile.linkedProviders).toBe(previous.profile.linkedProviders);
         expect(notified).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains unchanged accounts and nested identity when another account health changes', () => {
+        const api = createTestStore();
+        const accounts = ['work', 'personal'].map(accountId => QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId },
+            status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'legacy_unfenced',
+            credentialRevision: null, configurationReady: true, configurationRevision: null,
+        }));
+        api.getState().applyProfile({ ...structuredClone(profileDefaults), id: 'account-a', connectedAccountsV4: accounts });
+        const previous = api.getState().profile;
+        const next = structuredClone(previous);
+        next.connectedAccountsV4[1].status = 'needs_reauth';
+        api.getState().applyProfile(next);
+        const current = api.getState().profile;
+        expect(current.connectedAccountsV4[0]).toBe(previous.connectedAccountsV4[0]);
+        expect(current.connectedAccountsV4[1]).not.toBe(previous.connectedAccountsV4[1]);
+        expect(current.connectedAccountsV4[1].ref).toBe(previous.connectedAccountsV4[1].ref);
+        expect(current.connectedAccountsV4[1].status).toBe('needs_reauth');
     });
 
     it('suppresses repeated activation, scoped echoes and clearing but publishes scope changes', () => {

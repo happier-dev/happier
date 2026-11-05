@@ -32,7 +32,6 @@ import {
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceContributedActionDescriptorResolver } from './pluginSurfaceActionDispatch';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { projectPluginActionInputSelectionFacts } from './pluginActionInputSelectionFacts';
 export { projectPluginActionInputSelectionFacts } from './pluginActionInputSelectionFacts';
 
@@ -170,125 +169,142 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
         const mergedSignal = mergeAbortSignals([input.host.signal, options?.signal]);
         const signal = mergedSignal.signal;
         try {
-        const hostIsCurrent = () => input.isCurrent()
-            && input.host.isCurrent?.() !== false
-            && input.host.accountLifetime?.isCurrent() !== false;
-        if (signal?.aborted || !hostIsCurrent()) {
-            return errorPayload(hostIsCurrent() ? 'unavailable' : 'stale_surface', 'select_action_input_aborted');
-        }
-
-        if ('hostAction' in parsed.data) {
-            if (parsed.data.hostAction.action === 'review.start' && 'sessionId' in parsed.data) {
-                if (!input.host.accountLifetime?.isCurrent()) return errorPayload('unavailable', 'host_unavailable');
-                const serverId = parsed.data.serverId ?? input.host.accountLifetime?.scope.serverId;
-                if (!serverId) return errorPayload('unavailable', 'host_unavailable');
-                const { presentReviewExecutionRunLaunchSelection } = await import(
-                    '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection'
-                );
-                if (signal?.aborted || !hostIsCurrent()) return errorPayload('stale_surface', 'select_action_input_aborted');
-                const presentation = presentReviewExecutionRunLaunchSelection({ sessionId: parsed.data.sessionId,
-                    serverId, draft: parsed.data.draft, isCurrent: hostIsCurrent });
-                const cancel = () => presentation.close();
-                signal?.addEventListener('abort', cancel, { once: true });
-                if (signal?.aborted) cancel();
-                try {
-                    const selected = await presentation.result;
-                    if (signal?.aborted || !hostIsCurrent()) return errorPayload('stale_surface', 'select_action_input_aborted');
-                    if (!selected) return { kind: 'cancelled' };
-                    const admitted = ReviewStartInputSchema.safeParse({ ...parsed.data.draft, ...selected.input,
-                        sessionId: parsed.data.sessionId });
-                    return admitted.success ? readBoundedSelectionResult(selected)
-                        : errorPayload('invalid_payload', 'select_action_input_result_invalid');
-                } finally {
-                    signal?.removeEventListener('abort', cancel);
+            const result = await (async (): Promise<PluginUiJsonValueV1> => {
+                if (signal?.aborted) return errorPayload('unavailable', 'select_action_input_aborted');
+                if ('hostAction' in parsed.data) {
+                    if (parsed.data.hostAction.action === 'session.transcript.get') {
+                        const lifetime = input.host.accountLifetime;
+                        const serverId = resolveServerProfileScopeIdForIdentifier(lifetime?.scope.serverId);
+                        if (!lifetime || !serverId
+                            || resolveServerProfileScopeIdForIdentifier(input.host.serverId) !== serverId) {
+                            return errorPayload('unavailable', 'host_unavailable');
+                        }
+                        const { presentSessionAddressSelection } = await import(
+                            '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection'
+                        );
+                        const presentation = presentSessionAddressSelection(serverId);
+                        const cancel = () => presentation.close();
+                        signal?.addEventListener('abort', cancel, { once: true });
+                        if (signal?.aborted) cancel();
+                        try {
+                            const selected = await presentation.result;
+                            if (!selected || selected.kind !== 'existingSession') return { kind: 'cancelled' };
+                            return readBoundedSelectionResult({ kind: 'sessionAddress', session: {
+                                serverId: selected.serverId, sessionId: selected.sessionId,
+                            } });
+                        } finally {
+                            signal?.removeEventListener('abort', cancel);
+                        }
+                    }
+                    if (parsed.data.hostAction.action === 'review.start' && 'sessionId' in parsed.data) {
+                        if (!input.host.accountLifetime) return errorPayload('unavailable', 'host_unavailable');
+                        const serverId = parsed.data.serverId ?? input.host.accountLifetime?.scope.serverId;
+                        if (!serverId) return errorPayload('unavailable', 'host_unavailable');
+                        const { presentReviewExecutionRunLaunchSelection } = await import(
+                            '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection'
+                        );
+                        const presentation = presentReviewExecutionRunLaunchSelection({ sessionId: parsed.data.sessionId,
+                            serverId, draft: parsed.data.draft, isCurrent: input.isCurrent });
+                        const cancel = () => presentation.close();
+                        signal?.addEventListener('abort', cancel, { once: true });
+                        if (signal?.aborted) cancel();
+                        try {
+                            const selected = await presentation.result;
+                            if (!selected) return { kind: 'cancelled' };
+                            return readBoundedSelectionResult(selected);
+                        } finally {
+                            signal?.removeEventListener('abort', cancel);
+                        }
+                    }
+                    const target = readSessionServerStartDraftTarget(input.host);
+                    if (!target) return errorPayload('unavailable', 'host_unavailable');
+                    const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
+                    const draft = 'draft' in parsed.data ? parsed.data.draft : undefined;
+                    const outcome = await composer({
+                        ...(draft === undefined ? {} : { draft }),
+                        ...(signal ? { signal } : {}),
+                        isCurrent: input.isCurrent,
+                        target,
+                    });
+                    if (outcome.kind === 'submitted') {
+                        return readBoundedSelectionResult({ kind: 'serverStartDraft', draft: outcome.draft });
+                    }
+                    if (outcome.kind === 'cancelled') return outcome;
+                    return sessionComposerFailure(outcome);
                 }
-            }
-            const target = readSessionServerStartDraftTarget(input.host);
-            if (!target) return errorPayload('unavailable', 'host_unavailable');
-            const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
-            const outcome = await composer({
-                ...(parsed.data.draft === undefined ? {} : { draft: parsed.data.draft }),
-                ...(signal ? { signal } : {}),
-                isCurrent: hostIsCurrent,
-                target,
-            });
-            if (outcome.kind === 'submitted') {
-                return readBoundedSelectionResult({ kind: 'serverStartDraft', draft: outcome.draft });
-            }
-            if (outcome.kind === 'cancelled') return outcome;
-            return sessionComposerFailure(outcome);
-        }
 
-        if (
-            parsed.data.draft !== undefined
-            && !PluginUiLaunchInputV1Schema.safeParse(parsed.data.draft).success
-        ) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
-        const pluginProjectionById = selectionFacts.pluginProjectionById;
-        const targetedContributions = selectionFacts.targetedContributions;
-        if (!selectionFacts.hasPluginProjection || !targetedContributions) {
-            return errorPayload('unavailable', 'host_unavailable');
-        }
-        const controller = createPluginContributedActionController({
-            resolveCurrent: () => ({
-                pluginProjectionById,
-                targetedContributions,
-                pluginUiProjection: selectionFacts.pluginUiProjection,
-                ...(input.resolveContributedAction
-                    ? { resolveContributedAction: input.resolveContributedAction }
-                    : {}),
-                host: {
-                    ...input.host,
-                    ...(signal ? { signal } : {}),
-                    isCurrent: input.isCurrent,
-                },
-            }),
-            ...(input.resolveConnectedAccountOptions
-                ? { resolveConnectedAccountOptions: input.resolveConnectedAccountOptions }
-                : {}),
-        });
-        const selected = await controller.selectActionInput(parsed.data);
-        if (selected.kind !== 'form' && selected.kind !== 'direct') {
-            return selectionFailure(selected);
-        }
-        if (selected.kind === 'direct') {
-            return readBoundedSelectionResult(selected.result);
-        }
+                if (
+                    parsed.data.draft !== undefined
+                    && !PluginUiLaunchInputV1Schema.safeParse(parsed.data.draft).success
+                ) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
+                const pluginProjectionById = selectionFacts.pluginProjectionById;
+                const targetedContributions = selectionFacts.targetedContributions;
+                if (!selectionFacts.hasPluginProjection || !targetedContributions) {
+                    return errorPayload('unavailable', 'host_unavailable');
+                }
+                const controller = createPluginContributedActionController({
+                    resolveCurrent: () => ({
+                        pluginProjectionById,
+                        targetedContributions,
+                        pluginUiProjection: selectionFacts.pluginUiProjection,
+                        ...(input.resolveContributedAction
+                            ? { resolveContributedAction: input.resolveContributedAction }
+                            : {}),
+                        host: {
+                            ...input.host,
+                            ...(signal ? { signal } : {}),
+                            isCurrent: input.isCurrent,
+                        },
+                    }),
+                    ...(input.resolveConnectedAccountOptions
+                        ? { resolveConnectedAccountOptions: input.resolveConnectedAccountOptions }
+                        : {}),
+                });
+                const selected = await controller.selectActionInput(parsed.data);
+                if (selected.kind !== 'form' && selected.kind !== 'direct') {
+                    return selectionFailure(selected);
+                }
+                if (selected.kind === 'direct') {
+                    return readBoundedSelectionResult(selected.result);
+                }
 
-        present({ form: selected.form, ...(signal ? { signal } : {}) });
-        if (!input.isCurrent()) {
-            selected.form.retire();
-            return errorPayload('stale_surface', 'host_retired');
-        }
-        const readSelectionResult = async (): Promise<PluginUiJsonValueV1> => {
-            const result = await selected.result;
-            if (result.kind === 'unavailable' || result.kind === 'stale') {
-                return selectionFailure(result);
-            }
-            return readBoundedSelectionResult(result);
-        };
-        if (!signal) return await readSelectionResult();
-        let detachAbort: () => void = () => undefined;
-        const aborted = new Promise<PluginUiJsonValueV1>((resolve) => {
-            const onAbort = () => {
-                selected.form.retire();
-                resolve(errorPayload(
-                    input.isCurrent() ? 'unavailable' : 'stale_surface',
-                    'select_action_input_aborted',
-                ));
-            };
-            if (signal.aborted) {
-                onAbort();
-            } else {
-                signal.addEventListener('abort', onAbort, { once: true });
-                detachAbort = () => signal.removeEventListener('abort', onAbort);
-            }
-        });
-        try {
-            return await Promise.race([readSelectionResult(), aborted]);
-        } finally {
-            detachAbort();
-            selected.form.retire();
-        }
+                present({ form: selected.form, ...(signal ? { signal } : {}) });
+                const readSelectionResult = async (): Promise<PluginUiJsonValueV1> => {
+                    const result = await selected.result;
+                    if (result.kind === 'unavailable' || result.kind === 'stale') {
+                        return selectionFailure(result);
+                    }
+                    return readBoundedSelectionResult(result);
+                };
+                if (!signal) return await readSelectionResult();
+                let detachAbort: () => void = () => undefined;
+                const aborted = new Promise<PluginUiJsonValueV1>((resolve) => {
+                    const onAbort = () => {
+                        selected.form.retire();
+                        resolve(errorPayload(
+                            'unavailable',
+                            'select_action_input_aborted',
+                        ));
+                    };
+                    if (signal.aborted) {
+                        onAbort();
+                    } else {
+                        signal.addEventListener('abort', onAbort, { once: true });
+                        detachAbort = () => signal.removeEventListener('abort', onAbort);
+                    }
+                });
+                try {
+                    return await Promise.race([readSelectionResult(), aborted]);
+                } finally {
+                    detachAbort();
+                    selected.form.retire();
+                }
+            })();
+            const hostIsCurrent = input.isCurrent()
+                && input.host.isCurrent?.() !== false
+                && input.host.accountLifetime?.isCurrent() !== false;
+            if (!hostIsCurrent) return errorPayload('stale_surface', signal?.aborted ? 'select_action_input_aborted' : 'host_retired');
+            return signal?.aborted ? errorPayload('unavailable', 'select_action_input_aborted') : result;
         } finally {
             mergedSignal.dispose();
         }

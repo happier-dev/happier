@@ -4,7 +4,6 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../sessions/authoring.js';
 import type { JsonValue } from '../identity.js';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 import type {
     StoredImageRefV1 as ProtocolStoredImageRefV1,
@@ -54,6 +53,8 @@ import type {
     PluginUiRespondToSessionPermissionRequestV1 as ProtocolPluginUiRespondToSessionPermissionRequestV1,
     PluginUiRespondToSessionPermissionResultV1 as ProtocolPluginUiRespondToSessionPermissionResultV1,
     PluginUiPreparedReviewWorkspaceResultV1 as ProtocolPluginUiPreparedReviewWorkspaceResultV1,
+    PluginUiSelectActionInputHostRequestV1 as ProtocolPluginUiSelectActionInputHostRequestV1,
+    PluginUiSelectActionInputResultV1 as ProtocolPluginUiSelectActionInputResultV1,
     PluginHostedWebAccountDataBridgeOperationV1 as ProtocolPluginHostedWebAccountDataBridgeOperationV1,
     PluginHostedWebAccountDataBridgeResponseV1 as ProtocolPluginHostedWebAccountDataBridgeResponseV1,
     PluginHostedWebAccountDataBridgeChangeV1 as ProtocolPluginHostedWebAccountDataBridgeChangeV1,
@@ -401,17 +402,7 @@ export type PluginUiSelectActionInputTargetedRequestV1 = {
     draft?: PluginUiJsonObjectV1;
 };
 
-export type PluginUiSelectActionInputHostRequestV1 =
-    | {
-        hostAction: { action: 'session.spawn_new'; projection: 'serverStartDraft' };
-        draft?: PluginUiJsonObjectV1;
-    }
-    | {
-        hostAction: { action: 'review.start'; projection: 'executionRunLaunch' };
-        sessionId: string;
-        serverId?: string;
-        draft: { engineIds: string[]; instructions: string };
-    };
+export type PluginUiSelectActionInputHostRequestV1 = ProtocolPluginUiSelectActionInputHostRequestV1;
 
 /**
  * What the host writes into its own New Session screen before opening it.
@@ -514,17 +505,7 @@ export type PluginUiSelectActionInputTargetedSubmittedV1 = {
 };
 
 /** Exact result arms: targeted submitted, host-owned no-invoke inputs, or cancellation. */
-export type PluginUiSelectActionInputResultV1 =
-    | PluginUiSelectActionInputTargetedSubmittedV1
-    | { kind: 'serverStartDraft'; draft: PluginUiSessionServerStartDraftV1 }
-    | {
-        kind: 'executionRunLaunch';
-        input: Pick<
-            PluginActionInputById['execution.run.start'],
-            'secretReferenceOverlay' | 'teamCredentialModel' | 'teamCredentialSessionBindingConsent'
-        >;
-    }
-    | { kind: 'cancelled' };
+export type PluginUiSelectActionInputResultV1 = ProtocolPluginUiSelectActionInputResultV1;
 
 /** Mount-scoped, non-durable input completion exposed only when the host installs it. */
 export type PluginUiEphemeralInputSettlementV1 =

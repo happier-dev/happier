@@ -552,7 +552,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     ) => void | Promise<void>;
     openConnectedAccounts?: (
         input: PluginUiTestkitOpenConnectedAccountsInput,
-    ) => void | Promise<void>;
+    ) => import('../ui/hostApi.js').OpenConnectedAccountsResult | void | Promise<import('../ui/hostApi.js').OpenConnectedAccountsResult | void>;
     settleEphemeralInput?: (
         input: PluginUiTestkitSettleEphemeralInputInput,
     ) => void | Promise<void>;
@@ -1555,8 +1555,8 @@ async function createPluginUiTestkitInternal<TSurface>(
                 if (!payload.success) {
                     throw fixtureError('invalid_payload', 'openConnectedAccounts payload is invalid.');
                 }
-                await handlers.openConnectedAccounts({ request: payload.data, signal });
-                return undefined;
+                const result = await handlers.openConnectedAccounts({ request: payload.data, signal });
+                return result ?? undefined;
             }
             case 'notify': {
                 if (!handlers.notify) throw fixtureError('unsupported_method', 'notify is not installed.');

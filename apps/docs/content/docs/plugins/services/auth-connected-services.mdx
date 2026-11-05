@@ -65,6 +65,11 @@ account inventory to the plugin.
 In 0.3 development source, Settings pages can open the same host purpose setup
 without a current Session using
 `hostApi.openConnectedAccounts({ service, purpose: { consumer, purpose } })`.
+The returned `OpenConnectedAccountsResult` is
+`{ kind: 'connected' | 'selected', account }` or `{ kind: 'dismissed' }`.
+Use the qualified `account` reference to select the result in your draft; it
+contains no credentials. Older hosts return `undefined`, so re-read your
+account options in that case. Existing callers can keep ignoring the result.
 The consumer is the qualified Action or Resource whose installed declaration
 owns the purpose. The host validates that declaration on the invoking machine,
 offers compatible accounts and pools, and saves the choice through the existing

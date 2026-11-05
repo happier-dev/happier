@@ -2606,6 +2606,9 @@ describe('plugin UI domain client transport adapter', () => {
     it('opens Connected Accounts through semantic service identity without exposing a host route', async () => {
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         let receive: ((message: unknown) => void) | undefined;
+        let result: unknown = { kind: 'selected', account: {
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' }, accountId: 'github:work',
+        } };
         const api = await createPluginUiHostApiClientFromTransport({
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
             identity,
@@ -2623,17 +2626,17 @@ describe('plugin UI domain client transport adapter', () => {
                     if (message.kind === 'request') {
                         receive?.({
                             wireVersion: 1, kind: 'result', identity,
-                            requestId: message.requestId, method: message.method, result: null,
+                            requestId: message.requestId, method: message.method, result,
                         });
                     }
                 },
             },
         });
 
-        await api.openConnectedAccounts({
+        await expect(api.openConnectedAccounts({
             service: { pluginId: 'happier.scm.github', localId: 'github-account' },
             accountId: 'github:work',
-        });
+        })).resolves.toEqual(result);
         expect(sent.at(-1)).toMatchObject({
             kind: 'request',
             method: 'openConnectedAccounts',
@@ -2646,6 +2649,20 @@ describe('plugin UI domain client transport adapter', () => {
 
         await expect(api.openConnectedAccounts({ accountId: 'unqualified' } as never))
             .rejects.toMatchObject({ code: 'invalid_payload' });
+        result = { kind: 'dismissed' };
+        await expect(api.openConnectedAccounts()).resolves.toEqual(result);
+        result = { kind: 'connected', account: { service: { pluginId: 'happier.scm.github', localId: 'github-account' }, accountId: 'github:new' } };
+        await expect(api.openConnectedAccounts()).resolves.toEqual(result);
+        result = { kind: 'selected', account: { service: { pluginId: 'happier.scm.github', localId: 'github-account' }, accountId: 'github:work', token: 'forbidden' } };
+        await expect(api.openConnectedAccounts()).rejects.toMatchObject({ code: 'invalid_payload' });
+        result = { kind: 'selected', account: { service: { pluginId: 'happier.scm.github', localId: 'github-account', token: 'forbidden' }, accountId: 'github:work' } };
+        await expect(api.openConnectedAccounts()).rejects.toMatchObject({ code: 'invalid_payload' });
+        result = { kind: 'dismissed', token: 'forbidden' };
+        await expect(api.openConnectedAccounts()).rejects.toMatchObject({ code: 'invalid_payload' });
+        result = null;
+        await expect(api.openConnectedAccounts()).resolves.toBeUndefined();
+        result = undefined;
+        await expect(api.openConnectedAccounts()).resolves.toBeUndefined();
     });
 
     it('replaces the page location through the host and renders the location the host settled on', async () => {

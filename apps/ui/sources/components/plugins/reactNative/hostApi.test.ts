@@ -627,21 +627,24 @@ describe('canonical React Native plugin Host API adapter', () => {
 
     it('carries only semantic Connected Accounts identity through the native adapter', async () => {
         const requests: PluginUiHostApiRequestEnvelopeV1[] = [];
+        const result = { kind: 'connected', account: {
+            service: { pluginId: 'acme.provider', localId: 'account' }, accountId: 'work',
+        } } as const;
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
             requestSurface: surface,
             requestIdPrefix: 'rn-open-connected-accounts',
             handleRequest: async (request) => {
                 requests.push(request);
-                return null;
+                return result;
             },
             installedMethods: ['openConnectedAccounts'],
         });
 
-        await adapter.api.openConnectedAccounts({
+        await expect(adapter.api.openConnectedAccounts({
             service: { pluginId: 'acme.provider', localId: 'account' },
             accountId: 'work',
-        });
+        })).resolves.toEqual(result);
 
         expect(requests).toContainEqual(expect.objectContaining({
             method: 'openConnectedAccounts',

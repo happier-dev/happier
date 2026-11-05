@@ -1461,6 +1461,20 @@ function readVoiceCredentialTarget(
   });
 }
 
+/** Metadata-only inventory for one declared Voice credential slot across Account and Machines. */
+export function listAccountSettingsVoiceCredentialSecretRefs(
+  settings: Readonly<Record<string, unknown>>,
+  target: Readonly<{ contribution: PluginContributionIdentityV1; credentialSlotId: string }>,
+): readonly string[] {
+  const state = readVoiceCredentialTarget(settings, { ...target, machineId: null });
+  const bindings = ownRecord(state.binding?.credentialBindings);
+  const account = ownRecord(bindings?.account);
+  const byMachineId = ownRecord(bindings?.byMachineId);
+  const references = [account?.[target.credentialSlotId],
+    ...Object.values(byMachineId ?? {}).map(slots => ownRecord(slots)?.[target.credentialSlotId])];
+  return Object.freeze([...new Set(references.filter((reference): reference is string => typeof reference === 'string'))]);
+}
+
 function readSelectedVoiceCredentialSlotReference(
   binding: Readonly<Record<string, unknown>> | null,
   credentialSlotId: string,

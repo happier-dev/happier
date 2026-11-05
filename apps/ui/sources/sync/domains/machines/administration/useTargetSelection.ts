@@ -248,22 +248,6 @@ export function useMachineAdministrationTargetSelection(
     }), [allowSoleCandidate, candidates, snapshots, storedTarget]);
 
     React.useEffect(() => {
-        if (!enabled || !initialTargetPending || !initialTarget || initialTargetIntent.current.applied
-            || initialTargetIntent.current.key !== initialTargetKey) return;
-        const candidate = candidates.find(item => item.target.machineId === initialTarget.machineId
-            && item.target.serverIdentityId === initialTarget.serverIdentityId);
-        if (!candidate || !isMachineAdministrationCandidateExplicitlySelectable(candidate, explicitSelection)) return;
-        const current = storage.getState();
-        if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
-        releaseInitialTarget();
-        const previous = current.settings.machineAdministrationTargetsLocalV1[selectionKey];
-        if (previous?.machineId === candidate.target.machineId && previous.serverIdentityId === candidate.target.serverIdentityId) return;
-        getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: setMachineAdministrationTargetPreference(
-            current.settings.machineAdministrationTargetsLocalV1, selectionKey, candidate.target,
-        ) }, { expectedSettingsScope, source: 'ui' });
-    }, [candidates, enabled, expectedSettingsScope, explicitSelection, initialTarget, initialTargetKey, initialTargetPending, releaseInitialTarget, selectionKey]);
-
-    React.useEffect(() => {
         if (storedTarget || !allowSoleCandidate || targetState.kind !== 'online') return;
         const current = storage.getState();
         if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;

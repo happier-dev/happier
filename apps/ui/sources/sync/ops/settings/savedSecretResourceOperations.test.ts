@@ -34,6 +34,8 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { storage } from '@/sync/domains/state/storage';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { applyAcknowledgedConnectedMetadata } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -2530,6 +2532,30 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1,
             expectedSettingsVersion: account.settingsVersion })).toMatchObject({ ok: false, reason: 'in_use',
             references: [{ owner: 'registrySource', path: 'registrySourcesCatalog.sources[0].token.secretRef' }] });
+        expect(account.writes).toEqual([]);
+    });
+
+    it.each(['plain', 'e2ee'] as const)('refuses deleting a key record a Connected Account still uses, naming that account (%s)', async mode => {
+        const account = await openAccount(mode);
+        const resourceId = 'anthropic-key';
+        const connected = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
+        const credential = {
+            ref: connected, status: 'connected', authenticationModeId: 'api-key', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true, configurationRevision: null, scopes: [],
+            savedSecretResourceIds: [resourceId] } satisfies (typeof profileDefaults.connectedAccountsV4)[number];
+        storage.getState().applyProfileForScope(account.scope, { ...profileDefaults, id: account.scope.accountId, connectedAccountsV4: [{ ...credential, displayName: 'Work credential' },
+            { ...credential, ref: { ...connected, accountId: 'private-routing-handle' } }] });
+        applyAcknowledgedConnectedMetadata(account.scope, { kind: 'presentation', record: { v: 1, entries: [{ v: 1,
+            subject: { kind: 'account', account: connected }, label: 'Chosen credential' }] } }, 1, true);
+        account.setEffect(() => Response.json({ resourceId }));
+        expect(await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1,
+            expectedSettingsVersion: account.settingsVersion })).toMatchObject({ ok: false, reason: 'in_use',
+            references: [{ owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.work',
+                referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Chosen credential' } },
+            { owner: 'connectedAccountCredential',
+                // The incumbent approval harness renders translation keys; the canonical presenter owns this fallback.
+                referrer: { kind: 'connectedAccountCredential', id: 'private-routing-handle',
+                    displayName: 'connectedServicesCollection.accountLabel' } }] });
         expect(account.writes).toEqual([]);
     });
 

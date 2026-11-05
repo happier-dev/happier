@@ -5507,6 +5507,110 @@ describe('PluginSurfacePlacementHost', () => {
         expect(daemon.snapshot).toMatchObject({ revision: '2', values: { name: 'Current write', mode: 'safe' } });
     });
 
+    it('hands the bound Machine to Connected Account setup and returns the selected reference', async () => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show').mockReturnValue('machine-connected-account');
+        const placement = surfacePlacementFixture({
+            binding: { pluginId: 'acme.browser', destinationId: 'notes', rendererId: 'native-panel', container: 'appPage', target: { kind: 'app' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' }, display: { label: 'Notes' },
+        });
+        const target = primeExactTargetedContributions({ pluginId: 'acme.browser', occurrenceId: placement.occurrenceId! });
+        const model = withMountedTargetPackage(generatedReactNativeProjection, target, { displayName: 'Notes', version: '3.2.1' });
+        const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
+            machineId="machine_1" serverId="server-a" platform="web" />);
+        let pending: ReturnType<RenderContext['hostApi']['openConnectedAccounts']> | undefined;
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps.length, surfaceFixtureDiagnostics(screen, 'acme.browser')).toBeGreaterThan(0));
+            const api = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext.hostApi;
+            pending = api.openConnectedAccounts({ service: { pluginId: 'acme.browser', localId: 'account' } });
+            await vi.waitFor(() => expect(show).toHaveBeenCalledOnce());
+            const { captureServerProfileScopeResolver } = await import('@/sync/domains/server/serverProfiles');
+            expect(show.mock.calls[0]![0].props?.request.initialMachineTarget).toEqual({
+                serverIdentityId: captureServerProfileScopeResolver()('server-a'), machineId: 'machine_1',
+            });
+            const selected = { kind: 'selected', account: {
+                service: { pluginId: 'acme.browser', localId: 'account' }, accountId: 'work',
+            } } as const;
+            show.mock.calls[0]![0].props?.onResult(selected);
+            await expect(pending).resolves.toEqual(selected);
+        } finally {
+            show.mock.calls.at(-1)?.[0].onRequestClose?.();
+            await pending;
+            await screen.unmount();
+            show.mockRestore();
+        }
+    });
+
+    it('opens Account purpose setup in place from an app page without a Machine selector', async () => {
+        const pluginId = 'acme.browser';
+        reactNativeSurfaceProps.length = 0;
+        reactNativeSurfaceRuntime.enabled = true;
+        const purpose = { consumer: { pluginId, localId: 'read-page' }, purpose: 'metrics-read' };
+        let pending: Promise<unknown> | undefined;
+        let completed = false;
+        reactNativeSurfaceRuntime.module = Object.freeze({
+            renderSurface: defineUiSurface((context: RenderContext) => <Button testID="account-purpose-page" title="Connect"
+                onPress={() => {
+                    pending = context.hostApi.openConnectedAccounts({ purpose,
+                        service: { pluginId, localId: 'cloud-account' } }).then(() => { completed = true; });
+                    return pending;
+                }} />),
+        });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
+        const lifetime = pluginSurfaceAccountLifetime.value!;
+        const authored = surfacePlacementFixture({
+            binding: { pluginId, destinationId: 'page', rendererId: 'native-panel', container: 'appPage', target: { kind: 'app' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' },
+        });
+        const { occurrenceId: _occurrence, ...declaration } = authored;
+        const placement = { ...declaration, hostSupplies: [], hostCompatibility: 'compatible' as const };
+        const projection = { ...generatedReactNativeProjection,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Account page', version: '1.0.0',
+                enabled: true, source: { kind: 'bundled' as const, locator: pluginId },
+                declaredExecution: { daemonActions: false, contributionPoints: false } } },
+            surfacePlacementsById: { [placement.id]: placement }, actionsById: {},
+        } satisfies PluginUiProjectionModel;
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { router } = await import('expo-router');
+        const push = vi.spyOn(router, 'push');
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show').mockReturnValue('connect-purpose');
+        onTestFinished(() => show.mockRestore());
+        const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: null, serverId: lifetime.scope.serverId, platform: 'web', accountLifetime: lifetime,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {},
+        }}><PluginSurfacePlacementHost placement={placement} pluginUiProjection={projection} platform="web"
+            reactNativeLoaderBackend={{ backendId: 'commonJs', available: true }} />
+        </AppShellPluginUiProjectionValueProvider>);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('account-purpose-page'), surfaceFixtureDiagnostics(screen, pluginId)).not.toBeNull());
+            const { renderContext } = reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext };
+            act(() => screen.findHostByTestId('account-purpose-page')!.props.onPress());
+            await vi.waitFor(() => expect(show).toHaveBeenCalled());
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            expect(completed).toBe(false);
+            const modal = show.mock.calls.at(-1)![0];
+            expect(modal.props?.request).toMatchObject({ scope: lifetime.scope,
+                purposeRequest: { scope: lifetime.scope, purpose }, purposeSettlement: 'resourceDefault',
+                service: { pluginId, localId: 'cloud-account' } });
+            expect(modal.props?.request.purposeRequest).not.toHaveProperty('machineId');
+            expect(push).not.toHaveBeenCalled();
+            modal.onRequestClose?.();
+            await pending;
+            expect(completed).toBe(true);
+            pending = renderContext.hostApi.openConnectedAccounts({ service: { pluginId, localId: 'cloud-account' } });
+            await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
+            show.mock.calls.at(-1)![0].onRequestClose?.();
+            await pending;
+        } finally {
+            show.mock.calls.at(-1)?.[0].onRequestClose?.();
+            try { await pending; }
+            finally { await screen.unmount(); push.mockRestore(); }
+        }
+    });
+
     it('renders unavailable instead of a blank surface for a mismatched evaluated model', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const placement = {

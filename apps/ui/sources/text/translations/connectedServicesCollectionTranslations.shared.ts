@@ -14,6 +14,7 @@ export const en = {
     meterNotReported: 'Not reported',
     meterEstimated: ({ value }: { value: string }) => `~${value}`,
     indexTitle: 'All services',
+    newSecret: 'New secret',
     indexDescription: 'The accounts your agents sign in with, and how much each has left.',
     viewList: 'List',
     viewGrid: 'Grid',

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 import { buildConnectedServiceSetupCatalog } from './buildConnectedServiceSetupCatalog';
@@ -14,7 +14,6 @@ import type { ConnectSheetAccountRequest, ConnectSheetAccountResult } from './Co
 export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     onResult: (result: ConnectSheetAccountResult) => void) {
     const viewer = useActiveServerAccountScope();
-    const profiles = useProfile(profile => profile.connectedAccountsV4);
     const close = React.useCallback(() => onResult({ kind: 'dismissed' }), [onResult]);
     const selectedTarget = React.useMemo(() => request.account ? { kind: 'account' as const, account: request.account } : null, [request.account]);
     const settle = React.useCallback((account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected') =>
@@ -22,10 +21,6 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     const purposeSetup = useConnectedAccountPurposeSetup({ request: request.purposeRequest ?? null,
         selectedTarget, onClose: close,
         ...(request.purposeSettlement === 'resourceDefault' ? { onSettled: settle } : { onSelected: settle }) });
-    const { indexModel } = useConnectedServicesIndex({ agents: 'cached', registry: purposeSetup.registry,
-        targetSelection: request.targetSelection });
-    const catalog = React.useMemo(() => purposeSetup.filterCatalog(buildConnectedServiceSetupCatalog(indexModel)),
-        [indexModel, request.purposeRequest, purposeSetup.declaration]);
     const [target, setTarget] = React.useState<ConnectedServiceSetupTarget>(() => {
         if (!request.service) return { kind: 'catalog' };
         const serviceKey = buildQualifiedPluginContributionKey(request.service);
@@ -37,12 +32,18 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     const machineRequired = machineDemand?.key === demandKey ? machineDemand.required : false;
     const onMachineRequirementChange = React.useCallback((required: boolean) => setMachineDemand(current =>
         current?.key === demandKey && current.required === required ? current : { key: demandKey, required }), [demandKey]);
-    const selectedService = target.kind === 'catalog' ? null : catalog.find(entry => entry.serviceKey === target.serviceKey)?.service;
+    const { indexModel, targetSelection } = useConnectedServicesIndex({
+        agents: machineRequired || target.kind === 'catalog' ? 'load' : 'cached', registry: purposeSetup.registry,
+        targetSelection: request.targetSelection, initialMachineTarget: request.initialMachineTarget,
+        serviceKey: target.kind === 'catalog' ? undefined : target.serviceKey });
+    const catalog = React.useMemo(() => purposeSetup.filterCatalog(buildConnectedServiceSetupCatalog(indexModel)),
+        [indexModel, request.purposeRequest, purposeSetup.declaration]);
+    const selectedService = React.useMemo(() => target.kind === 'catalog' ? null : parseQualifiedPluginContributionKey(target.serviceKey), [target]);
     const services = React.useMemo(() => selectedService ? [selectedService]
         : request.service ? [request.service] : purposeSetup.declaration?.serviceRefs,
         [selectedService, request.service, purposeSetup.declaration]);
-    const savedAccounts = React.useMemo(() => profiles.filter(profile => !services || services.some(service =>
-        service.pluginId === profile.ref.service.pluginId && service.localId === profile.ref.service.localId)), [profiles, services]);
+    const savedAccounts = useProfile(profile => profile.connectedAccountsV4.filter(account => !services || services.some(service =>
+        service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId)));
     const opening = resolveConnectSheetOpening(selectedService ? { ...request, service: selectedService } : request,
         { accounts: savedAccounts, services });
     const onSelected = (account: QualifiedConnectedAccountRef) => {
@@ -54,7 +55,7 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
         else onResult({ kind: 'connected', account });
     };
     return { initialMode: opening.initialMode, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
-        savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, onMachineRequirementChange,
+        savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, targetSelection, onMachineRequirementChange,
         unavailableReason: request.scope !== undefined && !areServerAccountScopesEqual(request.scope, viewer)
             ? 'account_scope_mismatch' as const : purposeSetup.unavailableReason };
 }

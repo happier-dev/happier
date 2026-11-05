@@ -25,10 +25,17 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     deviceStepOpenWhere: (params: Readonly<{ where: string }>) => string;
     deviceStepApprove: (params: Readonly<{ service: string }>) => string;
     deviceCheckNow: string;
+    keyNew: string;
+    keySaved: string;
     keyUse: (params: Readonly<{ name: string }>) => string;
+    keyOwnerApprovesFirst: (params: Readonly<{ owner: string }>) => string;
     keyHowToAdd: string;
+    keyInUseHere: string;
+    keyUsedElsewhereForThis: string;
+    keySearch: string;
     accountNew: string;
     accountSaved: string;
+    keyTitle: string;
     sheetUnavailable: string;
     sheetPurposeUnavailable: string;
     sheetSelectionRequired: string;
@@ -61,10 +68,17 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         deviceStepOpenWhere: ({ where }) => `${where}, signed in to the account you want to use`,
         deviceStepApprove: ({ service }) => `Approve Happier in ${service}`,
         deviceCheckNow: 'Check now',
+        keyNew: 'New key',
+        keySaved: 'Saved key',
         keyUse: ({ name }) => `Use ${name}`,
+        keyOwnerApprovesFirst: ({ owner }) => `${owner} approves first`,
         keyHowToAdd: 'How to add the key',
+        keyInUseHere: 'In use here',
+        keyUsedElsewhereForThis: 'Used elsewhere for this',
+        keySearch: 'Search keys',
         accountNew: 'Add account',
         accountSaved: 'Your accounts',
+        keyTitle: 'Add a key',
         sheetUnavailable: 'This sign-in belongs to another account, so it can’t be changed here.',
         sheetPurposeUnavailable: 'This plugin’s account purpose is unavailable. Reopen the source after the plugin loads.',
         sheetSelectionRequired: 'Choose this account from the machine setup that requested it.',

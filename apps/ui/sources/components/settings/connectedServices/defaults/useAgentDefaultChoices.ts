@@ -5,7 +5,7 @@ import type { useMountedActionExecution } from '@/components/approvals/useMounte
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 
-import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
+import { useConnectedServicesAgents } from '../model/useConnectedServicesAgents';
 import {
     buildAgentDefaultChoices,
     type AgentDefaultChoice,
@@ -26,7 +26,7 @@ export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeB
     disabledReason: string | undefined;
     execution: ReturnType<typeof useMountedActionExecution>;
 }> {
-    const { agentEntries, agentsKnown, appShellProjection } = useConnectedServicesIndex({ agents: 'cached' });
+    const { agentEntries, agentsKnown, appShellProjection } = useConnectedServicesAgents({ agents: 'cached' });
     const { catalog, legacySettings, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
     const agents = agentsKnown ? agentEntries : NO_AGENTS;
     const choices = React.useMemo(

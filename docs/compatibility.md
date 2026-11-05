@@ -4216,6 +4216,18 @@ development readers reject the new Set arm. Released V1 operation projections
 continue omitting these development-only details. No admission, credential,
 isolation identity, wire epoch, migration or alternate cause carrier is added.
 
+Unreleased 0.3 `openConnectedAccounts` returns the existing Connect settlement:
+connected/selected with a qualified account reference, or dismissed. The result,
+account identity and nested service identity are closed; unknown fields and
+credential material reject at the SDK transport reader. Its canonical reader
+normalizes only legacy null/absent acknowledgements to `undefined`, allowing the
+caller to re-read account options. Existing SDK readers discard a result, so
+old-reader/new-host calls retain their behavior. No request, method capability,
+wire epoch (1), semantic Host API generation, runtime ABI or package
+version changes. The scoped-clean moving 0.2 predecessor at
+`512915f3ccf4a29a8454b74ad9db6ca72079d916` has no Plugin SDK UI host contract.
+This is an additive development response, not a released-package claim.
+
 Unreleased 0.3 External Action locality refusals retain their selector or
 locality phase in the existing Action failure details. Exact matching Machine
 targets remain supported; admission decisions and error codes are unchanged.

@@ -9,6 +9,8 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { ConnectSheetKeyBindingTarget } from './connectSheetKeyBindings';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
@@ -20,7 +22,8 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 
 import { ConnectSheetContent } from './ConnectSheetContent';
 
-export type ConnectSheetAccountResult = Readonly<{ kind: 'connected' | 'selected'; account: QualifiedConnectedAccountRef }>
+export type ConnectSheetAccountResult = Exclude<PluginUiOpenConnectedAccountsResultV1, undefined>;
+export type ConnectSheetKeyResult = Readonly<{ kind: 'connected' | 'selected'; secretRef: string }>
     | Readonly<{ kind: 'dismissed' }>;
 export type ConnectSheetAccountRequest = Readonly<{
     scope?: AccountSettingsScope | null;
@@ -34,8 +37,14 @@ export type ConnectSheetAccountRequest = Readonly<{
     initialMachineTarget?: MachineAdministrationTargetV1 | null;
     targetSelection?: MachineAdministrationTargetSelectionV1;
 }>;
-export type ConnectSheetRequest = ConnectSheetAccountRequest;
-export type ConnectSheetResult = ConnectSheetAccountResult;
+export type ConnectSheetKeyRequest = Readonly<{
+    service: Readonly<{ kind: 'key'; suggestedName?: string; keyKind?: 'apiKey' | 'token' | 'password' | 'other' }>;
+    scope?: AccountSettingsScope | null;
+    current?: string;
+    bindingTarget?: ConnectSheetKeyBindingTarget;
+}>;
+export type ConnectSheetRequest = ConnectSheetAccountRequest | ConnectSheetKeyRequest;
+export type ConnectSheetResult = ConnectSheetAccountResult | ConnectSheetKeyResult;
 
 export type ConnectSheetContentProps = CustomModalInjectedProps & Readonly<{
     request: ConnectSheetRequest;
@@ -47,6 +56,7 @@ export type ConnectSheetContentProps = CustomModalInjectedProps & Readonly<{
  * "Sign in again", or Connect from a surface without room. Same panel, same controller; a modal on
  * wide screens and a sheet on phones through the modal owner.
  */
+export function presentConnectSheet(request: ConnectSheetKeyRequest): Promise<ConnectSheetKeyResult>;
 export function presentConnectSheet(request: ConnectSheetAccountRequest): Promise<ConnectSheetAccountResult>;
 export function presentConnectSheet(request: ConnectSheetRequest): Promise<ConnectSheetResult> {
     const lifetime = captureActiveServerAccountScopeLifetime();

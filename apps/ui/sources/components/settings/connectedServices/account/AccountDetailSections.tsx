@@ -450,8 +450,8 @@ export const AccountDetailUsedBySection = React.memo(function AccountDetailUsedB
     testID?: string;
 }>) {
     const router = useRouter();
-    const { indexModel } = useConnectedServicesIndex({ agents: 'cached' });
     const serviceKey = buildQualifiedPluginContributionKey(props.account.service);
+    const { indexModel } = useConnectedServicesIndex({ agents: 'cached', serviceKey });
     const sheet = indexModel.sheets.find((candidate) => candidate.serviceKey === serviceKey);
     if (!sheet || sheet.usedBy.length === 0) return null;
     const agentIdByTitle = new Map(sheet.usedBy.map((title, index) => [title, sheet.usedByAgentIds[index] ?? null]));

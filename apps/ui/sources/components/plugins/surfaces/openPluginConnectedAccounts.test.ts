@@ -32,14 +32,17 @@ function request(payload: unknown): PluginUiHostApiRequestEnvelopeV1 {
 
 describe('createPluginOpenConnectedAccountsHostApiHandler', () => {
     it('forwards only a validated semantic service/account request', async () => {
-        const open = vi.fn(async () => undefined);
+        const result = { kind: 'selected' as const, account: {
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' }, accountId: 'github:work',
+        } };
+        const open = vi.fn(async () => result);
         const handler = createPluginOpenConnectedAccountsHostApiHandler(open);
         const payload = {
             service: { pluginId: 'happier.scm.github', localId: 'github-account' },
             accountId: 'github:work',
         };
 
-        await expect(handler(request(payload))).resolves.toBeNull();
+        await expect(handler(request(payload))).resolves.toEqual(result);
         expect(open).toHaveBeenCalledWith(payload);
 
         const invalid = await handler(request({ accountId: 'unqualified' }));
@@ -48,7 +51,7 @@ describe('createPluginOpenConnectedAccountsHostApiHandler', () => {
     });
 
     it('refuses navigation after the mount retires', async () => {
-        const open = vi.fn(async () => undefined);
+        const open = vi.fn(async () => ({ kind: 'dismissed' as const }));
         const handler = createPluginOpenConnectedAccountsHostApiHandler(open, () => false);
 
         await expect(handler(request({}))).resolves.toMatchObject({ code: 'stale_surface' });

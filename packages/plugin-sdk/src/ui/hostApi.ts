@@ -456,6 +456,9 @@ export type OpenConnectedAccountsRequest =
         purpose?: Readonly<{ consumer: PluginUiContributionIdentityV1; purpose: string }>;
     }>;
 
+/** The selected account reference, dismissal, or no result from an older host. */
+export type OpenConnectedAccountsResult = import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenConnectedAccountsResultV1;
+
 export interface PluginUiHostApi {
     /**
      * Native/declarative page areas use this shared host binding; the host stamps identity and
@@ -560,11 +563,13 @@ export interface PluginUiHostApi {
      * Open Happier's canonical Connected Accounts UI, optionally focused on an
      * exact service or qualified account. The host owns routing and admission;
      * plugins never receive credentials or an internal route.
+     * Resolves with the chosen account or dismissal. Older hosts return
+     * undefined; callers can re-read their existing account options.
      */
     openConnectedAccounts(
         request?: OpenConnectedAccountsRequest,
         options?: PluginCancellationOptions,
-    ): Promise<void>;
+    ): Promise<OpenConnectedAccountsResult>;
     /**
      * Replace THIS full-page surface's own location without adding a history
      * entry, and declare the one page-internal step system Back returns to.

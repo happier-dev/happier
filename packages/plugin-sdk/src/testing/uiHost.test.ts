@@ -19,7 +19,7 @@ import {
 import { isPluginError, PluginError } from '../errors.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import { definePlugin } from '../definePlugin.js';
-import type { ComposerContentHandleV1, ComposerSnapshotV1 } from '../ui/hostApi.js';
+import type { ComposerContentHandleV1, ComposerSnapshotV1, OpenConnectedAccountsResult } from '../ui/hostApi.js';
 import {
     createPluginUiTestkit,
     createSurfaceContextFixture,
@@ -47,6 +47,24 @@ const identity = {
 const initialSurface = createSurfaceContextFixture();
 const firstDigest = `sha256:${'1'.repeat(64)}`;
 const secondDigest = `sha256:${'2'.repeat(64)}`;
+
+it('returns Connect account references through the real fixture host and SDK client', async () => {
+    let result: OpenConnectedAccountsResult = { kind: 'selected', account: {
+        service: { pluginId: 'com.acme.source', localId: 'account' }, accountId: 'work',
+    } };
+    const fixture = await createPluginUiTestkit({ identity,
+        authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, surface: { kind: 'author-surface' },
+        surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { openConnectedAccounts: async () => result },
+    });
+    try {
+        await expect(fixture.context.hostApi.openConnectedAccounts()).resolves.toEqual(result);
+        result = { kind: 'dismissed' };
+        await expect(fixture.context.hostApi.openConnectedAccounts()).resolves.toEqual(result);
+        result = undefined;
+        await expect(fixture.context.hostApi.openConnectedAccounts()).resolves.toBeUndefined();
+    } finally { await fixture.dispose(); }
+});
 
 function targetedSurfaceAdmissionFixture(input: Readonly<{
     targetGeneration?: string;

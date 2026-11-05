@@ -53,6 +53,15 @@ describe('describeConnectedAccountsNeedingSignIn', () => {
 });
 
 describe('listConnectedAccountsNeedingSignIn', () => {
+    it('does not claim that absent or unknown health needs sign-in', () => {
+        expect(listConnectedAccountsNeedingSignIn({
+            profile: { connectedServicesV2: [], connectedAccountsV4: [
+                { ref: { service, accountId: 'unknown' }, status: 'future-status' },
+                { ref: { service, accountId: 'absent' } },
+            ] },
+            accountTransport: 'advertised-v4', entries: [entry],
+        })).toEqual([]);
+    });
     it('lists the qualified accounts whose credentials need signing in again, with their service', () => {
         const result = listConnectedAccountsNeedingSignIn({
             profile: {

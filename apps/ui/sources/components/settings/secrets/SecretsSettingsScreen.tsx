@@ -11,6 +11,7 @@ import { SecretsSettingsPage } from '@/components/settings/secrets/SecretsSettin
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { savedSecretUsedByCopy } from '@/components/secrets/savedSecretRowCopy';
 import { Modal } from '@/modal';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -206,7 +207,10 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     ) => {
         if (result.reason === 'in_use') {
             Modal.alert(t('secrets.catalog.inUseTitle'), t('secrets.catalog.inUseBody', {
-                places: result.references.map((reference) => reference.path).join('\n'),
+                places: result.references.map((reference) => {
+                    const { title, subtitle } = savedSecretUsedByCopy(reference);
+                    return [title, subtitle].filter(Boolean).join(' · ');
+                }).join('\n'),
             }));
             return;
         }

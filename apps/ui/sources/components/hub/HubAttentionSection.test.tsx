@@ -125,7 +125,7 @@ afterEach(async () => {
     clearMachineRequestReachabilityForTest();
     await connection?.dispose();
     connection = undefined;
-    await setActiveServerId(initialServerId);
+    if (initialServerId) await setActiveServerId(initialServerId);
     if (state.serverId) await removeServerProfile(state.serverId);
     if (studioId) await removeServerProfile(studioId);
     studioId = undefined;
@@ -138,7 +138,7 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-function account(accountId: string, status: 'connected' | 'needs_reauth') {
+function account(accountId: string, status: 'connected' | 'needs_reauth' | 'refresh_failed_retryable' | 'refreshing') {
     return QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service: SERVICE, accountId }, status,
         authenticationModeId: 'oauth', revisionSemantics: 'legacy_unfenced', credentialRevision: null,
         configurationRevision: null, configurationReady: true, scopes: [] });
@@ -220,6 +220,25 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
 }
 
 describe('HubAttentionSection', () => {
+    it('does not serialize sign-in facts on health arrivals and still shows a new sign-in need', async () => {
+        state.loginState = 'logged_in';
+        state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-ok', 'connected')] };
+        const { screen } = await renderSection();
+        const stringify = vi.spyOn(JSON, 'stringify');
+        try {
+            for (const status of ['refresh_failed_retryable', 'connected', 'refreshing'] as const) {
+                await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile,
+                    connectedAccountsV4: [account('acct-ok', status)] }); });
+            }
+            const signInSerializations = stringify.mock.calls.filter(([value]) => value && typeof value === 'object'
+                && Object.keys(value).length === 2 && 'connectedAccountsV4' in value && 'connectedServicesV2' in value);
+            expect(signInSerializations).toHaveLength(0);
+            expect(screen.getTextContent()).toBe('');
+            await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile,
+                connectedAccountsV4: [account('acct-ok', 'needs_reauth')] }); });
+            expect(screen.findByTestId('settings-overview-attention.service:happier.example/subscription/acct-ok.action')).not.toBeNull();
+        } finally { stringify.mockRestore(); await screen.unmount(); }
+    });
     it('keeps Home attention usable when its selected Agents machine has unknown presence', async () => {
         state.loginState = 'logged_out';
         state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-1', 'needs_reauth')] };

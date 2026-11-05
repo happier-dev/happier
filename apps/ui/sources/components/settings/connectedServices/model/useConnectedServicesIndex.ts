@@ -1,11 +1,9 @@
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import * as React from 'react';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import { useConnectedServicesAgentUses } from './useConnectedServicesAgents';
 
-import { AGENT_IDS } from '@/agents/catalog/catalog';
-import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
-    useAppShellPluginUiProjection,
     useProjectedConnectedServicesRegistry,
     useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -17,13 +15,8 @@ import {
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPreferredLanguage, t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
-import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
 import { buildProviderGatewayCollection, areProviderGatewayDeclarationsKnown, providerConnectionDetailRoute,
     type ProviderGatewayCollectionRow } from '../../providers/collection/providerCollectionModel';
@@ -35,7 +28,6 @@ import { randomUUID } from '@/platform/randomUUID';
 
 import {
     buildConnectedServicesIndexModel,
-    type ConnectedServicesIndexAgentUse,
 } from './buildConnectedServicesIndexModel';
 import { presentConnectedServiceIndexDiagnostics } from './presentConnectedServiceIndexDiagnostics';
 import { resolveConnectedServiceRegistryEntryDisplayName, resolveQualifiedConnectedServiceRegistryDisplayName } from './resolveConnectedServiceDisplayName';
@@ -49,6 +41,7 @@ import { resolveConnectedServiceRegistryEntryDisplayName, resolveQualifiedConnec
  * `agents: 'cached'` only reads what this launch already holds, so a hub never asks a machine.
  */
 const NO_GATEWAYS: readonly ProviderGatewayCollectionRow[] = Object.freeze([]);
+const NO_ACCOUNTS = Object.freeze([]);
 
 /** A gateway row with what it draws on, as the rail and the phone's index show it. */
 export type ConnectedServicesGatewayRow = ProviderGatewayCollectionRow & Readonly<{ summary: string }>;
@@ -56,17 +49,11 @@ const ADD_GATEWAY_KEY = 'gateway:add';
 const NO_MACHINE_TARGET = () => null;
 
 export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached'; gateways?: boolean; registry?: ConnectedServiceRegistrySnapshot;
-    targetSelection?: MachineAdministrationTargetSelectionV1 }>) {
-    const profile = useProfile();
-    const scope = useActiveServerAccountScope();
+    targetSelection?: MachineAdministrationTargetSelectionV1; initialMachineTarget?: MachineAdministrationTargetV1 | null;
+    serviceKey?: string }>) {
+    const { scope, targetSelection, appShellProjection, agentEntries, agentsKnown, agentUses } = useConnectedServicesAgentUses(options);
     // The Account catalog is the saved payload authority, independent of Machine admission.
     const gatewayCatalog = useProviderCatalog(options.gateways ? scope : null);
-    const appShellProjection = useAppShellPluginUiProjection();
-    const projectionMachineId = appShellProjection.accountLifetime?.isCurrent()
-        && areServerAccountScopesEqual(appShellProjection.accountLifetime.scope, scope)
-        && selectActiveServerAccountScopeForServer(scope, appShellProjection.serverId)
-        ? appShellProjection.machineId : null;
-    const sourceMachineId = options.agents === 'load' ? projectionMachineId : null;
     // The last loaded catalog stays listed while it reloads; only a current one may add another.
     const gatewayRows = React.useMemo(() => {
         if (!gatewayCatalog?.data) return null;
@@ -113,10 +100,7 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         : gatewayCatalog && gatewayCatalog.status !== 'ready'
             ? { kind: 'catalog' as const, catalog: gatewayCatalog.catalog }
             : { kind: 'declaration' as const };
-    const purposeCatalog = useConnectedAccountCatalog('purposes', scope, { sourceMachineId });
     const settings = useSettingsSelector((settings) => ({
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
     }));
     const focusedRegistry = useProjectedConnectedServicesRegistry();
@@ -134,28 +118,20 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
     const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });
     const transport = resolveConnectedAccountUiNegotiation(serverFeatures);
 
-    const daemonAgentProjection = useDaemonMergedProjectionInputs({
-        machineId: appShellProjection.machineId,
-        serverId: appShellProjection.serverId,
-        enabled: Boolean(appShellProjection.machineId),
-        load: options.agents === 'load',
-    });
-    const agentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
-        enabledAgentIds: AGENT_IDS,
-        mergedProviderProjectionById: daemonAgentProjection.inputs?.mergedProviderProjectionById ?? null,
-        mergedBackendProjectionById: daemonAgentProjection.inputs?.mergedBackendProjectionById ?? null,
-    }), [
-        daemonAgentProjection.inputs?.mergedBackendProjectionById,
-        daemonAgentProjection.inputs?.mergedProviderProjectionById,
-    ]);
-    // The catalog owner supplies admitted bundled declarations while no daemon
-    // projection is available. Dynamic Agents still need their projected row.
-    const agentsKnown = agentEntries.some((agent) => agent.identity !== null);
-
-    const legacyServices = profile.connectedServicesV2;
-    const qualifiedAccounts = transport === 'advertised-v4' ? profile.connectedAccountsV4 ?? [] : [];
-    const qualifiedGroups = transport === 'advertised-v4' ? profile.connectedAccountGroupsV4 ?? [] : [];
-    const registryEntries = registrySnapshot.entries;
+    const legacyServices = useProfile(profile => options.serviceKey === undefined ? profile.connectedServicesV2
+        : profile.connectedServicesV2.filter(service => {
+            const entry = getLegacyConnectedServiceRegistryEntry(service.serviceId);
+            return entry.service && buildQualifiedPluginContributionKey(entry.service) === options.serviceKey;
+        }));
+    const qualifiedAccounts = useProfile(profile => transport !== 'advertised-v4' ? NO_ACCOUNTS
+        : options.serviceKey === undefined ? profile.connectedAccountsV4
+            : profile.connectedAccountsV4.filter(account => buildQualifiedPluginContributionKey(account.ref.service) === options.serviceKey));
+    const qualifiedGroups = useProfile(profile => transport !== 'advertised-v4' ? NO_ACCOUNTS
+        : options.serviceKey === undefined ? profile.connectedAccountGroupsV4
+            : profile.connectedAccountGroupsV4.filter(group => buildQualifiedPluginContributionKey(group.ref.service) === options.serviceKey));
+    const registryEntries = React.useMemo(() => options.serviceKey === undefined ? registrySnapshot.entries
+        : registrySnapshot.entries.filter(entry => entry.service
+            && buildQualifiedPluginContributionKey(entry.service) === options.serviceKey), [registrySnapshot.entries, options.serviceKey]);
 
     const visibleRegistryEntries = React.useMemo(() => {
         if (transport !== 'legacy') return registryEntries;
@@ -174,38 +150,6 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         }
         return [...byQualifiedService.values()];
     }, [transport, registryEntries, legacyServices]);
-
-    const agentUses = React.useMemo((): readonly ConnectedServicesIndexAgentUse[] | null => {
-        const purposeBindings = purposeCatalog.value;
-        if (!agentsKnown || purposeCatalog.status !== 'ready' || purposeCatalog.stale || !purposeBindings) return null;
-        return agentEntries
-            .filter((agent) => agent.connectedAccounts.length > 0)
-            .map((agent) => ({
-                agentId: agent.agentId,
-                title: agent.title,
-                services: agent.connectedAccounts.map((declaration) => declaration.service),
-                defaults: agent.identity
-                    ? resolveAgentConnectedAccountPurposeDefaults({
-                        settings: {
-                            connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-                            connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-                        },
-                        purposeBindings,
-                        agentId: agent.agentId,
-                        consumer: agent.identity,
-                        declarations: agent.connectedAccounts,
-                    }).flatMap((entry) => entry.target ? [entry.target] : [])
-                    : [],
-            }));
-    }, [
-        agentEntries,
-        agentsKnown,
-        purposeCatalog.status,
-        purposeCatalog.stale,
-        purposeCatalog.value,
-        settings.connectedServicesDefaultAuthByAgentIdV1,
-        settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    ]);
 
     const indexModel = React.useMemo(() => buildConnectedServicesIndexModel({
         transport,
@@ -237,6 +181,7 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
     ]);
 
     return {
+        targetSelection,
         indexModel,
         gateways,
         gatewaysKnown,
@@ -250,7 +195,6 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         addGatewayError: gatewayMutation.error,
         gatewayApproval: gatewayMutation.pendingApproval,
         gatewayCatalog,
-        purposeCatalog,
         transport,
         agentEntries,
         agentsKnown,

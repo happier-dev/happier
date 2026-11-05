@@ -24,6 +24,7 @@ import {
     PluginUiOpenNewSessionRequestV1Schema,
     PluginUiOpenAutomationEventRequestV1Schema,
     PluginUiOpenConnectedAccountsRequestV1Schema,
+    PluginUiOpenConnectedAccountsResultV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
@@ -1398,7 +1399,11 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertInstalled('openConnectedAccounts');
             const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(request);
             if (!payload.success) throwHostApiError('invalid_payload');
-            await transport.request('openConnectedAccounts', payload.data, options);
+            const result = PluginUiOpenConnectedAccountsResultV1Schema.safeParse(
+                await transport.request('openConnectedAccounts', payload.data, options),
+            );
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
         },
         openSurface: async (destination, input, options) => {
             assertActive(options?.signal);

@@ -3131,6 +3131,7 @@
 | `./ui` | `MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1` | value | any |
 | `./ui` | `OpenAutomationEventRequest` | type | any |
 | `./ui` | `OpenConnectedAccountsRequest` | type | any |
+| `./ui` | `OpenConnectedAccountsResult` | type | any |
 | `./ui` | `OpenNewSessionOptions` | type | any |
 | `./ui` | `OpenNewSessionRequest` | type | any |
 | `./ui` | `OpenSurfaceOptions` | type | any |

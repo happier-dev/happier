@@ -147,6 +147,7 @@ export type QualifiedPoolDetailViewProps = Readonly<{
     error?: string | null;
     onShareWithTeam?: () => void;
     onConnectAccount?: () => void;
+    settled?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
     /** Clock for countdowns; the live page passes nothing. */
     now?: number;
@@ -681,6 +682,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                     </View>
                 ) : undefined}
             />
+            {props.settled}
             {nameDraft !== null ? (
                 <ItemGroup>
                     <SectionContentRow>

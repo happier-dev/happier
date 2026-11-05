@@ -19,8 +19,6 @@ import { presentConnectedAccountNames } from '@/sync/domains/connectedServices/q
 import { t } from '@/text';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 
 import { ConnectedServiceMark } from '../ConnectedServiceMark';
 import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionApprovalNotice';
@@ -32,10 +30,17 @@ import {
 } from './ConnectedServiceSetupPanel';
 import type {
   ConnectSheetAccountRequest,
+  ConnectSheetKeyRequest,
   ConnectSheetContentProps,
 } from './ConnectedServiceSetupModal';
 import { useConnectAccountSheetModel } from './useConnectAccountSheetModel';
 import { useConnectSheetHeading } from './useConnectSheetHeading';
+
+import { ConnectKeySheetBody } from './ConnectKeySheetBody';
+
+import { isConnectSheetKeyRequest } from './connectSheetOpening';
+
+import { useConnectKeySheetModel } from './useConnectKeySheetModel';
 
 type SheetMode = 'new' | 'saved';
 
@@ -66,6 +71,50 @@ function SheetModeSwitch(
       onSelectTab={props.onChange}
       testIDPrefix="connect-sheet:mode"
     />
+  );
+}
+
+function ConnectKeySheetLeaf(
+  props: ConnectSheetContentProps &
+    Readonly<{ request: ConnectSheetKeyRequest }>,
+) {
+  const { theme } = useUnistyles();
+  const model = useConnectKeySheetModel(props.request);
+  const suggestedName = props.request.service.suggestedName;
+  // A key asked for by something (a provider, a field) is "Add a key"; Credentials' own "+" is a new secret.
+  const requested = Boolean(
+    props.request.bindingTarget ||
+      props.request.current !== undefined ||
+      props.request.service.keyKind,
+  );
+  useConnectSheetHeading(props, {
+    title:
+      suggestedName ??
+      (requested
+        ? t('connectedServicesSetup.keyTitle')
+        : t('connectedServicesCollection.newSecret')),
+    subtitle: '',
+    leading: <Icon name="key" size={18} color={theme.colors.text.secondary} />,
+    leadingKey: 'key',
+    bodyScroll: 'none',
+  });
+  return (
+    <View style={[styles.frame, styles.bounded]}>
+      <ConnectKeySheetBody
+        catalog={model.catalog}
+        linkableEntries={model.linkableEntries}
+        initialMode={model.initialMode}
+        preselected={model.preselected}
+        loading={model.loading}
+        scope={props.request.scope ?? null}
+        currentRef={props.request.current ?? null}
+        sameTargetRefs={model.sameTargetRefs}
+        suggestedName={suggestedName}
+        submitLabel={requested ? t('connectedServicesSettings.keySave') : undefined}
+        onResult={props.onResult}
+        onCancel={() => props.onResult({ kind: 'dismissed' })}
+      />
+    </View>
   );
 }
 
@@ -182,22 +231,16 @@ function ConnectAccountSheetLeaf(
 
   // The machine a sign-in runs on: chosen here, so the band can show it beside the title (lab crConnect),
   // and handed to the sign-in below. Read only while the chosen method needs a machine (58c).
-  const ownTargetSelection = useMachineAdministrationTargetSelection(
-    MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
-    {
-      enabled: props.request.targetSelection === undefined && model.machineRequired,
-      ...(props.request.initialMachineTarget !== undefined ? { initialTarget: props.request.initialMachineTarget } : {}),
-    },
-  );
-  const targetSelection = props.request.targetSelection ?? ownTargetSelection;
-  const machineChip = React.useMemo(() => model.machineRequired && mode === 'new' ? (
+  const targetSelection = model.targetSelection;
+  const showTargetSelector = mode === 'new' && (model.machineRequired || model.target.kind === 'catalog');
+  const machineChip = React.useMemo(() => showTargetSelector ? (
     <MachineAdministrationTargetSelector
       selection={targetSelection}
       disabled={Boolean(purposeRequest)}
       presentation="chip"
       testIDPrefix="connected-service-setup-target"
     />
-  ) : null, [mode, model.machineRequired, purposeRequest, targetSelection]);
+  ) : null, [showTargetSelector, purposeRequest, targetSelection]);
 
   // A repair names its account once, as the band's quiet second line under "Sign in to … again" (owner 11-01):
   // who it is, never a card of its own.
@@ -353,6 +396,8 @@ function ConnectAccountSheetLeaf(
  */
 export function ConnectSheetContent(props: ConnectSheetContentProps) {
   const request = props.request;
+  if (isConnectSheetKeyRequest(request))
+    return <ConnectKeySheetLeaf {...props} request={request} />;
   return <ConnectAccountSheetLeaf {...props} request={request} />;
 }
 
