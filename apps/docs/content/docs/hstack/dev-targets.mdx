@@ -971,7 +971,7 @@ On platforms without `flock`, each command performs its own flush.
 
 In current development, you can run commands from a sibling checkout through
 the 0.3 executor by putting `--repo=/absolute/path/to/checkout` before its other
-options. The sibling uses command-only mirrors on `mac2-linux` and
+options. The sibling uses command-only mirrors on `nl3` and
 `windows2-linux` by default. Both endpoints use `no-watch`; new mirrors need one
 initial synchronization, and each dispatch crosses the selected target's normal
 flush barrier. Dependencies and mandatory UI postinstall outputs are prepared
@@ -981,7 +981,7 @@ Set a different subset from 0.3 through the existing placement command:
 
 ```bash
 node apps/stack/scripts/repo_local.mjs dev-targets placement set commands auto \
-  --repo=/absolute/path/to/0.2 --targets=mac2-linux,windows2-linux --fallback=local
+  --repo=/absolute/path/to/0.2 --targets=nl3,windows2-linux --fallback=local
 ```
 
 The optional 0.2 `./apps/stack/bin/hstack-exec -- <command> [args...]` wrapper

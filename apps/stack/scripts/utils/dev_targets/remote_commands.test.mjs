@@ -1913,7 +1913,7 @@ test('the real UI hit area native probe has no workspace dist demand', async () 
   assert.deepEqual(commandPolicy.resolveCommandWorkspaceLocks(policy, repoRoot), []);
 });
 
-test('host and first-party plugin source Vitest skip emitted publication while resolver overrides retain preparation', () => {
+test('host and first-party plugin source Vitest skip emitted publication while resolver overrides retain preparation', async () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/u, '');
   const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
@@ -1930,7 +1930,7 @@ test('host and first-party plugin source Vitest skip emitted publication while r
       }] : []),
     ];
     for (const { args, kind, heavyClass = 'validation' } of cases) {
-      const policy = resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: join(root, component) });
+      const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot: root, cwd: join(root, component) });
       assert.equal(policy.kind, kind);
       assert.equal(policy.heavyClass, heavyClass);
       if (process.platform !== 'win32') {
@@ -2626,8 +2626,8 @@ test('remote narrow stack operations keep literal CLI arguments and retained sta
   }
 });
 
-test('CLI command prerequisites distinguish Vitest setup from generator-only projection checks', () => {
-  const vitest = resolveRemoteCommandPolicy(['corepack', 'yarn', '--cwd', 'apps/cli', 'vitest', 'run', 'src/example.test.ts']);
+test('CLI command prerequisites distinguish Vitest setup from generator-only projection checks', async () => {
+  const vitest = await commandPolicy.resolvePackageCommandPolicy(['corepack', 'yarn', '--cwd', 'apps/cli', 'vitest', 'run', 'src/example.test.ts']);
   const projection = resolveRemoteCommandPolicy(['corepack', 'yarn', '--cwd', 'apps/cli', 'test:migration:bundled-plugin-projections']);
   assert.equal(vitest.requiredTools, 'go');
   assert.equal(vitest.heavyClass, 'validation', 'non-compiling focused requests retain validation');
@@ -2782,6 +2782,10 @@ printf 'prepared-native' > "$output"
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '',
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '',
     };
+    const policies = new Map(await Promise.all(['apps/cli', 'packages/plugin-ui'].map(async component => [
+      component, await commandPolicy.resolvePackageCommandPolicy(['vitest', 'run', 'src/example.test.ts'],
+        { repoRoot: checkout, cwd: join(checkout, component) }),
+    ])));
     const run = (component, buildMode) => {
       // Bind scratch at the worker process boundary, before remote custody
       // starts. The fixture owns its teardown; per-dispatch scratch reclamation
@@ -2792,9 +2796,10 @@ printf 'prepared-native' > "$output"
         HAPPIER_DEV_TARGET_EXECUTION: placement === 'remote' ? '1' : '',
         ...(buildMode ? { HAPPIER_WORKSPACE_BUILD_MODE: buildMode } : {}) };
       if (placement === 'remote') {
+        const policy = policies.get(component);
         const command = buildRemoteExecCommand({ ...posix, repoDir: checkout, cliHomeDir: join(root, 'home'), remotePath: [bin] }, {
           executionId, cwd: component, commandArgs: ['vitest', 'run', 'src/example.test.ts'],
-          admissionClass: resolveRemoteCommandPolicy(['vitest', 'run', 'src/example.test.ts'], { repoRoot: checkout, cwd: join(checkout, component) }).heavyClass,
+          admissionClass: policy.heavyClass, commandPolicy: policy,
           environment: commandEnvironment,
           preparation: { componentRelativeDir: component, validationKind: 'source-test' },
         });
@@ -4839,7 +4844,7 @@ test('CLI integration skips publication and compilation admission only when setu
     const skipped = ['1', 'true', ' YES '].includes(value);
     const env = { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: value };
     await t.test(value || 'unset', async () => {
-      const policy = resolveRemoteCommandPolicy(args, { cwd, env });
+      const policy = await commandPolicy.resolvePackageCommandPolicy(args, { cwd, env });
       assert.equal(policy.kind, skipped ? 'source-test' : 'runtime');
       assert.equal(policy.heavyClass, skipped ? 'validation' : 'compilation');
       if (skipped) {
@@ -4870,7 +4875,7 @@ test('CLI integration skips publication and compilation admission only when setu
   for (const selection of [[], ['src/plugins/scaffold/scaffold.integration.test.ts']]) {
     const compilerArgs = [...args.slice(0, 6), ...selection];
     const env = { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: '1' };
-    const policy = resolveRemoteCommandPolicy(compilerArgs, { cwd, env });
+    const policy = await commandPolicy.resolvePackageCommandPolicy(compilerArgs, { cwd, env });
     assert.equal(policy.kind, 'source-test');
     assert.equal(policy.heavyClass, 'compilation', selection.join(' ') || 'whole integration suite');
     if (process.platform === 'win32') continue;

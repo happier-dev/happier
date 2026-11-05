@@ -257,7 +257,7 @@ test('native sync readiness artifact executes the same canonical first-cycle and
 test('sibling checkout projection isolates mirror roots and defaults to the small command pool', () => {
   const config = {
     version: 3,
-    targets: ['mac2-linux', 'windows2-linux', 'other'].map(name => ({
+    targets: ['nl3', 'windows2-linux', 'other', 'mac2-linux'].map(name => ({
       name, platform: 'posix', ssh: name, repoDir: '/workspace-mirror/0.3', cliHomeDir: '/home/worker',
     })),
     runtimePlacement: { server: { mode: 'local' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
@@ -270,6 +270,9 @@ test('sibling checkout projection isolates mirror roots and defaults to the smal
   assert.match(output, /^target_1_automatic='1'$/m);
   assert.match(output, /^target_2_automatic='1'$/m);
   assert.match(output, /^target_3_automatic='0'$/m);
+  assert.match(output, /^target_4_automatic='0'$/m);
+  assert.deepEqual(resolveCommandRepositoryConfig(config, { repoRoot: '/workspace/other-sibling', executorRepoRoot: '/workspace/0.3' }).commandExecution.targets, ['nl3', 'windows2-linux']);
+  assert.match(renderNativeExecutionProjection(config, { repoRoot: '/workspace/other-sibling', executorRepoRoot: '/workspace/0.3' }), /^target_1_repo_dir='\/workspace-mirror\/other-sibling'$/m);
   assert.equal(JSON.stringify(config), before);
 });
 
@@ -285,7 +288,7 @@ test('sibling command configuration preserves placement overrides and excludes s
   await writeFile(join(repoRoot, 'yarn.lock'), '# sibling lock');
   const config = {
     version: 3,
-    targets: ['mac2-linux', 'windows2-linux', 'other'].map(name => ({
+    targets: ['nl3', 'windows2-linux', 'other', 'mac2-linux'].map(name => ({
       name, platform: 'posix', ssh: name, repoDir: '/mirror/0.3', cliHomeDir: '/home/worker',
     })),
     runtimePlacement: { server: { mode: 'prefer-target', target: 'mac2-linux' }, expo: { mode: 'local' }, daemon: { mode: 'local' } },
@@ -293,7 +296,7 @@ test('sibling command configuration preserves placement overrides and excludes s
   };
   await writeFile(configPath, JSON.stringify(config));
   const prepared = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
-  assert.deepEqual(prepared.config.commandExecution.targets, ['mac2-linux', 'windows2-linux']);
+  assert.deepEqual(prepared.config.commandExecution.targets, ['nl3', 'windows2-linux']);
   const targets = prepared.config.targets.filter(target => prepared.config.commandExecution.targets.includes(target.name));
   const project = renderMutagenProject({ sourceDir: repoRoot, targets, config: prepared.config });
   assert.doesNotMatch(project, /portable|pollingInterval|happier-other/);
@@ -537,7 +540,7 @@ test('sibling service mirrors retain explicit placement without enrolling mac-ho
     repoDir: '/mirror/0.2', cliHomeDir: '/home/mac' };
   const parent = { version: 3, targets: [
     { ...target, repoDir: '/mirror/0.3' },
-    { ...target, name: 'mac2-linux', ssh: 'worker-ssh', repoDir: '/worker/0.3' },
+    { ...target, name: 'nl3', ssh: 'worker-ssh', repoDir: '/worker/0.3' },
   ] };
   const runtimeConfig = { version: 3, targets: [target], runtimePlacement: {
     server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' },
@@ -547,7 +550,7 @@ test('sibling service mirrors retain explicit placement without enrolling mac-ho
   const config = resolveCommandRepositoryConfig(parent, {
     repoRoot: '/source/0.2', executorRepoRoot: '/source/0.3', runtimeConfig,
   });
-  assert.deepEqual(config.commandExecution.targets, ['mac2-linux']);
+  assert.deepEqual(config.commandExecution.targets, ['nl3']);
   assert.equal(config.targets.find(t => t.name === 'mac-host')?.repoDir, '/mirror/0.2');
   assert.deepEqual(config.runtimePlacement, runtimeConfig.runtimePlacement);
   const projection = renderNativeExecutionProjection(config, { repoRoot: '/source/0.2' });
@@ -589,7 +592,7 @@ test('sibling preparation reads its own persisted service placement', async t =>
     repoDir: '/mirror/0.2', cliHomeDir: '/home/mac' };
   await writeFile(configPath, JSON.stringify({ version: 3, targets: [
     { ...target, repoDir: '/mirror/0.3' },
-    { ...target, name: 'mac2-linux', ssh: 'worker', repoDir: '/worker/0.3' },
+    { ...target, name: 'nl3', ssh: 'worker', repoDir: '/worker/0.3' },
   ] }));
   const identity = resolveRepoStackIdentity({ repoRoot, stacksStorageRoot: env.HAPPIER_STACK_STORAGE_DIR, createIfMissing: false });
   await mkdir(identity.stackBaseDir, { recursive: true });
@@ -602,6 +605,6 @@ test('sibling preparation reads its own persisted service placement', async t =>
   const prepared = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false, env });
   assert.equal(prepared.config.targets.find(t => t.name === 'mac-host')?.repoDir, '/mirror/0.2');
   assert.equal(prepared.config.runtimePlacement.server.target, 'mac-host');
-  assert.deepEqual(prepared.config.commandExecution.targets, ['mac2-linux']);
+  assert.deepEqual(prepared.config.commandExecution.targets, ['nl3']);
   assert.equal(JSON.parse(await readFile(prepared.path, 'utf8')).runtimePlacement.server.target, 'mac-host');
 });

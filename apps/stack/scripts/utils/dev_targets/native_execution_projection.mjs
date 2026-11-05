@@ -32,7 +32,7 @@ export function resolveCommandRepositoryConfig(config, { repoRoot, executorRepoR
     throw new Error('[dev-targets] --repo must identify an absolute sibling checkout');
   }
   const name = basename(repoRoot);
-  const defaults = ['mac2-linux', 'windows2-linux'].filter(name => normalized.targets.some(target => target.name === name && target.platform === 'posix'));
+  const defaults = ['nl3', 'windows2-linux'].filter(name => normalized.targets.some(target => target.name === name && target.platform === 'posix'));
   // Automatic commands use workers; service placement keeps its host while
   // every sibling source gets its own directory in that host's mirror parent.
   const requested = commandExecution ?? (defaults.length ? { mode: 'auto', targets: defaults, fallback: 'local' } : { mode: 'local' });

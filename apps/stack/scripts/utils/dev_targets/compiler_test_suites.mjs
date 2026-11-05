@@ -1,6 +1,9 @@
 import { createRequire } from 'node:module';
-import { posix } from 'node:path';
+import { existsSync } from 'node:fs';
+import { posix, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveVitestForwardArgs } from '../../../../../scripts/testing/vitestForwardArgs.mjs';
+import { waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 // Evidence-backed compiler consumers shared by both command dispatchers.
 export const COMPILER_NATIVE_TEST_FILES = Object.freeze([
@@ -58,18 +61,18 @@ export const COMPILER_TEST_SUITES = Object.freeze([
   ].map(suite => Object.freeze({ ...suite, configs: Object.freeze(suite.configs), compilerFiles: Object.freeze(suite.compilerFiles) })));
 
 const requireVitest = createRequire(new URL('../../../../../apps/ui/package.json', import.meta.url));
-// Load the package's ESM entry as ESM. The source-runtime loader must not
-// reinterpret Vitest's import-only dependencies through CommonJS require.
-const { parseCLI } = await import(requireVitest.resolve('vitest/node'));
-export function refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompilerSetup = false) {
-  if (policy.compilerSuite !== '1' || facts.admissionWrapper === '1') return;
+export async function refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompilerSetup = false, env = process.env) {
+  if (facts.admissionWrapper === '1') return;
+  const focusedSource = policy.kind === 'source-test' && policy.workerTool === 'vitest'
+    && policy.heavyClass === 'validation';
+  if (policy.compilerSuite !== '1' && !focusedSource) return;
   const suite = COMPILER_TEST_SUITES.find(candidate =>
     candidate.component === facts.component && candidate.configs.includes(facts.config));
-  if (!suite || (suite.compilerSetup && !skipCompilerSetup)) return;
-  const filters = readVitestFileFilters(facts);
+  if (!focusedSource && (!suite || (suite.compilerSetup && !skipCompilerSetup))) return;
+  const filters = await readVitestFileFilters(facts, env);
   if (!filters.length) return;
-  const packageRoot = posix.join(repoRoot.replaceAll('\\', '/'), suite.component);
-  const selectedCompiler = suite.compilerFiles.some(file => {
+  const packageRoot = posix.join(repoRoot.replaceAll('\\', '/'), facts.component);
+  const selectedCompiler = suite?.compilerFiles.some(file => {
     const path = `${packageRoot}/${file}`;
     return filters.some(value => {
       const absolute = /^(?:\/|[a-z]:\/)/iu.test(value);
@@ -80,18 +83,28 @@ export function refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompil
         || file.toLocaleLowerCase().includes(relativeFilter.toLocaleLowerCase());
     });
   });
-  if (!selectedCompiler) {
+  if (policy.compilerSuite === '1' && !selectedCompiler) {
     policy.heavyClass = 'validation';
     policy.localCompile = '0';
   }
+  if (policy.kind === 'source-test' && policy.workerTool === 'vitest' && policy.heavyClass === 'validation'
+    && filters.length === 1 && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filters[0])
+    && existsSync(resolve(repoRoot, facts.component, filters[0]))) {
+    policy.heavyClass = facts.component === 'apps/ui' ? 'focused-validation-ui'
+      : facts.component === 'apps/cli' ? 'validation' : 'focused-validation';
+  }
 }
 
-export function readVitestFileFilters(facts) {
+async function readVitestFileFilters(facts, env) {
   let args = facts.vitestArguments;
   if (facts.entry === 'runVitestShards.mjs' && facts.component === 'apps/cli') {
     args = resolveVitestForwardArgs(['node', facts.entry, ...args]);
   }
   if (!args.length) return [];
+  await waitForDependencyRefresh({ installDir: fileURLToPath(new URL('../../../../../', import.meta.url)), env });
+  // Preserve ESM loading: the source-runtime loader cannot require Vitest's
+  // import-only dependency graph. Resolution follows the installer's wait.
+  const { parseCLI } = await import(pathToFileURL(requireVitest.resolve('vitest/node')).href);
   // Vitest owns option parsing: option values are never file selections.
   try {
     const { filter } = parseCLI(['vitest', ...(args[0] === 'run' ? args : ['run', ...args])]);

@@ -23,7 +23,7 @@ import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs'
 import { resolveRemoteValidationPlacementClass } from './validation_preparation_policy.mjs';
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
-import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, readVitestFileFilters, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
+import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
 import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
 
@@ -825,6 +825,12 @@ export async function isSelfDispatchingPackageCommand(commandArgs, { repoRoot = 
   return Boolean(match && resolve(packageDir, match[1]) === resolve(repoRoot, 'apps/stack/bin/hstack-exec'));
 }
 export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = COMMAND_REPO_ROOT, env = process.env, packageDir } = {}) {
+  return resolveCommandPolicyContext(commandArgs, { cwd, repoRoot, env, packageDir }).policy;
+}
+
+// The synchronous classifier uses authored source only. Complete launcher
+// policy resolution refines test selections after dependency publication.
+function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAND_REPO_ROOT, env = process.env, packageDir } = {}) {
   cwd = packageDir ?? cwd;
   let facts = normalizeCommandArguments(commandArgs, cwd, repoRoot);
   if (['node', 'nodejs'].includes(facts.command) && facts.entryRepositoryPath === 'scripts/workspaces/buildTypeScriptPackageDist.mjs') {
@@ -884,18 +890,6 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
   if ((policy.kind === 'source-test' || facts.component === 'apps/cli') && policy.workerTool === 'vitest' && policy.generatorCheck === '0') {
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
   }
-  refineCompilerSuiteSelection(policy, facts, repoRoot, skipCompilerSetup);
-  if (policy.kind === 'source-test' && policy.workerTool === 'vitest'
-    && policy.heavyClass === 'validation' && facts.admissionWrapper === '0') {
-    const filters = readVitestFileFilters(facts);
-    if (filters.length === 1 && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filters[0])
-      && existsSync(resolve(repoRoot, facts.component, filters[0]))) {
-      // CLI's measured 1,601,992 KiB peak fits the existing validation envelope.
-      policy.heavyClass = facts.component === 'apps/ui' ? 'focused-validation-ui'
-        : facts.component === 'apps/cli' ? 'validation'
-          : 'focused-validation';
-    }
-  }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
     && facts.nativeTestPath && facts.nativeLoader === '0' && !env.NODE_OPTIONS) {
     const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPath);
@@ -914,7 +908,7 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
     }
     if (HEAVYWEIGHT_COMPILE_CLASSES.includes(policy.heavyClass)) policy.localCompile = '1';
   }
-  return { ...policy, component: normalizeCommandPath(facts.component) };
+  return { policy: { ...policy, component: normalizeCommandPath(facts.component) }, facts, skipCompilerSetup };
 }
 
 /** Finite work owns publication resources, not installed-tree consumption.
@@ -1070,7 +1064,8 @@ async function resolveComposedCommandPolicy(commandArgs, options) {
     const cwd = await resolveCommandPackageDirectory(context, options.repoRoot ?? COMMAND_REPO_ROOT);
     return resolvePackageCommandPolicy(context.args, { ...options, cwd: cwd ?? context.cwd, packageDir: undefined });
   }
-  const policy = resolveRemoteCommandPolicy(commandArgs, options);
+  const { policy, facts: policyFacts, skipCompilerSetup } = resolveCommandPolicyContext(commandArgs, options);
+  await refineCompilerSuiteSelection(policy, policyFacts, options.repoRoot ?? COMMAND_REPO_ROOT, skipCompilerSetup, options.env);
   if (policy.kind !== 'typecheck' || policy.component !== 'apps/cli'
     || facts.entry !== 'runTypeScriptCli.mjs') return policy;
   const projects = [];
@@ -2930,7 +2925,7 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
       return 0;
     }
     if (vitestPolicy) {
-      const policy = resolveRemoteCommandPolicy(commandArgs, { repoRoot, cwd });
+      const policy = await resolveComposedCommandPolicy(commandArgs, { repoRoot, cwd });
       for (const key of ['kind', 'workspaceLock', 'requiredTools', 'heavyClass', 'localCompile']) {
         process.stdout.write(`policy_${key}=${posixQuote(policy[key])}\n`);
       }
