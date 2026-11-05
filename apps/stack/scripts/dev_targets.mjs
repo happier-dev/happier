@@ -1,7 +1,4 @@
-import { configureDevTargetPower, inspectDevTargetPower } from './utils/dev_targets/worker_power.mjs';
-import { provisionManagedWslDevTarget } from './utils/dev_targets/managed_wsl.mjs';
 import './utils/env/env.mjs';
-import { loadControlledRuntimeConfig, resolveControlledQaBrowserTarget } from './utils/dev_targets/service_placement.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -16,33 +13,11 @@ import {
   resolveDevTargetsConfigPath,
   upgradeDevTargetsConfigToVersion3,
 } from './utils/dev_targets/config.mjs';
-import { runDevTargetsDoctor } from './utils/dev_targets/doctor.mjs';
 import { spawnForegroundCommand } from './utils/proc/proc.mjs';
-import {
-  applyManagedDevTargetCapacity,
-  doctorManagedDevTargetRuntime,
-} from './utils/dev_targets/managed_runtime.mjs';
-import { prepareDevTargetHost, provisionPosixDevTarget, provisionQaDevTarget } from './utils/dev_targets/provision.mjs';
-import { runQaBrowserSession, runQaBrowserSignin } from './utils/dev_targets/qa_browser.mjs';
-import { provisionManagedLimaDevTarget } from './utils/dev_targets/managed_worker.mjs';
-import {
-  inspectDevTargetAdmission,
-  inspectDevTargetSync,
-  runDevTargetCommand,
-  syncDevTarget,
-} from './utils/dev_targets/executor.mjs';
 import { describeDevTargetSyncRecovery } from './utils/dev_targets/mutagen_runtime.mjs';
-import {
-  inspectDevTargetSyncService,
-  startDevTargetSyncService,
-  stopDevTargetSyncService,
-  waitForDevTargetSyncMonitor,
-} from './utils/dev_targets/sync_service.mjs';
-import { prepareCommandRepository, writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
-import { moveRetainedServerData } from './utils/dev_targets/retained_server_data.mjs';
-import { readStackEnvObject } from './stack/stack_environment.mjs';
 
 async function configureWorkerPower(target) {
+  const { configureDevTargetPower } = await import('./utils/dev_targets/worker_power.mjs');
   const results = await configureDevTargetPower({ target });
   for (const result of results) {
     if (!result.ok) process.stderr.write(`[dev-targets] ${target.name} ${result.role}: sleep configuration failed: ${result.detail}\n`);
@@ -311,6 +286,7 @@ function setTargetCapacity(config, targetName, mode, kv) {
 }
 
 async function writeConfig(path, config, repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')) {
+  const { writeNativeExecutionProjection } = await import('./utils/dev_targets/native_execution_projection.mjs');
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
@@ -391,6 +367,7 @@ async function main() {
   }
 
   if (command === 'browser' && positionals[1] === 'signin') {
+    const { runQaBrowserSignin } = await import('./utils/dev_targets/qa_browser.mjs');
     const result = await runQaBrowserSignin({ sessionName: positionals[2], stackName,
       rootDir: executorRepoRoot, cdpHttpUrl: kv.get('--cdp') });
     process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -407,6 +384,7 @@ async function main() {
       || (command === 'placement' && positionals[1] === 'set' && positionals[2] !== 'commands')) {
       throw new Error('[dev-targets] --repo scopes command placement and mirror inspection/synchronization only');
     }
+    const { prepareCommandRepository } = await import('./utils/dev_targets/native_execution_projection.mjs');
     const prepared = await prepareCommandRepository({
       configPath: loaded.path, executorRepoRoot, repoRoot: commandRepoRoot, synchronize: false,
     });
@@ -415,6 +393,7 @@ async function main() {
   }
   if (loaded.config.targets.length === 0 && (command === 'move-server'
     || (command === 'placement' && positionals[1] === 'set' && positionals[2] === 'qa'))) {
+    const { loadControlledRuntimeConfig } = await import('./utils/dev_targets/service_placement.mjs');
     const inherited = await loadControlledRuntimeConfig({ stackName, env: process.env });
     loaded = { ...loaded, config: inherited.config };
   }
@@ -423,6 +402,8 @@ async function main() {
     return;
   }
   if (command === 'qa' && positionals[1] === 'setup') {
+    const { loadControlledRuntimeConfig } = await import('./utils/dev_targets/service_placement.mjs');
+    const { provisionQaDevTarget } = await import('./utils/dev_targets/provision.mjs');
     const controlled = await loadControlledRuntimeConfig({ stackName, env: process.env });
     const target = requireTarget(controlled.config.targets, positionals[2], 'qa setup');
     const result = await provisionQaDevTarget({ target, stackName,
@@ -442,6 +423,9 @@ async function main() {
     if (flags.has('--worker-loopback-url') && !kv.get('--worker-loopback-url')) {
       throw new Error('[dev-targets] browser --worker-loopback-url requires an HTTP loopback URL');
     }
+    const { readStackEnvObject } = await import('./stack/stack_environment.mjs');
+    const { resolveControlledQaBrowserTarget } = await import('./utils/dev_targets/service_placement.mjs');
+    const { runQaBrowserSession } = await import('./utils/dev_targets/qa_browser.mjs');
     const { env: stackEnv } = await readStackEnvObject(stackName);
     const browserEnv = { ...process.env, ...stackEnv };
     const controlled = await resolveControlledQaBrowserTarget({ stackName, targetName, env: browserEnv });
@@ -468,6 +452,8 @@ async function main() {
   }
   if (command === 'move-server') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
+    const { loadControlledRuntimeConfig } = await import('./utils/dev_targets/service_placement.mjs');
+    const { moveRetainedServerData } = await import('./utils/dev_targets/retained_server_data.mjs');
     const { authority } = await loadControlledRuntimeConfig({ stackName, env: process.env });
     const result = await moveRetainedServerData({
       target, stackName, stackBaseDir: dirname(loaded.path), config: loaded.config, env: process.env,
@@ -529,6 +515,8 @@ async function main() {
     if (requestedName && targets.length === 0) {
       throw new Error(`[dev-targets] target not found: ${requestedName}`);
     }
+    const { runDevTargetsDoctor } = await import('./utils/dev_targets/doctor.mjs');
+    const { inspectDevTargetSync } = await import('./utils/dev_targets/executor.mjs');
     const toolDiagnosis = await runDevTargetsDoctor({ targets, stackBaseDir: dirname(path), env: process.env });
     const diagnosedTargets = await Promise.all(toolDiagnosis.targets.map(async (observed, index) => {
       const synchronization = await inspectDevTargetSync({
@@ -561,6 +549,9 @@ async function main() {
   }
   if (command === 'status') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
+    const { inspectDevTargetSync, inspectDevTargetAdmission } = await import('./utils/dev_targets/executor.mjs');
+    const { doctorManagedDevTargetRuntime } = await import('./utils/dev_targets/managed_runtime.mjs');
+    const { inspectDevTargetPower } = await import('./utils/dev_targets/worker_power.mjs');
     const [status, managedRuntime, admission, powerPolicy] = await Promise.all([
       inspectDevTargetSync({
         target,
@@ -627,6 +618,7 @@ async function main() {
         kv,
       );
       const force = flags.has('--force');
+      const { applyManagedDevTargetCapacity } = await import('./utils/dev_targets/managed_runtime.mjs');
       if (force) await writeConfig(path, desired.config);
       const applied = await applyManagedDevTargetCapacity({
         target: desired.target,
@@ -650,6 +642,7 @@ async function main() {
   }
   if (command === 'sync') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
+    const { syncDevTarget } = await import('./utils/dev_targets/executor.mjs');
     const sync = await syncDevTarget({
       target,
       stackBaseDir: dirname(loaded.path),
@@ -663,6 +656,7 @@ async function main() {
     return;
   }
   if (command === 'sync-service') {
+    const { inspectDevTargetSyncService, startDevTargetSyncService, stopDevTargetSyncService, waitForDevTargetSyncMonitor } = await import('./utils/dev_targets/sync_service.mjs');
     const action = String(positionals[1] ?? 'status').trim().toLowerCase();
     const stackBaseDir = dirname(loaded.path);
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -784,6 +778,7 @@ async function main() {
     } else {
       // Windows origins and targets require the cross-platform SSH adapter;
       // POSIX-origin command routing uses the native execution owner above.
+      const { runDevTargetCommand } = await import('./utils/dev_targets/executor.mjs');
       result = await runDevTargetCommand({
         target,
         stackBaseDir: dirname(loaded.path),
@@ -813,6 +808,7 @@ async function main() {
     if (targets.some(target => target.platform !== 'posix')) throw new Error('[dev-targets] host prepare supports Linux workers only');
     if (flags.has('--tailscale-authkey-stdin') && targets.length !== 1) throw new Error('[dev-targets] auth-key stdin requires exactly one target');
     // Password entry belongs to the owner terminal; process one worker at a time.
+    const { prepareDevTargetHost } = await import('./utils/dev_targets/provision.mjs');
     for (const target of targets) {
       process.stderr.write(`[dev-targets] preparing ${target.name}; enter its sudo password if prompted\n`);
       const prepared = await prepareDevTargetHost({ target, allLinux, growRoot: flags.has('--grow-root'), noSleep: flags.has('--no-sleep'),
@@ -909,6 +905,7 @@ async function main() {
         : { platform: 'windows', ssh: kv.get('--outer-ssh'), sshConfigFile: kv.get('--outer-ssh-config-file') };
       const cpus = requireCapacityInteger(kv.get('--dedicated-cpus'), '--dedicated-cpus');
       const memoryGiB = requireCapacityInteger(kv.get('--dedicated-memory-gib'), '--dedicated-memory-gib');
+      const { provisionManagedWslDevTarget } = await import('./utils/dev_targets/managed_wsl.mjs');
       candidate = await provisionManagedWslDevTarget({
         name: name.toLowerCase(), outerTarget, stackBaseDir: dirname(path),
         instance: kv.get('--wsl-instance') ?? `HappierWorker-${name.toLowerCase()}`,
@@ -953,6 +950,7 @@ async function main() {
           new URL('./provision/linux-guest-pressure.sh', import.meta.url),
           'utf8',
         );
+        const { provisionManagedLimaDevTarget } = await import('./utils/dev_targets/managed_worker.mjs');
         candidate = await provisionManagedLimaDevTarget({
           name,
           host,
@@ -974,6 +972,7 @@ async function main() {
         if (kv.get('--lima-instance') || kv.get('--lima-home') || kv.get('--lima-profile')) {
           throw new Error('[dev-targets] Lima flags require --managed-lima when provisioning with --host');
         }
+        const { provisionPosixDevTarget } = await import('./utils/dev_targets/provision.mjs');
         candidate = await provisionPosixDevTarget({
           name,
           host,
