@@ -332,6 +332,7 @@ const COMMAND_RULES = [
     'apps/stack/scripts/utils/dev_targets/remote_validation_preparation.test.mjs',
     'apps/stack/scripts/utils/dev_targets/mutagen_project.test.mjs',
     'apps/stack/scripts/utils/dev_targets/qa_browser.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/qa_browser_recovery.integration.test.mjs',
     'apps/stack/scripts/utils/stack/stop_remote.test.mjs',
     'apps/stack/scripts/utils/proc/ownership_killProcessGroupOwnedByStack.test.mjs',
     'apps/stack/scripts/utils/proc/native_process_identity.test.mjs',

@@ -566,6 +566,10 @@ async function runQaBrowserAttempt({ target, stackName, stackBaseDir, sessionNam
     await readyTask;
     if (failure) throw failure;
     if (!cancelled && !readiness) throw new Error('[dev-targets] QA browser exited before CDP readiness');
+    if (!cancelled) {
+      throw Object.assign(new Error('[dev-targets] remote QA browser worker exited unexpectedly (0); browser session ended; acquire a new browser'),
+        { code: 'qa-browser-worker-exited' });
+    }
   } finally {
     lifecycleFinished = true;
     abort.abort();

@@ -879,7 +879,8 @@ test(`QA browser backs off dropped SSH forwards, restores its bindings, and sett
   } finally {
     if (recoveryEnd === 'worker exit') finishWorker({ code: 0 });
     else signalSource.emit('SIGINT');
-    await result;
+    if (recoveryEnd === 'worker exit') await assert.rejects(result, { code: 'qa-browser-worker-exited' });
+    else await result;
   }
   t.mock.timers.tick(60_000);
   await new Promise(setImmediate);
@@ -933,7 +934,7 @@ test('admitted browser survives pending recovery beyond acquisition window and s
     await new Promise(setImmediate);
     assert.equal(closed, false, 'admission timeout must never retire a browser already held by a lane');
     finishWorker({ code: 0 });
-    await assert.doesNotReject(result, 'a successful worker exit must not become an HTTP AbortError');
+    await assert.rejects(result, { code: 'qa-browser-worker-exited' }, 'worker loss must settle as a terminal failure rather than an HTTP AbortError');
     assert.equal(forwards, 2);
   } finally {
     signals.emit('SIGINT');
