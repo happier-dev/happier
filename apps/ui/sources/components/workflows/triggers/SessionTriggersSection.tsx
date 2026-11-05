@@ -14,6 +14,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useIsFocused, useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { useAutomationRunNowController } from '@/components/automations/list/useAutomationRunNowController';
@@ -105,7 +106,17 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                 </View>
             )}
         >
-            {props.status === 'failed' ? (
+            {props.status === 'failed' ? empty ? (
+                // Nothing of this section's own is held: the section's inline failure on the rows' edge (the
+                // freshness strip is only for retained content).
+                <SurfaceStateCard
+                    testID="session-work-triggers-failed"
+                    size="line"
+                    kind="error"
+                    title={t('workflows.triggers.section.loadFailed')}
+                    action={{ testID: 'session-work-triggers-failed-action', label: t('workflows.triggers.popover.tryAgain'), onPress: props.onRetry }}
+                />
+            ) : (
                 <SurfaceFreshnessLine
                     testID="session-work-triggers-failed"
                     tone="warning"

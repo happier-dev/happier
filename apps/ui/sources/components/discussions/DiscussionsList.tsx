@@ -64,8 +64,12 @@ const styles = StyleSheet.create((theme) => ({
     root: { flex: 1, minHeight: 0, minWidth: 0 },
     list: { flex: 1, minHeight: 0 },
     listContent: { flexGrow: 1, paddingBottom: theme.space.s8 },
+    // With the host's sections after it, the list is one section of a flow: it never grows to push them down.
+    listContentFlow: { paddingBottom: theme.space.s8 },
     stateLine: { paddingHorizontal: theme.space.s8 },
     invite: { paddingTop: theme.space.s20, paddingHorizontal: theme.space.s12 },
+    // The pane's invite opens right under its section label; the state's own frame holds its air.
+    paneInvite: { paddingHorizontal: theme.space.s12 },
     freshness: { paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s6 },
     archivedDisclosure: {
         minHeight: HAPPIER_PAGE_METRICS.controlHeightPx,
@@ -482,7 +486,7 @@ function DiscussionsListReady(props: Readonly<{
                     );
                 }
                 return (
-                    <View style={styles.invite}>
+                    <View style={styles.paneInvite}>
                         <SurfaceStateCard
                             testID="session-conversations-empty"
                             kind="empty"
@@ -661,7 +665,7 @@ function DiscussionsListReady(props: Readonly<{
             ) : null}
             <FlatList
                 style={styles.list}
-                contentContainerStyle={styles.listContent}
+                contentContainerStyle={props.footer ? styles.listContentFlow : styles.listContent}
                 accessibilityRole="list"
                 accessibilityLabel={t('session.collaboration.conversations')}
                 data={items}

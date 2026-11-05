@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, View, type LayoutChangeEvent, type ViewProps } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SessionAccessEditor } from '@/components/sessions/access/SessionAccessEditor';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -16,6 +16,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
+import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -48,11 +49,14 @@ import { SessionExternalSharingAvailabilitySection } from './SessionExternalShar
 import { SessionCollaborationAccessCard, projectSessionCollaborationAccessCard } from './SessionCollaborationAccessCard';
 import { SessionShareMorphFrame, useShareMorph, useShareMorphCoveredStyle, type ShareMorphRect } from './SessionShareMorph';
 
+const BODY_FOOT_FADE = Object.freeze({ bottom: true });
+
 const WebInertView = View as React.ComponentType<ViewProps & Readonly<{ inert?: boolean }>>;
 
 const styles = StyleSheet.create((theme) => ({
     surface: { flex: 1, minHeight: 0, minWidth: 0 },
-    column: { flex: 1, minHeight: 0, minWidth: 0, paddingTop: theme.space.s4 },
+    // The pane's header band ends in its own air: the first row starts at the band's edge, as in every pane.
+    column: { flex: 1, minHeight: 0, minWidth: 0 },
     // Only the conversations flex, so their list stays the one scroller and the
     // present line, Responsible and the access card stay put around it.
     body: { flex: 1, minHeight: 0, minWidth: 0 },
@@ -370,6 +374,7 @@ function SessionCollaborationNamedAccessPane(props: PaneProps) {
 
 function SessionCollaborationPane(props: PaneProps & Readonly<{ access: SessionAccessEditorController | null; namedAccess: boolean }>) {
     const { refs, publicLink } = props;
+    const { theme } = useUnistyles();
     const morph = useShareMorph(props.shareOpen);
     const coveredStyle = useShareMorphCoveredStyle(morph.clock, morph.coveredEnd);
     const [container, setContainer] = React.useState<Readonly<{ w: number; h: number }> | null>(null);
@@ -431,6 +436,9 @@ function SessionCollaborationPane(props: PaneProps & Readonly<{ access: SessionA
                                 {followSections}
                             </ScrollView>
                         )}
+                        {/* The access card is pinned at the foot: what scrolls on above it softens into the pane at its
+                            edge instead of being cut flat against the card. */}
+                        {showCard ? <ScrollEdgeFades color={theme.colors.surface.base} edges={BODY_FOOT_FADE} /> : null}
                     </View>
                     {/* User ruling 2026-09-29: who has access and Responsible are one block at the foot. */}
                     {showCard ? (
