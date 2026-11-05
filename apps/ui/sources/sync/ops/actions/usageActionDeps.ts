@@ -172,7 +172,7 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       const abort = () => retired.abort();
       context.signal?.addEventListener('abort', abort, { once: true });
       try {
-        const { deliverUsageImageFileResult } = await import('@/components/settings/usage/usageAnalyticsExport');
+        const { deliverUsageImageFileResult } = await import('@/components/settings/usage/usageImageFile');
         account.assertCurrent();
         const result = await deliverUsageImageFileResult(file, intent, { signal: retired.signal,
           isCurrent: () => { account.assertCurrent(); return true; } });

@@ -33,7 +33,7 @@ import { UsageRecapPublicOutput, type UsageRecapPublicOutputKind } from './Usage
 import { t } from '@/text';
 import {
   captureUsageViewPng,
-} from '../../usageAnalyticsExport';
+} from '../../usageImageFile';
 import { UsageStatCard } from './UsageStatCard';
 import {
   buildUsageStatCardModel,
