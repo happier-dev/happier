@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Animated, Platform, View, type LayoutChangeEvent } from 'react-native';
-import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
+import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { admitInternalRouteHref } from '@/utils/path/routeUtils';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';

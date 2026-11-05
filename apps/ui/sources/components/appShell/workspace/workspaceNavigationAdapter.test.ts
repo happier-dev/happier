@@ -1298,4 +1298,24 @@ describe('workspace navigation adapter', () => {
     expect(h.state().focusedGroupId).toBe('group:1');
     expect(h.active().target.params).toEqual({ id: 'A1', serverId: 'home-a' });
   });
+  it.each(['git', 'files', 'terminal'].flatMap(tool => ['url', 'replace'].map(entry => ({ tool, entry }))))(
+    'keeps phone /$tool selection and its return in the same Session destination through $entry', ({ tool, entry }) => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.initialize('/session/A1?serverId=home-a&mobileSurface=chat');
+    const tabId = h.active().id;
+    for (const href of [
+      `/session/A1/${tool}?serverId=home-a`,
+      '/session/A1?serverId=home-a&mobileSurface=chat',
+      `/session/A1/${tool}?serverId=home-a`,
+      '/session/A1?serverId=home-a&mobileSurface=companion',
+      '/session/A1/terminal?serverId=home-a',
+      '/session/A1?serverId=home-a&mobileSurface=chat',
+    ]) {
+      expect(entry === 'url' ? h.adapter.acceptUrl(href) : h.adapter.openHref(href, { replace: true })).toBe(true);
+      expect(h.active().id).toBe(tabId);
+      expect(Object.keys(h.state().tabs)).toEqual([tabId]);
+      expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(href);
+    }
+  });
+
 });

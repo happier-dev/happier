@@ -8,6 +8,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState, SESSION_PANE_URL_PARAM_KEYS } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { resolveSessionCockpitRouteFromPathname } from '@/components/workspaceCockpit/session/sessionCockpitState';
 
 export type WorkspaceOpenOptions = Readonly<{
     mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown';
@@ -75,7 +76,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             || (!pane?.details && !pane?.rightTabId && pane?.bottomTabId === 'terminal');
     };
     const sessionIdentity = (ref: DestinationRef) => {
-        if (ref.kind !== 'session' && ref.kind !== 'sessionDetails' && !isSessionTerminal(ref)) return null;
+        const routedSession = ref.params.workspacePathname
+            ? resolveSessionCockpitRouteFromPathname(ref.params.workspacePathname) : null;
+        if (ref.kind !== 'session' && ref.kind !== 'sessionDetails'
+            && (!routedSession || routedSession.sessionId !== ref.params.id)) return null;
         const scope = input.getScope?.();
         const serverId = ref.params.serverId ?? scope?.serverId;
         // Missing qualifiers denote the current persisted workspace realm,
@@ -90,6 +94,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             && (candidate.serverId === identity.serverId || areServerProfileIdentifiersEquivalent(candidate.serverId, identity.serverId))
             && candidate.accountId === identity.accountId;
     };
+    const isSessionPhoneSelection = (current: DestinationRef, target: DestinationRef) =>
+        sameSessionIdentity(current, target) && current.kind !== 'sessionDetails' && target.kind !== 'sessionDetails'
+        && (current.params.workspacePathname !== undefined || target.params.workspacePathname !== undefined
+            || current.params.mobileSurface !== undefined || target.params.mobileSurface !== undefined);
     // A Project is one resource per Home: opening it again goes to its tab, like a Session.
     const projectIdentity = (ref: DestinationRef) => ref.kind === 'project' && ref.params.workspaceRefId
         ? { id: ref.params.workspaceRefId, serverId: ref.params.serverId ?? input.getScope?.()?.serverId } : null;
@@ -216,6 +224,9 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const sourceTab = state.tabs[options.tabId ?? state.groups[openingGroupId].activeTabId];
             const sourceEntry: WorkspaceNavigationEntry | undefined = sourceTab
                 ? { tabId: sourceTab.id, groupId: openingGroupId, target: sourceTab.target } : undefined;
+            if (options.replace && mode === 'preview' && sourceTab && isSessionPhoneSelection(sourceTab.target, target)) {
+                options = { ...options, tabId: sourceTab.id, reuseExisting: false };
+            }
             let finishOpen: ((opened: WorkspaceNavigationEntry) => void) | undefined = undefined;
             const keepSourcePreview = !options.replace && sourceTab?.preview
                 && shouldRetainWorkspaceDestinationPreview(sourceTab.target, target, input.getCatalog(), input.getScope?.());
@@ -377,9 +388,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             // Phone chrome mirrors an already selected pane into its fullscreen route.
             // That handoff (and its return) keeps the destination, Account lifetime and retained
             // source slot. An independently addressed Details resource still opens separately.
-            const sameSession = (current.target.kind === 'session' || current.target.kind === 'sessionDetails')
-                && (target.kind === 'session' || target.kind === 'sessionDetails')
-                && sameSessionIdentity({ ...current.target, kind: 'session' }, { ...target, kind: 'session' });
+            const sameSession = sameSessionIdentity(current.target, target);
             const currentDetails = parseSessionPaneUrlState(current.target.params)?.details;
             const nextDetails = parseSessionPaneUrlState(target.params)?.details;
             const detailsProjection = sameSession && (
@@ -399,13 +408,16 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 key !== 'id' && key !== 'serverId' && key !== 'accountId' && current.target.params[key] !== value) : null;
             // Readiness may re-admit the cold URL after initialization. Its Home
             // alias and omitted view state must not replace the same current pane.
-            if (sameDestinationRef(current.target, target) || changedSessionParams?.length === 0) {
+            if (sameDestinationRef(current.target, target)
+                || (current.target.kind === target.kind && changedSessionParams?.length === 0)) {
                 input.transport.adoptCurrent?.(current, history.index);
                 return true;
             }
             // Phone cockpit selection changes the current view, not its retained pane.
-            const phoneSelection = changedSessionParams?.length === 1 && changedSessionParams[0][0] === 'mobileSurface';
-            return this.openHref(href, phoneSelection || detailsProjection ? { tabId: current.tabId } : {}, false);
+            const phoneSelection = isSessionPhoneSelection(current.target, target);
+            return this.openHref(href, phoneSelection
+                ? { tabId: current.tabId, reuseExisting: false }
+                : detailsProjection ? { tabId: current.tabId } : {}, false);
         },
         step(direction: -1 | 1) {
             if (direction === -1 ? !this.canGoBack : !this.canGoForward) return;
