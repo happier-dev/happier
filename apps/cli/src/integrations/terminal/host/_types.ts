@@ -1,6 +1,7 @@
 import type {
   TerminalHostAdapter as AgentTerminalHostAdapter,
   TerminalHostKind,
+  TerminalHostHandle,
   TerminalHostPreference,
 } from '@happier-dev/agents';
 import type { AgentTerminalHostResolutionReason } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -15,8 +16,12 @@ export type TerminalHostNativeLaunch = Readonly<{
   windowsVerbatimArguments?: boolean;
 }>;
 
+export type TerminalHostProcessObservation = Readonly<{ pid: number; argv: readonly string[] }>;
+
 /** Host-private prepared native invocation; never exposed through the plugin SDK. */
 export type TerminalHostAdapter = Omit<AgentTerminalHostAdapter, 'createOrAttachHost'> & Readonly<{
+  /** Positive observations only: missing processes never prove native exit. */
+  captureProcessObservations?(handle: TerminalHostHandle): Promise<readonly TerminalHostProcessObservation[] | null>;
   createOrAttachHost(opts: Parameters<AgentTerminalHostAdapter['createOrAttachHost']>[0] & Readonly<{
     preparedLaunch?: TerminalLaunchSpec;
     /** Host-only final authorization, invoked only when a new process is required. */

@@ -101,6 +101,11 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
     return await clientFor(handle).findPane(handle.terminalId);
   }
 
+  async function captureProcessInfo(handle: TerminalHostHandle) {
+    const pane = await resolvePane(handle);
+    return pane ? await clientFor(handle).processInfo(pane.paneId) : null;
+  }
+
   async function captureInputState(handle: TerminalHostHandle): Promise<TerminalInputState> {
     const pane = await resolvePane(handle);
     if (!pane) return { stable: false, currentInput: '', observedAt: Date.now() };
@@ -222,9 +227,8 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
     async evaluateLiveness(handle) {
       const observedAt = Date.now();
       try {
-        const pane = await resolvePane(handle);
-        if (!pane) return { paneAlive: false, paneDead: true, observedAt };
-        const process = await clientFor(handle).processInfo(pane.paneId);
+        const process = await captureProcessInfo(handle);
+        if (!process) return { paneAlive: false, paneDead: true, observedAt };
         return {
           paneAlive: true,
           panePid: process.shellPid ?? undefined,
@@ -235,6 +239,9 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
         if (paneFailure(error)) return { paneAlive: false, paneDead: true, observedAt };
         return { paneAlive: false, probeInconclusive: true, observedAt };
       }
+    },
+    async captureProcessObservations(handle) {
+      return (await captureProcessInfo(handle))?.foregroundProcesses ?? null;
     },
     captureInputState,
     createControlPort,

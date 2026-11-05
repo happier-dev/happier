@@ -571,6 +571,18 @@ Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam
 
+In 0.3 development source, the terminal host owns native exit observations.
+Borrowed foreground launches keep their qualified IPC producer. Independently
+created Herdr hosts with a direct native invocation capture a positive PID and
+exact argv observation, then use the existing process fingerprint custody check
+to prove exit. Foreground absence, a different foreground command and failed
+discovery remain unknown; an alive retained shell is a separate pane-liveness
+fact. Herdr has no native lifetime push for these panes, so the private host
+observer checks custody on the established 30-second cadence while exit
+subscribers exist and stops on unsubscribe, retirement or replacement. Adopted
+hosts without their original native invocation remain unqualified. Existing
+Agent consumers own turn failure and recovery from the qualified exit event.
+
 In 0.3 development, foreground Stop aborts the prompt-loop lifetime and starts
 native turn cancellation alongside permission withdrawal. A pending Home write
 for withdrawn permission requests must not delay the native interrupt. The Stop

@@ -24,6 +24,16 @@ export async function retireTerminalClientProcess(identity: BorrowedTerminalProc
     await terminateProcessTree({ pid: identity.pid });
 }
 
+/** Compare the complete, already platform-normalized native invocation. */
+export function matchesTerminalClientInvocation(
+    argv: readonly string[],
+    invocation: Readonly<{ command: string; args: readonly string[] }>,
+): boolean {
+    return argv[0] === invocation.command
+        && argv.length === invocation.args.length + 1
+        && invocation.args.every((argument, index) => argv[index + 1] === argument);
+}
+
 /** Invocation is the exact, already platform-normalized private attach preparation. */
 export async function proveTerminalClientCustody(input: Readonly<{
     launcher: BorrowedTerminalProcessIdentity;
@@ -53,9 +63,7 @@ export async function proveTerminalClientCustody(input: Readonly<{
         && !descendsFrom(input.launcher.pid, process.pid))) return reject('unrelated_foreground_process');
     const native = foreground.some(process => process.pid !== input.launcher.pid
         && descendsFrom(process.pid, input.launcher.pid)
-        && process.argv[0] === input.invocation.command
-        && process.argv.length === input.invocation.args.length + 1
-        && input.invocation.args.every((arg, index) => process.argv[index + 1] === arg));
+        && matchesTerminalClientInvocation(process.argv, input.invocation));
     if (!native) return reject('native_invocation_not_observed');
     return await readTerminalClientProcessState(input.launcher) === 'alive' || reject('launcher_changed');
 }

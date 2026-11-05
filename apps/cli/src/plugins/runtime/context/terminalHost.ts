@@ -26,6 +26,8 @@ import {
 } from '@/plugins/runtime/invocation/services/exec';
 import { readHostProcessOwnerTag, withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { createTerminalLaunchSpec, type TerminalLaunchSpec } from '@/terminal/host/launchSpec';
+import { createNativeProcessExitObserver } from '@/terminal/host/nativeProcessExit';
+import { matchesTerminalClientInvocation } from '@/terminal/host/terminalClientCustody';
 import { resolveTerminalHostCreationFailure } from '@/integrations/terminal/host/errors';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import {
@@ -152,7 +154,12 @@ type ActiveTerminalHost = Readonly<{
     handle: TerminalHostHandle;
     lifecycle: 'owned' | 'borrowed';
     currentHostProcess?: BorrowedTerminalProcess;
-    currentHostState?: { exited: boolean; result?: TerminalHostExit; listeners: Set<(exit: TerminalHostExit) => void> };
+    exitState?: {
+        exited: boolean;
+        result?: TerminalHostExit;
+        listeners: Set<(exit: TerminalHostExit) => void>;
+        observer?: ReturnType<typeof createNativeProcessExitObserver>;
+    };
     launch?: TerminalLaunchSpec;
     physicalDisposition?: Promise<void>;
     rollbackCreation?(): Promise<void>;
@@ -312,6 +319,22 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
     prepared: PreparedTerminalHostOwner;
 }> {
     const activeHosts = new Map<TerminalHostHandle, ActiveTerminalHost>();
+    const setActiveHost = (handle: TerminalHostHandle, active: ActiveTerminalHost) => {
+        const previous = activeHosts.get(handle);
+        if (previous?.exitState !== active.exitState) previous?.exitState?.observer?.stop();
+        activeHosts.set(handle, active);
+    };
+    const publishExit = (state: NonNullable<ActiveTerminalHost['exitState']>, result: TerminalHostExit) => {
+        if (state.exited) return;
+        state.exited = true;
+        state.result = result;
+        state.observer?.stop();
+        for (const listener of state.listeners) {
+            try { listener(result); }
+            catch { logger.infoFile('[terminal-host] Exit observer failed (terminal_exit_observer_failed)'); }
+        }
+        state.listeners.clear();
+    };
     let retainedLaunch: TerminalLaunchSpec | null = null;
     const uncertainNativeLaunches = new Set<HostAuthorizedPluginExecLaunch>();
     // Public plugin launches and host-private native presentations share the exact
@@ -406,11 +429,15 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                 && active.handle.sessionName === createdHandle.sessionName);
             if (incumbent) return incumbent.handle;
         }
-        const currentHostState: ActiveTerminalHost['currentHostState'] = currentHostProcess
+        const installedAgentIsDirectChild = request.providerExitOwnership === 'direct'
+            && (!nativeLaunch || matchesTerminalClientInvocation(request.spawnArgv, nativeLaunch));
+        const exitState: ActiveTerminalHost['exitState'] = currentHostProcess
+            || (installedAgentIsDirectChild && resolution.adapter.captureProcessObservations)
             ? { exited: false, listeners: new Set() } : undefined;
         const active = {
             adapter: resolution.adapter, handle: createdHandle, lifecycle,
-            ...(currentHostProcess ? { currentHostProcess, currentHostState } : {}),
+            ...(currentHostProcess ? { currentHostProcess } : {}),
+            ...(exitState ? { exitState } : {}),
             ...(request.preparedLaunch ? { launch: request.preparedLaunch } : {}),
             ...(nativeLaunch ? { releaseNativeLaunch: nativeLaunch.release } : {}),
             rollbackCreation: async () => {
@@ -419,7 +446,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
             },
         };
         // Custody starts on physical creation, before binding can fail.
-        activeHosts.set(createdHandle, active);
+        setActiveHost(createdHandle, active);
         let handle = createdHandle;
         try {
             handle = await params.onHostCreated?.(createdHandle, lifecycle) ?? createdHandle;
@@ -435,11 +462,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
             }
             throw error;
         }
-        if (currentHostProcess && currentHostState) {
-            const installedAgentIsDirectChild = request.providerExitOwnership === 'direct'
-                && (!nativeLaunch || (nativeLaunch.command === request.spawnArgv[0]
-                    && nativeLaunch.args.length === request.spawnArgv.length - 1
-                    && nativeLaunch.args.every((argument, index) => argument === request.spawnArgv[index + 1])));
+        if (currentHostProcess && exitState) {
             const notifyExit = (result: TerminalHostExit) => {
                 // The launcher reports its immediate child's exit. A shell shim's
                 // closure does not prove that the selected Agent process stopped.
@@ -448,19 +471,25 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                     ...(result.nativeExited === true && installedAgentIsDirectChild
                         ? { nativeExited: true as const } : {}),
                 };
-                currentHostState.exited = true;
-                currentHostState.result = qualifiedResult;
-                for (const listener of currentHostState.listeners) {
-                    try { listener(qualifiedResult); }
-                    catch { logger.infoFile('[terminal-host] Exit observer failed (terminal_exit_observer_failed)'); }
-                }
-                currentHostState.listeners.clear();
+                publishExit(exitState, qualifiedResult);
             };
             void currentHostProcess.whenExited.then(notifyExit, () => notifyExit({ code: null, signal: null }));
         }
         activeHosts.delete(createdHandle);
         const { rollbackCreation: _rollback, ...bound } = active;
-        activeHosts.set(handle, { ...bound, handle });
+        setActiveHost(handle, { ...bound, handle });
+        if (!currentHostProcess && exitState && resolution.adapter.captureProcessObservations) {
+            const captureProcessObservations = resolution.adapter.captureProcessObservations.bind(resolution.adapter);
+            exitState.observer = createNativeProcessExitObserver({
+                invocation: nativeLaunch ?? { command: request.spawnArgv[0]!, args: request.spawnArgv.slice(1) },
+                captureProcessObservations: () => captureProcessObservations(handle),
+                onExit: () => {
+                    if (activeHosts.get(handle)?.exitState === exitState) {
+                        publishExit(exitState, { code: null, signal: null, nativeExited: true });
+                    }
+                },
+            });
+        }
         return handle;
     };
 
@@ -470,7 +499,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                 assertCapability(params);
                 const existing = await params.resolveExistingHostForAdoption!();
                 if (!existing) return null;
-                activeHosts.set(existing.handle, existing);
+                setActiveHost(existing.handle, existing);
                 return existing.handle;
             },
         } : {}),
@@ -529,7 +558,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
         },
         async evaluateLiveness(handle: Parameters<AgentTerminalHostService['evaluateLiveness']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
-            if (active.currentHostState?.exited) {
+            if (active.currentHostProcess && active.exitState?.exited) {
                 return { paneAlive: false, paneDead: true, observedAt: Date.now() };
             }
             return active.adapter.evaluateLiveness(active.handle);
@@ -539,11 +568,11 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
             listener: (exit: TerminalHostExit) => void,
         ) {
             const active = resolveActiveHost(activeHosts, handle);
-            const state = active.currentHostState;
+            const state = active.exitState;
             if (!state) return null;
             let disposed = false;
             const notify = (result: TerminalHostExit) => {
-                if (!disposed && activeHosts.get(handle)?.currentHostState === state) listener(result);
+                if (!disposed && activeHosts.get(handle)?.exitState === state) listener(result);
             };
             if (state.result) {
                 const result = state.result;
@@ -551,8 +580,15 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                     try { notify(result); }
                     catch { logger.infoFile('[terminal-host] Exit observer failed (terminal_exit_observer_failed)'); }
                 });
-            } else state.listeners.add(notify);
-            return { dispose() { disposed = true; state.listeners.delete(notify); } };
+            } else {
+                state.listeners.add(notify);
+                if (!active.physicalDisposition) state.observer?.start();
+            }
+            return { dispose() {
+                disposed = true;
+                state.listeners.delete(notify);
+                if (state.listeners.size === 0) state.observer?.stop();
+            } };
         },
         async captureInputState(handle: Parameters<AgentTerminalHostService['captureInputState']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
@@ -569,6 +605,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
             intent: Parameters<AgentTerminalHostService['dispose']>[1],
         ) {
             const active = resolveActiveHost(activeHosts, handle);
+            active.exitState?.observer?.stop();
             const physicalDisposition = active.physicalDisposition ?? Promise.resolve().then(async () => {
                 if (active.rollbackCreation) await active.rollbackCreation();
                 else {
@@ -576,10 +613,15 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                     await params.disposeHost({ handle: active.handle, adapter: active.adapter, intent, lifecycle: active.lifecycle });
                 }
             });
-            activeHosts.set(handle, { ...active, physicalDisposition });
+            setActiveHost(handle, { ...active, physicalDisposition });
             try { await physicalDisposition; }
             catch (error) {
-                if (activeHosts.get(handle)?.physicalDisposition === physicalDisposition) activeHosts.set(handle, active);
+                if (activeHosts.get(handle)?.physicalDisposition === physicalDisposition) {
+                    setActiveHost(handle, active);
+                    if (active.exitState && !active.exitState.exited && active.exitState.listeners.size > 0) {
+                        active.exitState.observer?.start();
+                    }
+                }
                 throw error;
             }
             await active.launch?.discard();
