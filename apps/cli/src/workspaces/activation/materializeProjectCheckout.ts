@@ -1,3 +1,5 @@
+import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
+import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { stat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
@@ -19,6 +21,7 @@ export type MaterializedProjectCheckout = Readonly<{
 
 export type MaterializeProjectCheckoutInput = Readonly<{
   materialization: WorkspaceActivationRequestV1;
+  requesterIdentity?: HostRequesterExecutionIdentity;
   sourceDirectory?: string;
   sourceRootPath?: string;
   selector?: ProjectSourceRepositorySelectorV1;
@@ -68,6 +71,10 @@ async function explicitSubdirectory(root: string, subdir: string): Promise<strin
 /** Neutral realization only: SCM owns Git effects and Sync owns copying/links. */
 export async function materializeProjectCheckout(input: MaterializeProjectCheckoutInput): Promise<MaterializedProjectCheckout> {
   input.signal?.throwIfAborted();
+  // A daemon-side Account/Workspace reference is not permission to realize a
+  // member checkout. The containing Open owner uses the selected native child.
+  if (input.requesterIdentity && !isHostRequesterUnrestrictedOwner(input.requesterIdentity))
+    throw privateProjectCheckoutRefusal();
   const choice = input.materialization;
   if (choice.kind === 'clone') {
     if (choice.initialCheckout && input.ref !== undefined && input.ref !== choice.initialCheckout.commit) return refused('invalid_materialization');

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
@@ -85,15 +86,15 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
         }>,
     ): Promise<PluginConnectedAccountMaterialization>;
     /**
-     * Bounded metadata projection of the purpose's exact current target. The
-     * seam clamps `limit` before dispatch; the owner reports its own elision
-     * through an explicit complete-or-truncated status.
+     * Metadata projection of the purpose's exact current target. An explicit
+     * limit bounds caller demand; omission requests the full authorized
+     * inventory. The owner reports any elision through its status.
      */
     listAccounts(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
             exactPurposeBindingSubjectId?: string;
             sessionId?: string;
-            limit: number;
+            limit?: number;
             signal: AbortSignal;
         }>,
     ): Promise<PluginConnectedAccountMetadataList>;
@@ -452,12 +453,6 @@ function snapshotMaterialization(
     });
 }
 
-/**
- * The bounded metadata listing has no resumable cursor, so its ceiling is the
- * same authorized-inventory bound the interactive selection and Action-form
- * owners already enforce. A caller-supplied limit is clamped into it.
- */
-export const CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT = 256;
 const CONNECTED_ACCOUNT_LISTED_ORIGIN_MAX = 32;
 const CONNECTED_ACCOUNT_LISTED_DISPLAY_NAME_MAX_LENGTH = 512;
 const CONNECTED_ACCOUNT_LISTED_STATES = Object.freeze({
@@ -474,28 +469,17 @@ function isListedAccountState(
         && Object.hasOwn(CONNECTED_ACCOUNT_LISTED_STATES, value);
 }
 
-function clampListLimit(limit: unknown): number {
-    if (limit === undefined) return CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT;
-    if (
-        typeof limit !== 'number'
-        || !Number.isSafeInteger(limit)
-        || limit < 1
-    ) {
-        throw listingOutOfScope();
-    }
-    return Math.min(limit, CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT);
-}
-
 function snapshotListRequest(
     request: unknown,
-): Readonly<{ purpose: string; limit: number }> {
+): Readonly<{ purpose: string; limit?: number }> {
     if (!isUnknownRecord(request)) throw listingOutOfScope();
     for (const key of Reflect.ownKeys(request)) {
         if (key !== 'purpose' && key !== 'limit') throw listingOutOfScope();
     }
     const purpose = request.purpose;
     if (typeof purpose !== 'string') throw listingOutOfScope();
-    return Object.freeze({ purpose, limit: clampListLimit(request.limit) });
+    const limit = readConnectedAccountListLimit(request.limit);
+    return Object.freeze({ purpose, ...(limit === undefined ? {} : { limit }) });
 }
 
 /**
@@ -598,14 +582,14 @@ function snapshotListedAccount(
 
 function snapshotMetadataList(
     scope: PluginConnectedAccountBindingScope,
-    limit: number,
+    limit: number | undefined,
     result: unknown,
 ): PluginConnectedAccountMetadataList {
     if (!isUnknownRecord(result)) throw listingOutOfScope();
     const status = result.status;
     if (status !== 'complete' && status !== 'truncated') throw listingOutOfScope();
     const accounts = result.accounts;
-    if (!Array.isArray(accounts) || accounts.length > limit) throw listingOutOfScope();
+    if (!Array.isArray(accounts) || (limit !== undefined && accounts.length > limit)) throw listingOutOfScope();
     const seen = new Set<string>();
     const listed: PluginConnectedAccountListedAccount[] = [];
     for (const entry of accounts) {
@@ -784,7 +768,7 @@ export function createStablePluginConnectedAccountsHost(
                                 ? { exactPurposeBindingSubjectId }
                                 : {}),
                             ...(seed.session ? { sessionId: seed.session.id } : {}),
-                            limit: requestSnapshot.limit,
+                            ...(requestSnapshot.limit === undefined ? {} : { limit: requestSnapshot.limit }),
                             signal: signals.signal,
                         });
                         assertCurrent(seed);

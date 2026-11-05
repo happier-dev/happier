@@ -36,6 +36,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
+import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export type PreparedProjectSetupCommand = Readonly<
     { kind: 'literal'; source: Extract<ProjectCommandSourceV1, { kind: 'command' }>; cwd: string }
@@ -49,6 +50,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     /** Resolved by the accepted Workspace/Project row owner, never from Action input. */
     projectAssociation: Readonly<{ workspace: WorkspaceRefV1; project: QualifiedProjectTrustProjectV1 }>;
     requester: ProjectSetupTrustClientInput;
+    /** Host-selected execution identity; never inferred from credentials or Action operands. */
+    requesterIdentity?: HostRequesterExecutionIdentity;
     purpose: 'setup' | 'teardown';
     platform: Readonly<{ os: string; arch: string }>;
     nativeIo: ProjectNativeCommandIo;
@@ -156,7 +159,12 @@ function associationMatches(input: ProjectSetupPreparationInput): boolean {
             .every(field => workspace.data[field] === associated.data[field]);
 }
 
-async function readReviewProvenance(input: ProjectSetupPreparationInput, root: string, basis: ProjectManifestFileSnapshot['basis']): Promise<ProjectSetupReviewPresentation['provenance']> {
+async function readReviewProvenance(input: ProjectSetupPreparationInput, root: string, basis: ProjectManifestFileSnapshot['basis'],
+    presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>): Promise<ProjectSetupReviewPresentation['provenance']> {
+    if (!input.requesterIdentity || !isHostRequesterUnrestrictedOwner(input.requesterIdentity)) {
+        return { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' };
+    }
+    if (presentation) return presentation.provenance;
     const manifestPresent = basis.kind === 'present';
     const base = { file: '.happier/project.json' as const, fileState: manifestPresent ? 'unknown' as const : 'absent' as const };
     try {
@@ -400,7 +408,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         // SCM provenance is display context, excluded from the consent digest.
         // Native-launch checkpoints remeasure effect inputs, not repository UI.
         const provenanceStartedAt = performance.now();
-        const provenance = presentation?.provenance ?? await readReviewProvenance(input, root, snapshot.basis);
+        const provenance = await readReviewProvenance(input, root, snapshot.basis, presentation);
         logger.debug('[ProjectSetup] launch phase', { phase: 'review_provenance', retained: presentation !== undefined,
             durationMs: Math.round(performance.now() - provenanceStartedAt) });
         if (input.signal?.aborted) return refuse('project_setup_cancelled');

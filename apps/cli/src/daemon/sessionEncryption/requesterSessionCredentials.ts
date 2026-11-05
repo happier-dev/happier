@@ -1,4 +1,4 @@
-import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredentialBinding, requesterSessionCredentialPath } from './requesterSessionCustody';
+import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure, requesterCurrentnessCheckpoint, type RequesterCurrentnessObservation } from './requesterCurrentness';
 
@@ -39,6 +39,7 @@ import { readMachineRpcAdmissionCurrentOrThrow } from '@/api/machine/machineRpcA
 import { listProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 import { logger } from '@/utils/logger';
 import { performance } from 'node:perf_hooks';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { TrackedSession } from '../types';
 import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
@@ -529,6 +530,7 @@ export type RequesterSessionMachineAdmissionBoundary = Readonly<{
   daemonToken: string;
   signal?: AbortSignal;
   isHomeCurrent(): boolean;
+  getObservedServerIdentityId?(): string | null | Promise<string | null>;
   readInstallation(): Readonly<{ installationId: string; privateKey: string | Uint8Array }> | null;
 }>;
 
@@ -642,6 +644,29 @@ export async function verifyRequesterSessionMachineAdmissionCurrent(
 }
 
 
+async function readWorkspaceSyncMachineAdmissionCurrent(input: Parameters<typeof readRequesterSessionMachineAdmissionCurrent>[0]) {
+  const current = await readRequesterMachineAdmissionCurrent(input);
+  if (current === undefined) throw new PluginError({ code: 'project_requester_home_unavailable', retryable: true,
+    message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
+  return current;
+}
+
+/** A captured native TARGET needs current Machine access, never a fictional Session proof. */
+export async function verifyWorkspaceSyncRelationshipMachineAdmissionCurrent(
+  input: Parameters<typeof readRequesterSessionMachineAdmissionCurrent>[0],
+): Promise<boolean> {
+  return await readWorkspaceSyncMachineAdmissionCurrent(input) !== null;
+}
+
+/** SOURCE has no captured native member. A fresh boundary must still permit
+ * this exact requester to execute through the installed daemon. */
+export async function verifyWorkspaceSyncSourceMachineAdmissionCurrent(
+  input: Parameters<typeof readRequesterSessionMachineAdmissionCurrent>[0],
+): Promise<boolean> {
+  const current = await readWorkspaceSyncMachineAdmissionCurrent(input);
+  return current != null && (isCustodianMachineAdmission(current) || current.role === 'manage');
+}
+
 /** Reconstructs Account ports for this exact Session; protected custody is data, never an authority witness. */
 export async function resolveRequesterSessionBootstrap(input: RequesterSessionCredentialBinding & Readonly<{
   serverHttpBaseUrl: string;
@@ -665,8 +690,7 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
       if (current === undefined) throw new Error('requester_session_machine_admission_unavailable');
       return current !== null;
     };
-    const credentials = (await resolveRequesterSessionCustody({ ...input,
-      verifyMachineAdmissionCurrent: verify(stored.credentials) }, read(stored.credentials)))?.credentials ?? null;
+    const credentials = (await resolveRequesterSessionCustody(input, read(stored.credentials)))?.credentials ?? null;
     if (!credentials) return null;
     const result = await prepareRequesterSessionBootstrap({ credentials, attribution: input.attribution, machineAdmission,
       ...(stored.homeServerIdentityId ? { homeServerIdentityId: stored.homeServerIdentityId } : {}),
@@ -746,11 +770,12 @@ export async function isAdmittedRequesterSessionBootstrapCurrent(context: Pick<R
   catch { return false; }
 }
 
-async function readBoundCustody(path: string, expected: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope'>) {
+async function readBoundCustody(path: string, expected: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>) {
   const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
-  if (value.scope !== expected.scope || value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
+  if (value.scope !== expected.scope || value.endpointRole !== expected.endpointRole
+    || value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
   const credentials = decodeStoredCredentials(value.credentials);
-  return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId } : null;
+  return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId, executionIdentity: value.executionIdentity } : null;
 }
 
 /** Constrain an independently authenticated Account/Session source. Only ENOENT
@@ -771,7 +796,7 @@ export async function readRequesterSessionExecutionCustodyForHost(input: Request
 }
 
 export type RequesterSessionCredentialBindingsResult =
-  | Readonly<{ status: 'ready'; bindings: readonly Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope'>[] }>
+  | Readonly<{ status: 'ready'; bindings: readonly Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>[] }>
   | Readonly<{ status: 'unavailable'; reason: 'requester_session_custody_unavailable' }>;
 
 /** Discovers existing private custody references only; current Home admission still gates every recovery. */
@@ -781,8 +806,9 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
   machineId: string;
   installationId: string;
   scope?: RequesterSessionCredentialBinding['scope'];
+  endpointRole?: RequesterSessionCredentialBinding['endpointRole'];
 }>): Promise<RequesterSessionCredentialBindingsResult> {
-  const directory = join(input.happyHomeDir, 'requester-session-credentials', `home-${encodeURIComponent(input.serverId)}`);
+  const directory = requesterSessionCredentialDirectory({ ...input, attribution: { serverId: input.serverId } });
   let names: readonly string[];
   try { names = await listProtectedLocalStateDirectory(directory); }
   catch (error) {
@@ -790,19 +816,21 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
     return { status: 'unavailable', reason: 'requester_session_custody_unavailable' };
   }
   try {
-    const bindings: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope'>[] = [];
+    const bindings: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>[] = [];
     for (const name of names) {
-      if (name.startsWith('workflow-trigger-') !== (input.scope === 'workflow_trigger')) continue;
+      if (!name.startsWith(requesterSessionCredentialFilePrefix(input))) continue;
       const path = join(directory, name);
       const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
       if (value.attribution.serverId !== input.serverId
         || path !== requesterSessionCredentialPath({ happyHomeDir: input.happyHomeDir,
-          sessionId: value.sessionId, attribution: value.attribution, scope: value.scope }) || value.scope !== input.scope
+          sessionId: value.sessionId, attribution: value.attribution, scope: value.scope, endpointRole: value.endpointRole }) || value.scope !== input.scope
         || !decodeStoredCredentials(value.credentials)) {
         return { status: 'unavailable', reason: 'requester_session_custody_unavailable' };
       }
+      if (value.endpointRole !== input.endpointRole) continue;
       if (value.attribution.machineId === input.machineId && value.attribution.installationId === input.installationId) {
-        bindings.push({ sessionId: value.sessionId, attribution: value.attribution, ...(value.scope ? { scope: value.scope } : {}) });
+        bindings.push({ sessionId: value.sessionId, attribution: value.attribution, ...(value.scope ? { scope: value.scope } : {}),
+          ...(value.endpointRole ? { endpointRole: value.endpointRole } : {}) });
       }
     }
     return { status: 'ready', bindings };
@@ -820,13 +848,15 @@ export async function verifyRequesterSessionCredentialBinding(input: Readonly<{
   signal?: AbortSignal;
   expectedSessionCreationTag?: string;
   onSessionReadRefused?: () => void;
-}>): Promise<boolean> {
-  return await readRequesterSessionCredentialBinding(input) === true;
+}>, caller: 'direct_binding'
+  | 'custody_after_machine_binding' | 'custody_recovery' = 'direct_binding'): Promise<boolean> {
+  return await readRequesterSessionCredentialBinding(input, undefined, caller) === true;
 }
 
 async function readRequesterSessionCredentialBinding(
   input: Parameters<typeof verifyRequesterSessionCredentialBinding>[0],
   readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
+  caller: 'direct_binding' | 'custody_after_machine_binding' | 'custody_recovery' = 'direct_binding',
 ): Promise<true | null | undefined> {
   // Opaque false can be a withdrawn local Home or an unbound Session. Only the
   // canonical Machine reader can identify its existing null refusal result.
@@ -884,6 +914,9 @@ async function readRequesterSessionCredentialBinding(
         return after == null ? after : true;
       } catch (error) {
         rethrowRequesterHomeReadFailure(error);
+        // Preserve the existing Workspace recovery error contract.
+        if (caller === 'custody_recovery' && input.scope === 'workspace_sync_relationship'
+          && classifyServerEndpointError(error).kind !== 'auth_failed') throw error;
         if (sessionReadRefused && !input.signal?.aborted) input.onSessionReadRefused?.();
         if (input.signal?.aborted) return undefined;
         return classifyServerEndpointError(error).kind === 'auth_failed' ? null : undefined;
@@ -898,10 +931,13 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   homeServerIdentityId?: string;
   automationId?: string;
   machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
+  executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
   const path = requesterSessionCredentialPath(input);
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
     ...(input.scope ? { scope: input.scope } : {}),
+    ...(input.endpointRole ? { endpointRole: input.endpointRole } : {}),
+    ...(input.executionIdentity ? { executionIdentity: input.executionIdentity } : {}),
     ...(input.automationId ? { automationId: input.automationId } : {}),
     attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
@@ -914,7 +950,8 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     // Rejoin may refresh this exact requester's sign-in; never adopt a file
     // from a different Account, Home, Machine, or installation.
     const existing = await readBoundCustody(path, input);
-    if (!existing || existing.homeServerIdentityId !== input.homeServerIdentityId) throw new Error('requester_session_custody_mismatch');
+    if (!existing || existing.homeServerIdentityId !== input.homeServerIdentityId
+      || !isDeepStrictEqual(existing.executionIdentity, input.executionIdentity)) throw new Error('requester_session_custody_mismatch');
     created = false;
     await replacePrivateBearerFile({ path, contents });
   }
@@ -943,24 +980,84 @@ export async function resolveRequesterSessionCredentials(input: RequesterSession
   return (await resolveRequesterSessionCustody(input))?.credentials ?? null;
 }
 
-async function resolveRequesterSessionCustody(
-  input: Parameters<typeof resolveRequesterSessionCredentials>[0],
+type RequesterCustodyRecoveryCurrentness =
+  | Readonly<{ verifyMachineAdmissionCurrent(signal?: AbortSignal): Promise<boolean>; machineAdmissionBoundary?: never }>
+  | Readonly<{ machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary; verifyMachineAdmissionCurrent?: never }>;
+
+async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], 'verifyMachineAdmissionCurrent'>
+  & RequesterCustodyRecoveryCurrentness,
   readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
 ) {
   try {
     if (input.signal?.aborted) return null;
+    // Sync currentness belongs to the authenticated Machine reader. A caller
+    // closure could accidentally substitute a Session proof or stale admission.
+    if (input.scope === 'workspace_sync_relationship' && !input.machineAdmissionBoundary) return null;
     // An opaque callback never supplies a reason to delete protected custody.
-    if (!readMachineAdmissionCurrent && !await input.verifyMachineAdmissionCurrent(input.signal)) return null;
+    if (input.scope !== 'workspace_sync_relationship' && !readMachineAdmissionCurrent
+      && input.verifyMachineAdmissionCurrent && !await input.verifyMachineAdmissionCurrent(input.signal)) return null;
     const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
     if (!stored) return null;
-    const current = await readRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials }, readMachineAdmissionCurrent);
+    const boundary = input.machineAdmissionBoundary;
+    if (boundary && stored.homeServerIdentityId && boundary.getObservedServerIdentityId
+      && stored.homeServerIdentityId !== await boundary.getObservedServerIdentityId()) return null;
+    const callerVerifier = input.scope === 'workspace_sync_relationship' ? undefined : input.verifyMachineAdmissionCurrent;
+    const verifyMachineAdmissionCurrent = callerVerifier ?? ((signal?: AbortSignal) =>
+      (input.endpointRole === 'source' ? verifyWorkspaceSyncSourceMachineAdmissionCurrent
+        : input.scope === 'workspace_sync_relationship' ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent
+          : verifyRequesterSessionMachineAdmissionCurrent)({
+        credentials: stored.credentials, sessionId: input.sessionId, attribution: input.attribution,
+        serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: boundary!, signal }));
+    const current = await readRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials,
+      verifyMachineAdmissionCurrent }, readMachineAdmissionCurrent, 'custody_recovery');
     if (current === true) return stored;
     // readBoundCustody above has already matched the exact persisted scope,
-    // Account, Session/trigger id and installation attribution.
-    if (input.scope === 'workflow_trigger' && current === null && !input.signal?.aborted)
-      await retireRequesterSessionCredentialCustody(input);
+    // Account, Session/trigger id and installation attribution. Workspace keeps
+    // its existing authenticated Machine recovery behavior.
+    if (!input.signal?.aborted && (input.scope === 'workspace_sync_relationship'
+      || input.scope === 'workflow_trigger' && current === null)) await retireRequesterSessionCredentialCustody(input);
     return null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
+}
+
+/** The existing custody id slot holds the relationship id, never a fictional Session. */
+export type WorkspaceSyncRelationshipCredentialBinding = Omit<RequesterSessionCredentialBinding, 'sessionId' | 'scope' | 'endpointRole'>
+  & Readonly<{ relationshipId: string }>;
+
+/** Open captures the admitted requester once; recovery reuses this exact identity. */
+export async function createWorkspaceSyncRelationshipCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding
+  & Omit<Parameters<typeof createRequesterSessionCredentialCustody>[0], keyof RequesterSessionCredentialBinding | 'executionIdentity' | 'automationId'>
+  & Readonly<{ executionIdentity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }>
+): ReturnType<typeof createRequesterSessionCredentialCustody> {
+  return await createRequesterSessionCredentialCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship' });
+}
+
+/** The relationship owner validates its graph; this owner verifies Account and Machine on reconnect. */
+export async function resolveWorkspaceSyncRelationshipCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding
+  & Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], keyof RequesterSessionCredentialBinding | 'onSessionReadRefused' | 'verifyMachineAdmissionCurrent'>
+  & Readonly<{ machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary }>
+): Promise<Readonly<{ credentials: StoredCredentials;
+  executionIdentity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }> | null> {
+  const stored = await resolveRequesterSessionCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship' });
+  return stored?.executionIdentity ? { credentials: stored.credentials, executionIdentity: stored.executionIdentity } : null;
+}
+
+/** SOURCE retains its actual requester Account admission; it has no target native identity. */
+export async function createWorkspaceSyncSourceCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding
+  & Omit<Parameters<typeof createRequesterSessionCredentialCustody>[0], keyof RequesterSessionCredentialBinding | 'executionIdentity' | 'automationId'>
+): ReturnType<typeof createRequesterSessionCredentialCustody> {
+  return await createRequesterSessionCredentialCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship', endpointRole: 'source' });
+}
+
+export async function resolveWorkspaceSyncSourceCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding
+  & Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], keyof RequesterSessionCredentialBinding | 'onSessionReadRefused' | 'verifyMachineAdmissionCurrent'>
+  & Readonly<{ machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary }>
+): Promise<StoredCredentials | null> {
+  return (await resolveRequesterSessionCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship', endpointRole: 'source' }))?.credentials ?? null;
 }
 
 export async function bindRequesterSessionMachineControl(input: Readonly<{

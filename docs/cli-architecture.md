@@ -4413,7 +4413,14 @@ An unqualified shell remains Machine intent even when its working directory is
 inside an accepted Project.
 Explicit Project and Session targets keep their requester Account owners.
 Use retains its admitted Project/Workspace Sessions, requester terminals and
-finite Project operations. Machine-level shell, setup scripts, package installs,
+finite Project operations. In development source, Project Open Sync uses only the
+requester's prepared private checkout; its target bootstrap and Sync agents run
+through the native member process, and the requester-owned relationship retains
+that captured identity for later transfers and reconnects. Its credentials use a
+Sync relationship scope in the existing private requester-custody store;
+automatic conflict recovery
+requires that exact retained relationship capture at daemon ingress.
+Machine-level shell, setup scripts, package installs,
 service execution/control, reboot, elevation and firewall configuration require
 Manage. Home decides the role once; the terminal intent/custody owner consumes
 that admitted role to distinguish Machine shells from Project terminals.

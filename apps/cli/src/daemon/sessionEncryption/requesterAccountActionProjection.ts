@@ -294,6 +294,8 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
   isCurrent(): Promise<boolean>;
   /** Supplied by the installed owner after root admission; never a transported fact. */
   isCustodyCurrent?: () => Promise<boolean>;
+  /** Installed host lifetime only; excludes finite request cancellation and Home root verification. */
+  isRetainedCustodyCurrent?: () => Promise<boolean>;
   /** Transferred only after successful admission; runs at final retained retirement. */
   onRetire?: () => Promise<void>;
   signal?: AbortSignal;
@@ -429,6 +431,28 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
           && await input.isCurrent() && await authorization.requesterAccountProjection!.isCurrent()
         : authorization.requesterAccountProjection!.isCurrent,
       ...(input.isCustodyCurrent && !sourcePreparation ? { isCustodyCurrent: authorization.requesterAccountProjection!.isCurrent } : {}),
+      ...(input.isRetainedCustodyCurrent ? { retainCustody: () => {
+        const isInstalledCurrent = input.isRetainedCustodyCurrent!;
+        const snapshot = savedSecretOperationContext.readSnapshot();
+        if (!snapshot) throw new Error('requester_account_context_retired');
+        const releaseReference = retain();
+        let retained = true;
+        const isRetainedCurrent = async () => retained && live && await isInstalledCurrent()
+          && retained && live && observation!.isCurrent(currentness);
+        const retainedSecrets = createInvocationSavedSecretOperationContextV1({
+          credentials: input.credentials, snapshot, serverHttpBaseUrl: input.serverHttpBaseUrl,
+          machineAdmission: savedSecretOperationContext.machineAdmission, isCurrent: isRetainedCurrent,
+        });
+        const retainedPublication = createRequesterAccountSettingsPublication({
+          observation: observation!, currentness, operationContext: retainedSecrets,
+        });
+        return Object.freeze({
+          isCurrent: isRetainedCurrent,
+          savedSecretOperationContext: retainedSecrets,
+          release: async () => { if (retained) { retained = false; retainedPublication.dispose();
+            try { await retainedSecrets.isCurrent(); } finally { await releaseReference(); } } },
+        });
+      } } : {}),
       retain,
       dispose: async () => { if (!ingressReleased) { ingressReleased = true; await release(); } },
     });
@@ -475,6 +499,8 @@ export async function prepareInstalledRequesterAccountActionContext(input: Reado
   serverId: string;
   serverHttpBaseUrl: string;
   ownCredentials?: StoredCredentials;
+  /** Local host custody beyond finite ingress; never a signed root recheck. */
+  isRetainedCustodyCurrent?: () => Promise<boolean>;
   /** Existing installed Session owner; never resolves custody by Account alone. */
   resolveRequesterSessionBootstrap?: (sessionId: string, attribution: AdmittedRequesterSessionBootstrap['attribution']) => Promise<RequesterSessionInputCustody | null>;
   /** Manager-owned recheck of the exact Home-verified signed SOURCE request, private to preparation. */
@@ -577,6 +603,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
   requesterSessionBootstrap?: RequesterSessionInputCustody;
   isCurrent(): Promise<boolean>;
   isCustodyCurrent?: () => Promise<boolean>;
+  isRetainedCustodyCurrent?: () => Promise<boolean>;
   createExecutor(context: RequesterAccountActionContext): NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountExecutor']>;
   signal?: AbortSignal;
 }>): ReturnType<PrepareExternalActionRequesterAccountContext> {

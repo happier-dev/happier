@@ -15,6 +15,7 @@ import { projectAgentIsolationOperationMaterial, type AgentLaunchMaterialization
 export type PrepareRequesterNativeOperationInput = Readonly<{
   requesterIdentity: HostRequesterExecutionIdentity;
   requesterAccount?: RequesterAccountActionContext;
+  retainedRequesterCustody?: ReturnType<NonNullable<RequesterAccountActionContext['retainCustody']>>;
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
   ingress?: RpcHandlerContext;
   signal: AbortSignal;
@@ -86,6 +87,7 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   try {
     if (input.requesterAccount) material = await prepareRequesterOperationMaterial({
       requesterAccount: input.requesterAccount, requesterIdentity,
+      ...(input.retainedRequesterCustody ? { retainedCustody: input.retainedRequesterCustody } : {}),
       reloadController: host.reloadController, signal: input.signal });
     input.signal.throwIfAborted();
     return { requesterIdentity: selected, memberIdentity, workingDirectory, agentIsolation,

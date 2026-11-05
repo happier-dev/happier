@@ -11839,9 +11839,13 @@ daemonWorkSignal: AbortSignal;
               ?? { kind: 'unavailable', code: 'plugin_account_execution_unavailable' },
           prepareRequesterAccountContext: async ({ authorization, purpose, signal, verifyWorkspaceSyncPrepareCurrent, verifyServiceMoveChildCurrent, deploymentChildExecution, templateRequesterSetup }) => {
             const privatePurpose = purpose ?? { kind: 'external_action' as const };
+            const custodyMachine = params.getApiMachineForSessions();
             let executeManagedFiniteWake: ((request: ManagedMachinePolicyRequest) => Promise<ActionExecuteResult>) | undefined;
             let requesterTargetResolver: ReturnType<typeof createDaemonExternalActionTargetResolver> | undefined;
             const prepared = await prepareInstalledRequesterAccountActionContext({ authorization, purpose: privatePurpose,
+              isRetainedCustodyCurrent: async () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing()
+                && !shutdownCancellationDomains.daemonWorkSignal.aborted && Boolean(custodyMachine)
+                && params.getApiMachineForSessions() === custodyMachine,
               ...(verifyWorkspaceSyncPrepareCurrent ? { verifyWorkspaceSyncPrepareCurrent } : {}),
               ...(verifyServiceMoveChildCurrent ? { verifyServiceMoveChildCurrent } : {}),
               ...(deploymentChildExecution ? { deploymentChildExecution } : {}),

@@ -135,7 +135,6 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   beforeMachineAccessRead?: () => Promise<void> }> = {}) {
   const sessionId = options.sessionId ?? 'session';
   const custodianAccountId = options.custodianAccountId ?? 'alice';
-  const machineRole = options.machineGrantCount ? 'manage' : 'use';
   directory = await mkdtemp(join(tmpdir(), 'requester-custody-'));
   app = fastify();
   const keyPair = tweetnacl.sign.keyPair();
@@ -150,6 +149,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   let settingsAvailable = true;
   let machineRowsReturned = 0;
   let grantRowsReturned = 0;
+  let machineRole: 'manage' | 'use' = options.machineGrantCount ? 'manage' : 'use';
   const requests: Array<{ path: string; bearer: string | undefined; purpose: string | string[] | undefined; sessionActionAuthorized?: true }> = [];
   const pendingInputs: unknown[] = [];
   let sessionActionAuthorization: ExternalActionExecutionAuthorizationV1 | undefined;
@@ -267,6 +267,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'alice-daemon',
     isHomeCurrent: () => true, readInstallation: () => ({ installationId, privateKey: keyPair.secretKey }) };
   return { boundary, requests, pendingInputs, correspondence, keyPair, setAccess: (value: boolean) => { access = value; },
+    setMachineRole: (value: 'manage' | 'use') => { machineRole = value; for (const row of machineRows) row.access.role = value; },
     readReturnedRows: () => ({ machine: machineRowsReturned, grants: grantRowsReturned }),
     setSessionActionAuthorization: (value: ExternalActionExecutionAuthorizationV1) => { sessionActionAuthorization = value; },
     setUnavailablePath: (value: string | null) => { unavailablePath = value; },
@@ -278,6 +279,160 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
 }
 
 describe('requester Session lifecycle custody', () => {
+  it.each(['plain', 'e2ee'] as const)('discovers each custody scope in the current Home store and recovers Sync with its captured identity (%s)', async mode => {
+    const secret = new Uint8Array(32).fill(19);
+    const host = await home({ sessionId: 'sync-relationship', ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });
+    const requesterCredentials = mode === 'e2ee' ? { token: credentials.token, encryption: { type: 'legacy' as const, secret } } : credentials;
+    const binding = { happyHomeDir: directory!, relationshipId: 'sync-relationship', attribution };
+    const executionIdentity = { kind: 'isolated', requester: attribution, separationRequired: true } as const;
+    const custody = await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding,
+      credentials: requesterCredentials, executionIdentity, homeServerIdentityId: 'srv_original_home' });
+    expect(custody.path).toBe(join(directory!, 'requester-session-credentials',
+      'home-bob-home', 'relationship-sync-relationship.json'));
+    const session = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'session', attribution, credentials });
+    await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'schedule', scope: 'workflow_trigger', attribution, credentials });
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution })).toEqual({
+      status: 'ready', bindings: [{ sessionId: 'session', attribution }] });
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution, scope: 'workflow_trigger' })).toEqual({
+      status: 'ready', bindings: [{ sessionId: 'schedule', scope: 'workflow_trigger', attribution }] });
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution, scope: 'workspace_sync_relationship' })).toEqual({
+      status: 'ready', bindings: [{ sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', attribution }] });
+    const recovered = await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
+    expect(recovered).toEqual({ credentials: { ...requesterCredentials, credentialProvenance: 'stored_session' }, executionIdentity });
+    await expect(requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding,
+      credentials: requesterCredentials, executionIdentity: { ...executionIdentity, separationRequired: false },
+      homeServerIdentityId: 'srv_original_home' })).rejects.toThrow('requester_session_custody_mismatch');
+    expect(host.requests.some(request => request.path.startsWith('/v2/sessions/'))).toBe(false);
+    expect(host.requests.filter(request => request.path === '/v1/account/profile')).not.toHaveLength(0);
+    expect(host.requests.filter(request => request.path === '/v1/account/profile').every(request =>
+      request.bearer === `Bearer ${credentials.token}`)).toBe(true);
+    vi.stubEnv(REQUESTER_SESSION_ID_ENV, binding.relationshipId);
+    expect(await readRequesterSessionCredentialsForChild(custody.path)).toBeNull();
+    await custody.cleanup();
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(session.path)).resolves.toBeUndefined();
+  });
+
+  it.each(['requester', 'machine', 'identity'] as const)('refuses substituted Sync relationship %s custody', async mismatch => {
+    const host = await home();
+    const binding = { happyHomeDir: directory!, relationshipId: 'sync-relationship', attribution };
+    const custody = await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+      executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    if (mismatch === 'requester') host.setAccountId('alice');
+    if (mismatch === 'machine') host.setAccess(false);
+    if (mismatch === 'identity') {
+      const stored = JSON.parse(await readFile(custody.path, 'utf8'));
+      stored.executionIdentity.requester.accountId = 'alice';
+      await replacePrivateBearerFile({ path: custody.path, contents: JSON.stringify(stored) });
+    }
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: host.boundary })).toBeNull();
+  });
+
+  it.each(['owner', 'manager'] as const)('recovers Sync relationship SOURCE Account custody independently of the target native identity (%s)', async authority => {
+    const host = await home({ sessionId: 'source-sync', ...(authority === 'owner'
+      ? { custodianAccountId: attribution.accountId } : { machineGrantCount: 1 }) });
+    const binding = { happyHomeDir: directory!, relationshipId: 'source-sync', attribution };
+    const target = await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+      executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    const source = await requesterCredentialOwner.createWorkspaceSyncSourceCredentialCustody({ ...binding, credentials });
+    expect(source.path).not.toBe(target.path);
+    const stored = JSON.parse(await readFile(source.path, 'utf8'));
+    expect(stored).toMatchObject({ scope: 'workspace_sync_relationship', endpointRole: 'source', attribution });
+    expect(stored.executionIdentity).toBeUndefined();
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution,
+      scope: 'workspace_sync_relationship', endpointRole: 'source' })).toEqual({ status: 'ready', bindings: [
+      { sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', endpointRole: 'source', attribution },
+    ] });
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution,
+      scope: 'workspace_sync_relationship' })).toEqual({ status: 'ready', bindings: [
+      { sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', attribution },
+    ] });
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+    expect(host.requests.some(request => request.path.startsWith('/v2/sessions/'))).toBe(false);
+    host.setAccess(false);
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toBeNull();
+    await expect(access(source.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(target.path)).resolves.toBeUndefined();
+  });
+
+  it('refuses SOURCE Manage-to-Use downgrade at the next boundary while retaining target native custody', async () => {
+    const host = await home({ sessionId: 'source-downgrade', machineGrantCount: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'source-downgrade', attribution };
+    const source = await requesterCredentialOwner.createWorkspaceSyncSourceCredentialCustody({ ...binding, credentials });
+    const target = await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+      executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    const fresh = { credentials, attribution, sessionId: binding.relationshipId, serverHttpBaseUrl: origin, boundary: host.boundary };
+    const machineReads = () => host.requests.filter(request => request.path === '/v1/machines/machine').length;
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+    host.setMachineRole('use');
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toBeNull();
+    let before = machineReads();
+    expect(await requesterCredentialOwner.verifyWorkspaceSyncSourceMachineAdmissionCurrent(fresh)).toBe(false);
+    expect(machineReads() - before).toBe(1);
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).not.toBeNull();
+    await expect(access(source.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(target.path)).resolves.toBeUndefined();
+    host.setMachineRole('manage');
+    before = machineReads();
+    expect(await requesterCredentialOwner.verifyWorkspaceSyncSourceMachineAdmissionCurrent(fresh)).toBe(true);
+    expect(machineReads() - before).toBe(1);
+    expect(host.requests.some(request => request.path.endsWith('/admission/verify'))).toBe(false);
+  });
+
+  it('recovers Sync relationship custody without a fictional Session proof', async () => {
+    const host = await home({ machineGrantCount: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'relationship-without-session', attribution };
+    await requesterCredentialOwner.createWorkspaceSyncSourceCredentialCustody({ ...binding, credentials });
+    await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+      executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    const fresh = { credentials, attribution, sessionId: binding.relationshipId, serverHttpBaseUrl: origin, boundary: host.boundary };
+    // This Home has an actual Session named "session". Its signed Session proof
+    // refuses the relationship id, as the real AccessKey/Session owner does.
+    expect(await verifyRequesterSessionMachineAdmissionCurrent(fresh)).toBe(false);
+    const beforeSync = host.requests.length;
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).toMatchObject(credentials);
+    expect(await requesterCredentialOwner.verifyWorkspaceSyncSourceMachineAdmissionCurrent(fresh)).toBe(true);
+    host.setMachineRole('use');
+    expect(await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).not.toBeNull();
+    expect(await requesterCredentialOwner.verifyWorkspaceSyncRelationshipMachineAdmissionCurrent(fresh)).toBe(true);
+    expect(host.requests.slice(beforeSync).some(request => request.path.endsWith('/admission/verify')
+      || request.path.startsWith('/v2/sessions/'))).toBe(false);
+    expect(await verifyRequesterSessionMachineAdmissionCurrent({ ...fresh, sessionId: 'session' })).toBe(true);
+  });
+
+  it.each(['source', 'target'] as const)('preserves Sync %s custody when Machine admission is unavailable, then retires a definite refusal', async endpoint => {
+    const host = await home({ machineGrantCount: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'unavailable-sync', attribution };
+    const custody = endpoint === 'source'
+      ? await requesterCredentialOwner.createWorkspaceSyncSourceCredentialCustody({ ...binding, credentials })
+      : await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+        executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    let homeCurrent = false;
+    const boundary = { ...host.boundary, isHomeCurrent: () => homeCurrent };
+    const recover = () => endpoint === 'source'
+      ? requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding, serverHttpBaseUrl: origin, machineAdmissionBoundary: boundary })
+      : requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding, serverHttpBaseUrl: origin, machineAdmissionBoundary: boundary });
+    await expect(recover()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    homeCurrent = true;
+    host.setUnavailablePath('/v1/machines/machine');
+    await expect(recover()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+    await expect(access(custody.path)).resolves.toBeUndefined();
+    host.setUnavailablePath(null);
+    host.setAccess(false);
+    expect(await recover()).toBeNull();
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each(['direct', 'cold', 'session-binding'] as const)('preserves ordinary requester custody after refused %s recovery following a crash', async recovery => {
     const host = await home();
     const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };

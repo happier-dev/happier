@@ -12,6 +12,8 @@ import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnershi
 import { workspaceSyncTargetBootstrap } from './workspaceSyncTargetBootstrap';
 import { prepareWorkspaceSyncBetween } from './workspaceSyncPreparation';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { PrivateProjectNativeSync } from '@/workspaces/activation/privateProjectSyncEffect';
+import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
 const relationshipStatus: WorkspaceSyncStatusV1 = {
   relationshipId: 'rel-1', controllerMachineId: 'machine-a', state: 'watching',
@@ -24,6 +26,88 @@ const relationshipStatus: WorkspaceSyncStatusV1 = {
 };
 
 describe('WorkspaceSyncHandoffAdapter', () => {
+  it('settles a bound remote Open without re-acquiring relationship custody or downgrading a later transfer', async () => {
+    const adapter = handoffAdapter(managedSync());
+    const input = relationshipInput();
+    let custodyAcquisitions = 0;
+    const execution = {
+      credentials: { token: 'requester-token', encryption: null },
+      accountRowsCustody: { serverId: 'server-a', accountId: 'requester', serverHttpBaseUrl: 'https://home.invalid', isCurrent: async () => true },
+      assertTransferCurrent: async () => undefined,
+      retainRelationship: async () => { custodyAcquisitions += 1; },
+      release: async () => undefined,
+    };
+    adapter.retainPrivateExecution!({ input, execution });
+    await adapter.bindPrivateExecutionRelationship!(input.operationId, 'rel-1');
+    expect(adapter.resolvePrivateExecution!({ relationshipId: 'rel-1' })?.phase).toBe('open');
+    // A TARGET Open delegates finalization to SOURCE; its finite exit settles
+    // this same retained capture even when the source acknowledgement is lost.
+    await adapter.bindPrivateExecutionRelationship!(input.operationId, 'rel-1', 'relationship');
+    expect(adapter.resolvePrivateExecution!({ relationshipId: 'rel-1' })?.phase).toBe('relationship');
+    await adapter.bindPrivateExecutionRelationship!(input.operationId, 'rel-1');
+    expect(adapter.resolvePrivateExecution!({ relationshipId: 'rel-1' })?.phase).toBe('relationship');
+    expect(custodyAcquisitions).toBe(1);
+    await adapter.releasePrivateExecution!(input.operationId);
+  });
+  it('shares identical Account endpoints across retained relationships while preserving conflicting Account or root ambiguity', () => {
+    const adapter = handoffAdapter(managedSync());
+    const workspace = { id: 'shared-source', serverId: 'server-a', machineId: 'machine-a', rootPath: '/src', createdAtMs: 1 };
+    const retain = (operationId: string, accountId: string, rootPath = workspace.rootPath) => {
+      const snapshot: ActiveProjectAccountRowsSnapshot = { source: 'network', workspaceRefs: [{ ...workspace, rootPath }],
+        relationships: [], graphRevision: 'absent', organizations: [], rows: [], loadedAtMs: 1, scopeKey: accountId };
+      adapter.retainPrivateExecution!({ input: { ...relationshipInput(), operationId }, execution: {
+        credentials: { token: 'requester-token', encryption: null },
+        accountRowsCustody: { serverId: 'server-a', accountId, serverHttpBaseUrl: 'https://home.invalid', isCurrent: async () => true },
+        getSnapshot: () => snapshot, assertTransferCurrent: async () => undefined, release: async () => undefined,
+      } });
+    };
+    retain('open-1', 'requester');
+    retain('open-2', 'requester');
+    expect(adapter.resolvePrivateWorkspaceRef!('shared-source', 'server-a')).toEqual({ kind: 'resolved', workspace });
+    retain('open-3', 'requester', '/changed-root');
+    expect(adapter.resolvePrivateWorkspaceRef!('shared-source', 'server-a')).toEqual({ kind: 'unavailable' });
+    const otherAccount = handoffAdapter(managedSync());
+    for (const [index, capture] of adapter.listPrivateExecutions!().slice(0, 2).entries()) {
+      otherAccount.retainPrivateExecution!({ input: capture.input, execution: { ...capture.execution,
+        accountRowsCustody: { ...capture.execution.accountRowsCustody, accountId: `account-${index}` } } });
+    }
+    expect(otherAccount.resolvePrivateWorkspaceRef!('shared-source', 'server-a')).toEqual({ kind: 'unavailable' });
+    expect(adapter.resolvePrivateWorkspaceRef!('unknown', 'server-a')).toEqual({ kind: 'unowned' });
+  });
+  it('keeps a private Open capture only for its exact operation and retires it through its owner', async () => {
+    const adapter = handoffAdapter(managedSync());
+    const input = relationshipInput();
+    let released = false;
+    let nativeDisposed = false;
+    // Native process boundary: this fixture observes only its lifetime callback.
+    const nativeSync = { dispose: async () => { nativeDisposed = true; } } as PrivateProjectNativeSync;
+    const execution = {
+      credentials: { token: 'requester-token', encryption: null },
+      accountRowsCustody: { serverId: 'server-a', accountId: 'requester', serverHttpBaseUrl: 'https://home.invalid',
+        isCurrent: async () => true },
+      assertTransferCurrent: async () => undefined,
+      nativeSync,
+      release: async () => { released = true; },
+    };
+    adapter.retainPrivateExecution!({ input, execution });
+    expect(adapter.resolvePrivateExecution!({ operationId: input.operationId })?.execution).toBe(execution);
+    expect(adapter.resolvePrivateExecution!({ operationId: input.operationId })?.phase).toBe('open');
+    expect(adapter.resolvePrivateExecution!({ operationId: 'another-open' })).toBeNull();
+    expect(adapter.resolvePrivateExecution!({})).toBeNull();
+    expect(() => adapter.retainPrivateExecution!({ input: { ...input, targetRootPath: '/other-member' }, execution }))
+      .toThrow(expect.objectContaining({ code: 'workspace_sync_operation_conflict' }));
+    await adapter.bindPrivateExecutionRelationship!(input.operationId, 'rel-1');
+    expect(adapter.resolvePrivateExecution!({ relationshipId: 'rel-1' })?.execution).toBe(execution);
+    expect(adapter.resolvePrivateExecution!({ operationId: input.operationId, relationshipId: 'another-relationship' })).toBeNull();
+    const prepared = await adapter.prepare(input);
+    await adapter.finalize({ operationId: input.operationId, prepared });
+    await adapter.commit({ operationId: input.operationId, prepared });
+    expect(adapter.resolvePrivateExecution!({ relationshipId: 'rel-1' })?.phase).toBe('relationship');
+    await adapter.releasePrivateExecution!(input.operationId);
+    expect(released).toBe(true);
+    expect(nativeDisposed).toBe(false);
+    expect(adapter.resolvePrivateExecution!({ operationId: input.operationId })).toBeNull();
+  });
   it('requires and initially flushes an exact relationship during prepare, then finalizes after source stop', async () => {
     const sync = managedSync({
       flush: vi.fn(async () => relationshipStatus),

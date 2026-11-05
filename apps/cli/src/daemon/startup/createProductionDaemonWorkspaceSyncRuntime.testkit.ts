@@ -51,6 +51,96 @@ const contentPolicyInput = { v: 1 as const, selection: 'all_files' as const, ext
 let pluginRuntimeHome: Promise<string> | undefined;
 let pluginRuntimeDevelopmentRoots: ReturnType<typeof createDaemonPluginDevelopmentRootsOwner> | undefined;
 
+/** Native artifact/process boundaries with the real broker, controller and target admission. */
+export function createWorkspaceSyncNativeProcessTestBoundary(options: Readonly<{
+  onCommand?: (command: MutagenControlCommandV1) => Promise<void>;
+}> = {}) {
+  const sessions = new Map<string, MutagenSessionSummaryV1>();
+  const commands: MutagenControlCommandV1[] = [];
+  let client: WorkspaceSyncBrokerClient | undefined;
+  let finish: (() => void) | undefined;
+  const factories: Partial<ProductionDaemonWorkspaceSyncFactories> = {
+    stopRetainedNativeProcesses: async () => undefined,
+    createDaemonRuntime: deps => createDaemonWorkspaceSyncRuntime({ ...deps,
+      resolveInstalledComponentPaths: () => ({ currentPath: '/fixture-engine', resolvedCurrentPath: '/fixture-engine' }),
+      resolveArtifactPaths: () => ({ managerPath: '/fixture-engine/manager', agentPath: '/fixture-engine/agent' }),
+      assertArtifactPayload: () => ({ engineVersion: '0.18.1', protocolEpoch: 'external-stream-v1' }),
+    }),
+    createBroker: async input => {
+      const peerIdentityValidator = createWorkspaceSyncPeerIdentityValidator({
+        resolveExecutable: () => '/fixture-peer-identity',
+        observe: async () => ({ pid: process.pid, uid: process.getuid!(), gid: process.getgid!() }),
+      });
+      peerIdentityValidator.setExpectedSidecarPid(process.pid);
+      const handle = await createDaemonWorkspaceSyncBroker({ ...input, peerIdentityValidator,
+        listenBroker: async config => {
+          const broker = await listenWorkspaceSyncBroker(config);
+          client = new WorkspaceSyncBrokerClient({ endpointPath: broker.socketPath,
+            brokerInstanceId: broker.brokerInstanceId, launchNonce: broker.launchNonce,
+            launchSecret: input.launchSecret, sidecarPid: process.pid });
+          client.onCommand(async command => {
+            commands.push(command);
+            await options.onCommand?.(command);
+            if (command.t === 'shutdown') return null;
+            if (command.t === 'list') return { sessions: [...sessions.values()], nextCursor: null };
+            if (command.t === 'create') {
+              const endpoint = (value: string) => ({ protocol: 'external' as const,
+                host: value.replace('external://', ''), path: '' as const,
+                state: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } });
+              const session: MutagenSessionSummaryV1 = { identifier: command.session.name, name: command.session.name,
+                labels: command.session.labels, alpha: endpoint(command.session.alpha), beta: endpoint(command.session.beta),
+                mode: command.session.mode, paused: true, status: 'watching', successfulCycles: 0, conflictCount: 0 };
+              sessions.set(session.identifier, session);
+              return session;
+            }
+            if (command.t === 'terminate') { sessions.delete(command.sessionIdentifier); return null; }
+            const session = sessions.get(command.sessionIdentifier);
+            if (!session) throw new Error('Native session is missing');
+            if (command.t === 'get_policy') return { selection: 'all_files', patterns: [], nextCursor: null };
+            if (command.t === 'list_conflicts') return { totalCount: 0, shownCount: 0, truncatedCount: 0, conflicts: [], nextCursor: null };
+            if (command.t === 'flush') {
+              // Both native engine endpoints consume their real admitted port;
+              // each external agent OS boundary owns its filesystem effects.
+              for (const endpoint of [session.alpha, session.beta]) {
+                const pipe = await client!.openStream(endpoint.host);
+                const settled = new Promise<void>((resolve, reject) => {
+                  pipe.stream.on('data', () => undefined);
+                  pipe.stream.once('end', resolve);
+                  pipe.stream.once('error', reject);
+                });
+                pipe.stream.end('native-sync-cycle');
+                await Promise.all([settled, pipe.done]);
+              }
+            }
+            const updated = { ...session,
+              paused: command.t === 'pause' ? true : command.t === 'resume' ? false : session.paused,
+              successfulCycles: session.successfulCycles + (command.t === 'flush' ? 1 : 0) };
+            sessions.set(updated.identifier, updated);
+            return updated;
+          });
+          return broker;
+        } });
+      return { ...handle, command: async (request, signal, operationId) => {
+        const result = await handle.command(request, signal, operationId);
+        if (request.t === 'shutdown') finish?.();
+        return result;
+      } };
+    },
+    spawnSidecar: async () => {
+      await client?.connectControl();
+      const terminated = new Promise<{ type: 'exited'; code: number }>(resolve => {
+        finish = () => resolve({ type: 'exited', code: 0 });
+      });
+      return { pid: process.pid, waitForTermination: () => terminated,
+        stop: async () => { finish?.(); await client?.close(); } };
+    },
+  };
+  return { factories, commands, openStream: async (endpointId: string) => {
+    if (!client) throw new Error('Native control boundary is unavailable');
+    return client.openStream(endpointId);
+  } };
+}
+
 export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   socketIo: Readonly<{
     mockImplementation(implementation: () => ReturnType<typeof createApiSessionSocketStub>): unknown;

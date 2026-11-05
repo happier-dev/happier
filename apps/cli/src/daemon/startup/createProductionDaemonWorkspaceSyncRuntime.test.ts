@@ -81,6 +81,9 @@ const contentPolicy = {
   policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicyInput),
 };
 
+// As in the target-authority suite, link the real lazy API transport during collection.
+await import('@/api/api');
+
 function settingsSnapshot(): ActiveProjectAccountRowsSnapshot {
   return {
     source: 'network',
@@ -123,6 +126,67 @@ function settingsSnapshot(): ActiveProjectAccountRowsSnapshot {
 }
 
 describe('createProductionDaemonWorkspaceSyncRuntime', () => {
+  it('recovers retained remote Sync with the captured Account and Home before engine work', async () => {
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const remoteReads: Readonly<{ authorization: unknown; origin: string }>[] = [];
+    const remoteRecoveries: unknown[] = [];
+    let observeRemote = false;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, separateTargetParent: true,
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined,
+      readAdditionalHttpResponse: async (url, config) => {
+        if (observeRemote && url.endsWith('/v1/machines/target-parent')) remoteReads.push({
+          authorization: config?.headers?.Authorization, origin: new URL(url).origin,
+        });
+        return undefined;
+      },
+      handleAdditionalSocketAck: async payload => {
+        if (!payload || typeof payload !== 'object' || !('method' in payload)
+          || payload.method !== `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER}` || !('params' in payload)) return undefined;
+        const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
+        remoteRecoveries.push(decoded.params);
+        return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' },
+          { status: 'recovery_needed', recoveryPath: '/member/recovery' }, decoded.callId) };
+      },
+    });
+    const credentials = { token: [Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url'),
+      Buffer.from('{"sub":"bob"}').toString('base64url'), 'captured-requester'].join('.'), encryption: null };
+    const relationship = { v: 1 as const, relationshipId: 'retained-requester-remote',
+      controllerMachineId: fixture.sourceRef.machineId, alphaWorkspaceRefId: fixture.sourceRef.id,
+      betaWorkspaceRefId: fixture.targetRef.id, mode: 'keep_synced' as const, contentPolicy,
+      enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    for (const value of [fixture.sourceRef, fixture.targetRef]) {
+      const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: value.id };
+      rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value }) }));
+    }
+    const key = { kind: 'relationship-graph' as const };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0,
+      content: cipher.seal({ key, value: { relationships: [relationship] } }) }));
+    let snapshot: ActiveProjectAccountRowsSnapshot = { ...settingsSnapshot(),
+      workspaceRefs: [fixture.sourceRef, fixture.targetRef], relationships: [relationship] };
+    const operationId = relationship.relationshipId;
+    fixture.parent.handoffAdapter.retainPrivateExecution!({ phase: 'relationship',
+      input: { operationId, accountServerId: fixture.serverId,
+        action: { kind: 'relationship', relationshipId: operationId, flushBeforeCommit: false },
+        sourceMachineId: fixture.sourceRef.machineId, sourceWorkspaceRefId: fixture.sourceRef.id, sourceRootPath: fixture.sourcePath,
+        targetMachineId: fixture.targetRef.machineId, targetWorkspaceRefId: fixture.targetRef.id, targetRootPath: fixture.targetPath },
+      execution: { credentials, accountRowsCustody: { serverId: fixture.serverId, accountId: 'bob',
+        serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true },
+      getSnapshot: () => snapshot, replaceSnapshot: async next => { snapshot = next; },
+      assertTransferCurrent: async () => undefined, release: async () => undefined },
+    });
+    await fixture.parent.handoffAdapter.bindPrivateExecutionRelationship!(operationId, operationId);
+    observeRemote = true;
+    await expect(fixture.parentManagedWorkspaceSync.ensure(relationship)).rejects.toMatchObject({ code: 'workspace_sync_recovery_needed' });
+    expect(remoteRecoveries).toEqual([{ relationshipId: operationId,
+      targetMachineId: fixture.targetRef.machineId, targetWorkspaceRefId: fixture.targetRef.id }]);
+    expect(remoteReads.length).toBeGreaterThan(0);
+    expect(remoteReads.every(read => read.authorization === `Bearer ${credentials.token}`
+      && read.origin === 'https://bind-child-home.invalid')).toBe(true);
+    expect(await fixture.parentManagedWorkspaceSync.list()).toEqual([]);
+  });
+
   it.each(['copy', 'foreign-project'] as const)('settles worker creation when the installed profile differs from the portable Home identity (%s)', async outcome => {
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
@@ -1132,8 +1196,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       && Reflect.get(headers, 'x-requester-proof') === 'bob' && !Reflect.has(headers, 'Authorization'))).toBe(true);
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
     current = false;
-    await expect(fixture.parent.handoffAdapter.finalize({ operationId: request.operationId, prepared, signal })).rejects.toMatchObject({
-      code: 'project_requester_authority_unavailable' });
+    await expect(fixture.parent.handoffAdapter.finalize({ operationId: request.operationId, prepared, signal })).resolves.toMatchObject({
+      kind: 'copy_once', operationId: request.operationId });
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
@@ -1700,7 +1764,6 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     expect(newOrdinaryTarget.input).toMatchObject({ sourceMachineId: 'machine-b', sourceWorkspaceRefId: 'workspace-beta',
       sourceRootPath: '/work/beta', targetMachineId: 'machine-a', targetRootPath: '/new-ordinary-target' });
     expect(newOrdinaryTarget.input.targetWorkspaceRefId).toBeUndefined();
-    await newOrdinaryTarget.assertCurrent();
     controllerOnline = false;
     const rpcCount = callMachineRpc.mock.calls.length;
     await expect(production.handoffAdapter.prepareBetween({ sourceWorkspaceRefId: childRef.id,
@@ -2334,18 +2397,19 @@ describe('bind-child source handoff through real daemon controllers', () => {
     else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('refuses fresh native source drift before final copy and releases parent custody on abort', async () => {
+  it('keeps the admitted physical source through final copy and re-admits a fresh operation', async () => {
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo });
     const prepared = await fixture.child.handoffAdapter.prepare(fixture.prepareInput);
     fixture.driftNativeRoot();
-    await writeFile(join(fixture.sourcePath, 'payload.txt'), 'must not copy');
-    await expect(fixture.child.handoffAdapter.finalize({ operationId: fixture.prepareInput.operationId, prepared }))
-      .rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
-    expect(await readdir(fixture.targetPath)).toEqual([]);
+    await writeFile(join(fixture.sourcePath, 'payload.txt'), 'admitted source after quiescence');
+    await fixture.child.handoffAdapter.finalize({ operationId: fixture.prepareInput.operationId, prepared });
+    expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('admitted source after quiescence');
     await fixture.child.handoffAdapter.abort({ operationId: fixture.prepareInput.operationId, prepared });
     const releasedSource = await fixture.probeSource();
     expect(releasedSource).not.toHaveProperty('kind');
     if (!('kind' in releasedSource)) await releasedSource.release();
+    await expect(fixture.child.handoffAdapter.prepare({ ...fixture.prepareInput, operationId: 'fresh-child-copy' }))
+      .rejects.toMatchObject({ code: 'workspace_sync_child_unavailable' });
   });
 
   it('requires source-phase support before quiescence or acquiring parent custody', async () => {

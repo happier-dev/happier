@@ -7,6 +7,12 @@ import type { AccountSettingsContext } from '@/settings/accountSettings/bootstra
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 
+export type RetainedRequesterAccountCustody = Readonly<{
+  isCurrent(): Promise<boolean>;
+  savedSecretOperationContext: SavedSecretOperationContextV1;
+  release(): Promise<void>;
+}>;
+
 /** Finite Account custody at an admitted ingress, never a Session or a credential store. */
 export type RequesterAccountActionContext = Readonly<{
   invocation?: ExternalActionRequesterInvocationV1;
@@ -22,6 +28,8 @@ export type RequesterAccountActionContext = Readonly<{
   /** Local installed custody, separate from fresh Home effect authorization. */
   isCustodyCurrent?: () => Promise<boolean>;
   refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
+  /** Retained relationship custody needs an installed lifetime owner independent of finite ingress. */
+  retainCustody?: () => RetainedRequesterAccountCustody;
   retain(): () => Promise<void>;
   dispose(): Promise<void>;
 

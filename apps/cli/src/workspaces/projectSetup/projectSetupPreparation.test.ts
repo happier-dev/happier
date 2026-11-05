@@ -27,8 +27,19 @@ import { prepareProjectSetup, reviewProjectSetupEffect, inspectProjectSetup, ins
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 import * as scmProcess from '@/scm/runtime';
 import { performance } from 'node:perf_hooks';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 describe('current Project setup effect and preparation admission', () => {
+    function requesterIdentity(actorAccountId = 'approving-user') {
+        return selectHostRequesterExecutionIdentity({
+            rpcContext: { signal: new AbortController().signal, callerAuthority: 'present_user',
+                machineAdmission: { actorAccountId, custodianAccountId: 'approving-user', machineId: 'machine-a',
+                    installationId: 'installation', role: actorAccountId === 'approving-user' ? 'manage' : 'use', encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true },
+            hostHomeServerIdentityId: 'home', hostCustodianAccountId: 'approving-user',
+            hostExecutionTarget: { machineId: 'machine-a', installationId: 'installation' },
+        });
+    }
     const roots: string[] = [];
     afterEach(async () => {
         vi.restoreAllMocks();
@@ -45,6 +56,7 @@ describe('current Project setup effect and preparation admission', () => {
         const input: ProjectSetupPreparationInput = {
             workspace, projectAssociation: { workspace, project: { serverId: 'home', projectId: 'project-p' } },
             requester: { credentials: { token: 'approving-user', encryption: null }, serverHttpBaseUrl: 'https://requester.example' },
+            requesterIdentity: requesterIdentity(),
             purpose: 'setup', platform: { os: 'linux', arch: 'x64' },
             nativeIo: { resolveTool: async tool => ({ executablePath: `/managed/${tool}`, version: '1' }) },
         };
@@ -132,6 +144,51 @@ describe('current Project setup effect and preparation admission', () => {
         await writeFile(join(secondInstallation, 'installed-npm/package.json'), JSON.stringify({ name: 'npm', version: '4.7.0', bin: { npm: 'bin/npm.cjs' } }));
         expect(await reviewProjectSetupEffect({ ...b.input, nativeIo: projectNativeSystemIo }))
             .toMatchObject({ kind: 'refused', code: 'native_tool_version_mismatch' });
+    });
+
+    it.skipIf(process.platform === 'win32').each(['member', 'unknown'] as const)('keeps %s setup provenance unavailable without running repository commands', async actor => {
+        const { root, input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
+        runScmExecutable(root, 'git', ['init', '-b', 'main']);
+        runScmExecutable(root, 'git', ['-c', 'user.name=Provenance test', '-c', 'user.email=provenance@example.invalid',
+            'commit', '--allow-empty', '-m', 'initial']);
+        const marker = join(root, 'fsmonitor-executed');
+        const hook = join(root, 'fsmonitor-hook');
+        await writeFile(hook, `#!/bin/sh\nprintf 'executed\\n' >> ${JSON.stringify(marker)}\nprintf 'token\\0'\n`, { mode: 0o700 });
+        runScmExecutable(root, 'git', ['config', 'core.fsmonitor', hook]);
+        vi.stubEnv('GIT_CONFIG_COUNT', '1');
+        vi.stubEnv('GIT_CONFIG_KEY_0', 'safe.directory');
+        vi.stubEnv('GIT_CONFIG_VALUE_0', root);
+        const registration = createGitScmBackendRuntimeRegistration();
+        const scmRegistry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+            executableDefinition: registration.runtime!, registration,
+            hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+        })]);
+        const preparation = { ...input, scmRegistry, successHomeDir: root };
+        // Explicit, caller-owned review retains its real repository context.
+        const direct = await reviewed(preparation);
+        expect(direct.reviewedEffect.presentation.provenance.kind).toBe('repository');
+        await expect(access(marker)).resolves.toBeUndefined();
+        await rm(marker);
+        const commands = vi.spyOn(scmProcess, 'runScmCommand');
+        trustTransport(null);
+        const inspect = () => inspectProjectSetup({ ...preparation,
+            requesterIdentity: actor === 'unknown' ? undefined : requesterIdentity('member') }, { reviewConsent: true });
+        const inspection = await inspect();
+        expect(inspection).toMatchObject({
+            setupReadiness: { kind: 'unprepared' }, setupConsent: { kind: 'required' },
+            setupReview: { reviewedEffectDigest: direct.reviewedEffectDigest,
+                reviewedEffect: { presentation: { provenance: { kind: 'unavailable', file: '.happier/project.json', fileState: 'unknown' } } } },
+        });
+        {
+            const retained = await reviewProjectSetupEffect({ ...preparation,
+                requesterIdentity: actor === 'unknown' ? undefined : requesterIdentity('member') }, direct.reviewedEffect.presentation);
+            expect(retained).toMatchObject({ kind: 'reviewed', plan: { reviewedEffect: {
+                presentation: { provenance: { kind: 'unavailable', fileState: 'unknown' } },
+            } } });
+            await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(commands.mock.calls.filter(([request]) => request.args.includes('status'))).toHaveLength(0);
+        }
     });
 
     it('displays observed repository provenance without treating HEAD, branch, or file cleanliness as consent', async () => {

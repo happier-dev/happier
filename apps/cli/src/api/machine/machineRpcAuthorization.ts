@@ -39,6 +39,7 @@ import { SocketRpcMachineAdmissionContextV1Schema, type SocketRpcMachineAdmissio
   WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, HandoffTargetReplacementPreflightV1Schema,
   WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema,
+  WorkspaceSyncTargetConflictRecoverV1Schema, type WorkspaceSyncTargetConflictRecoverV1,
   WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncCommittedCopyPreviewV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -55,6 +56,8 @@ import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/works
 import { logger } from '@/ui/logger';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
+import type { RetainedWorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 
 const finiteProjectMethods: readonly string[] = Object.values(
   PROJECT_FINITE_ACTION_RPC_METHODS_V1,
@@ -236,10 +239,28 @@ export function doesWorkspaceSyncSeedRootMatchRouting(authorization: ExternalAct
 }
 
 /** Local installation facts and the current Home verification boundary. */
+export type PrivateWorkspaceSyncTargetAdmission = Readonly<{
+  context: SocketRpcMachineAdmissionContextV1;
+  receivingMachine: Readonly<{ machineId: string; installationId: string }>;
+  request: unknown;
+  /** Signed target phase or an authenticated continuation of the bound job. */
+  routing: WorkspaceSyncSourceWriterTargetRoutingV1['target'] | Readonly<{
+    phase: 'recover'; accountServerId: string;
+  } & WorkspaceSyncTargetConflictRecoverV1>;
+  targetWorkspaceRefId?: string;
+}>;
+
+export type PrivateWorkspaceSyncTargetExecutionResolution =
+  | Readonly<{ kind: 'matched'; capture: RetainedWorkspaceSyncPrivateExecution }>
+  | Readonly<{ kind: 'private_unavailable' }>
+  | Readonly<{ kind: 'no_private_capture' }>;
+
 export type MachineRpcAdmissionBoundary = Readonly<{
   machineId: string;
   resolveCustodianAccountId: (signal?: AbortSignal) => Promise<string | null>;
   resolveInstallationId: () => string | null;
+  /** Cheap exact active-operation lookup; never selects a requester or re-evaluates permissions. */
+  resolvePrivateWorkspaceSyncTargetExecution?: (input: PrivateWorkspaceSyncTargetAdmission) => PrivateWorkspaceSyncTargetExecutionResolution;
   verifyMachineAdmission: (input: Readonly<{
     context: SocketRpcMachineAdmissionContextV1;
     method: string;
@@ -527,7 +548,15 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(params: unknown, rout
   }
   const body = routing.phase === 'prepare' ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(params)
     : WorkspaceSyncTargetBootstrapReleaseV1Schema.safeParse(params);
-  return body.success && body.data.bootstrapOperationId === routing.operationId;
+  if (!body.success) return false;
+  if (body.data.bootstrapOperationId === routing.operationId) return true;
+  // This is a request binding, never authority: the receiver below also
+  // requires the exact already-admitted private Open capture for this form.
+  const relationshipId = deriveWorkspaceSyncRelationshipId(routing.operationId);
+  return body.data.bootstrapOperationId === relationshipId
+    && (routing.phase === 'release' || 'owner' in body.data && body.data.owner.kind === 'relationship'
+      && body.data.owner.relationshipId === relationshipId
+      && body.data.transientRelationship?.relationshipId === relationshipId);
 }
 
 export async function authorizeMachineRpcRequest(request: Readonly<{
@@ -702,6 +731,12 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
             ? { custodySubjectAccountId: custodyRequest.data.subjectAccountId } : {}),
           ...(request.signal ? { signal: request.signal } : {}) });
       if (!verifiedAdmission) return forbidden('machine_currentness');
+      const privateRecovery = rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER
+        && context.actorAccountId !== context.custodianAccountId
+        && !sourceRouting && !targetRouting && !writerTargetRouting && !seedRouting
+        ? WorkspaceSyncTargetConflictRecoverV1Schema.safeParse(request.params) : null;
+      if (privateRecovery && !privateRecovery.success) return forbidden('machine_target');
+      const recoveryHome = privateRecovery?.success ? await machine.resolveHomeServerIdentityId?.(request.signal) : null;
       if (installationId !== machine.resolveInstallationId()) return forbidden('machine_installation');
       if (request.signal?.aborted) return forbidden('request_cancelled');
       // These native bind phases do not launch requester processes. Home has
@@ -765,6 +800,34 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
       const nativePersonalComputer = nativeRequesterControl && (rpcMethod === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
         || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
         || rpcMethod === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START);
+      const workspaceTargetPhase = rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+        || rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+        || rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
+      const privateTargetRouting = targetRouting ?? writerTargetRouting?.target;
+      const privateTargetBody = privateTargetRouting?.phase === 'prepare'
+        ? WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(request.params)
+        : privateTargetRouting?.phase === 'release'
+          ? WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(request.params) : undefined;
+      const privateSyncLookup = workspaceTargetPhase && privateTargetRouting !== undefined
+        ? machine.resolvePrivateWorkspaceSyncTargetExecution?.({ context,
+          receivingMachine: { machineId: machine.machineId, installationId }, routing: privateTargetRouting,
+          ...(privateTargetBody ? { targetWorkspaceRefId: privateTargetBody.targetWorkspaceRefId } : {}),
+          request: request.params,
+        }) ?? null : privateRecovery?.success && recoveryHome
+          ? machine.resolvePrivateWorkspaceSyncTargetExecution?.({ context,
+            receivingMachine: { machineId: machine.machineId, installationId }, request: privateRecovery.data,
+            routing: { phase: 'recover', accountServerId: recoveryHome, ...privateRecovery.data },
+            targetWorkspaceRefId: privateRecovery.data.targetWorkspaceRefId,
+          }) ?? null : null;
+      const privateSyncExecution = privateSyncLookup?.kind === 'matched' ? privateSyncLookup.capture : null;
+      if (privateSyncLookup?.kind === 'private_unavailable' || privateRecovery && !privateSyncExecution) {
+        return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
+      }
+      if (privateTargetBody && privateTargetRouting
+        && privateTargetBody.bootstrapOperationId !== privateTargetRouting.operationId && !privateSyncExecution) {
+        return { ok: false, errorCode: 'agent_isolation_unavailable', error: 'Private workspace Sync execution is unavailable' };
+      }
+      if (privateSyncExecution) return { ok: true, workspaceSyncPrivateExecution: privateSyncExecution };
       if (
         !nativeManagedBindPhase &&
         !nativeEffectOwner &&
@@ -774,8 +837,8 @@ export async function authorizeMachineRpcRequest(request: Readonly<{
         // owner distinguishes finite output and enforces retained custody.
         // Keep the route flag for Session admission and older-receiver floors.
         !(nativePersonTerminal && rpcMethod === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) &&
-        resolveMachineRpcRoutePolicy(rpcMethod)
-          .requesterExecutionIsolationRequired === true
+        (workspaceTargetPhase && !privateTargetRouting || resolveMachineRpcRoutePolicy(rpcMethod)
+          .requesterExecutionIsolationRequired === true)
       ) {
         const physicalCustodianAccountId = custodianAccountId
           ?? await machine.resolveCustodianAccountId(request.signal);

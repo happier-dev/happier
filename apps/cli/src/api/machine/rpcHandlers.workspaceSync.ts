@@ -11,6 +11,10 @@ import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSou
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
+import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PrivateWorkspaceSyncTargetAdmission, PrivateWorkspaceSyncTargetExecutionResolution } from './machineRpcAuthorization';
 import { ProjectWorkerDependencyQueryV1Schema, ProjectWorkerDependencyV1Schema,
   type ProjectWorkerDependencyQueryV1, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { WorkspaceSyncCommittedCopyTargetV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema,
@@ -98,6 +102,61 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
   removeCommittedCopyHere?(request: WorkspaceSyncCommittedCopyTargetV1, signal?: AbortSignal): Promise<WorkspaceSyncCommittedCopyTargetResultV1>;
   readProjectWorkerDependencies?(request: ProjectWorkerDependencyQueryV1, signal?: AbortSignal): Promise<readonly ProjectWorkerDependencyV1[]>;
 }>;
+
+/** Admission is already current. Match only the incumbent host capture. */
+export function resolvePrivateWorkspaceSyncTargetExecution(
+  adapter: Pick<WorkspaceSyncHandoffAdapter, 'resolvePrivateExecution'>,
+  admission: PrivateWorkspaceSyncTargetAdmission,
+): PrivateWorkspaceSyncTargetExecutionResolution {
+  const { routing } = admission;
+  const capture = adapter.resolvePrivateExecution?.(routing.phase === 'recover'
+    ? { relationshipId: routing.relationshipId } : { operationId: routing.operationId });
+  if (!capture) return { kind: 'no_private_capture' };
+  const { input, execution } = capture;
+  const identity = execution.executionIdentity;
+  const home = routing.accountServerId;
+  const workspaceRefId = admission.targetWorkspaceRefId;
+  const matches = identity?.kind === 'isolated'
+    && identity.requester.accountId === admission.context.actorAccountId
+    && execution.accountRowsCustody.accountId === admission.context.actorAccountId
+    // Account rows custody holds the semantic Home; requester attribution's
+    // serverId is the local profile handle and must not be used as Home identity.
+    && execution.accountRowsCustody.serverId === home
+    && input.accountServerId === home
+    && identity.requester.machineId === admission.receivingMachine.machineId
+    && identity.requester.installationId === admission.receivingMachine.installationId
+    && input.targetMachineId === admission.receivingMachine.machineId
+    && input.targetMachineId === routing.targetMachineId
+    && (routing.phase === 'recover' || input.targetRootPath === routing.targetRootPath)
+    && (workspaceRefId === undefined || input.targetWorkspaceRefId === workspaceRefId);
+  if (!matches) return { kind: 'private_unavailable' };
+  // The binding is installed by the canonical signed prepare, before initial
+  // ensure. It survives commit for later transfers; an operation id alone
+  // never authorizes this continuation. Native custody owns the captured root.
+  if (routing.phase === 'recover') {
+    const action = input.action;
+    const admittedRelationship = action.kind === 'create_relationship'
+      || action.kind === 'relationship' && capture.phase === 'relationship' && action.relationshipId === routing.relationshipId;
+    if (!admittedRelationship || capture.relationshipId !== routing.relationshipId
+      || input.targetWorkspaceRefId !== routing.targetWorkspaceRefId) return { kind: 'private_unavailable' };
+  }
+  if (routing.phase === 'prepare') {
+    const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(admission.request);
+    const action = input.action;
+    if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return { kind: 'private_unavailable' };
+    if (request.policyDigest !== action.contentPolicy.policyDigest) return { kind: 'private_unavailable' };
+    const operation = request.owner.kind === 'copy_once' ? request.owner.operation : request.transientRelationship;
+    if (!operation || operation.alphaWorkspaceRefId !== input.sourceWorkspaceRefId
+      || operation.betaWorkspaceRefId !== input.targetWorkspaceRefId || request.endpointRole !== 'beta'
+      || !sameStrictJsonValue(operation.contentPolicy, action.contentPolicy)) return { kind: 'private_unavailable' };
+    if (request.owner.kind === 'relationship'
+      && (action.kind !== 'create_relationship' || request.owner.relationshipId !== deriveWorkspaceSyncRelationshipId(input.operationId)
+        || !('mode' in operation) || operation.mode !== action.mode)) return { kind: 'private_unavailable' };
+    if (request.owner.kind === 'copy_once' && (action.kind !== 'copy_once'
+      || request.owner.operation.operationId !== input.operationId)) return { kind: 'private_unavailable' };
+  }
+  return { kind: 'matched', capture };
+}
 
 function unavailable(): never {
   throw Object.assign(new Error('Workspace sync runtime is unavailable'), {
@@ -222,6 +281,14 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   const rpcHandlerManager = createWorkspaceSyncRpcRegistrar(params.rpcHandlerManager);
   const service = (): MachineWorkspaceSyncRpcService => params.service ?? unavailable();
   const signal = (value: AbortSignal | undefined): AbortSignal => value ?? new AbortController().signal;
+  const privateNativeTarget = (context: RpcHandlerContext | undefined) => {
+    const capture = context?.workspaceSyncPrivateExecution;
+    if (!capture) return null;
+    if (!capture.execution.nativeSync) {
+      throw new RpcError('Private workspace Sync execution is unavailable', 'agent_isolation_unavailable');
+    }
+    return capture.execution.nativeSync;
+  };
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, async (raw, context) => {
     const request = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse(raw);
@@ -390,7 +457,10 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER, async (raw, context) => {
     const request = WorkspaceSyncTargetConflictRecoverV1Schema.parse(raw);
-    const recover = service().recoverConflictResolutionAtTarget;
+    const native = privateNativeTarget(context);
+    const recover = native ? context?.workspaceSyncPrivateExecution?.execution.recoverConflictResolutionHere
+      : service().recoverConflictResolutionAtTarget;
+    if (native && !recover) throw new RpcError('Private workspace Sync execution is unavailable', 'agent_isolation_unavailable');
     if (!recover) unavailable();
     return WorkspaceSyncTargetConflictRecoverResultV1Schema.parse(
       await recover(request, signal(context?.signal)),
@@ -410,20 +480,32 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, async (raw, context) => {
     const request = HandoffTargetReplacementPreflightV1Schema.parse(raw);
+    const native = privateNativeTarget(context);
     return HandoffTargetReplacementPreflightResultV1Schema.parse(
-      await service().preflightHandoffTargetReplacement(request, signal(context?.signal), context),
+      await (native ? native.preflightHandoffTargetReplacementHere(request, signal(context?.signal))
+        : service().preflightHandoffTargetReplacement(request, signal(context?.signal), context)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, async (raw, context) => {
     const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(raw);
+    const native = privateNativeTarget(context);
+    if (native && context) await context.workspaceSyncPrivateExecution?.execution.bindTargetPhaseContext?.(context);
+    if (native && request.owner.kind === 'relationship') {
+      const bind = context?.workspaceSyncPrivateExecution?.bindRelationship;
+      if (!bind) throw new RpcError('Private workspace relationship custody is unavailable', 'agent_isolation_unavailable');
+      await bind(request.owner.relationshipId);
+    }
     return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(
-      await service().prepareBootstrapAtTarget(request, signal(context?.signal), context),
+      await (native ? native.prepareBootstrapHere(request, signal(context?.signal))
+        : service().prepareBootstrapAtTarget(request, signal(context?.signal), context)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, async (raw, context) => {
     const request = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(raw);
+    const native = privateNativeTarget(context);
     return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(
-      await service().releaseBootstrapAtTarget(request, signal(context?.signal), context),
+      await (native ? native.releaseBootstrapHere(request, signal(context?.signal))
+        : service().releaseBootstrapAtTarget(request, signal(context?.signal), context)),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LEGACY_INSPECT, async (raw, context) => {

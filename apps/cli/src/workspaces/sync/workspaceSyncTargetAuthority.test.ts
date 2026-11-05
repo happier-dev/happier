@@ -908,7 +908,8 @@ describe('private requester finite target bootstrap', () => {
       machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine-b', installationId: 'target-installation',
         role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
     const authority = createWorkspaceSyncTargetAuthority({ localServerId: 'server-1', localMachineId: 'machine-b',
-      refreshProjectSnapshot: signal => readProjectAccountRows({ authorization, effectActionId: 'projects.open', serverId: 'server-1', signal }),
+      refreshProjectSnapshot: signal => readProjectAccountRows({ authorization, effectActionId: 'projects.open', serverId: 'server-1', signal,
+        selection: { kinds: ['workspace-ref', 'relationship-graph'] } }),
       callMachineRpc: async () => { throw new Error('This local READY must not use another Machine'); },
       bootstrap: { materializationDirectory: join(root, 'materialization'), rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') }) } });
     onTestFinished(async () => { await authority.releaseAllRetainedBootstraps(); withdrawActiveProjectAccountRowsSnapshot();

@@ -1,8 +1,8 @@
 import axios from 'axios';
-import { mkdtemp, mkdir, writeFile, access, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
@@ -16,7 +16,8 @@ import { readSettings, readStoredCredentialsForServerId, updateSettings } from '
 import { registerProjectOpenRpcHandlers } from './registerProjectOpenRpcHandlers';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectResultV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
@@ -54,9 +55,93 @@ import { writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../../packages/plugins/scm-git/src/backend';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
+import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { deriveAgentIsolationMemberIdentity, buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/provisioning';
+import { writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
+import { workspaceCheckoutNativeBoundary as nativeBoundary } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createProductionDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime';
+import { createWorkspaceSyncNativeProcessTestBoundary } from '@/daemon/startup/createProductionDaemonWorkspaceSyncRuntime.testkit';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
+import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
 
 const socketIo = vi.hoisted(() => vi.fn());
+const nativeSyncFiles = vi.hoisted(() => ({ source: '' }));
 vi.mock('socket.io-client', () => ({ io: socketIo }));
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  const { workspaceCheckoutFilesystemBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+  return workspaceCheckoutFilesystemBoundary(actual);
+});
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  const { workspaceCheckoutNativeBoundary, spawnWorkspaceCheckoutNativeBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+  const execFileBoundary = (...args: unknown[]) => {
+    if (args[0] === 'sudo' && Array.isArray(args[1]) && args[1].at(-1) === 'agent-launch'
+      && workspaceCheckoutNativeBoundary.launch) {
+      const commandArgs = args[1];
+      const callback = args.at(-1);
+      const home = workspaceCheckoutNativeBoundary.mounts[0];
+      if (typeof callback !== 'function' || !home) throw new Error('Missing native readiness fixture');
+      // Retain the real stdin/physical-settlement path and validate its frame
+      // through the canonical OS readiness boundary instead of invoking sudo.
+      // The frame header is binary; UTF-8 decoding can corrupt its uint32 length.
+      return Reflect.apply(actual.execFile, actual, ['/bin/cat', [], {
+        ...(typeof args[2] === 'object' && args[2] !== null ? args[2] : {}), encoding: 'buffer',
+      },
+        (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
+          if (error) { callback(error, stdout, stderr); return; }
+          void import('@/daemon/agentIsolation/agentIsolationEffects.testkit').then(({ runAgentIsolationMemberReadinessBoundary }) =>
+            runAgentIsolationMemberReadinessBoundary({ request: ['sudo', commandArgs, { inputBytes: Buffer.from(stdout) }],
+              nativeHome: { path: home.path, uid: home.uid } })).then(result => {
+            if (!result) throw new Error('Missing native readiness result');
+            callback(null, result.stdout, result.stderr);
+          }).catch(error => callback(error, '', ''));
+        }]);
+    }
+    const lookup = args[0] === 'getent' && Array.isArray(args[1])
+      ? workspaceCheckoutNativeBoundary.accountLookups.get(JSON.stringify(args[1])) : undefined;
+    // Exact passwd/group observations are an OS boundary. Retain a real
+    // child and the ordinary Node callback/physical-settlement contract.
+    return Reflect.apply(actual.execFile, actual, lookup === undefined ? args
+      : ['/usr/bin/printf', ['%s', lookup], ...args.slice(2)]);
+  };
+  // Existing real git tests use Node's { stdout, stderr } promisified adapter.
+  Object.defineProperties(execFileBoundary, Object.getOwnPropertyDescriptors(actual.execFile));
+  return { ...actual,
+    spawn: (command: string, args: readonly string[], options: import('node:child_process').SpawnOptions) => {
+      if (workspaceCheckoutNativeBoundary.launch && (command === '/fixture-engine/agent' || args.includes('/fixture-engine/agent'))) {
+        expect(workspaceCheckoutNativeBoundary.identity.getStore()).toBe('member');
+        const root = args.at(-1);
+        expect([nativeSyncFiles.source, workspaceCheckoutNativeBoundary.privateRoot]).toContain(root);
+        expect(args.slice(-4)).toEqual(['synchronizer', '--external', '--root', root]);
+        workspaceCheckoutNativeBoundary.runAsUsers.push(root === nativeSyncFiles.source ? 'mutagen-member-source' : 'mutagen-member-target');
+        if (root === nativeSyncFiles.source) return actual.spawn('/bin/cat', [], options);
+        const mount = workspaceCheckoutNativeBoundary.mounts.find(entry => nativeSyncFiles.source.startsWith(`${entry.path}/`));
+        if (!mount) throw new Error('Missing native agent filesystem boundary');
+        const source = `${mount.backing}${nativeSyncFiles.source.slice(mount.path.length)}`;
+        const target = `${mount.backing}${workspaceCheckoutNativeBoundary.privateRoot.slice(mount.path.length)}`;
+        // This is the external engine executable boundary. The real member
+        // worker opens it only after canonical target/bootstrap admission.
+        return actual.spawn('/bin/sh', ['-c', 'cp -a -- "$1"/. "$2"/ && exec /bin/cat', 'native-sync-fixture', source, target], options);
+      }
+      if (command !== 'sudo' || !workspaceCheckoutNativeBoundary.launch) return actual.spawn(command, args, options);
+      expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
+      workspaceCheckoutNativeBoundary.runAsUsers.push(args[2]!);
+      return spawnWorkspaceCheckoutNativeBoundary();
+    },
+    execFile: execFileBoundary,
+  };
+});
 // Real API composition is daemon startup, not part of an individual RPC deadline.
 await import('@/api/api');
 
@@ -83,7 +168,7 @@ describe('Project Open RPC', () => {
   beforeEach(async () => {
     await seedTestServerProfile({ id: 'srv_test_home', homeId: 'srv_test_home', serverUrl: 'https://home.example' });
   });
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
+  afterEach(() => { nativeBoundary.reset(); nativeSyncFiles.source = ''; vi.restoreAllMocks(); vi.unstubAllGlobals(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
 
   it('refuses a deleted worktree branch or missing base ref before creating files or accepting rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-open-missing-ref-'));
@@ -498,53 +583,127 @@ describe('Project Open RPC', () => {
     } finally { scope.restore(); reloadConfiguration(); await rm(home, { recursive: true, force: true }); }
   });
 
-  it.each(['plain', 'e2ee'] as const)('accepts a scoped requester Source and ref through its admitted private ports without reading custodian credentials (%s)', async mode => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-requester-open-'));
+  it.skipIf(process.platform !== 'linux').each([
+    { mode: 'plain', action: 'attach', fault: 'none' }, { mode: 'e2ee', action: 'attach', fault: 'none' },
+    { mode: 'plain', action: 'copy_once', fault: 'none' }, { mode: 'plain', action: 'create_relationship', fault: 'none' },
+    { mode: 'plain', action: 'create_relationship', fault: 'endpoint_write_failure' },
+    { mode: 'plain', action: 'create_relationship', fault: 'enabled_graph_ack' },
+    { mode: 'plain', action: 'create_relationship', fault: 'remote_source_ack' },
+  ] as const)('keeps a scoped Use requester Source on member execution without custodian credentials ($mode/$action/$fault)', async ({ mode, action, fault }) => {
+    const syncing = action !== 'attach';
+    socketIo.mockImplementation((await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io);
+    let memberPreparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
+    const installed = await createInstalledFilesystemMachineFixture({ agentIsolation: {
+      managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+      read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+        status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }),
+      prepareMember: async input => {
+        if (!memberPreparation) throw new Error('Member preparation fixture is not ready');
+        const result = await memberPreparation.members.prepare(input);
+        if (result.kind !== 'ready') throw new Error('Member preparation refused');
+        return result;
+      },
+    } });
+    const homeId = installed.homeServerIdentityId;
+    const requesterIdentity = { kind: 'isolated' as const, separationRequired: true, homeServerIdentityId: homeId,
+      requester: { serverId: homeId, accountId: 'bob', machineId: 'machine', installationId: installed.installation.installationId } };
+    const member = deriveAgentIsolationMemberIdentity(requesterIdentity);
+    memberPreparation = createAgentIsolationMemberPreparationBoundary({ activeServerDir: configuration.activeServerDir,
+      requesterIdentity, custodianAccountId: 'requester', encryptionMode: 'plain', uid: 2401 });
+    for (const step of buildAgentIsolationProvisioningSteps({ requesterIdentity, daemonUsername: 'happier', daemonPrimaryGroup: 'happier',
+      binaryPath: '/opt/happier/cli/current/happier' })) memberPreparation.installed.add(step.id);
+    const backingHome = join(installed.directory, 'native-home');
+    const backingWorkspace = join(installed.directory, 'native-workspace');
+    await mkdir(backingHome); await mkdir(backingWorkspace);
+    nativeBoundary.mounts = [{ path: member.home, backing: backingHome, uid: 2401, gid: 2401, mode: 0o40700 },
+      { path: member.workspaceRoot, backing: backingWorkspace, uid: 2401, gid: 1001, mode: 0o42770 }];
+    nativeBoundary.accountLookups.set(JSON.stringify(['--service=files', 'passwd', member.username]),
+      `${member.username}:x:2401:2401:${member.ownershipMarker}:${member.home}:/usr/sbin/nologin\n`);
+    nativeBoundary.accountLookups.set(JSON.stringify(['--service=files', 'group', 'happier']), 'happier:x:1001:\n');
+    await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...member, agentUid: 2401, agentGid: 2401 });
+    const root = join(member.workspaceRoot, 'bob-checkout');
+    nativeBoundary.launch = async (input, output) => {
+      const frame = await readAgentLaunchFrame(input);
+      expect(frame.nativeIdentity).toEqual({ username: member.username, agentUid: 2401, agentGid: 2401, home: member.home });
+      expect(frame.args).toEqual(['workspace-effect']);
+      await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal,
+        currentDirectory: () => member.workspaceRoot });
+    };
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
     const material = mode === 'e2ee' ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) } : null;
     const cipher = createProjectAccountRowCipherV1({ mode, material, randomBytes: n => new Uint8Array(n) });
-    const key = { kind: 'workspace-ref' as const, serverId: 'srv_test_home', id: 'bob-checkout' };
-    const workspace = { id: key.id, serverId: 'srv_test_home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
+    const key = { kind: 'workspace-ref' as const, serverId: homeId, id: 'bob-checkout' };
+    const workspace = { id: key.id, serverId: homeId,
+      machineId: fault === 'remote_source_ack' ? 'remote-source' : 'machine', rootPath: root, createdAtMs: 1 };
     const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: cipher.seal({ key, value: workspace }) }];
-    const source: ProjectSourceV1 = { id: 'bob-source', revision: 1, name: 'Bob Source', createdByAccountId: 'bob', audience: [],
+    const source = { id: 'bob-source', revision: 1, name: 'Bob Source', createdByAccountId: 'bob', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
-        repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } };
+        repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
     let current = true;
     // Private ports represent admitted host custody. Only HTTP/crypto system boundaries are supplied here.
-    const authorization = { v: 1, token: 'admitted-requester-fixture',
-      binding: { accountId: 'bob', machineId: 'machine', custodianAccountId: 'alice',
-      installationId: 'installation', actionId: 'projects.open', accountEncryptionMode: mode,
-      authentication: { kind: 'terminal', tokenEpoch: 0 }, serverIdentityId: 'identity',
+    let authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'admitted-requester-fixture',
+      binding: { accountId: 'bob', machineId: 'machine', custodianAccountId: 'requester',
+      installationId: installed.installation.installationId, actionId: 'projects.open', accountEncryptionMode: mode,
+      authentication: { kind: 'terminal', tokenEpoch: 0 }, serverIdentityId: homeId,
+      ...(syncing ? { workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId('requester-open'),
+        sourceWorkspaceRefId: workspace.id, source: { actorAccountId: 'bob', custodianAccountId: 'requester',
+          machineId: workspace.machineId, installationId: installed.installation.installationId,
+          role: 'use' as const, encryptionMode: 'plain' as const } } } : {}),
       requestId: 'requester-open', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' } },
-      requesterAccountProjection: { accountId: 'bob', serverId: 'srv_test_home', accountEncryptionMode: mode, projectAccountRowCipher: cipher,
+      requesterAccountProjection: { accountId: 'bob', serverId: homeId, accountEncryptionMode: mode, projectAccountRowCipher: cipher,
         projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode, material }),
         resolveMachineContentEncryptionContext: machine => {
           const context = resolvePublishedMachineEncryptionContext({ credentials: { token, encryption: material }, machineId: machine.id,
-            publishedDataEncryptionKey: machine.dataEncryptionKey, expectedAccountMode: machine.storageMode ?? mode });
+            publishedDataEncryptionKey: machine.dataEncryptionKey, access: machine.access,
+            expectedAccountMode: machine.access?.resourceMode ?? machine.storageMode ?? mode });
           // The admitted projection declares its mode explicitly; the CLI codec also accepts legacy implicit E2EE contexts.
           return context.encryptionMode === 'plain'
             ? { encryptionMode: 'plain' as const }
             : { encryptionMode: 'e2ee' as const, encryptionKey: context.encryptionKey, encryptionVariant: context.encryptionVariant };
         },
         isCurrent: async () => current, readArtifact: async () => null },
-      requesterHttpProjection: { accountId: 'bob', serverId: 'srv_test_home', serverIdentityId: 'identity', serverHttpBaseUrl: 'https://home.example',
+      requesterHttpProjection: { accountId: 'bob', serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
         accountEncryptionMode: mode, isCurrent: async () => current,
         createRequestHeaders: async () => current ? { 'x-requester-proof': 'bob' } : null },
     } satisfies ExternalActionExecutionAuthorizationV1;
+    const assertBobHeaders = (headers: unknown) => {
+      if (syncing) {
+        if (headers && typeof headers === 'object' && Reflect.get(headers, 'Authorization') !== undefined)
+          expect(headers).toMatchObject({ Authorization: `Bearer ${token}` });
+        else expect(headers).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token });
+      }
+      else { expect(headers).toMatchObject({ 'x-requester-proof': 'bob' }); expect(headers).not.toHaveProperty('Authorization'); }
+    };
     vi.spyOn(axios, 'request').mockImplementation(async request => {
-      expect(request.headers).toMatchObject({ 'x-requester-proof': 'bob' });
+      assertBobHeaders(request.headers);
       return { status: 200, data: { ok: true, source, canManage: false } };
     });
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
-      expect(config?.headers).toMatchObject({ 'x-requester-proof': 'bob' });
-      expect(config?.headers).not.toHaveProperty('Authorization');
+      assertBobHeaders(config?.headers);
+      if (syncing && url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (syncing && url.endsWith('/v1/account/encryption')) return { status: 200,
+        data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
+      if (syncing && url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (syncing && url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       const response = await plainMachineRead(url);
-      if (!('machine' in response.data)) throw new Error('Requester should only read the selected Machine');
-      return { ...response, data: { machine: { ...response.data.machine, storageMode: 'plain' } } };
+      if (!('machine' in response.data)) throw new Error(`Unexpected requester GET ${new URL(url).pathname}`);
+      return { ...response, data: { machine: { ...response.data.machine,
+        installationId: installed.installation.installationId, storageMode: 'plain',
+        access: { custodian: { accountId: 'requester', displayName: 'Custodian' },
+          role: 'use', resourceMode: 'plain', accessState: 'ready' } } } };
     });
+    const verifyMachineAdmissionRequest = vi.mocked(axios.post).getMockImplementation();
+    let endpointWriteFailed = false;
+    let graphAcknowledgementLost = false;
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
-      expect(config?.headers).toMatchObject({ 'x-requester-proof': 'bob' });
-      expect(config?.headers).not.toHaveProperty('Authorization');
+      if (syncing && url.endsWith('/v1/machines/machine/admission/verify')) {
+        expect(config?.headers).toMatchObject({ Authorization: `Bearer ${installed.bootstrap.credentials.token}` });
+        if (!verifyMachineAdmissionRequest) throw new Error('Missing installed Machine verification boundary');
+        return verifyMachineAdmissionRequest(url, body, config);
+      }
+      assertBobHeaders(config?.headers);
+      if (endpointWriteFailed || graphAcknowledgementLost) throw new Error('Project rows are temporarily unavailable after the committed write');
       if (url.endsWith('/project-trust/read')) return { status: 200, data: { status: 'absent' } };
       if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
       if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
@@ -553,29 +712,275 @@ describe('Project Open RPC', () => {
         revision: mutation.expectedRevision === 'absent' ? 0 : mutation.expectedRevision + 1, content: mutation.content }));
       for (const row of changed) { const index = rows.findIndex(existing => JSON.stringify(existing.key) === JSON.stringify(row.key));
         if (index < 0) rows.push(row); else rows[index] = row; }
+      if (fault === 'endpoint_write_failure' && request.mutations.some(mutation => mutation.key.kind === 'workspace-ref')) {
+        endpointWriteFailed = true;
+        throw new Error('The committed endpoint write acknowledgement was lost');
+      }
+      if (fault === 'enabled_graph_ack' && changed.some(row => {
+        if (row.key.kind !== 'relationship-graph' || row.content === null) return false;
+        const payload = cipher.open(row.key, row.content);
+        return 'relationships' in payload.value && payload.value.relationships.some(relationship => relationship.enabled);
+      })) {
+        graphAcknowledgementLost = true;
+        throw new Error('The enabled relationship acknowledgement was lost');
+      }
       return { status: 200, data: { status: 'updated', cursor: 1, rows: changed } };
     });
-    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'account_automation',
-      callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice',
-        machineId: 'machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
-    const runtime: ProjectOpenRuntime = { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'alice',
-      readCredentials: async () => { throw new Error('Bob must not use Alice credentials'); } };
-    const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'source', id: source.id, revision: 1, selector: source.repository,
-      checkout: { serverId: 'srv_test_home', workspaceId: key.id, machineId: 'machine', rootPath: root } }, materialization: { kind: 'attach' } };
+    const ingress = new AbortController();
+    const admissionDiagnostics = syncing ? vi.spyOn(logger, 'warnLocalFile') : undefined;
+    const requesterAccount = syncing ? await admitRequesterAccountActionContext({ authorization: {
+      v: authorization.v, token: authorization.token, binding: { ...authorization.binding, admittedMachineRole: 'use' } },
+      credentials: { token, encryption: null }, serverId: homeId, serverIdentityId: homeId,
+      serverHttpBaseUrl: installed.serverHttpBaseUrl, isCurrent: async () => current,
+      isCustodyCurrent: async () => current,
+      isRetainedCustodyCurrent: async () => installed.isHomeCurrent(), signal: ingress.signal }) : null;
+    if (syncing && !requesterAccount) throw new Error(`Canonical requester custody was not admitted: ${JSON.stringify(admissionDiagnostics?.mock.calls)}`);
+    if (requesterAccount) {
+      onTestFinished(requesterAccount.dispose);
+      const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: requesterAccount.authorization,
+        serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
+        target: requesterAccount.authorization.binding.target, installationId: installed.installation.installationId,
+        privateKey: decodeBase64(installed.installation.privateKey, 'base64url'), isCurrent: requesterAccount.isCurrent,
+        signal: ingress.signal });
+      if (!projected) throw new Error('Missing installed requester HTTP projection');
+      authorization = projected;
+    }
+    const context: RpcHandlerContext = { signal: ingress.signal, callerAuthority: 'account_automation',
+      callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'requester',
+        machineId: 'machine', installationId: installed.installation.installationId, role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+    let runtime: ProjectOpenRuntime = { serverId: homeId, serverHttpBaseUrl: installed.serverHttpBaseUrl, machineId: 'machine', accountId: 'requester',
+      privateCheckout: { prepareNativeOperation: input => installed.machine.prepareNativeOperation(input) },
+      readCredentials: async () => { throw new Error('Bob must not use custodian credentials'); } };
+    const targetRoot = syncing ? join(member.workspaceRoot, 'bob-sync') : root;
+    nativeBoundary.privateRoot = syncing ? targetRoot : '';
+    nativeBoundary.privateRoots = syncing ? [root] : [];
+    nativeSyncFiles.source = syncing ? root : '';
+    const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const contentPolicy = { ...policyFields, policyDigest: computeWorkspaceSyncPolicyDigest(policyFields) };
+    const nativeSyncBoundary = createWorkspaceSyncNativeProcessTestBoundary();
+    const productionSyncInput = { happyHomeDir: installed.directory,
+      activeServerDir: configuration.activeServerDir, activeServerId: installed.serverId,
+      homeTarget: await resolveCurrentCliHomeTarget(), localMachineId: 'machine', releaseChannel: 'publicdev',
+      privateCheckout: runtime.privateCheckout,
+      requesterMachineAdmissionBoundary: { machineId: 'machine', daemonToken: installed.bootstrap.credentials.token,
+        isHomeCurrent: installed.isHomeCurrent, getObservedServerIdentityId: () => homeId,
+        readInstallation: () => installed.installation },
+      credentials: installed.bootstrap.credentials, isCurrent: async () => installed.isHomeCurrent() } satisfies
+      Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0];
+    const productionSync = syncing ? await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, nativeSyncBoundary.factories) : null;
+    let recoveredSync: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>> | undefined;
+    if (productionSync) { runtime = { ...runtime, workspaceSyncAdapter: productionSync.handoffAdapter }; onTestFinished(() => productionSync.stop()); }
+    const input = { serverId: homeId, machineId: 'machine', source: { kind: 'source', id: source.id, revision: 1, selector: source.repository,
+      checkout: { serverId: homeId, workspaceId: key.id, machineId: workspace.machineId, rootPath: root } }, materialization: action === 'attach'
+      ? { kind: 'attach' as const }
+      : { kind: 'sync' as const, targetPath: targetRoot, workspaceAction: action === 'copy_once'
+        ? { kind: 'copy_once' as const, contentPolicy }
+        : { kind: 'create_relationship' as const, mode: 'keep_synced' as const, contentPolicy,
+          flushBeforeCommit: true as const } } } satisfies OpenProjectInputV1;
+    let remoteTargetPrepared = false;
+    if (fault === 'remote_source_ack' && productionSync) {
+      const targetHandlers = new Map<string, RpcHandler<unknown, unknown>>();
+      const targetRegistrar: RpcHandlerRegistrar = { registerHandler: (method, handler) => {
+        targetHandlers.set(method, handler as RpcHandler<unknown, unknown>);
+      } };
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRegistrar, service: productionSync.workspaceSync });
+      runtime = { ...runtime, callWorkspaceSource: async request => {
+        expect(request.machineId).toBe('remote-source');
+        const capture = productionSync.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
+        if (!capture?.input.sourceWorkspaceRefId || !capture.input.targetWorkspaceRefId || !context.machineAdmission)
+          throw new Error('Missing real private TARGET capture');
+        const relationshipId = deriveWorkspaceSyncRelationshipId(request.operationId);
+        // The remote transport supplies SOURCE's admitted prepare packet. The
+        // real TARGET receiver binds custody and runs its native authority.
+        const prepare = { v: 1 as const, bootstrapOperationId: relationshipId,
+          owner: { kind: 'relationship' as const, relationshipId },
+          transientRelationship: { v: 1 as const, relationshipId, controllerMachineId: 'remote-source',
+            alphaWorkspaceRefId: capture.input.sourceWorkspaceRefId, betaWorkspaceRefId: capture.input.targetWorkspaceRefId,
+            mode: 'keep_synced' as const, contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
+          targetWorkspaceRefId: capture.input.targetWorkspaceRefId, endpointRole: 'beta' as const,
+          policyDigest: contentPolicy.policyDigest, createIfMissing: true, targetBootstrap: 'use_existing' as const };
+        const admitted = resolvePrivateWorkspaceSyncTargetExecution(productionSync.handoffAdapter, {
+          context: context.machineAdmission, receivingMachine: { machineId: 'machine', installationId: installed.installation.installationId },
+          request: prepare, targetWorkspaceRefId: capture.input.targetWorkspaceRefId,
+          routing: { v: 1, phase: 'prepare', operationId: request.operationId, accountServerId: homeId,
+            targetMachineId: 'machine', targetRootPath: targetRoot },
+        });
+        if (admitted.kind !== 'matched') throw new Error(`TARGET admission failed: ${admitted.kind}`);
+        const handler = targetHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE);
+        if (!handler) throw new Error('TARGET prepare was not registered');
+        await handler(prepare, { ...context, workspaceSyncPrivateExecution: admitted.capture });
+        remoteTargetPrepared = true;
+        return { kind: 'outcomeUnknown' };
+      } };
+    }
+    // Existing-checkout attachment needs the daemon-applied runtime lifetime,
+    // but no plugin contributions. Publish it through the real runtime owner.
+    const pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: installed.directory,
+      controller: pluginReloadController, runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+    onTestFinished(() => pluginRuntime.dispose());
     try {
-      await mkdir(join(root, '.happier'));
+      await mkdir(join(root, '.happier'), { recursive: true });
       await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'touch not-executed' }] } }));
+      await writeFile(join(root, 'payload.txt'), 'member seed');
+      post.mockClear();
+      const foreignHomeAuthorization = { ...authorization,
+        binding: { ...authorization.binding, serverIdentityId: 'foreign-home' } };
+      // Preserve the real host-only ports while changing only the wire Home binding.
+      Object.defineProperties(foreignHomeAuthorization, {
+        requesterAccountProjection: { value: authorization.requesterAccountProjection },
+        requesterHttpProjection: { value: authorization.requesterHttpProjection },
+      });
+      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, { ...context,
+        callerInputAuthorization: foreignHomeAuthorization }))
+        .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+      expect(post).not.toHaveBeenCalled();
+      expect(nativeBoundary.runAsUsers).toEqual([]);
+      if (syncing && input.materialization.kind === 'sync') {
+        for (const [denied, code] of [[{ ...input, materialization: { ...input.materialization,
+          targetPath: join(member.workspaceRoot, '..', 'other-member', 'foreign-checkout') } }, 'workspace_private_checkout_review_required'],
+        [{ ...input, source: { kind: 'folder', path: root } }, 'workspace_private_checkout_required']] as const) {
+          expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(denied, context))
+            .toMatchObject({ kind: 'refused', code });
+          expect(post.mock.calls.some(([, body]) => ProjectAccountRowMutationRequestV1Schema.safeParse(body).success)).toBe(false);
+          expect(nativeBoundary.runAsUsers).toEqual([]);
+        }
+        const foreign = { ...workspace, id: 'foreign-source', machineId: 'machine',
+          rootPath: join(member.workspaceRoot, '..', 'other-member', 'foreign-source') };
+        const foreignKey = { ...key, id: foreign.id };
+        rows.push({ key: foreignKey, revision: 0, content: cipher.seal({ key: foreignKey, value: foreign }) });
+        try {
+          expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)({ ...input,
+            source: { ...input.source, checkout: { serverId: homeId, workspaceId: foreign.id,
+              machineId: 'machine', rootPath: foreign.rootPath } } }, context))
+            .toMatchObject({ kind: 'refused', code: 'workspace_private_checkout_required' });
+          expect(post.mock.calls.some(([, body]) => ProjectAccountRowMutationRequestV1Schema.safeParse(body).success)).toBe(false);
+          expect(nativeSyncBoundary.commands).toEqual([]);
+          await expect(access(targetRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+          rows.splice(rows.findIndex(row => row.key.kind === 'workspace-ref' && row.key.id === foreign.id), 1);
+          nativeBoundary.runAsUsers.length = 0;
+          nativeBoundary.phases.length = 0;
+        }
+      }
+      // Signed Open reads describe child placement. Retained transfers use
+      // Account bearer admission once at their next natural boundary.
+      const machineReads = () => vi.mocked(axios.get).mock.calls.filter(([url, config]) => url.endsWith('/v1/machines/machine')
+        && config?.headers?.Authorization === `Bearer ${token}`).length;
+      const initialMachineReads = machineReads();
       const opened = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
-      expect(opened, JSON.stringify(post.mock.calls.map(([url]) => url))).toMatchObject({ kind: 'opened', directory: root, setup: 'approvalRequired',
-        workspace: { serverId: 'srv_test_home', machineId: 'machine', rootPath: root }, facts: { source: { sourceId: source.id, revision: 1 } } });
+      if (fault === 'remote_source_ack') {
+        expect(remoteTargetPrepared, JSON.stringify(admissionDiagnostics?.mock.calls)).toBe(true);
+        expect(opened).toEqual({ kind: 'outcomeUnknown' });
+        const captures = productionSync?.handoffAdapter.listPrivateExecutions?.();
+        expect(captures).toHaveLength(1);
+        const retained = captures?.[0];
+        if (!retained?.relationshipId) throw new Error('The remote SOURCE must bind real TARGET custody');
+        expect(retained.relationshipId).toBe(deriveWorkspaceSyncRelationshipId(retained.input.operationId));
+        expect(retained.phase).toBe('relationship');
+        return;
+      }
+      if (fault === 'endpoint_write_failure') {
+        expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(2);
+        expect(nativeSyncBoundary.commands).toEqual([]);
+        await expect(access(targetRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(opened).toMatchObject({ kind: 'outcomeUnknown' });
+        return;
+      }
+      if (fault === 'enabled_graph_ack') {
+        expect(graphAcknowledgementLost, JSON.stringify(admissionDiagnostics?.mock.calls)).toBe(true);
+        expect(opened).toEqual({ kind: 'outcomeUnknown' });
+      }
+      else expect(opened, JSON.stringify({
+        outcome: opened,
+        requestPaths: post.mock.calls.map(([url]) => new URL(url).pathname),
+        settlement: admissionDiagnostics?.mock.calls.filter(([message]) => message === '[Project Open] Settlement failed').map(([, details]) => details),
+        nativePhases: nativeBoundary.phases })).toMatchObject({ kind: 'opened', directory: targetRoot, setup: 'approvalRequired',
+        workspace: { serverId: homeId, machineId: 'machine', rootPath: targetRoot }, facts: { source: { sourceId: source.id, revision: 1 } } });
+      if (syncing) expect(machineReads() - initialMachineReads).toBe(0);
+      expect(nativeBoundary.childFailure).toBeUndefined();
+      expect(nativeBoundary.runAsUsers[0]).toBe(member.username);
+      if (syncing) {
+        expect(await nativeBoundary.identity.run('member', () => readFile(join(targetRoot, 'payload.txt'), 'utf8'))).toBe('member seed');
+        const captured = productionSync?.handoffAdapter.listPrivateExecutions?.();
+        if (fault !== 'enabled_graph_ack') expect(captured?.length ?? 0).toBe(action === 'create_relationship' ? 1 : 0);
+        expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(2);
+        expect(nativeBoundary.runAsUsers).toContain('mutagen-member-source');
+        expect(nativeBoundary.runAsUsers).toContain('mutagen-member-target');
+        if (action === 'create_relationship') {
+          if (!productionSync) throw new Error('Missing private Sync runtime');
+          const retained = captured?.[0];
+          if (!retained?.relationshipId || retained.execution.executionIdentity?.kind !== 'isolated') throw new Error('Missing bound private relationship');
+          const capturedIdentity = retained.execution.executionIdentity;
+          expect(capturedIdentity.requester).toEqual(requesterIdentity.requester);
+          ingress.abort();
+          current = false;
+          await requesterAccount?.dispose();
+          let relationshipId: string;
+          if (fault === 'enabled_graph_ack') {
+            expect(graphAcknowledgementLost).toBe(true);
+            const graph = rows.find(row => row.key.kind === 'relationship-graph');
+            if (!graph?.content) throw new Error('The enabled graph must survive its lost acknowledgement');
+            const payload = cipher.open(graph.key, graph.content);
+            if (!('relationships' in payload.value)) throw new Error('Expected the relationship graph');
+            const relationship = payload.value.relationships.find(value => value.enabled);
+            if (!relationship) throw new Error('Expected a durably enabled relationship');
+            relationshipId = relationship.relationshipId;
+            graphAcknowledgementLost = false;
+          } else {
+            relationshipId = retained.relationshipId;
+          }
+          await writeFile(join(root, 'payload.txt'), 'member later transfer');
+          const nativeLaunches = nativeBoundary.runAsUsers.length;
+          const warmMachineReads = machineReads();
+          await productionSync.workspaceSync.controller.flush(relationshipId);
+          expect(machineReads() - warmMachineReads).toBe(1);
+          expect(nativeBoundary.runAsUsers.slice(nativeLaunches)).toEqual(['mutagen-member-source', 'mutagen-member-target']);
+          expect(await nativeBoundary.identity.run('member', () => readFile(join(targetRoot, 'payload.txt'), 'utf8')))
+            .toBe('member later transfer');
+          expect(await captured?.[0]?.execution.accountRowsCustody.isCurrent()).toBe(true);
+          await productionSync.stop();
+          const recoveredBoundary = createWorkspaceSyncNativeProcessTestBoundary();
+          const recovered = await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, recoveredBoundary.factories);
+          recoveredSync = recovered;
+          onTestFinished(() => recovered.stop());
+          const recoveredCapture = recovered.handoffAdapter.resolvePrivateExecution?.({ relationshipId });
+          expect(recoveredCapture?.execution.executionIdentity).toEqual(capturedIdentity);
+          expect(recoveredCapture?.execution.credentials.token).toBe(token);
+          await writeFile(join(root, 'payload.txt'), 'member recovered transfer');
+          const recoveredLaunches = nativeBoundary.runAsUsers.length;
+          await recovered.workspaceSync.controller.flush(relationshipId);
+          expect(nativeBoundary.runAsUsers.slice(recoveredLaunches)).toEqual(['mutagen-member-source', 'mutagen-member-target']);
+          expect(await nativeBoundary.identity.run('member', () => readFile(join(targetRoot, 'payload.txt'), 'utf8')))
+            .toBe('member recovered transfer');
+          if (fault === 'none') {
+            const graphIndex = rows.findIndex(row => row.key.kind === 'relationship-graph');
+            if (graphIndex < 0) throw new Error('The committed graph must be present');
+            const flushes = recoveredBoundary.commands.filter(command => command.t === 'flush').length;
+            const launches = nativeBoundary.runAsUsers.length;
+            rows.splice(graphIndex, 1);
+            await expect(recovered.workspaceSync.controller.flush(relationshipId))
+              .rejects.toMatchObject({ code: 'relationship_not_ready' });
+            expect(recoveredBoundary.commands.filter(command => command.t === 'flush')).toHaveLength(flushes);
+            expect(nativeBoundary.runAsUsers).toHaveLength(launches);
+          }
+        }
+      } else expect(nativeBoundary.runAsUsers).toEqual([member.username]);
       // Home binding is proved by the real projection/installed-ingress tests;
       // this consumer receives host-private ports only after that admission.
       current = false;
       post.mockClear();
-      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context)).toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
+      expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, { ...context, signal: new AbortController().signal }))
+        .toEqual({ kind: 'refused', code: 'requester_authority_unavailable' });
       expect(post).not.toHaveBeenCalled();
       await expect(access(join(root, 'not-executed'))).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      endpointWriteFailed = false; graphAcknowledgementLost = false;
+      try { await recoveredSync?.stop(); }
+      finally {
+        try { await productionSync?.stop(); }
+        finally { nativeBoundary.completed = true; }
+      }
+    }
   });
 
   it('accepts the requested host folder for browsing despite an unenrolled Devcontainer', async () => {

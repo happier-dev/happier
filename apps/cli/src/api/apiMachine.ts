@@ -297,6 +297,7 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyMan
     doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
     readWorkspaceSyncTargetMethod, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
+import { resolvePrivateWorkspaceSyncTargetExecution } from './machine/rpcHandlers.workspaceSync';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { inspectProjectSetupFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
@@ -1485,8 +1486,18 @@ export class ApiMachineClient {
                 encryptionKey: this.machine.encryptionKey,
                 encryptionVariant: this.machine.encryptionVariant,
             };
+        const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
+            get serverUrl() { return readMachineRuntimeServerHttpBaseUrl(); }, resolveCurrentMachineId: () => this.machine.id,
+            ...(this.lifecycleDependencies.resolveCurrentServerIdentityId
+                ? { resolveCurrentServerIdentityId: this.lifecycleDependencies.resolveCurrentServerIdentityId } : {}),
+        });
         this.machineRpcAdmissionBoundary = {
             machineId: this.machine.id,
+            resolvePrivateWorkspaceSyncTargetExecution: input => {
+                const adapter = this.lifecycleDependencies.workspaceSyncHandoffAdapter;
+                return adapter ? resolvePrivateWorkspaceSyncTargetExecution(adapter, input) : { kind: 'no_private_capture' };
+            },
+            resolveHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
             resolveCustodianAccountId: (signal) => runWithServerHttpBaseUrl(readMachineRuntimeServerHttpBaseUrl(), () => this.getAccountId(signal)),
             resolveInstallationId: () => readInstallationIdentityIfExistsSync()?.installationId ?? null,
             verifyMachineAdmission: async ({ context, method, signal, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncSourceExecution, workspaceSyncTargetRouting, workspaceSyncSourceWriterTargetRouting, workspaceSyncSeedRouting, callerInputAuthorization }) => {
@@ -1672,10 +1683,6 @@ export class ApiMachineClient {
                 ?? { execute: async () => ({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' }) },
         });
         this.filesystemAccessPolicy = resolveFilesystemAccessPolicy();
-        const resolveCurrentMachineExecutionOriginContext = createCurrentMachineExecutionOriginContextResolver({
-            serverUrl: resolveServerHttpBaseUrl(),
-            resolveCurrentMachineId: () => this.machine.id,
-        });
         const resolveWorkspaceMutationActionExecutor = (): RpcActionExecutor | null => this.externalActionIngressOwner && !this.projectionSchedulingClosed ? {
                 execute: async (actionId, input, context) => {
                     const owner = this.externalActionIngressOwner;

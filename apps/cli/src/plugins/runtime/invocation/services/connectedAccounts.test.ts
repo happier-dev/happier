@@ -15,7 +15,6 @@ import type {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
-    CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
     createStablePluginConnectedAccountsHost,
     type StablePluginConnectedAccountsOwner,
 } from './connectedAccounts';
@@ -1117,7 +1116,7 @@ describe('stable plugin Connected Accounts host', () => {
         expect(dispose).toHaveBeenCalledOnce();
     });
 
-    it('projects a bounded purpose-scoped metadata listing and clamps its requested limit', async () => {
+    it('projects a purpose-scoped metadata listing and honors its requested limit', async () => {
         const owner = createOwner();
         const { seed } = createSeed();
         const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
@@ -1139,7 +1138,7 @@ describe('stable plugin Connected Accounts host', () => {
                 purpose: scope.purpose,
             },
             serviceRefs: scope.serviceRefs,
-            limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
+            limit: 10_000,
         }));
     });
 
@@ -1152,6 +1151,21 @@ describe('stable plugin Connected Accounts host', () => {
 
         await expect(service.listAccounts({ purpose: scope.purpose }))
             .resolves.toMatchObject({ status: 'truncated' });
+    });
+
+    it('rejects an owner result that exceeds an explicit caller limit', async () => {
+        const owner = createOwner({
+            listAccounts: vi.fn(async () => metadataList({ accounts: [
+                listedAccount(),
+                listedAccount({ account: { service: scope.serviceRefs[0]!, accountId: 'account-2' } }),
+            ] })),
+        });
+        const { seed } = createSeed();
+        const service = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+
+        await expect(service.listAccounts({ purpose: scope.purpose, limit: 1 })).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_out_of_scope',
+        });
     });
 
     it('denies a listing for an undeclared purpose and for a select-only scope', async () => {

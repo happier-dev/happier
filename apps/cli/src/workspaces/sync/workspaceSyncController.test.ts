@@ -45,20 +45,73 @@ function fixtureWorkspaceRef(id: string) {
 }
 
 describe('WorkspaceSyncController', () => {
+  it('admits each cold or warm transfer once and refuses revoked warm work before native commands', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-transfer-admission-'));
+    const sourceRoot = join(fixture, 'source');
+    await mkdir(sourceRoot);
+    const resolveWorkspaceRef = (id: string) => ({ machineId: id === 'a' ? 'm1' : 'm2', rootPath: id === 'a' ? sourceRoot : '/remote/b' });
+    const native: MutagenSessionSummaryV1 = {
+      identifier: 'native-r1', name: 'r1', labels: {
+        'external.owner': 'happier-workspace-sync', 'external.relationship_id': 'r1',
+        'external.endpoint_role': 'alpha|beta', 'external.schema': 'workspace-sync-v1',
+        'external.policy_digest': definition.contentPolicy.policyDigest,
+        'external.alpha_workspace_ref_id': 'a', 'external.beta_workspace_ref_id': 'b',
+        'external.controller_machine_id': 'm1', 'external.operation_kind': 'relationship',
+        'external.policy_selection': 'all_files',
+      },
+      alpha: { protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'alpha'), path: '', state: status.endpointStates.alpha },
+      beta: { protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'beta'), path: '', state: status.endpointStates.beta },
+      mode: 'one-way-safe', paused: false, status: 'watching', successfulCycles: 1, conflictCount: 0,
+    };
+    let current = true;
+    let admissions = 0;
+    const commands: string[] = [];
+    const controller = new WorkspaceSyncController({
+      adapter: createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+        // The native broker is the process boundary; controller and adapter stay real.
+        commands.push(command.t);
+        if (command.t === 'list') return { sessions: [native], nextCursor: null };
+        if (command.t === 'terminate') return null;
+        return native;
+      } }),
+      lifecycle: { start: async () => undefined, stop: async () => undefined },
+      rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }),
+      localMachineId: 'm1', resolveWorkspaceRef, resolveRelationshipDefinition: () => definition,
+      admitRelationshipTransfer: async () => {
+        admissions += 1;
+        if (!current) throw Object.assign(new Error('Requester access was withdrawn'), { code: 'project_requester_authority_unavailable' });
+      },
+    });
+    try {
+      await controller.flush('r1');
+      expect(admissions).toBe(1);
+      await controller.flush('r1');
+      expect(admissions).toBe(2);
+      current = false;
+      const before = commands.length;
+      await expect(controller.flush('r1')).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+      expect(commands).toHaveLength(before);
+      await expect(controller.resume('r1')).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+      expect(commands).toHaveLength(before);
+      expect(admissions).toBe(4);
+    } finally { await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
+  });
   it.each([false, true])('flushes its exact admitted definition and endpoints (warm=%s)', async warm => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-admitted-flush-'));
     const sourceRoot = join(fixture, 'source');
     await mkdir(sourceRoot);
+    const admissions: string[] = [];
     const controller = new WorkspaceSyncController({ adapter: completeAdapter(), lifecycle: lifecycle(),
       rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }), localMachineId: 'm1', localServerId: 'home',
       resolveWorkspaceRef: id => ({ serverId: 'home', machineId: id === 'a' ? 'm1' : 'm2', rootPath: id === 'a' ? sourceRoot : '/b' }),
       resolveRelationshipDefinition: () => definition });
     try {
       if (warm) await controller.ensure(definition);
-      await expect(controller.flush('r1', undefined, { relationship: definition, assertCurrent: async () => undefined, workspaceRefs: [
+      await expect(controller.flush('r1', undefined, { relationship: definition, assertCurrent: async () => { admissions.push('admitted'); }, workspaceRefs: [
         { id: 'a', serverId: 'home', machineId: 'm1', rootPath: sourceRoot, createdAtMs: 0 },
         { id: 'b', serverId: 'home', machineId: 'm2', rootPath: '/b', createdAtMs: 0 },
       ] })).resolves.toEqual(status);
+      expect(admissions).toEqual(['admitted']);
     } finally { await controller.shutdown(); await rm(fixture, { recursive: true, force: true }); }
   });
 
@@ -2515,7 +2568,7 @@ describe('WorkspaceSyncController', () => {
     const stream = await controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId('r1', 'beta') });
     expect(openMachineCarrierTunnel).toHaveBeenCalledWith(expect.objectContaining({
       operationId: 'r1', sourceMachineId: 'm1', targetMachineId: 'm2', flow: 'workspace_sync',
-    }));
+    }), undefined);
     const echoed = once(stream, 'data') as Promise<[Buffer]>;
     stream.write(Buffer.from('native-tunnel-loopback'));
     await expect(echoed).resolves.toEqual([Buffer.from('native-tunnel-loopback')]);

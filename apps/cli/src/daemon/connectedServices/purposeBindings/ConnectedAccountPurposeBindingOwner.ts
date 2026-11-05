@@ -160,7 +160,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
    */
   projectTargetAccounts(input: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
-    limit: number;
+    limit?: number;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMetadataList>;
   /**
@@ -1549,7 +1549,7 @@ export function createConnectedAccountPurposeBindingOwner(
     if (!before) throw resourceNotSelected(input.purpose);
     const listing = await dependencies.projectTargetAccounts({
       target: before.target,
-      limit: input.limit,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
       signal: input.signal,
     });
     input.signal.throwIfAborted();

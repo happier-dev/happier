@@ -907,6 +907,9 @@ const REQUESTER_EXECUTION_METHODS = new Set<string>([
 ]);
 
 function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRoutePolicyV1 {
+  // Home admits the requester; the receiving daemon requires the exact active
+  // private relationship capture before this automatic recovery can run.
+  const retainedWorkspaceRecovery = policy.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER;
   // Private relationship and work inventories keep their custodian authority.
   // These terminal routes establish exact requester custody at their canonical owner.
   const requesterTerminal = MACHINE_REQUESTER_TERMINAL_METHODS.has(policy.method);
@@ -923,7 +926,7 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
   // Machine requester. Attached Runs keep their separate exact Session access.
   const custodianOnly = resolveSocketRpcSessionAuthorization(policy.method)?.machineScope === true
     || MACHINE_CUSTODIAN_ONLY_METHODS.has(policy.method)
-    || policy.method.startsWith('daemon.workspaceSync.')
+    || policy.method.startsWith('daemon.workspaceSync.') && !retainedWorkspaceRecovery
     || policy.method.startsWith('daemon.terminal.') && !requesterTerminal
     || policy.method.startsWith('daemon.spawnSession.')
     // The separate read-only method is absent on old guests. Never relax the
@@ -947,7 +950,7 @@ function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRou
       || policy.method.startsWith('daemon.mcpServers.')
       || policy.method.startsWith('scm.')
       ? { requesterExecutionIsolationRequired: true as const } : {}),
-    sharedMachineAccess: custodianOnly ? 'custodian_only' : requesterTerminal ? 'use'
+    sharedMachineAccess: custodianOnly ? 'custodian_only' : requesterTerminal || retainedWorkspaceRecovery ? 'use'
       : MACHINE_MANAGEMENT_METHODS.has(policy.method) ? 'manage' : policy.sharedMachineAccess,
   };
 }

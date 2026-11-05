@@ -13,6 +13,11 @@ const isCliDistIntegrityProbe = process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE ===
 
 if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) {
   printCliVersion();
+} else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'workspace-effect') {
+  // Native private pipe only; never enter Account/daemon/bootstrap under member UID.
+  void import('./cli/commands/workspaceEffect').then(({ runWorkspaceEffectCommand }) =>
+    runWorkspaceEffectCommand(readCliProcessArgs().slice(1)))
+    .catch(() => { process.stderr.write('workspace_effect_unavailable\n'); process.exitCode = 1; });
 } else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'computer-effect') {
   // Private native desktop child: no Account or daemon bootstrap under its selected uid.
   void import('./daemon/computer/memberRuntimeInternal').then(async ({ runMemberComputerRuntimeInternal }) => {

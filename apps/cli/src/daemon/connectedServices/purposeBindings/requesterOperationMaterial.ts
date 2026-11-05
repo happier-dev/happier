@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import type { RequesterAccountActionContext, RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
@@ -17,12 +17,15 @@ import { logger } from '@/ui/logger';
  * This finite composition creates no Session, registry or credential issuer. */
 export async function prepareRequesterOperationMaterial(input: Readonly<{
   requesterAccount: RequesterAccountActionContext;
+  /** Explicit relationship custody; finite callers keep their original Account lifetime. */
+  retainedCustody?: RetainedRequesterAccountCustody;
   requesterIdentity: Exclude<HostRequesterExecutionIdentity, { kind: 'unknown' }> & { homeServerIdentityId: string };
   reloadController: PluginReloadController;
   signal?: AbortSignal;
 }>) {
   input.signal?.throwIfAborted();
   const account = input.requesterAccount;
+  const operationContext = input.retainedCustody?.savedSecretOperationContext ?? account.savedSecretOperationContext;
   const selected = input.requesterIdentity;
   const binding = account.authorization.binding;
   const matches = () => readRequesterAccountActionContext(account.authorization) === account
@@ -30,7 +33,8 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
     && binding.serverIdentityId === selected.homeServerIdentityId
     && binding.machineId === selected.requester.machineId
     && binding.installationId === selected.requester.installationId
-    && account.serverHttpBaseUrl === account.savedSecretOperationContext.serverHttpBaseUrl;
+    && account.serverHttpBaseUrl === operationContext.serverHttpBaseUrl
+    && operationContext.credentials === account.credentials;
   const unavailable = () => Object.assign(new PluginError({ code: 'agent_isolation_unavailable',
     message: 'Requester material is unavailable', retryable: false,
     details: { phase: 'requester_material_admission', reason: 'requester_authority_unavailable' } }), { rpcErrorCode: 'agent_isolation_unavailable' });
@@ -60,7 +64,7 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
   const isCurrent = async (signal?: AbortSignal) => {
     signal?.throwIfAborted();
     input.signal?.throwIfAborted();
-    return !disposed && matches();
+    return !disposed && matches() && (!input.retainedCustody || await input.retainedCustody.isCurrent());
   };
   const assertCurrent = async (signal?: AbortSignal) => {
     if (!await isCurrent(signal)) throw unavailable();
@@ -91,7 +95,7 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
       },
     });
     const runtime = createRequesterConnectedAccountPurposeBindingRuntime({
-      operationContext: account.savedSecretOperationContext, accountId: selected.requester.accountId,
+      operationContext, accountId: selected.requester.accountId,
       machineId: selected.requester.machineId, reloadController: input.reloadController,
       getAccountEncryptionMode: options => readMode(options?.signal), isCurrent,
       allowNativeAccountCredentials: false,
@@ -156,5 +160,5 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
       (owner, signal) => owner.materialize({ ...request, signal })),
   };
   return { connectedAccounts, readRuntime, readConnectedAccounts, credentials: account.credentials,
-    operationContext: account.savedSecretOperationContext, isCurrent, dispose };
+    operationContext, isCurrent, dispose };
 }

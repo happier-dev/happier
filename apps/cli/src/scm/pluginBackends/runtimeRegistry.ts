@@ -20,7 +20,7 @@ export type ScmBackendPluginRuntimeRegistry = Readonly<{
     scmHostingProvidersById?: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
     envAllowedNamesByPluginId?: ResolvedExecutablePluginRuntimeRegistry['envAllowedNamesByPluginId'];
     resolveConnectedAccountPurposeBindingOwner?:
-        ResolvedExecutablePluginRuntimeRegistry['resolveConnectedAccountPurposeBindingOwner'];
+        Parameters<typeof createHostScmHostingProviderRuntimeServices>[0]['resolveConnectedAccountPurposeBindingOwner'];
     managedDependencies?: Pick<StablePluginManagedDependenciesHost, 'resolveExecutable'>;
     scmBackendsById?: ResolvedExecutablePluginRuntimeRegistry['scmBackendsById'];
     scmBackendRegistrations?: ResolvedExecutablePluginRuntimeRegistry['scmBackendRegistrations'];

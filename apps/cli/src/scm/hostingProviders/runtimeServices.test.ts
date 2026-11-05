@@ -17,10 +17,7 @@ import {
   githubPullRequestAdapter,
 } from '@happier-dev/plugins-scm-github';
 
-import {
-  CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
-  type StablePluginConnectedAccountsOwner,
-} from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 
 import { runWithHostingProviderExecutionAuthority } from './executionAuthority';
 import { createHostScmHostingProviderRuntimeServices } from './runtimeServices';
@@ -987,9 +984,9 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       `https://forge-${index}.example.test`,
     ));
     const listAccounts = vi.fn(async (
-      input: Readonly<{ limit: number }>,
+      input: Readonly<{ limit?: number }>,
     ): Promise<ConfiguredDeploymentListing> => {
-      // The canonical owner clamps and then reports its own elision; it has no cursor.
+      // This transport fixture honors caller demand and reports any elision.
       const admitted = accounts.slice(0, input.limit);
       return {
         status: admitted.length < accounts.length ? 'truncated' : 'complete',
@@ -1015,9 +1012,6 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
 
     const registry = await services.resolveScmHostingProviderRegistry?.();
 
-    expect(listAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
-    }));
     expect(registry?.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'https://forge-20.example.test/team/repository.git',

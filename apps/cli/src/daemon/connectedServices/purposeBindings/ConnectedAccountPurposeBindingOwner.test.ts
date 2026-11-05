@@ -5,7 +5,6 @@ import type {
   QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT } from '@/plugins/runtime/invocation/services/connectedAccounts';
 
 import {
   composeConnectedAccountSessionPurposeBindingSnapshot,
@@ -238,7 +237,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     available = false;
     const nativeInput = { ...authorized, nativeService: service, request: { kind: 'environment' as const, keys: ['TOKEN'] }, signal };
     await expect(owner.materialize(nativeInput)).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
-    await expect(owner.listAccounts({ ...authorized, limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT, signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
+    await expect(owner.listAccounts({ ...authorized, signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
     await expect(owner.getBinding({ ...authorized, signal })).resolves.toBeNull();
     await expect(owner.materialize({ ...authorized, request: nativeInput.request, signal })).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });
     await expect(owner.materialize(nativeInput)).rejects.toMatchObject({ code: 'plugin_host_access_resource_not_selected' });

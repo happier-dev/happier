@@ -19,6 +19,17 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('routes only automatic retained recovery to requester admission while preserving isolation and raw sync custody', async () => {
+    const { resolveMachineRpcRoutePolicy: resolve } = await import('./routePolicyV1');
+    expect(resolve(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER)).toMatchObject({
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true, routeClass: 'server_required',
+    });
+    for (const method of [RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_APPLY, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE_DISCARD,
+      RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE]) {
+      expect(resolve(method).sharedMachineAccess).toBe('custodian_only');
+    }
+  });
   it('keeps the isolation set proof for its exact-target admission preview', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'set-proof', binding: {

@@ -68,6 +68,8 @@ export type RpcOperationDiagnostics = Readonly<{
 }>;
 
 export type RpcHandlerContext = Readonly<{
+    /** Exact host capture returned by Machine admission; never parsed from a request. */
+    workspaceSyncPrivateExecution?: import('@/workspaces/sync/workspaceSyncHandoffAdapter').RetainedWorkspaceSyncPrivateExecution;
     /** Content codec admitted for this exact call (its reply uses it); absent when no material was admitted. */
     contentMode?: 'plain' | 'e2ee';
     reportOperationDiagnostics?: (diagnostics: RpcOperationDiagnostics) => void;
@@ -167,7 +169,7 @@ export const RPC_ADMISSION_PREDICATES = [
 export type RpcAdmissionPredicate = (typeof RPC_ADMISSION_PREDICATES)[number];
 
 export type RpcAuthorizationResult =
-    | Readonly<{ ok: true }>
+    | Readonly<{ ok: true; workspaceSyncPrivateExecution?: RpcHandlerContext['workspaceSyncPrivateExecution'] }>
     | Readonly<{ ok: false; error: string; errorCode?: string; admissionPredicate?: RpcAdmissionPredicate }>;
 
 export type RpcHandlerActiveExecution = Readonly<{

@@ -5,6 +5,8 @@ import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/purposeBindings/requesterOperationMaterial';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
@@ -1000,25 +1002,34 @@ describe('admitted requester Action projection', () => {
     // The controller must never try spending the worker's effect as its own HTTP signature.
     const writes = vi.spyOn(axios, 'post').mockRejectedValue(new Error('unexpected controller effect proof'));
     let current = true;
+    let installedCurrent = true;
     const input: Parameters<typeof requesterAccountOwner.prepareInstalledRequesterAccountActionContext>[0] = {
       authorization: sealed, purpose, machineId: 'controller', serverId: 'home-profile',
       serverHttpBaseUrl: 'https://requester-home.test', verifyWorkspaceSyncPrepareCurrent: async () => current,
+      isRetainedCustodyCurrent: async () => installedCurrent,
       resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'controller', serverIdentityId: 'stable-home' }),
       ownCredentials: { token: 'alice-own', encryption: null },
       createExecutor: () => ({ execute: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }) }),
     };
     const prepared = await requesterAccountOwner.prepareInstalledRequesterAccountActionContext(input);
     expect(prepared).not.toBeNull();
+    let retained: ReturnType<NonNullable<import('./requesterAccountActionContext').RequesterAccountActionContext['retainCustody']>> | undefined;
     try {
       expect(prepared?.authorization.binding).toEqual(root.binding);
       expect(prepared?.authorization.requesterHttpProjection).toBeUndefined();
       const custody = requesterAccountOwner.readRequesterAccountActionContext(prepared?.authorization);
       expect(custody?.credentials.token).toBe('bob-private');
+      retained = custody?.retainCustody?.();
+      expect(retained).toBeDefined();
       expect(await custody?.isCurrent()).toBe(true);
       current = false;
       expect(await custody?.isCurrent()).toBe(false);
+      await prepared?.dispose();
+      expect(await retained?.isCurrent()).toBe(true);
+      installedCurrent = false;
+      expect(await retained?.isCurrent()).toBe(false);
       expect(writes).not.toHaveBeenCalled();
-    } finally { await prepared?.dispose(); }
+    } finally { await retained?.release(); await prepared?.dispose(); }
     current = true;
     expect(await requesterAccountOwner.prepareInstalledRequesterAccountActionContext({ ...input, authorization: root })).toBeNull();
     expect(await requesterAccountOwner.prepareInstalledRequesterAccountActionContext({ ...input, authorization: {
@@ -1419,6 +1430,59 @@ describe('admitted requester Action projection', () => {
       expect(await source.isCurrent()).toBe(false);
     } finally { await prepared?.dispose(); await release?.(); await source.dispose(); }
   });
+  it('retains Sync Account custody beyond Open cancellation without replaying root admission', async () => {
+    const ingress = new AbortController();
+    let installedCurrent = true;
+    let rootCurrent = true;
+    const credentials = { token: 'bob-retained-sync', encryption: null } as const;
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      throw new Error('Unexpected retained requester read');
+    });
+    const admitted = await requesterAccountOwner.admitRequesterAccountActionContext({
+      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' } },
+      credentials, serverId: 'home-profile', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://requester-home.test',
+      isCurrent: async () => rootCurrent, isRetainedCustodyCurrent: async () => installedCurrent, signal: ingress.signal,
+    });
+    if (!admitted) throw new Error('Missing admitted requester custody');
+    const retained = admitted.retainCustody?.();
+    let material: Awaited<ReturnType<typeof prepareRequesterOperationMaterial>> | undefined;
+    try {
+      expect(retained).toBeDefined();
+      material = await prepareRequesterOperationMaterial({ requesterAccount: admitted, retainedCustody: retained,
+        requesterIdentity: { kind: 'isolated', separationRequired: true, homeServerIdentityId: 'stable-home', requester: {
+          serverId: 'home-profile', accountId: 'bob', machineId: 'machine', installationId: 'installation' } },
+        reloadController: createPluginReloadController(), signal: new AbortController().signal });
+      expect(retained?.savedSecretOperationContext).toBeDefined();
+      expect(material.operationContext).toBe(retained?.savedSecretOperationContext);
+      ingress.abort();
+      rootCurrent = false;
+      await admitted.dispose();
+      expect(await admitted.isCurrent()).toBe(false);
+      const before = reads.mock.calls.length;
+      expect(await retained?.isCurrent()).toBe(true);
+      expect(await retained?.isCurrent()).toBe(true);
+      expect(await material.operationContext.isCurrent()).toBe(true);
+      expect(material.credentials).toBe(credentials);
+      expect(reads.mock.calls).toHaveLength(before);
+      expect(admitted.credentials).toBe(credentials);
+      expect(admitted.authorization.binding.accountId).toBe('bob');
+      installedCurrent = false;
+      expect(await retained?.isCurrent()).toBe(false);
+      expect(await material.isCurrent()).toBe(false);
+      installedCurrent = true;
+      expect(await retained?.isCurrent()).toBe(true);
+      await channel.push('bob', { mode: 'e2ee', version: 2, signingKeyFingerprint: null,
+        contentKeyFingerprint: null, updatedAt: 2 });
+      expect(await retained?.isCurrent()).toBe(false);
+    } finally { await material?.dispose(); await retained?.release(); await admitted.dispose(); }
+    expect(await retained?.isCurrent()).toBe(false);
+    expect(await retained?.savedSecretOperationContext.isCurrent()).toBe(false);
+  });
+
   it('keeps accepted private work current after the ingress releases custody and retires it on actual settlement', async () => {
     const admit = Reflect.get(requesterAccountOwner, 'admitRequesterAccountActionContext');
     expect(typeof admit).toBe('function');

@@ -21,10 +21,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import {
     deriveScmHostingProviderConnectedAccountPurposeAuthorization,
 } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
-import {
-    CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
-    type StablePluginConnectedAccountsOwner,
-} from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type {
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedScmHostingProviderContribution,
@@ -275,7 +272,6 @@ async function resolveScmHostingConfiguredDeployments(
         try {
             const listed = await listAccounts({
                 ...authorization,
-                limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT,
                 signal,
             });
             signal.throwIfAborted();
@@ -379,7 +375,7 @@ export function createHostScmHostingProviderRuntimeServices(
         const binding = await owner.getBinding({ ...authorization, signal });
         assertHostingAuthCurrent(authority, signal);
         if (!binding) return { kind: 'unbound' as const };
-        const listed = await owner.listAccounts({ ...authorization, limit: CONNECTED_ACCOUNT_METADATA_LIST_MAX_LIMIT, signal });
+        const listed = await owner.listAccounts({ ...authorization, signal });
         assertHostingAuthCurrent(authority, signal);
         const selected = listed.accounts.find((account) => sameQualifiedConnectedAccountRef(account.account, binding.account));
         if (!selected) return null;

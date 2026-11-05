@@ -14,23 +14,28 @@ import type { WorkspaceSyncRelationshipCreateRpcRequestV1, WorkspaceSyncRelation
 
 export type { ProjectAccountSnapshotMutation } from '@/workspaces/projectAccountRows';
 
-export type PrepareWorkspaceSyncRelationshipInput = Readonly<{
-  operationId: string;
+export type MaterializeWorkspaceSyncEndpointsInput = Readonly<{
   /** Host-derived Account Home scope; never accepted as a user-entered identity. */
   serverId: string;
   sourceMachineId: string;
   sourceRootPath: string;
   targetMachineId: string;
   targetRootPath: string;
+  sourceWorkspaceRefId?: string;
+  targetWorkspaceRefId?: string;
+  purpose?: 'worker_clean_copy';
+  signal?: AbortSignal;
+}>;
+
+export type PrepareWorkspaceSyncRelationshipInput = MaterializeWorkspaceSyncEndpointsInput & Readonly<{
+  operationId: string;
   mode: WorkspaceSyncPersistentModeV1;
   contentPolicy: WorkspaceContentPolicyV1;
   targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
-  purpose?: 'worker_clean_copy';
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;
   flushBeforeCommit: true;
-  signal?: AbortSignal;
 }>;
 
 export type PreparedWorkspaceSyncRelationship = Readonly<{
@@ -47,15 +52,7 @@ export type MaterializedWorkspaceSyncEndpoints = Readonly<{
 }>;
 
 export type WorkspaceSyncRelationshipOwner = Readonly<{
-  materializeEndpoints(input: Readonly<{
-    serverId: string;
-    sourceMachineId: string;
-    sourceRootPath: string;
-    targetMachineId: string;
-    targetRootPath: string;
-    purpose?: 'worker_clean_copy';
-    signal?: AbortSignal;
-  }>): Promise<MaterializedWorkspaceSyncEndpoints>;
+  materializeEndpoints(input: MaterializeWorkspaceSyncEndpointsInput): Promise<MaterializedWorkspaceSyncEndpoints>;
   prepareCreate(input: PrepareWorkspaceSyncRelationshipInput): Promise<PreparedWorkspaceSyncRelationship>;
   observeCreation(input: WorkspaceSyncRelationshipCreateRpcRequestV1 & Readonly<{ serverId: string }>): Promise<WorkspaceSyncRelationshipCreationObservationV1>;
   setEnabled(relationshipId: string, enabled: boolean, signal?: AbortSignal): Promise<void>;
@@ -220,15 +217,7 @@ export function createWorkspaceSyncRelationshipOwner(
     }
   };
 
-  const materializeEndpoints = async (input: Readonly<{
-    serverId: string;
-    sourceMachineId: string;
-    sourceRootPath: string;
-    targetMachineId: string;
-    targetRootPath: string;
-    purpose?: 'worker_clean_copy';
-    signal?: AbortSignal;
-  }>): Promise<MaterializedWorkspaceSyncEndpoints> => {
+  const materializeEndpoints = async (input: MaterializeWorkspaceSyncEndpointsInput): Promise<MaterializedWorkspaceSyncEndpoints> => {
     let sourceRef!: WorkspaceRefV1;
     let targetRef!: WorkspaceRefV1;
     const result = await mutateProjectSnapshot((settings) => {
@@ -237,7 +226,7 @@ export function createWorkspaceSyncRelationshipOwner(
         machineId: input.sourceMachineId,
         rootPath: input.sourceRootPath,
         nowMs: nowMs(),
-        createId,
+        createId: () => input.sourceWorkspaceRefId ?? createId(),
       });
       const second = materializeWorkspaceRefForMachineRoot(first.workspaceRefs, {
         serverId: input.serverId,
@@ -248,8 +237,12 @@ export function createWorkspaceSyncRelationshipOwner(
           machineId: first.workspaceRef.machineId, rootPath: first.workspaceRef.rootPath,
         } } : {}),
         nowMs: nowMs(),
-        createId,
+        createId: () => input.targetWorkspaceRefId ?? createId(),
       });
+      if ((input.sourceWorkspaceRefId && first.workspaceRef.id !== input.sourceWorkspaceRefId)
+        || (input.targetWorkspaceRefId && second.workspaceRef.id !== input.targetWorkspaceRefId)) {
+        throw ownerError('workspace_ref_not_ready', 'Prepared workspace endpoint identity differs from its existing root');
+      }
       sourceRef = first.workspaceRef;
       targetRef = second.workspaceRef;
       return admitProjectSnapshotTransition(settings, { ...settings, workspaceRefs: second.workspaceRefs });

@@ -29,7 +29,6 @@ import {
   type WorkspaceSyncTargetFileRead,
   type WorkspaceSyncTargetEntryObserve,
 } from '@/workspaces/sync/workspaceSyncController';
-import type { WorkspaceSyncMachineTunnelOpen } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import {
   createWorkspaceSyncHandoffAdapter,
   type PrepareWorkspaceSyncHandoffInput,
@@ -87,12 +86,18 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   createBroker: WorkspaceSyncSidecarLifecycleDependencies['createBroker'];
   spawnSidecar: SpawnWorkspaceSyncSidecar;
   launchLocalAgent: LaunchWorkspaceSyncLocalAgent;
+  openPrivateLocalWorkspaceAgentStream?: WorkspaceSyncControllerOptions['openPrivateLocalWorkspaceAgentStream'];
+  admitRelationshipTransfer?: WorkspaceSyncControllerOptions['admitRelationshipTransfer'];
+  resolvePrivateWorkspaceRoot?: WorkspaceSyncControllerOptions['resolvePrivateWorkspaceRoot'];
   stopRetainedNativeProcesses?: () => Promise<void>;
-  openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
+  openMachineCarrierTunnel?: WorkspaceSyncControllerOptions['openMachineCarrierTunnel'];
   handoffRelationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
   handoffPrepareBetween?: WorkspaceSyncHandoffAdapterDeps['prepareBetween'];
   resolveHandoffExecutionInput?: WorkspaceSyncHandoffAdapterDeps['resolveExecutionInput'];
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
+  preparePrivateExecution?: WorkspaceSyncHandoffAdapterDeps['preparePrivateExecution'];
+  resolveHandoffRelationshipOwner?: WorkspaceSyncHandoffAdapterDeps['resolveRelationshipOwner'];
+  getPrivateRelationshipDefinitions?: () => readonly WorkspaceSyncRelationshipV1[] | null;
   stageConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['stageConflictResolutionAtTarget']>;
   applyStagedConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['applyStagedConflictResolutionAtTarget']>;
   discardStagedConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['discardStagedConflictResolutionAtTarget']>;
@@ -129,6 +134,8 @@ export type DaemonWorkspaceSyncRuntime = Readonly<{
   managedWorkspaceSync: ManagedWorkspaceSync;
   openExternalStream(input: Readonly<{ endpointId: string; signal?: AbortSignal }>): Promise<Duplex>;
   openRootedAgent: WorkspaceSyncLocalAgentStreamOpen;
+  resolveNativeAgent(): Promise<Readonly<{ executablePath: string }>>;
+  reconcilePrivateRelationships(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   readProcessRoots(): readonly HappierProcessRootSource[];
@@ -252,19 +259,26 @@ export function createDaemonWorkspaceSyncRuntime(
     resolveWorkspaceRef: dependencies.resolveWorkspaceRef,
     rootOwnershipManager: dependencies.rootOwnershipManager,
     resolveRelationshipDefinition: (relationshipId) => {
-      const matches = acceptedRelationships.filter((candidate) => (
+      const matches = [...acceptedRelationships, ...(dependencies.getPrivateRelationshipDefinitions?.() ?? [])].filter((candidate) => (
         candidate.relationshipId === relationshipId
         && candidate.enabled
         && candidate.controllerMachineId === dependencies.localMachineId
       ));
-      return matches.length === 1 ? matches[0]! : null;
+      return matches.length > 0 && matches.every(candidate => isDeepStrictEqual(candidate, matches[0])) ? matches[0]! : null;
     },
-    resolveAllRelationshipDefinitions: () => getSnapshot()?.relationships ?? null,
+    resolveAllRelationshipDefinitions: () => {
+      const snapshot = getSnapshot();
+      const privateRelationships = dependencies.getPrivateRelationshipDefinitions?.() ?? null;
+      return snapshot || privateRelationships !== null ? [...(snapshot?.relationships ?? []), ...(privateRelationships ?? [])] : null;
+    },
     prepareRelationshipTarget: dependencies.prepareRelationshipTarget,
     ...(dependencies.recoverCopyOnceTarget ? { recoverCopyOnceTarget: dependencies.recoverCopyOnceTarget } : {}),
     ...(dependencies.borrowLinkedSourceRoot ? { borrowLinkedSourceRoot: dependencies.borrowLinkedSourceRoot } : {}),
     ...(dependencies.openMachineCarrierTunnel ? { openMachineCarrierTunnel: dependencies.openMachineCarrierTunnel } : {}),
     openLocalWorkspaceAgentStream: openRootedAgent,
+    openPrivateLocalWorkspaceAgentStream: dependencies.openPrivateLocalWorkspaceAgentStream,
+    admitRelationshipTransfer: dependencies.admitRelationshipTransfer,
+    resolvePrivateWorkspaceRoot: dependencies.resolvePrivateWorkspaceRoot,
     ...(dependencies.stageConflictResolutionAtTarget ? { stageConflictResolutionAtTarget: dependencies.stageConflictResolutionAtTarget } : {}),
     ...(dependencies.applyStagedConflictResolutionAtTarget ? { applyStagedConflictResolutionAtTarget: dependencies.applyStagedConflictResolutionAtTarget } : {}),
     ...(dependencies.discardStagedConflictResolutionAtTarget ? { discardStagedConflictResolutionAtTarget: dependencies.discardStagedConflictResolutionAtTarget } : {}),
@@ -285,6 +299,8 @@ export function createDaemonWorkspaceSyncRuntime(
     ...(dependencies.handoffPrepareBetween ? { prepareBetween: dependencies.handoffPrepareBetween } : {}),
     ...(dependencies.resolveHandoffExecutionInput ? { resolveExecutionInput: dependencies.resolveHandoffExecutionInput } : {}),
     ...(dependencies.relationshipOwner ? { relationshipOwner: dependencies.relationshipOwner } : {}),
+    ...(dependencies.preparePrivateExecution ? { preparePrivateExecution: dependencies.preparePrivateExecution } : {}),
+    ...(dependencies.resolveHandoffRelationshipOwner ? { resolveRelationshipOwner: dependencies.resolveHandoffRelationshipOwner } : {}),
     bootstrap: dependencies.bootstrap,
   });
 
@@ -300,10 +316,12 @@ export function createDaemonWorkspaceSyncRuntime(
   let stopped = false;
 
   const readRelationships = (snapshot: ActiveProjectAccountRowsSnapshot | null): readonly WorkspaceSyncRelationshipV1[] => {
-    if (!snapshot) {
+    const privateRelationships = dependencies.getPrivateRelationshipDefinitions?.() ?? null;
+    if (!snapshot && privateRelationships === null) {
       throw Object.assign(new Error('Project rows are unavailable'), { code: 'project_account_rows_unavailable' });
     }
-    return snapshot.relationships;
+    return [...new Map([...(snapshot?.relationships ?? []), ...(privateRelationships ?? [])]
+      .map(relationship => [relationship.relationshipId, relationship])).values()];
   };
 
   const applySnapshot = (snapshot: ActiveProjectAccountRowsSnapshot | null, force = false): Promise<void> => {
@@ -450,6 +468,8 @@ export function createDaemonWorkspaceSyncRuntime(
     managedWorkspaceSync: controller,
     openExternalStream: async (input) => await controller.openExternalStream(input),
     openRootedAgent,
+    resolveNativeAgent: async () => ({ executablePath: (await resolveRuntime()).agentPath }),
+    reconcilePrivateRelationships: async () => await applySnapshot(getSnapshot(), true),
     readProcessRoots: () => lifecycle.readProcessRoots(),
     start,
     stop,

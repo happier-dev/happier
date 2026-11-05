@@ -158,6 +158,26 @@ function workerCopySnapshot(sourceRootPath = '/source', targetRootPath = '/targe
 }
 
 describe('WorkspaceSyncRelationshipOwner', () => {
+  it('persists the endpoint identities already prepared by an admitted native Open', async () => {
+    const harness = createHarness();
+    const prepared = await harness.owner.prepareCreate({
+      operationId: 'handoff_1', serverId: 'server', sourceMachineId: 'machine_source', sourceRootPath: '/source',
+      targetMachineId: 'machine_target', targetRootPath: '/target', sourceWorkspaceRefId: 'native-source',
+      targetWorkspaceRefId: 'native-target', mode: 'keep_synced', contentPolicy: policy,
+      targetBootstrap: 'materialize_from_source_workspace', flushBeforeCommit: true,
+    });
+    expect(prepared.relationship).toMatchObject({ alphaWorkspaceRefId: 'native-source', betaWorkspaceRefId: 'native-target' });
+  });
+
+  it('refuses a prepared endpoint identity when its root already names another Workspace', async () => {
+    const harness = createHarness({}, { workspaceRefs: [
+      { id: 'source-ref', serverId: 'server', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
+      { id: 'existing-target', serverId: 'server', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 },
+    ], relationships: [] });
+    await expect(harness.owner.materializeEndpoints({ serverId: 'server', sourceMachineId: 'machine_source', sourceRootPath: '/source',
+      targetMachineId: 'machine_target', targetRootPath: '/target', sourceWorkspaceRefId: 'source-ref', targetWorkspaceRefId: 'native-target' }))
+      .rejects.toMatchObject({ code: 'workspace_ref_not_ready' });
+  });
   it('keeps ordinary Sync termination but refuses worker retirement of the same unproven relationship', async () => {
     const harness = createHarness();
     const prepared = await harness.owner.prepareCreate(createInput);

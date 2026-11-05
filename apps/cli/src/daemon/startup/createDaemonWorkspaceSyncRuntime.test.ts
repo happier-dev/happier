@@ -833,6 +833,27 @@ describe('createDaemonWorkspaceSyncRuntime', () => {
     }
   });
 
+  it('opens a captured member endpoint without traversing its root as the daemon', async () => {
+    const harness = boundaries();
+    const stream = new PassThrough();
+    // Native process boundary owns root verification and the rooted child.
+    const openPrivateLocalWorkspaceAgentStream = vi.fn(async () => ({ stream, stop: async () => undefined }));
+    const runtime = createDaemonWorkspaceSyncRuntime({
+      ...harness.deps,
+      openPrivateLocalWorkspaceAgentStream,
+    });
+    try {
+      await runtime.start();
+      harness.activateRelationships();
+      await runtime.whenProjectsSettled();
+      await expect(runtime.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId(relationship.relationshipId, 'alpha') }))
+        .resolves.toBe(stream);
+      expect(harness.deps.launchLocalAgent).not.toHaveBeenCalled();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it('forwards broker open cancellation into the controller machine-carrier path', async () => {
     const harness = boundaries();
     const stopped = Object.assign(new Error('test transport stopped'), { code: 'cancelled' });

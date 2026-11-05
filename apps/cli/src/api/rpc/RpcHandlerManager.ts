@@ -826,6 +826,7 @@ export class RpcHandlerManager {
                         ? { callerInputAuthorization: parsedInputAuthorization.data } : {}),
                     signal: controller.signal,
             });
+            let workspaceSyncPrivateExecution: RpcHandlerContext['workspaceSyncPrivateExecution'];
             if (this.authorizeRequest) {
                 nextPhase('authorize_request');
                 diagnostic.callerClass = 'unadmitted';
@@ -846,6 +847,7 @@ export class RpcHandlerManager {
                         effectAttempted: false,
                     });
                 }
+                workspaceSyncPrivateExecution = authorization.workspaceSyncPrivateExecution;
             }
             nextPhase('input_binding');
             // Session handlers validate the relay's actor themselves and need
@@ -1018,6 +1020,7 @@ export class RpcHandlerManager {
                 this.readUnprefixedMethod(request.method),
             );
             const result = await handler(decryptedParams, Object.freeze({
+                ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
                     ? 'plain' : rpcContent.mode,
@@ -1211,6 +1214,8 @@ export class RpcHandlerManager {
                 signal.throwIfAborted();
                 handlerExecutionId = this.beginHandlerExecution(method);
                 return await handler(params, Object.freeze({
+                    ...(options?.admissionResult?.workspaceSyncPrivateExecution
+                        ? { workspaceSyncPrivateExecution: options.admissionResult.workspaceSyncPrivateExecution } : {}),
                     ...(options?.rpcContext ? {
                         machineAdmission: options.rpcContext.machineAdmission,
                         verifyMachineAdmissionCurrent: options.rpcContext.verifyMachineAdmissionCurrent,

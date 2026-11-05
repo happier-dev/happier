@@ -36,6 +36,7 @@ import { assertWorkspaceSyncRequesterBootstrapSupported } from './workspaceSyncB
 import { lstat, readdir, realpath, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join, normalize, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
+import { clearTimeout, setTimeout } from 'node:timers';
 
 import {
   getActiveProjectAccountRowsSnapshot,
@@ -47,7 +48,7 @@ import { discoverNativeConfinedWorkspaceSyncRecovery } from './workspaceSyncNati
 import { createWorkspaceSyncEntryExport, stageWorkspaceSyncEntryExport } from './workspaceSyncEntryTransfer';
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 import { observeWorkspaceSyncEntryAtRoot, readWorkspaceSyncFileAtRoot } from './workspaceSyncFileRead';
-import type { WorkspaceSyncOwnedLocalAgent, WorkspaceSyncTargetEntryObserve } from './workspaceSyncController';
+import type { WorkspaceSyncOwnedLocalAgent, WorkspaceSyncTargetEntryObserve, WorkspaceSyncLocalAgentStreamOpen } from './workspaceSyncController';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
 import { computeWorkspaceSyncAbsentRootFingerprint } from './workspaceSyncRootIdentity';
 import {
@@ -191,7 +192,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   stageConflictResolutionHere(request: WorkspaceSyncTargetConflictStageV1, signal?: AbortSignal): Promise<void>;
   applyStagedConflictResolutionHere(request: WorkspaceSyncTargetConflictApplyV1, signal?: AbortSignal): Promise<WorkspaceSyncTargetConflictApplyResultV1>;
   discardStagedConflictResolutionHere(request: WorkspaceSyncTargetConflictApplyV1, signal?: AbortSignal): Promise<void>;
-  recoverConflictResolutionHere(request: WorkspaceSyncTargetConflictRecoverV1, signal?: AbortSignal): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
+  recoverConflictResolutionHere(request: WorkspaceSyncTargetConflictRecoverV1, signal?: AbortSignal,
+    context?: WorkspaceSyncConflictRecoveryContext): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
   recoverConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictRecoverV1 & Readonly<{ signal?: AbortSignal }>): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
   readFileHere(request: WorkspaceSyncTargetFileReadV1, signal?: AbortSignal): Promise<ReadWorkspaceSyncFileResultV1>;
   observeEntryHere(request: WorkspaceSyncTargetEntryObserveV1, signal?: AbortSignal): Promise<WorkspaceSyncEntryExpectationV1>;
@@ -207,6 +209,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   prepareBootstrapAtTarget(request: WorkspaceSyncTargetBootstrapPrepareRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapAtTargetResult>;
   releaseBootstrapAtTarget(request: WorkspaceSyncTargetBootstrapReleaseRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncTargetBootstrapReleaseResultV1>;
   acquireWorkspaceSyncMachineIngress(request: AcquireWorkspaceSyncMachineIngressRequest): Promise<WorkspaceSyncMachineIngress>;
+  /** Owner-local controller endpoint whose root custody was already retained. Never a wire RPC. */
+  openLocalWorkspaceAgentIngress(request: Parameters<WorkspaceSyncLocalAgentStreamOpen>[0]): Promise<WorkspaceSyncMachineIngress>;
   /** Owner-local, non-wire: release retained relationship fences the Project rows no longer own. */
   reconcileRetainedBootstraps(): Promise<void>;
   /** Owner-local, non-wire: release every retained handle on daemon shutdown. */
@@ -221,9 +225,27 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   }>>;
 }>;
 
+/** Existing controller-owned root loan; same-process callers may carry it across the native bridge. */
+export type WorkspaceSyncLocalResolutionEndpoint = NonNullable<Awaited<ReturnType<NonNullable<
+  WorkspaceSyncTargetAuthorityDependencies['resolveLocalResolutionEndpoint']
+>>>>;
+
+/** Host-only recovery custody; an explicit Account projection carries its controller's actual root loan. */
+export type WorkspaceSyncConflictRecoveryContext = Readonly<{
+  localResolutionEndpoint?: WorkspaceSyncLocalResolutionEndpoint | null;
+  getProjectSnapshot?: never;
+}> | Readonly<{
+  localResolutionEndpoint: WorkspaceSyncLocalResolutionEndpoint;
+  getProjectSnapshot(): ActiveProjectAccountRowsSnapshot | null;
+}>;
+
 export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
   localServerId: string;
   localMachineId: string;
+  /** Captured native child owns this one admitted local endpoint. */
+  localWorkspaceRefId?: string;
+  /** Installed physical daemon Account, derived from its own credentials. */
+  localAccountId?: string | null;
   getProjectSnapshot?: () => ActiveProjectAccountRowsSnapshot | null;
   /** Passive preview reads current Home rows, never the daemon's retained row cache. */
   refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot>;
@@ -808,13 +830,13 @@ export function createWorkspaceSyncTargetAuthority(
   if (!localMachineId) throw new TypeError('Workspace sync target authority requires a local machine id');
   if (!localServerId) throw new TypeError('Workspace sync target authority requires a local server id');
   const readSnapshot = dependencies.getProjectSnapshot ?? getActiveProjectAccountRowsSnapshot;
-  const getSnapshot = (): ActiveProjectAccountRowsSnapshot => {
-    const snapshot = readSnapshot();
+  const requireSnapshot = (snapshot: ActiveProjectAccountRowsSnapshot | null): ActiveProjectAccountRowsSnapshot => {
     if (!snapshot) {
       throw authorityError('project_account_rows_unavailable', 'Project rows are unavailable');
     }
     return snapshot;
   };
+  const getSnapshot = (): ActiveProjectAccountRowsSnapshot => requireSnapshot(readSnapshot());
   const readInvocationSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot> => {
     const authorization = context?.callerInputAuthorization;
     if (!authorization) return getSnapshot();
@@ -1277,7 +1299,8 @@ export function createWorkspaceSyncTargetAuthority(
     /** The exact current invocation's Home rows, when they differ from daemon custody. */
     projectSnapshot?: ActiveProjectAccountRowsSnapshot | null;
   }>): Promise<RetainedBootstrap | null> => {
-    if (!bootstrap || input.targetWorkspace.machineId.trim() !== localMachineId) return null;
+    if (!bootstrap || input.targetWorkspace.machineId.trim() !== localMachineId
+      || dependencies.localWorkspaceRefId !== undefined && input.targetWorkspace.id !== dependencies.localWorkspaceRefId) return null;
     assertLocalWorkspacePlacement(input.targetWorkspace, localServerId, localMachineId);
     const authorityKey = retainedAuthorityKey({
       relationshipId: input.relationship.relationshipId,
@@ -1355,7 +1378,8 @@ export function createWorkspaceSyncTargetAuthority(
     targetWorkspace: WorkspaceRefV1;
     sourceWorkspace: WorkspaceRefV1;
   }>): Promise<RetainedBootstrap | null> => {
-    if (!bootstrap || input.targetWorkspace.machineId.trim() !== localMachineId) return null;
+    if (!bootstrap || input.targetWorkspace.machineId.trim() !== localMachineId
+      || dependencies.localWorkspaceRefId !== undefined && input.targetWorkspace.id !== dependencies.localWorkspaceRefId) return null;
     assertLocalWorkspacePlacement(input.targetWorkspace, localServerId, localMachineId);
     const operation = input.request.owner.operation;
     const authorityKey = retainedAuthorityKey({
@@ -1536,14 +1560,18 @@ export function createWorkspaceSyncTargetAuthority(
     });
   };
 
-  const resolveRecoveryWorkspace = async (request: WorkspaceSyncTargetConflictRecoverV1) => {
+  const resolveRecoveryWorkspace = async (request: WorkspaceSyncTargetConflictRecoverV1,
+    context?: WorkspaceSyncConflictRecoveryContext) => {
+    const localResolutionEndpoint = context?.localResolutionEndpoint;
+    const readRecoverySnapshot = context?.getProjectSnapshot;
+    const getRecoverySnapshot = readRecoverySnapshot ? () => requireSnapshot(readRecoverySnapshot()) : getSnapshot;
     const { relationship, workspace } = resolveOwnedWorkspace(
-      getSnapshot(), request.relationshipId, request.targetWorkspaceRefId, localServerId, 'any',
+      getRecoverySnapshot(), request.relationshipId, request.targetWorkspaceRefId, localServerId, 'any',
     );
     if (workspace.machineId !== request.targetMachineId) {
       throw authorityError('approval_stale', 'Reviewed workspace conflict recovery endpoint changed');
     }
-    if (relationship.enabled) return { relationship, workspace, transientAccess: null };
+    if (relationship.enabled && !readRecoverySnapshot) return { relationship, workspace, transientAccess: null };
 
     // Initial relationship preparation deliberately leaves the durable graph
     // disabled. Only the already retained controller/target root may settle its
@@ -1552,10 +1580,10 @@ export function createWorkspaceSyncTargetAuthority(
     const checkedAccess = (access: Access, localWorkspace: WorkspaceRefV1): Access => ({
       canonicalRoot: access.canonicalRoot,
       assertCurrentAuthority: async () => {
-        const current = resolveOwnedWorkspace(getSnapshot(), relationship.relationshipId, workspace.id, localServerId, 'any');
+        const current = resolveOwnedWorkspace(getRecoverySnapshot(), relationship.relationshipId, workspace.id, localServerId, 'any');
         if (!areWorkspaceSyncRelationshipDefinitionsEqual(current.relationship, relationship)
           || !isDeepStrictEqual(current.workspace, workspace)
-          || !isDeepStrictEqual(resolveWorkspaceRef(getSnapshot(), localWorkspace.id, localServerId), localWorkspace)) {
+          || !isDeepStrictEqual(resolveWorkspaceRef(getRecoverySnapshot(), localWorkspace.id, localServerId), localWorkspace)) {
           throw authorityError('relationship_not_ready', 'Workspace recovery endpoint is no longer owned by the retained definition');
         }
         const canonicalRoot = await realpath(localWorkspace.rootPath).catch(() => null);
@@ -1569,27 +1597,28 @@ export function createWorkspaceSyncTargetAuthority(
       ? [workspace.id]
       : [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId];
     for (const refId of localMemberIds) {
-      const member = resolveWorkspaceRef(getSnapshot(), refId, localServerId);
+      const member = resolveWorkspaceRef(getRecoverySnapshot(), refId, localServerId);
       if (member.machineId !== localMachineId) continue;
       assertLocalWorkspacePlacement(member, localServerId, localMachineId);
-      const controllerAccess = await dependencies.resolveLocalResolutionEndpoint?.(relationship.relationshipId, member.id);
+      const controllerAccess = member.id === request.targetWorkspaceRefId && localResolutionEndpoint
+        ? localResolutionEndpoint : await dependencies.resolveLocalResolutionEndpoint?.(relationship.relationshipId, member.id);
       if (!controllerAccess?.relationship
         || !areWorkspaceSyncRelationshipDefinitionsEqual(controllerAccess.relationship, relationship)) continue;
       const transientAccess = checkedAccess(controllerAccess, member);
       await transientAccess.assertCurrentAuthority();
       return { relationship, workspace, transientAccess };
     }
-    if (workspace.machineId === localMachineId) {
+    if (!readRecoverySnapshot && workspace.machineId === localMachineId) {
       assertLocalWorkspacePlacement(workspace, localServerId, localMachineId);
       const endpointRole = relationship.alphaWorkspaceRefId === workspace.id ? 'alpha' : 'beta';
       const authorityKey = retainedAuthorityKey({ relationshipId: relationship.relationshipId,
         operationId: relationship.relationshipId, endpointRole, targetWorkspaceRefId: workspace.id });
       const entry = retained.get(authorityKey);
-      if (entry?.transientAuthority && relationshipOwnsEndpoint(getSnapshot(), entry, false)) {
+      if (entry?.transientAuthority && relationshipOwnsEndpoint(getRecoverySnapshot(), entry, false)) {
         const canonicalRoot = await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
         const transientAccess = checkedAccess({ canonicalRoot, assertCurrentAuthority: async () => {
           if (retained.get(authorityKey) !== entry || !entry.transientAuthority
-            || !relationshipOwnsEndpoint(getSnapshot(), entry, false)) {
+            || !relationshipOwnsEndpoint(getRecoverySnapshot(), entry, false)) {
             throw authorityError('relationship_not_ready', 'Workspace recovery target no longer retains its transient bootstrap');
           }
           await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
@@ -1763,11 +1792,12 @@ export function createWorkspaceSyncTargetAuthority(
   const recoverConflictResolutionHere = async (
     rawRequest: WorkspaceSyncTargetConflictRecoverV1,
     signal?: AbortSignal,
+    context?: WorkspaceSyncConflictRecoveryContext,
   ): Promise<WorkspaceSyncTargetConflictRecoverResultV1> => {
     assertStateAvailable();
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetConflictRecoverV1Schema.parse(rawRequest);
-    const { relationship, workspace, transientAccess } = await resolveRecoveryWorkspace(request);
+    const { relationship, workspace, transientAccess } = await resolveRecoveryWorkspace(request, context);
     assertLocalWorkspacePlacement(workspace, localServerId, localMachineId);
     const recoveryDirectory = await requireResolutionDirectory();
     const records = await (dependencies.discoverConflictRecovery ?? discoverNativeConfinedWorkspaceSyncRecovery)({ recoveryDirectory });
@@ -1781,7 +1811,8 @@ export function createWorkspaceSyncTargetAuthority(
       await transientAccess?.assertCurrentAuthority();
       return { status: 'settled' };
     }
-    let access = transientAccess ?? await dependencies.resolveLocalResolutionEndpoint?.(relationship.relationshipId, workspace.id) ?? null;
+    let access = transientAccess ?? context?.localResolutionEndpoint
+      ?? await dependencies.resolveLocalResolutionEndpoint?.(relationship.relationshipId, workspace.id) ?? null;
     let release: (() => Promise<void>) | null = null;
     if (!access) {
       try {
@@ -2070,6 +2101,222 @@ export function createWorkspaceSyncTargetAuthority(
         workspace,
       }),
     }));
+  };
+
+  // Controller-owned local endpoints and retained target endpoints share the
+  // same rooted-agent/listener custody and shutdown map.
+  const openLocalAgentIngress = async (request: Readonly<{ signal?: AbortSignal; expiresAtMs?: number }>, input: Readonly<{
+    authorityKey: string; operationId: string; role: 'alpha' | 'beta'; workspaceRefId: string; canonicalRoot: string;
+    assertCurrent(): void;
+  }>): Promise<WorkspaceSyncMachineIngress> => {
+    request.signal?.throwIfAborted();
+    const openRootedAgent = dependencies.openRootedAgent;
+    if (!openRootedAgent) throw authorityError('agent_unavailable', 'Verified rooted workspace sync agent is unavailable');
+    const authorityKey = input.authorityKey;
+    if ((activeIngresses.get(authorityKey)?.size ?? 0) > 0) {
+      throw authorityError('peer_unavailable', 'Workspace sync machine ingress is already active');
+    }
+    if (closing) {
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+    }
+    input.assertCurrent();
+    const agentAbort = new AbortController();
+    let openerPromise: Promise<WorkspaceSyncOwnedLocalAgent> | null = null;
+    let closeIngress: (() => Promise<void>) | null = null;
+    let agentStopPromise: Promise<void> | null = null;
+    let ingressSettlementPromise: Promise<void> | null = null;
+    let activeCloser!: () => Promise<void>;
+    const ingressClosers = activeIngresses.get(authorityKey) ?? new Set<() => Promise<void>>();
+    const stopOpenedAgent = (agent: WorkspaceSyncOwnedLocalAgent): Promise<void> => {
+      if (agentStopPromise) return agentStopPromise;
+      agentStopPromise = (async () => {
+        agent.stream.destroy();
+        await agent.stop();
+        ingressClosers.delete(activeCloser);
+        if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
+        notifyActivity();
+      })().catch((error: unknown) => {
+        agentStopPromise = null;
+        throw error;
+      });
+      return agentStopPromise;
+    };
+    activeCloser = (): Promise<void> => {
+      if (ingressSettlementPromise) return ingressSettlementPromise;
+      ingressSettlementPromise = (async () => {
+        agentAbort.abort();
+        const pendingOpener = openerPromise;
+        if (!pendingOpener) return;
+        let openedAgent: WorkspaceSyncOwnedLocalAgent;
+        try {
+          openedAgent = await pendingOpener;
+        } catch {
+          request.signal?.removeEventListener('abort', abortFromCaller);
+          ingressClosers.delete(activeCloser);
+          if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
+          notifyActivity();
+          return;
+        }
+        request.signal?.removeEventListener('abort', abortFromCaller);
+        if (closeIngress) await closeIngress();
+        else await stopOpenedAgent(openedAgent);
+      })().catch((error: unknown) => {
+        ingressSettlementPromise = null;
+        throw error;
+      });
+      return ingressSettlementPromise;
+    };
+    ingressClosers.add(activeCloser);
+    activeIngresses.set(authorityKey, ingressClosers);
+    notifyActivity();
+    // Event-driven cleanup (caller abort, peer socket or rooted-agent stream
+    // end) consumes its own close rejection: a rooted agent that fails to
+    // stop must not surface as an unhandled rejection in the daemon process.
+    // Custody stays with `close`, which resets itself on failure so
+    // `activeCloser` and the returned explicit closer can retry it.
+    const scheduleClose = () => { void activeCloser().catch(() => undefined); };
+    const abortFromCaller = () => {
+      agentAbort.abort(request.signal?.reason);
+      scheduleClose();
+    };
+    request.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    openerPromise = Promise.resolve().then(() => openRootedAgent({
+      operationId: input.operationId,
+      role: input.role,
+      workspaceRefId: input.workspaceRefId,
+      canonicalRoot: input.canonicalRoot,
+      signal: agentAbort.signal,
+    }));
+    const agent = await openerPromise.catch((error) => {
+      request.signal?.removeEventListener('abort', abortFromCaller);
+      ingressClosers.delete(activeCloser);
+      if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
+      notifyActivity();
+      throw error;
+    });
+    const closeLateAgent = async (): Promise<void> => {
+      agentAbort.abort();
+      request.signal?.removeEventListener('abort', abortFromCaller);
+      await stopOpenedAgent(agent);
+    };
+    closeIngress = closeLateAgent;
+    if (agentAbort.signal.aborted) {
+      await activeCloser();
+      throw authorityError('peer_unavailable', 'Workspace sync machine ingress ended before the rooted agent was ready');
+    }
+    if (closing) {
+      await activeCloser();
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+    }
+    try { input.assertCurrent(); } catch (error) { await activeCloser(); throw error; }
+    const server = createServer({ allowHalfOpen: true });
+    const localCapability = createFirstBytesLocalCapability();
+    const expectedLocalCapability = Buffer.from(localCapability, 'ascii');
+    let accepted: Socket | null = null;
+    const pendingCapabilitySockets = new Set<Socket>();
+    let closed = false;
+    let closePromise: Promise<void> | null = null;
+    let attachExpiryTimer: NodeJS.Timeout | null = null;
+    const close = (): Promise<void> => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        if (!closed) {
+          closed = true;
+          if (attachExpiryTimer) clearTimeout(attachExpiryTimer);
+          attachExpiryTimer = null;
+          request.signal?.removeEventListener('abort', abortFromCaller);
+          agentAbort.abort();
+          for (const socket of pendingCapabilitySockets) socket.destroy();
+          pendingCapabilitySockets.clear();
+          accepted?.destroy();
+          agent.stream.destroy();
+          await closeListeningServer(server);
+        }
+        await stopOpenedAgent(agent);
+      })().catch((error: unknown) => {
+        closePromise = null;
+        throw error;
+      });
+      return closePromise;
+    };
+    closeIngress = close;
+    server.on('connection', (socket) => {
+      if (closed || accepted || socket.remoteAddress !== '127.0.0.1') {
+        socket.destroy();
+        return;
+      }
+      pendingCapabilitySockets.add(socket);
+      socket.once('close', () => pendingCapabilitySockets.delete(socket));
+      void (async () => {
+        let supplied: Buffer;
+        try {
+          supplied = await readFirstBytesLocalCapability(socket);
+        } catch {
+          socket.destroy();
+          scheduleClose();
+          return;
+        }
+        if (
+          closed
+          || accepted
+          || !matchesFirstBytesLocalCapability(supplied, expectedLocalCapability)
+        ) {
+          socket.destroy();
+          scheduleClose();
+          return;
+        }
+        accepted = socket;
+        if (attachExpiryTimer) clearTimeout(attachExpiryTimer);
+        attachExpiryTimer = null;
+        pendingCapabilitySockets.delete(socket);
+        void closeListeningServer(server);
+        socket.setNoDelay(true);
+        socket.pipe(agent.stream, { end: false });
+        agent.stream.pipe(socket, { end: false });
+        socket.once('end', () => agent.stream.end());
+        agent.stream.once('end', () => { if (!socket.destroyed) socket.end(); });
+        socket.once('error', scheduleClose);
+        socket.once('close', scheduleClose);
+        agent.stream.once('error', scheduleClose);
+        agent.stream.once('close', scheduleClose);
+        socket.resume();
+      })();
+    });
+    try {
+      await new Promise<void>((resolveListen, rejectListen) => {
+        server.once('error', rejectListen);
+        server.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
+          server.off('error', rejectListen);
+          resolveListen();
+        });
+      });
+    } catch (error) {
+      await close();
+      throw error;
+    }
+    const address = server.address();
+    if (!address || typeof address === 'string' || !Number.isSafeInteger(address.port) || address.port < 1) {
+      await close();
+      throw authorityError('agent_unavailable', 'Workspace sync loopback ingress did not bind a port');
+    }
+    if (request.signal?.aborted) {
+      await close();
+      request.signal.throwIfAborted();
+    }
+    try { input.assertCurrent(); } catch (error) { await close(); throw error; }
+    if (closing) {
+      await close();
+      throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
+    }
+    if (request.expiresAtMs !== undefined) {
+      const scheduleExpiry: (callback: () => void, delayMs: number) => NodeJS.Timeout = setTimeout;
+      attachExpiryTimer = scheduleExpiry(
+        scheduleClose,
+        Math.max(1, request.expiresAtMs - Date.now()),
+      );
+      attachExpiryTimer.unref();
+    }
+    return Object.freeze({ port: address.port, localCapability, close });
   };
 
   const authority: WorkspaceSyncTargetAuthority = {
@@ -2561,8 +2808,8 @@ export function createWorkspaceSyncTargetAuthority(
       let admittedTarget: Awaited<ReturnType<typeof bindReplacementTarget>> | undefined;
       let independentTarget: WorkspaceRefV1 | undefined;
       if (sourceWriterTargetRouting && targetRouting) {
-        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization,
-          ownerKind: request.owner.kind });
+        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization, admission: context?.machineAdmission,
+          receivingAccountId: dependencies.localAccountId, ownerKind: request.owner.kind });
         assertPrepareWrites(request, targetRouting.targetContext);
         admittedTarget = await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
@@ -2636,8 +2883,8 @@ export function createWorkspaceSyncTargetAuthority(
           throw authorityError('workspace_sync_child_unavailable', 'The admitted child target does not resolve to this endpoint');
         }
       }
-      assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization,
-        ownerKind: request.owner.kind, targetReplacement: request.targetReplacementApproval !== undefined,
+      assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization, admission: context?.machineAdmission,
+        receivingAccountId: dependencies.localAccountId, ownerKind: request.owner.kind, targetReplacement: request.targetReplacementApproval !== undefined,
         materializesRemoteSource: request.targetBootstrap === 'materialize_from_source_workspace'
           && owner.sourceMachineId !== localMachineId && admittedCopy === undefined });
       // Exact mirroring authorizes deleting target-only files for the life of
@@ -2868,7 +3115,11 @@ export function createWorkspaceSyncTargetAuthority(
                   gitInput.targetState !== 'missing',
                   gitInput.targetFence,
                 );
-                await prepareExistingGitWorkspaceSyncTarget({ canonicalRoot: gitInput.canonicalRoot, targetState: 'nonempty' });
+                if (bootstrap.prepareGitTarget) {
+                  await bootstrap.prepareGitTarget({ ...gitInput, targetState: 'nonempty', targetBootstrap: 'use_existing' });
+                } else {
+                  await prepareExistingGitWorkspaceSyncTarget({ canonicalRoot: gitInput.canonicalRoot, targetState: 'nonempty' });
+                }
                 return custody;
               } }
             : bootstrap.prepareGitTarget ? { prepareGitTarget: bootstrap.prepareGitTarget } : {}),
@@ -3006,8 +3257,8 @@ export function createWorkspaceSyncTargetAuthority(
       });
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
-        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context.callerInputAuthorization,
-          ownerKind: wireRequest.owner.kind });
+        assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context.callerInputAuthorization, admission: context.machineAdmission,
+          receivingAccountId: dependencies.localAccountId, ownerKind: wireRequest.owner.kind });
         if (!source.sourceContext || !request.admittedTarget || source.accountServerId !== localServerId
           || source.operationId !== wireRequest.bootstrapOperationId
           || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
@@ -3096,13 +3347,22 @@ export function createWorkspaceSyncTargetAuthority(
       return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
     },
 
+    openLocalWorkspaceAgentIngress: async request => {
+      // The owner-local controller already retained its root handle. No wire
+      // RPC exposes this port or grants a caller-selected filesystem path.
+      const canonicalRoot = await realpath(request.canonicalRoot);
+      if (canonicalRoot !== request.canonicalRoot) throw authorityError('root_changed', 'Workspace sync local endpoint root changed');
+      return await openLocalAgentIngress(request, { ...request, canonicalRoot,
+        authorityKey: `local-agent:${request.operationId}:${request.role}:${request.workspaceRefId}`,
+        assertCurrent: () => { request.signal?.throwIfAborted(); } });
+    },
+
     acquireWorkspaceSyncMachineIngress: async (request) => {
       assertStateAvailable();
       request.signal?.throwIfAborted();
       if (!dependencies.openRootedAgent) {
         throw authorityError('agent_unavailable', 'Verified rooted workspace sync agent is unavailable');
       }
-      const openRootedAgent = dependencies.openRootedAgent;
       const facts = {
         operationId: request.operationId.trim(),
         sourceMachineId: request.sourceMachineId.trim(),
@@ -3143,227 +3403,14 @@ export function createWorkspaceSyncTargetAuthority(
         rootPath: target.rootPath,
       });
 
-      if ((activeIngresses.get(authorityKey)?.size ?? 0) > 0) {
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress is already active');
-      }
-      if (closing) {
-        throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
-      }
-      if (entry.relationshipId
-        && !entry.transientAuthority
-        && !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
-        throw authorityError('relationship_not_ready', 'Workspace sync relationship no longer owns the target endpoint');
-      }
-      const agentAbort = new AbortController();
-      let openerPromise: Promise<WorkspaceSyncOwnedLocalAgent> | null = null;
-      let closeIngress: (() => Promise<void>) | null = null;
-      let agentStopPromise: Promise<void> | null = null;
-      let ingressSettlementPromise: Promise<void> | null = null;
-      let activeCloser!: () => Promise<void>;
-      const ingressClosers = activeIngresses.get(authorityKey) ?? new Set<() => Promise<void>>();
-      const stopOpenedAgent = (agent: WorkspaceSyncOwnedLocalAgent): Promise<void> => {
-        if (agentStopPromise) return agentStopPromise;
-        agentStopPromise = (async () => {
-          agent.stream.destroy();
-          await agent.stop();
-          ingressClosers.delete(activeCloser);
-          if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
-          notifyActivity();
-        })().catch((error: unknown) => {
-          agentStopPromise = null;
-          throw error;
-        });
-        return agentStopPromise;
-      };
-      activeCloser = (): Promise<void> => {
-        if (ingressSettlementPromise) return ingressSettlementPromise;
-        ingressSettlementPromise = (async () => {
-          agentAbort.abort();
-          const pendingOpener = openerPromise;
-          if (!pendingOpener) return;
-          let openedAgent: WorkspaceSyncOwnedLocalAgent;
-          try {
-            openedAgent = await pendingOpener;
-          } catch {
-            request.signal?.removeEventListener('abort', abortFromCaller);
-            ingressClosers.delete(activeCloser);
-            if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
-            notifyActivity();
-            return;
+      return await openLocalAgentIngress(request, { authorityKey, operationId: facts.operationId,
+        role: entry.endpointRole, workspaceRefId: entry.targetWorkspaceRefId, canonicalRoot: currentRoot,
+        assertCurrent: () => {
+          if (retained.get(authorityKey) !== entry) throw authorityError('peer_unavailable', 'Workspace sync target ownership ended before ingress was ready');
+          if (entry.relationshipId && !entry.transientAuthority && !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
+            throw authorityError('relationship_not_ready', 'Workspace sync relationship no longer owns the target endpoint');
           }
-          request.signal?.removeEventListener('abort', abortFromCaller);
-          if (closeIngress) await closeIngress();
-          else await stopOpenedAgent(openedAgent);
-        })().catch((error: unknown) => {
-          ingressSettlementPromise = null;
-          throw error;
-        });
-        return ingressSettlementPromise;
-      };
-      ingressClosers.add(activeCloser);
-      activeIngresses.set(authorityKey, ingressClosers);
-      notifyActivity();
-      // Event-driven cleanup (caller abort, peer socket or rooted-agent stream
-      // end) consumes its own close rejection: a rooted agent that fails to
-      // stop must not surface as an unhandled rejection in the daemon process.
-      // Custody stays with `close`, which resets itself on failure so
-      // `activeCloser` and the returned explicit closer can retry it.
-      const scheduleClose = () => { void activeCloser().catch(() => undefined); };
-      const abortFromCaller = () => {
-        agentAbort.abort(request.signal?.reason);
-        scheduleClose();
-      };
-      request.signal?.addEventListener('abort', abortFromCaller, { once: true });
-      openerPromise = Promise.resolve().then(() => openRootedAgent({
-        operationId: facts.operationId,
-        role: entry.endpointRole,
-        workspaceRefId: entry.targetWorkspaceRefId,
-        canonicalRoot: currentRoot,
-        signal: agentAbort.signal,
-      }));
-      const agent = await openerPromise.catch((error) => {
-        request.signal?.removeEventListener('abort', abortFromCaller);
-        ingressClosers.delete(activeCloser);
-        if (ingressClosers.size === 0) activeIngresses.delete(authorityKey);
-        notifyActivity();
-        throw error;
-      });
-      const closeLateAgent = async (): Promise<void> => {
-        agentAbort.abort();
-        request.signal?.removeEventListener('abort', abortFromCaller);
-        await stopOpenedAgent(agent);
-      };
-      closeIngress = closeLateAgent;
-      if (agentAbort.signal.aborted) {
-        await activeCloser();
-        throw authorityError('peer_unavailable', 'Workspace sync machine ingress ended before the rooted agent was ready');
-      }
-      if (closing) {
-        await activeCloser();
-        throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
-      }
-      if (entry.relationshipId
-        && !entry.transientAuthority
-        && !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
-        await activeCloser();
-        throw authorityError('relationship_not_ready', 'Workspace sync relationship no longer owns the target endpoint');
-      }
-      const server = createServer({ allowHalfOpen: true });
-      const localCapability = createFirstBytesLocalCapability();
-      const expectedLocalCapability = Buffer.from(localCapability, 'ascii');
-      let accepted: Socket | null = null;
-      const pendingCapabilitySockets = new Set<Socket>();
-      let closed = false;
-      let closePromise: Promise<void> | null = null;
-      let attachExpiryTimer: NodeJS.Timeout | null = null;
-      const close = (): Promise<void> => {
-        if (closePromise) return closePromise;
-        closePromise = (async () => {
-          if (!closed) {
-            closed = true;
-            if (attachExpiryTimer) clearTimeout(attachExpiryTimer);
-            attachExpiryTimer = null;
-            request.signal?.removeEventListener('abort', abortFromCaller);
-            agentAbort.abort();
-            for (const socket of pendingCapabilitySockets) socket.destroy();
-            pendingCapabilitySockets.clear();
-            accepted?.destroy();
-            agent.stream.destroy();
-            await closeListeningServer(server);
-          }
-          await stopOpenedAgent(agent);
-        })().catch((error: unknown) => {
-          closePromise = null;
-          throw error;
-        });
-        return closePromise;
-      };
-      closeIngress = close;
-      server.on('connection', (socket) => {
-        if (closed || accepted || socket.remoteAddress !== '127.0.0.1') {
-          socket.destroy();
-          return;
-        }
-        pendingCapabilitySockets.add(socket);
-        socket.once('close', () => pendingCapabilitySockets.delete(socket));
-        void (async () => {
-          let supplied: Buffer;
-          try {
-            supplied = await readFirstBytesLocalCapability(socket);
-          } catch {
-            socket.destroy();
-            scheduleClose();
-            return;
-          }
-          if (
-            closed
-            || accepted
-            || !matchesFirstBytesLocalCapability(supplied, expectedLocalCapability)
-          ) {
-            socket.destroy();
-            scheduleClose();
-            return;
-          }
-          accepted = socket;
-          if (attachExpiryTimer) clearTimeout(attachExpiryTimer);
-          attachExpiryTimer = null;
-          pendingCapabilitySockets.delete(socket);
-          void closeListeningServer(server);
-          socket.setNoDelay(true);
-          socket.pipe(agent.stream, { end: false });
-          agent.stream.pipe(socket, { end: false });
-          socket.once('end', () => agent.stream.end());
-          agent.stream.once('end', () => { if (!socket.destroyed) socket.end(); });
-          socket.once('error', scheduleClose);
-          socket.once('close', scheduleClose);
-          agent.stream.once('error', scheduleClose);
-          agent.stream.once('close', scheduleClose);
-          socket.resume();
-        })();
-      });
-      try {
-        await new Promise<void>((resolveListen, rejectListen) => {
-          server.once('error', rejectListen);
-          server.listen({ host: '127.0.0.1', port: 0, exclusive: true }, () => {
-            server.off('error', rejectListen);
-            resolveListen();
-          });
-        });
-      } catch (error) {
-        await close();
-        throw error;
-      }
-      const address = server.address();
-      if (!address || typeof address === 'string' || !Number.isSafeInteger(address.port) || address.port < 1) {
-        await close();
-        throw authorityError('agent_unavailable', 'Workspace sync loopback ingress did not bind a port');
-      }
-      if (request.signal?.aborted) {
-        await close();
-        request.signal.throwIfAborted();
-      }
-      if (retained.get(authorityKey) !== entry) {
-        await close();
-        throw authorityError('peer_unavailable', 'Workspace sync target ownership ended before ingress was ready');
-      }
-      if (entry.relationshipId
-        && !entry.transientAuthority
-        && !relationshipStillOwnsEndpoint(getSnapshot(), entry)) {
-        await close();
-        throw authorityError('relationship_not_ready', 'Workspace sync relationship no longer owns the target endpoint');
-      }
-      if (closing) {
-        await close();
-        throw authorityError('peer_unavailable', 'Workspace sync target authority is shutting down');
-      }
-      if (request.expiresAtMs !== undefined) {
-        attachExpiryTimer = setTimeout(
-          scheduleClose,
-          Math.max(1, request.expiresAtMs - Date.now()),
-        );
-        attachExpiryTimer.unref();
-      }
-      return Object.freeze({ port: address.port, localCapability, close });
+        } });
       });
     },
 
@@ -3452,13 +3499,9 @@ export function createWorkspaceSyncTargetAuthority(
         if (rejected.length > 0) ingressCloseFailures.set(authorityKey, rejected);
       }));
       await Promise.all([...inFlight.values()]);
-      const failures: unknown[] = [];
+      const failures: unknown[] = [...ingressCloseFailures.values()].flat();
       for (const authorityKey of [...retained.keys()]) {
-        const ingressFailures = ingressCloseFailures.get(authorityKey);
-        if (ingressFailures) {
-          failures.push(...ingressFailures);
-          continue;
-        }
+        if (ingressCloseFailures.has(authorityKey)) continue;
         await discardRetained(authorityKey).catch((error: unknown) => { failures.push(error); });
       }
       if (sourceLoans.size > 0) {

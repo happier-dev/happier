@@ -124,10 +124,15 @@ export type WorkspaceSyncControllerOptions = Readonly<{
   }> | void>;
   recoverCopyOnceTarget?: WorkspaceSyncCopyOnceTargetRecovery;
   borrowLinkedSourceRoot?: (operationId: string, workspaceRefId: string) => Promise<WorkspaceSyncSourceRootLoan | null>;
+  admitRelationshipTransfer?(relationshipId: string, signal?: AbortSignal): Promise<void>;
   openMachineCarrierTunnel?: (
     input: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>,
+    transferAdmission?: Promise<void>,
   ) => Promise<WorkspaceSyncMachineTunnel>;
   openLocalWorkspaceAgentStream?: WorkspaceSyncLocalAgentStreamOpen;
+  /** An admitted member verifies its own roots and launches its own agent. */
+  openPrivateLocalWorkspaceAgentStream?: (input: Parameters<WorkspaceSyncLocalAgentStreamOpen>[0], transferAdmission?: Promise<void>) => Promise<WorkspaceSyncOwnedLocalAgent | null>;
+  resolvePrivateWorkspaceRoot?: (rootPath: string) => Promise<string | null>;
   readFileAtTarget?: WorkspaceSyncTargetFileRead;
   observeEntryAtTarget?: WorkspaceSyncTargetEntryObserve;
   stageConflictResolutionAtTarget?: (request: Readonly<{
@@ -342,6 +347,9 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   private readonly borrowLinkedSourceRoot?: WorkspaceSyncControllerOptions['borrowLinkedSourceRoot'];
   private readonly openMachineCarrier?: WorkspaceSyncControllerOptions['openMachineCarrierTunnel'];
   private readonly openLocalAgent?: WorkspaceSyncLocalAgentStreamOpen;
+  private readonly openPrivateLocalAgent?: WorkspaceSyncControllerOptions['openPrivateLocalWorkspaceAgentStream'];
+  private readonly admitRelationshipTransfer?: WorkspaceSyncControllerOptions['admitRelationshipTransfer'];
+  private readonly resolvePrivateRoot?: WorkspaceSyncControllerOptions['resolvePrivateWorkspaceRoot'];
   private readonly readAtTarget?: WorkspaceSyncTargetFileRead;
   private readonly observeEntryAtTarget?: WorkspaceSyncTargetEntryObserve;
   private readonly stageConflictResolutionAtTarget?: WorkspaceSyncControllerOptions['stageConflictResolutionAtTarget'];
@@ -378,7 +386,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[];
     acceptedTargetWorkspace?: WorkspaceRefV1;
   }>>();
-  private readonly queues = new Map<string, { task: Promise<unknown>; material: boolean }>();
+  private readonly queues = new Map<string, { task: Promise<unknown>; material: boolean; transfer: { admission?: Promise<void> } }>();
   private readonly activityListeners = new Set<() => void>();
   private readonly listeners = new Map<string, Set<(status: WorkspaceSyncStatusV1) => void>>();
   private statusRevision = 0;
@@ -436,7 +444,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
   }
 
-  constructor(options: WorkspaceSyncControllerOptions) { assertCompleteAdapter(options.adapter); this.adapter = options.adapter; this.lifecycle = options.lifecycle; this.localServerId = options.localServerId?.trim() || null; this.localMachineId = options.localMachineId; this.resolveRef = options.resolveWorkspaceRef; this.rootOwnershipManager = options.rootOwnershipManager; this.resolveDefinition = options.resolveRelationshipDefinition ?? (() => null); this.prepareTarget = options.prepareRelationshipTarget ?? (async () => undefined); this.recoverCopyTarget = options.recoverCopyOnceTarget; this.borrowLinkedSourceRoot = options.borrowLinkedSourceRoot; this.openMachineCarrier = options.openMachineCarrierTunnel; this.openLocalAgent = options.openLocalWorkspaceAgentStream; this.readAtTarget = options.readFileAtTarget; this.observeEntryAtTarget = options.observeEntryAtTarget; this.stageConflictResolutionAtTarget = options.stageConflictResolutionAtTarget; this.applyStagedConflictResolutionAtTarget = options.applyStagedConflictResolutionAtTarget; this.discardStagedConflictResolutionAtTarget = options.discardStagedConflictResolutionAtTarget; this.releaseConflictResolutionCaptureAtSource = options.releaseConflictResolutionCaptureAtSource; this.recoverConflictResolutionAtTarget = options.recoverConflictResolutionAtTarget; this.resolveAllDefinitions = options.resolveAllRelationshipDefinitions; this.assertConflictResolutionAuthorized = options.assertConflictResolutionAuthorized; this.probeGit = options.probeGitRuntimeDependency ?? (async (signal) => await probeScmExecutableAvailable({ bin: 'git', ...(signal ? { signal } : {}) })); this.assertStateAvailable = options.assertLegacyStateAvailable ?? (() => undefined); this.onStatusPublished = options.onStatusPublished ?? (() => undefined); }
+  constructor(options: WorkspaceSyncControllerOptions) { assertCompleteAdapter(options.adapter); this.adapter = options.adapter; this.lifecycle = options.lifecycle; this.localServerId = options.localServerId?.trim() || null; this.localMachineId = options.localMachineId; this.resolveRef = options.resolveWorkspaceRef; this.rootOwnershipManager = options.rootOwnershipManager; this.resolveDefinition = options.resolveRelationshipDefinition ?? (() => null); this.prepareTarget = options.prepareRelationshipTarget ?? (async () => undefined); this.recoverCopyTarget = options.recoverCopyOnceTarget; this.borrowLinkedSourceRoot = options.borrowLinkedSourceRoot; this.openMachineCarrier = options.openMachineCarrierTunnel; this.openLocalAgent = options.openLocalWorkspaceAgentStream; this.openPrivateLocalAgent = options.openPrivateLocalWorkspaceAgentStream; this.admitRelationshipTransfer = options.admitRelationshipTransfer; this.resolvePrivateRoot = options.resolvePrivateWorkspaceRoot; this.readAtTarget = options.readFileAtTarget; this.observeEntryAtTarget = options.observeEntryAtTarget; this.stageConflictResolutionAtTarget = options.stageConflictResolutionAtTarget; this.applyStagedConflictResolutionAtTarget = options.applyStagedConflictResolutionAtTarget; this.discardStagedConflictResolutionAtTarget = options.discardStagedConflictResolutionAtTarget; this.releaseConflictResolutionCaptureAtSource = options.releaseConflictResolutionCaptureAtSource; this.recoverConflictResolutionAtTarget = options.recoverConflictResolutionAtTarget; this.resolveAllDefinitions = options.resolveAllRelationshipDefinitions; this.assertConflictResolutionAuthorized = options.assertConflictResolutionAuthorized; this.probeGit = options.probeGitRuntimeDependency ?? (async (signal) => await probeScmExecutableAvailable({ bin: 'git', ...(signal ? { signal } : {}) })); this.assertStateAvailable = options.assertLegacyStateAvailable ?? (() => undefined); this.onStatusPublished = options.onStatusPublished ?? (() => undefined); }
 
   private assertLocalSourcePlacement(ref: WorkspaceSyncResolvedRef | null): asserts ref is WorkspaceSyncResolvedRef {
     const serverMatches = this.localServerId === null || ref?.serverId?.trim() === this.localServerId;
@@ -467,7 +475,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const source = endpointRole === 'alpha' ? alpha : beta;
     if (source.machineId.trim() !== this.localMachineId.trim()) return null;
     this.assertLocalSourcePlacement(source);
-    const canonicalRoot = await realpath(source.rootPath).catch(() => source.rootPath);
+    const canonicalRoot = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => source.rootPath);
     const custody = this.fences.get(definition.relationshipId);
     const sourceHandle = custody?.handles.find((handle) => (
       getPathRemainderWithinBase(handle.owner.canonicalRoot, canonicalRoot) === ''
@@ -501,7 +509,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const ref = await this.resolveRef(workspaceRefId);
     if (!ref || ref.machineId.trim() !== this.localMachineId.trim()) return null;
     this.assertLocalSourcePlacement(ref);
-    const canonicalRoot = await realpath(ref.rootPath).catch(() => ref.rootPath);
+    const canonicalRoot = await this.resolvePrivateRoot?.(ref.rootPath) ?? await realpath(ref.rootPath).catch(() => ref.rootPath);
     const custody = this.fences.get(relationshipId);
     const handle = custody?.handles.find((candidate) => (
       getPathRemainderWithinBase(candidate.owner.canonicalRoot, canonicalRoot) === ''
@@ -540,13 +548,18 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     return timeWebLatencyPhase('workspaceSync.controller.enqueue', () => {
       abortIfRequested(signal);
       const prior = this.queues.get(id);
-      const run = (): Promise<T> => { abortIfRequested(signal); return action(); };
+      const transfer: { admission?: Promise<void> } = prior?.transfer ?? {};
+      const run = (): Promise<T> => Promise.resolve().then(() => {
+        abortIfRequested(signal);
+        transfer.admission = undefined;
+        return action();
+      });
       const next = prior ? prior.task.catch(() => {}).then(() => {
         queued.material = material;
         this.notifyActivity();
         return run();
       }) : run();
-      const queued = { task: next, material: material || prior?.material === true };
+      const queued = { task: next, material: material || prior?.material === true, transfer };
       this.queues.set(id, queued);
       this.notifyActivity();
       const settled = (): void => {
@@ -556,6 +569,13 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       void next.then(settled, settled);
       return next;
     });
+  }
+  private async admitTransfer(id: string, signal?: AbortSignal): Promise<void> {
+    if (!this.admitRelationshipTransfer) return;
+    const transfer = this.queues.get(id)?.transfer;
+    if (!transfer) throw new Error('Workspace Sync transfer has no owning queue');
+    transfer.admission ??= this.admitRelationshipTransfer(id, signal);
+    await transfer.admission;
   }
   private enqueueAll<T>(ids: readonly string[], action: () => Promise<T>): Promise<T> {
     const ordered = [...new Set(ids)].sort();
@@ -680,7 +700,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       const id = role === 'alpha' ? definition.alphaWorkspaceRefId : definition.betaWorkspaceRefId;
       const ref = await this.resolveRef(id, copyOperationId);
       if (!ref || ref.machineId !== this.localMachineId) continue;
-      const canonicalRoot = await realpath(ref.rootPath).catch(() => ref.rootPath);
+      const canonicalRoot = await this.resolvePrivateRoot?.(ref.rootPath) ?? await realpath(ref.rootPath).catch(() => ref.rootPath);
       if (carriedHandles.some((handle) => (
         getPathRemainderWithinBase(handle.owner.canonicalRoot, canonicalRoot) === ''
         && getPathRemainderWithinBase(canonicalRoot, handle.owner.canonicalRoot) === ''
@@ -737,7 +757,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const hubWorkspaceRefId = roles.sourceEndpointRole === 'alpha'
       ? definition.alphaWorkspaceRefId
       : definition.betaWorkspaceRefId;
-    const canonicalRoot = await realpath(source.rootPath).catch(() => source.rootPath);
+    const canonicalRoot = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => source.rootPath);
     const key = JSON.stringify([definition.controllerMachineId.trim(), hubWorkspaceRefId]);
     let participation = this.sharedHubParticipations.get(key);
     if (participation && participation.canonicalRoot !== canonicalRoot) {
@@ -813,7 +833,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     if (!participation) return [];
     const ref = await this.resolveRef(hubWorkspaceRefId);
     this.assertLocalSourcePlacement(ref);
-    const canonicalRoot = await realpath(ref.rootPath).catch(() => ref.rootPath);
+    const canonicalRoot = await this.resolvePrivateRoot?.(ref.rootPath) ?? await realpath(ref.rootPath).catch(() => ref.rootPath);
     if (participation.canonicalRoot !== canonicalRoot) {
       throw Object.assign(new Error('Workspace sync hub root changed after admission'), {
         code: 'workspace_root_ownership_lost',
@@ -1113,12 +1133,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     valid: WorkspaceSyncRelationshipV1,
     signal?: AbortSignal,
     preparation?: WorkspaceSyncRelationshipPreparation,
-    assertExpectedCurrent?: () => Promise<void>,
   ): Promise<WorkspaceSyncStatusV1> {
     if (valid.controllerMachineId !== this.localMachineId) {
       throw Object.assign(new Error('Workspace sync controller machine is unavailable'), { code: 'controller_unavailable' });
     }
     await this.assertRuntimeTopologyAdmission(valid);
+    await this.admitTransfer(valid.relationshipId, signal);
     const previous = this.definitions.get(valid.relationshipId);
     const recoveringOwnership = previous !== undefined && this.ownershipLost.has(valid.relationshipId);
     const needsOwnership = !previous || recoveringOwnership || !this.fences.has(valid.relationshipId);
@@ -1129,17 +1149,14 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     let acquiredHandles: WorkspaceRootOwnershipHandle[] | undefined;
     let sourceHandles: WorkspaceRootOwnershipHandle[] = [];
     try {
-      if (assertExpectedCurrent) await assertExpectedCurrent();
       if (needsOwnership) {
         sourceHandles = await this.acquireSourceRoots(valid);
       }
-      if (assertExpectedCurrent) await assertExpectedCurrent();
       const targetPreparation = await this.withSourceSeedAuthorization(valid, sourceHandles, async () => (
         await this.prepareTarget(valid, signal, preparation)
       ));
       const carriedHandles = [...sourceHandles, ...(targetPreparation?.ownershipHandles ?? [])];
       if (needsOwnership) {
-        if (assertExpectedCurrent) await assertExpectedCurrent();
         acquiredHandles = await this.acquireRoots(valid, carriedHandles);
         this.fences.set(valid.relationshipId, {
           handles: [...carriedHandles, ...acquiredHandles],
@@ -1149,10 +1166,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       if (!previous) this.definitions.set(valid.relationshipId, valid);
       await this.assertRelationshipOwnershipCurrent(valid.relationshipId);
       await this.recoverConflictResolutionForRelationship(valid, signal);
-      if (assertExpectedCurrent) await assertExpectedCurrent();
       await this.lifecycle.start();
       const runtimeDefinition = !valid.enabled && preparation?.transient ? { ...valid, enabled: true } : valid;
-      if (assertExpectedCurrent) await assertExpectedCurrent();
       const status = await this.adapter.ensure(runtimeDefinition, signal);
       // A cold staged row may already occupy definitions. After successful
       // transient engine admission, retain its live definition, not that
@@ -1334,27 +1349,24 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   }
   async flush(id: string, signal?: AbortSignal, expected?: WorkspaceSyncFlushExpectation): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, () => timeWebLatencyPhase('workspaceSync.controller.flush', async () => {
     this.assertStateAvailable();
-    const assertExpectedCurrent = expected ? async () => {
-      abortIfRequested(signal);
-      await this.assertFlushExpectationCurrent(id, expected);
-    } : undefined;
-    if (assertExpectedCurrent) await assertExpectedCurrent();
+    await this.admitTransfer(id, signal);
+    if (expected) await this.assertFlushExpectationCurrent(id, expected);
     if (this.ownershipLost.has(id)) throw Object.assign(new Error('Workspace root ownership was lost'), { code: 'workspace_root_ownership_lost' });
     if (!this.definitions.has(id)) {
       const definition = await this.resolveDefinition(id);
       if (!definition) throw Object.assign(new Error('Workspace sync relationship is not ready'), { code: 'relationship_not_ready' });
-      await this.ensureWithinQueue(validateWorkspaceSyncRelationship(definition), signal, undefined, assertExpectedCurrent);
+      await this.ensureWithinQueue(validateWorkspaceSyncRelationship(definition), signal);
     }
     const definition = this.definitions.get(id);
     if (definition) await this.recoverConflictResolutionForRelationship(definition, signal);
     await this.lifecycle.start();
     await this.assertRelationshipOwnershipCurrent(id);
-    if (assertExpectedCurrent) await assertExpectedCurrent();
     return this.publish(await this.adapter.flush(id, signal));
   })); }
   async pause(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, async () => { this.assertStateAvailable(); await this.lifecycle.start(); return this.publish(await this.adapter.pause(id, signal)); }); }
   async resume(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return this.enqueue(id, signal, async () => {
     this.assertStateAvailable();
+    await this.admitTransfer(id, signal);
     if (this.ownershipLost.has(id)) {
       const definition = this.definitions.get(id) ?? await this.resolveDefinition(id);
       if (!definition) throw Object.assign(new Error('Workspace sync relationship is not ready'), { code: 'relationship_not_ready' });
@@ -2391,7 +2403,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       || target.machineId !== request.targetMachineId) {
       throw Object.assign(new Error('Workspace sync source seed request does not match the active operation'), { code: 'target_unavailable' });
     }
-    const canonicalSourcePath = await realpath(source.rootPath).catch(() => {
+    const canonicalSourcePath = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => {
       throw Object.assign(new Error('Workspace sync source seed root is unavailable'), { code: 'root_changed' });
     });
     const sourceFence = authorization.ownershipHandles.find((handle) => (
@@ -2898,8 +2910,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       );
     };
     if (endpoint.machineId === this.localMachineId) {
+      const privateAgent = await this.openPrivateLocalAgent?.({ operationId, role, workspaceRefId: endpointRefId,
+        canonicalRoot: endpoint.rootPath, ...(input.signal ? { signal: input.signal } : {}) }, this.queues.get(operationId)?.transfer.admission);
+      if (privateAgent) return await retainIfStillOwned(privateAgent);
       if (!this.openLocalAgent) throw Object.assign(new Error('Verified local workspace agent is unavailable'), { code: 'agent_unavailable' });
-      const canonicalRoot = await realpath(endpoint.rootPath).catch(() => {
+      const canonicalRoot = await this.resolvePrivateRoot?.(endpoint.rootPath) ?? await realpath(endpoint.rootPath).catch(() => {
         throw Object.assign(new Error('Workspace sync endpoint root is unavailable'), { code: 'root_mismatch' });
       });
       const handles = 'relationshipId' in operation
@@ -2930,7 +2945,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       targetMachineId: endpoint.machineId,
       flow: 'workspace_sync',
       ...(input.signal ? { signal: input.signal } : {}),
-    });
+    }, this.queues.get(operationId)?.transfer.admission);
     const ownedTunnel = await connectWorkspaceSyncMachineTunnel(tunnel, input.signal);
     return await retainIfStillOwned({ stream: ownedTunnel.stream, stop: ownedTunnel.stop });
   }
