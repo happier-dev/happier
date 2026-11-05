@@ -71,7 +71,7 @@ describe('deployment demand read controller', () => {
             expect(base.transport.listEnvironments).toHaveBeenCalledTimes(2);
         } finally { selected.release(); peer.release(); controller.retire(); }
     });
-    it('shares one Environment read across one hundred joining demand leases and refreshes a genuine reopen', async () => {
+    it('shares one Environment read across one hundred joining demand leases and reads again only on an explicit refresh', async () => {
         const base = networkBoundary();
         const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
         const first = controller.acquireEnvironment(base.environment.id, active);
@@ -324,6 +324,114 @@ describe('deployment demand read controller', () => {
             expect(lease.getSnapshot().value?.healthFeed?.status).toBe('loading');
         } finally { lease.release(); controller.retire(); }
     });
+    it('keeps the admitted value and the read in flight through presentation remounts while later reads stall', async () => {
+        const base = networkBoundary();
+        const revision = (value: number) => ({ ...base.environmentDetail, environment: { ...base.environmentDetail.environment, revision: value } });
+        const reads: { signal: AbortSignal; settle: () => void }[] = [];
+        // QA #63: viewport/theme captures remounted the page; every remount released the record (dropping its value)
+        // and aborted the read in flight, so completed reads never landed and the page stayed on Loading.
+        const readEnvironment: DeploymentReadTransportV1['readEnvironment'] = (_scope, _id, { signal }) => new Promise(resolve => {
+            const value = revision(reads.length + 1);
+            reads.push({ signal, settle: () => resolve({ ok: true, value }) });
+        });
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport, readEnvironment } });
+        const inactive = { mounted: false, visible: false, focused: false };
+        const remount = (lease: ReturnType<typeof controller.acquireEnvironment>) => {
+            lease.setDemand(inactive);
+            lease.release();
+            const next = controller.acquireEnvironment(base.environment.id, inactive);
+            next.setDemand(active);
+            return next;
+        };
+        let lease = controller.acquireEnvironment(base.environment.id, active);
+        try {
+            for (let churn = 0; churn < 5; churn++) lease = remount(lease);
+            expect(reads, 'remounts join the first read instead of restarting it').toHaveLength(1);
+            expect(reads[0]!.signal.aborted).toBe(false);
+            reads[0]!.settle();
+            await vi.waitFor(() => expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { environment: { revision: 1 } } }));
+            const admitted = lease.getSnapshot();
+            lease = remount(lease);
+            expect(lease.getSnapshot(), 'a remount keeps the admitted value').toBe(admitted);
+            expect(reads, 'a clean remount reads nothing').toHaveLength(1);
+            void controller.refreshDemanded();
+            expect(reads, 'a wake re-reads beside the admitted value').toHaveLength(2);
+            for (let churn = 0; churn < 5; churn++) lease = remount(lease);
+            expect(lease.getSnapshot()).toBe(admitted);
+            expect(reads, 'a stalled read is joined, not multiplied').toHaveLength(2);
+            reads[1]!.settle();
+            await vi.waitFor(() => expect(lease.getSnapshot().value?.environment.revision).toBe(2));
+        } finally { lease.release(); controller.retire(); }
+    });
+    it('keeps the serving receipt through a presentation remount instead of returning to Loading', async () => {
+        // QA #64: the serving receipt showed at 1440, then every switch to 390 remounted the page, the released receipt
+        // record was dropped, and "Serving now" went back to Loading for data the page already held.
+        const base = networkBoundary();
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const inactive = { mounted: false, visible: false, focused: false };
+        let lease = controller.acquireReceipt(base.environment.id, base.receipt.id, active);
+        try {
+            await vi.waitFor(() => expect(lease.getSnapshot().status).toBe('ready'));
+            const admitted = lease.getSnapshot().value;
+            base.transport.readReceipt.mockImplementation(() => new Promise(() => {}));
+            lease.setDemand(inactive);
+            lease.release();
+            lease = controller.acquireReceipt(base.environment.id, base.receipt.id, inactive);
+            lease.setDemand(active);
+            expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: admitted });
+        } finally { lease.release(); controller.retire(); }
+    });
+    it('returns to a held receipt with zero repeat reads until a change signal marks it stale', async () => {
+        // QA #65: each detail return made 2 GETs of the receipt the page already held.
+        const base = networkBoundary();
+        const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });
+        const inactive = { mounted: false, visible: false, focused: false };
+        const open = () => { const lease = controller.acquireReceipt(base.environment.id, base.receipt.id, inactive); lease.setDemand(active); return lease; };
+        const leave = (lease: ReturnType<typeof open>) => { lease.setDemand(inactive); lease.release(); };
+        let serving = open();
+        let backup = open();
+        try {
+            await vi.waitFor(() => expect(serving.getSnapshot().status).toBe('ready'));
+            expect(base.transport.readReceipt).toHaveBeenCalledTimes(1);
+            for (let visit = 0; visit < 3; visit++) {
+                leave(serving); leave(backup);
+                serving = open(); backup = open();
+                backup.setDemand(hidden); backup.setDemand(active);
+            }
+            expect(serving.getSnapshot().status).toBe('ready');
+            expect(base.transport.readReceipt, 'returns reuse the held receipt').toHaveBeenCalledTimes(1);
+            leave(serving); leave(backup);
+            controller.invalidate({ environmentId: base.environment.id, projectSourceId: scope.projectSourceId, deploymentId: base.receipt.id });
+            serving = open(); backup = open();
+            expect(base.transport.readReceipt, 'a change while away re-reads once on return').toHaveBeenCalledTimes(2);
+        } finally { leave(serving); leave(backup); controller.retire(); }
+    });
+    it('settles a first read through a storm of connection wakes, then re-reads once for what they may have changed', async () => {
+        const base = networkBoundary();
+        const revision = (value: number) => ({ ...base.environmentDetail, environment: { ...base.environmentDetail.environment, revision: value } });
+        const reads: { signal: AbortSignal; settle: () => void }[] = [];
+        // QA #62: a socket reconnecting every ~350 ms aborted every read of 1-3 s, leaving "Loading" with demand active.
+        const readEnvironment: DeploymentReadTransportV1['readEnvironment'] = (_scope, _id, { signal }) => new Promise(resolve => {
+            const value = revision(reads.length + 1);
+            reads.push({ signal, settle: () => resolve({ ok: true, value }) });
+        });
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport, readEnvironment } });
+        const lease = controller.acquireEnvironment(base.environment.id, active);
+        try {
+            for (let wake = 0; wake < 5; wake++) void controller.refreshDemanded();
+            expect(reads, 'the first read plus one newer read, however many wakes').toHaveLength(2);
+            expect(reads[0]!.signal.aborted, 'a wake does not abort the read in flight').toBe(false);
+            reads[0]!.settle();
+            await vi.waitFor(() => expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { environment: { revision: 1 } } }));
+            reads[1]!.settle();
+            await vi.waitFor(() => expect(lease.getSnapshot().value?.environment.revision).toBe(2));
+            await vi.waitFor(() => expect(reads, 'the later wakes coalesced into one re-read').toHaveLength(3));
+            reads[2]!.settle();
+            await vi.waitFor(() => expect(lease.getSnapshot().value?.environment.revision).toBe(3));
+            expect(reads).toHaveLength(3);
+        } finally { lease.release(); controller.retire(); }
+    });
+
     it('supersedes a held current health subscription on explicit recovery and ignores its late facts', async () => {
         const base = networkBoundary();
         const observations: { signal: AbortSignal; publish: (feed: DeploymentEnvironmentHealthFeedV1) => void; stop: ReturnType<typeof vi.fn> }[] = [];
@@ -888,7 +996,7 @@ describe('deployment demand read controller', () => {
         controller.retire();
     });
 
-    it('joins concurrent identical reads and cancels only after the last active borrower leaves', async () => {
+    it('joins concurrent identical reads and lets a hidden record read land quietly for the next presentation', async () => {
         const { environment, environmentDetail, transport } = networkBoundary();
         let resolveRead!: (value: Awaited<ReturnType<DeploymentReadTransportV1['readEnvironment']>>) => void;
         transport.readEnvironment.mockImplementation(() => new Promise(resolve => { resolveRead = resolve; }));
@@ -902,13 +1010,13 @@ describe('deployment demand read controller', () => {
         const published = vi.fn();
         second.subscribe(published);
         second.setDemand(hidden);
-        expect(signal.aborted).toBe(true);
+        expect(signal.aborted, 'hiding starts no read but does not discard the one in flight').toBe(false);
         published.mockClear();
         resolveRead({ ok: true, value: environmentDetail });
-        await Promise.resolve();
-        await Promise.resolve();
-        expect(second.getSnapshot().value).toBeNull();
-        expect(published).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(second.getSnapshot().status).toBe('ready'));
+        expect(published, 'a hidden borrower does no presentation work').not.toHaveBeenCalled();
+        second.setDemand(active);
+        expect(second.getSnapshot().value?.environment.id).toBe(environment.id);
         controller.retire();
     });
 
@@ -1016,11 +1124,13 @@ describe('deployment demand read controller', () => {
             content: { ...environmentDetail.content, name: 'Reconnected' } };
         transport.readEnvironment.mockResolvedValue({ ok: true, value: repaired });
         const repair = mode === 'reconnect' ? controller.refreshDemanded() : selected.refresh({ supersede: true });
-        // Recovery must start now, even when the retired transport ignores cancellation.
-        expect(stalledSignal.aborted).toBe(true);
+        // Recovery must start now, even when the retired transport ignores cancellation. An explicit retry replaces the
+        // read at once; a reconnect wake lets it race, and abandons it as soon as the newer read answers.
+        expect(stalledSignal.aborted).toBe(mode === 'explicit');
         expect(transport.readEnvironment).toHaveBeenCalledTimes(2);
         expect(published).not.toHaveBeenCalled();
         await repair;
+        expect(stalledSignal.aborted).toBe(true);
         const current = selected.getSnapshot();
         expect(current.value?.content.name).toBe('Reconnected');
         expect(published).toHaveBeenCalledTimes(1);

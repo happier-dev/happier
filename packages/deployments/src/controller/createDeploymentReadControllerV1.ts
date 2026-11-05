@@ -42,6 +42,10 @@ type Entry = {
     healthObservation: DeploymentEnvironmentHealthObservationV1 | undefined;
     nextCursor: string | null;
     dirty: boolean;
+    /** A newer read started by a wake while `request` is still in flight. */
+    overlap: { abort: AbortController; request: Promise<void> } | undefined;
+    /** A wake arrived while both reads were in flight: read once more after they settle. */
+    rereadWhenSettled: boolean;
 };
 type Observation = { abort: AbortController; entries: Set<Entry> };
 const invalidResponse: DeploymentReadFailureV1 = { code: 'invalid_response', retryable: false };
@@ -80,11 +84,23 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         if (batch.entries.size === 0) batch.abort.abort();
     }
     function stopRead(entry: Entry) {
+        entry.rereadWhenSettled = false;
         if (entry.request) entry.dirty = true;
+        entry.overlap?.abort.abort();
+        entry.overlap = undefined;
         entry.abort?.abort();
         entry.abort = undefined;
         entry.request = undefined;
         if (entry.projection.getSnapshot().status === 'loading') entry.projection.publish(releasedSnapshot);
+    }
+    /**
+     * Withdrawn presentation starts no further reads, but a read in flight still answers for the record. Aborting it
+     * on every hide or remount (viewport/theme changes, QA #63) discarded each completed read and held the page on
+     * Loading; letting it land means the next borrower joins it and sees the admitted value.
+     */
+    function pauseRead(entry: Entry) {
+        entry.rereadWhenSettled = false;
+        stopObservation(entry);
     }
     function receipt(entry: Entry): DeploymentReceiptDetailV1 | null {
         return entry.resource.kind === 'receipt' ? entry.projection.getSnapshot().value as DeploymentReceiptDetailV1 | null : null;
@@ -186,16 +202,36 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         if (entry.request && !supersede) return entry.request;
         if (supersede) {
             entry.abort?.abort();
+            entry.overlap?.abort.abort();
+            entry.overlap = undefined;
             stopDeploymentEnvironmentHealthObservationV1(entry);
         }
         stopObservation(entry);
         const abort = new AbortController();
         entry.abort = abort;
         if (entry.projection.getSnapshot().value === null) entry.projection.publish({ status: 'loading', value: null, failure: null });
+        const request = startRead(entry, abort);
+        entry.request = request;
+        return request;
+    }
+    function startRead(entry: Entry, abort: AbortController): Promise<void> {
+        const current = () => !retired && !abort.signal.aborted && (entry.abort === abort || entry.overlap?.abort === abort);
+        /** The newer read speaks for the record: an older one still running is abandoned, never published later. */
+        const settle = () => {
+            if (entry.overlap?.abort === abort) {
+                entry.abort?.abort();
+                entry.abort = abort;
+                entry.request = entry.overlap.request;
+                entry.overlap = undefined;
+            }
+        };
         const perform = async () => {
             try {
                 const response = await entry.resource.read(abort.signal);
-                if (retired || abort.signal.aborted || entry.abort !== abort) return;
+                if (!current()) return;
+                // A failed older read says nothing while the newer one can still answer.
+                if (!response.ok && entry.abort === abort && entry.overlap) return;
+                settle();
                 if (!response.ok) { fail(entry, response.failure); return; }
                 let value: unknown;
                 try { value = entry.resource.admit(response.value); }
@@ -203,20 +239,41 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 publishValue(entry, value);
                 queueObservation(entry);
             } catch {
-                if (!retired && !abort.signal.aborted && entry.abort === abort) fail(entry, unavailable);
+                if (!current() || (entry.abort === abort && entry.overlap)) return;
+                settle();
+                fail(entry, unavailable);
             }
         };
-        const request = perform().finally(() => {
-            if (entry.abort === abort) { entry.abort = undefined; entry.request = undefined; }
+        return perform().finally(() => {
+            if (entry.abort !== abort) return;
+            // The newer read that was overlapping this one now owns the record.
+            if (entry.overlap) { entry.abort = entry.overlap.abort; entry.request = entry.overlap.request; entry.overlap = undefined; return; }
+            entry.abort = undefined; entry.request = undefined;
+            if (entry.rereadWhenSettled) { entry.rereadWhenSettled = false; void refresh(entry); }
         });
-        entry.request = request;
-        return request;
+    }
+    /**
+     * A wake says something may have changed, not that the read in flight is wrong. Aborting it let wakes arriving
+     * faster than a read completes (a reconnecting socket, QA #60/#62) keep a page on Loading or a stale value. So a
+     * wake starts one newer read beside it: whichever settles first publishes, and a stalled older read cannot hold
+     * recovery back or speak after the newer one. Further wakes coalesce into one re-read when those settle.
+     */
+    function revalidate(entry: Entry): Promise<void> {
+        if (!active(entry)) return Promise.resolve();
+        if (!entry.request) return refresh(entry);
+        if (entry.overlap) { entry.rereadWhenSettled = true; return entry.overlap.request; }
+        stopObservation(entry);
+        const abort = new AbortController();
+        const overlap: NonNullable<Entry['overlap']> = { abort, request: Promise.resolve() };
+        entry.overlap = overlap;
+        overlap.request = startRead(entry, abort);
+        return overlap.request;
     }
     function acquire<T>(resource: Resource, initialDemand: DeploymentReadDemandV1, consumeHealth = false): DeploymentReadLeaseV1<T> {
         let entry = entries.get(resource.key);
         if (!entry) {
             entry = { resource, projection: createDeploymentProjectionV1(), demands: new Set(), abort: undefined, request: undefined,
-                observation: undefined, healthObservation: undefined, nextCursor: null, dirty: true };
+                observation: undefined, healthObservation: undefined, nextCursor: null, dirty: true, overlap: undefined, rereadWhenSettled: false };
             entries.set(resource.key, entry);
         }
         const held = entry;
@@ -226,8 +283,10 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         let released = false;
         held.demands.add(demand);
         if (retired) held.projection.publish(retiredSnapshot);
-        else if (active(held) && ((!wasActive && (held.resource.kind !== 'collection' || held.dirty
-            || held.projection.getSnapshot().status !== 'ready')) || held.projection.getSnapshot().status === 'idle')) void refresh(held);
+        // Changes arrive as pushed hints (invalidate/refreshDemanded mark the record dirty), so returning to a clean ready
+        // record reads nothing (QA #65: each detail return repeated the held receipt's GET).
+        else if (active(held) && ((!wasActive && (held.dirty || held.projection.getSnapshot().status !== 'ready'))
+            || held.projection.getSnapshot().status === 'idle')) void refresh(held);
         syncHealthObservation(held);
         return {
             getSnapshot: () => (released ? releasedSnapshot : held.projection.getSnapshot()) as DeploymentReadSnapshotV1<T>,
@@ -250,13 +309,13 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 const entryWasActive = active(held);
                 demand.current = { ...next };
                 syncHealthObservation(held);
-                if (!active(held)) { stopRead(held); stopObservation(held); }
+                if (!active(held)) pauseRead(held);
                 else if (!wasActive && isDeploymentReadDemandActiveV1(next)) {
                     // Deliver the current shared value when presentation resumes,
                     // even if the following read returns an equal ready snapshot.
                     for (const listener of subscriptions.values()) listener();
-                    if ((!entryWasActive && (held.resource.kind !== 'collection' || held.dirty
-                        || held.projection.getSnapshot().status !== 'ready')) || held.projection.getSnapshot().status === 'idle') void refresh(held);
+                    if ((!entryWasActive && (held.dirty || held.projection.getSnapshot().status !== 'ready'))
+                        || held.projection.getSnapshot().status === 'idle') void refresh(held);
                 }
             },
             release() {
@@ -266,11 +325,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 subscriptions.clear();
                 held.demands.delete(demand);
                 syncHealthObservation(held);
-                if (!active(held)) { stopRead(held); stopObservation(held); }
-                if (held.demands.size === 0 && resource.kind !== 'collection') {
-                    held.projection.clear(); entries.delete(resource.key);
-                    if (resource.kind === 'receipt') refreshMemberVersions(resource.environmentId!);
-                }
+                // Records stay with this Home/Source controller so a remount shows the admitted value while it
+                // re-reads (QA #63, #64). A retained receipt only adds to member versions, which take the newest first.
+                if (!active(held)) pauseRead(held);
             },
         };
     }
@@ -389,12 +446,12 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     : resource.environmentId === hint.environmentId && (hint.deploymentId === undefined
                         ? resource.kind === 'environment' || resource.kind === 'domains'
                         : resource.kind === 'history' || (resource.kind === 'receipt' && resource.deploymentId === hint.deploymentId)));
-                if (affected) { entry.dirty = true; stopRead(entry); stopObservation(entry); void refresh(entry); }
+                if (affected) { entry.dirty = true; stopObservation(entry); void revalidate(entry); }
             }
         },
         refreshDemanded: () => Promise.all([...entries.values()].map(entry => {
             entry.dirty = true;
-            return refresh(entry, true);
+            return revalidate(entry);
         })).then(() => {}),
         retire() {
             if (retired) return;
