@@ -10317,7 +10317,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: 'Berechtigungen erscheinen nur im Terminal. Setz zurück oder schick eine Nachricht, um sie aus der App zu steuern.',
         sessionRunningLocally: 'Diese Session läuft lokal auf diesem Computer. Du kannst auf „remote“ wechseln, um sie aus der App zu steuern.',
-        sessionRunningLocallyAndRemotely: 'Diese Session ist lokal in OpenCode angehängt und lässt sich weiterhin aus der App steuern.',
+        sessionRunningLocallyAndRemotely: 'Diese Session ist lokal angehängt und lässt sich weiterhin aus der App steuern.',
         switchingToRemote: 'Wechsel in den Remote-Modus…',
         switchToRemote: 'Auf remote wechseln',
         detachLocalTerminal: 'Terminal abhängen',

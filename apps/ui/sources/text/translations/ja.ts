@@ -11220,7 +11220,7 @@ settingsSession: {
     sessionRunningLocally:
       "このセッションはこのコンピュータでローカル実行されています。アプリから制御するにはリモートに切り替えられます。",
     sessionRunningLocallyAndRemotely:
-      "このセッションは OpenCode にローカル接続されたままで、アプリからも引き続き操作できます。",
+      "このセッションはローカル接続されたままで、アプリからも引き続き操作できます。",
     switchingToRemote: "リモートモードに切り替え中…",
     switchToRemote: "リモートに切り替え",
     detachLocalTerminal: "ターミナルを切り離す",

@@ -10609,7 +10609,7 @@ settingsSession: {
     sessionRunningLocally:
       "此会话正在本机上以本地模式运行。你可以切换到远程以在应用中控制。",
     sessionRunningLocallyAndRemotely:
-      "此会话已在 OpenCode 中本地附加，同时仍可从应用中控制。",
+      "此会话已在本地连接，同时仍可从应用中控制。",
     switchingToRemote: "正在切换到远程模式…",
     switchToRemote: "切换到远程",
     detachLocalTerminal: "断开终端",

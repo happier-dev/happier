@@ -10304,7 +10304,7 @@ settingsSession: {
     chatFooter: {
         permissionsTerminalOnly: 'Les permissions ne s’affichent que dans le terminal. Réinitialise ou envoie un message pour piloter depuis l’app.',
         sessionRunningLocally: 'Cette session tourne localement sur cet ordinateur. Tu peux passer en distant pour la piloter depuis l’app.',
-        sessionRunningLocallyAndRemotely: 'Cette session est attachée localement dans OpenCode et reste pilotable depuis l’app.',
+        sessionRunningLocallyAndRemotely: 'Cette session est attachée localement et reste pilotable depuis l’app.',
         switchingToRemote: 'Passage en mode distant…',
         switchToRemote: 'Passer en distant',
         detachLocalTerminal: 'Détacher le terminal',

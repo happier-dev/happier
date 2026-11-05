@@ -11098,7 +11098,7 @@ settingsSession: {
     sessionRunningLocally:
       "Esta sessão está sendo executada localmente neste computador. Você pode alternar para remoto para controlar pelo app.",
     sessionRunningLocallyAndRemotely:
-      "Esta sessão está conectada localmente no OpenCode e ainda pode ser controlada pelo app.",
+      "Esta sessão está conectada localmente e ainda pode ser controlada pelo app.",
     switchingToRemote: "Alternando para o modo remoto…",
     switchToRemote: "Alternar para remoto",
     detachLocalTerminal: "Desconectar terminal",

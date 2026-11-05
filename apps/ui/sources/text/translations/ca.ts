@@ -10253,7 +10253,7 @@ settingsSession: {
       chatFooter: {
           permissionsTerminalOnly: 'Els permisos només es mostren al terminal. Reinicia o envia un missatge per controlar des de l\'app.',
           sessionRunningLocally: 'This session is running locally.',
-          sessionRunningLocallyAndRemotely: 'Aquesta sessió està adjunta localment a OpenCode i encara es pot controlar des de l’app.',
+          sessionRunningLocallyAndRemotely: 'Aquesta sessió està adjunta localment i encara es pot controlar des de l’app.',
           switchingToRemote: 'Canviant al mode remot…',
           switchToRemote: 'Canvia a remot',
           detachLocalTerminal: 'Desconnecta el terminal',
