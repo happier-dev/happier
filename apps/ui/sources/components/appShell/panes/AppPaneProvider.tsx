@@ -29,6 +29,8 @@ import { isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabMo
 import { applyCloseDetailsTab } from './details/workspace/detailsWorkspaceReducer';
 import { AppPaneContext, AppPaneFindSeedContext, AppPaneFocusReturnContext, AppPaneFileFrontContext, AppPaneDriverContext, createFileTabFrontSubscription, type AppPaneContextValue, type AppPaneContextSubscription } from './AppPaneContext';
 import { selectedPaneDestinationTabKey } from './model/selectedPaneDestination';
+import { Modal } from '@/modal';
+import { presentDetailsStartSheet } from './details/PhoneDetailsStartSheet';
 
 export { useAppPaneContext, useOptionalAppPaneContext, useOptionalAppPaneFindSeedContext, useOptionalPaneFocusReturnOwner, useOptionalPaneDriverReader } from './AppPaneContext';
 
@@ -124,6 +126,9 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         });
     });
     const [persistenceFailed, setPersistenceFailed] = useState(false);
+    const [detailsStartScopeId, setDetailsStartScopeId] = useState<string | null>(null);
+    const startSheetRef = useRef<Readonly<{ id: string; scopeId: string }> | null>(null);
+    const subscriptionRef = useRef<AppPaneContextSubscription | null>(null);
     const stateRef = useRef(state);
     const persistedScopesRef = useRef<AppPaneState['scopes'] | null>(null);
     // Reducer intents own persistence. Transient draft/dirty publications must
@@ -269,6 +274,12 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         }
         stateRef.current = nextState;
         setState(nextState);
+        const sheet = startSheetRef.current;
+        if (sheet && !nextState.scopes[sheet.scopeId]?.details.isOpen) {
+            startSheetRef.current = null;
+            setDetailsStartScopeId(null);
+            Modal.hide(sheet.id);
+        }
         if (shouldPersist) {
             let selectedPaneTabKey: string | undefined;
             if (action.type === 'selectRightDestination' || action.type === 'setRightTab'
@@ -372,6 +383,31 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         return driversRef.current.get(scopeId) ?? null;
     }, []);
 
+    const presentDetailsStart = React.useCallback((scopeId: string) => {
+        const subscription = subscriptionRef.current;
+        if (!subscription || startSheetRef.current?.scopeId === scopeId) return;
+        const previous = startSheetRef.current;
+        startSheetRef.current = null;
+        if (previous) Modal.hide(previous.id);
+        const close = () => {
+            const sheet = startSheetRef.current;
+            if (sheet?.scopeId !== scopeId) return;
+            startSheetRef.current = null;
+            setDetailsStartScopeId(null);
+            Modal.hide(sheet.id);
+            dispatch({ type: 'closeDetails', scopeId });
+        };
+        setDetailsStartScopeId(scopeId);
+        const id = presentDetailsStartSheet({ scopeId, subscription }, close);
+        if (id) startSheetRef.current = { id, scopeId };
+        else setDetailsStartScopeId(null);
+    }, [dispatch]);
+    React.useEffect(() => () => {
+        const sheet = startSheetRef.current;
+        startSheetRef.current = null;
+        if (sheet) Modal.hide(sheet.id);
+    }, []);
+
     const value: AppPaneContextValue = useMemo(() => ({
         state: qualifiedState,
         getReadState: readQualifiedState,
@@ -381,10 +417,12 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
         registerDriver,
         getDriver,
         driverRegistryVersion,
+        detailsStartScopeId,
+        presentDetailsStart,
         overlayFocusReturnOwner,
         fileFindSeedHandoff,
         fileFindSeedAccountBindings,
-    }), [ driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, persistenceFailed, persistScopes, readQualifiedState, registerDriver, qualifiedState]);
+    }), [detailsStartScopeId, presentDetailsStart, driverRegistryVersion, dispatch, fileFindSeedHandoff, fileFindSeedAccountBindings, getDriver, overlayFocusReturnOwner, persistenceFailed, persistScopes, readQualifiedState, registerDriver, qualifiedState]);
 
     // One read-only subscription over the provider's canonical state. A file edit
     // must not broadcast a new React context through every retained pane subtree.
@@ -393,7 +431,11 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
     const [subscription] = useState<AppPaneContextSubscription>(() => ({
         getSnapshot: () => valueRef.current,
         subscribe: fileFrontSubscription.subscribe,
+        notifyDriverUpdated: driver => {
+            if (driversRef.current.get(driver.scopeId) === driver) fileFrontSubscription.notify();
+        },
     }));
+    subscriptionRef.current = subscription;
     React.useLayoutEffect(() => fileFrontSubscription.notify(), [fileFrontSubscription, value]);
 
     const findSeedValue = useMemo(() => ({ fileFindSeedHandoff, fileFindSeedAccountBindings }),

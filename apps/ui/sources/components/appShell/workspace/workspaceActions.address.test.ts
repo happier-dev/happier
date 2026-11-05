@@ -26,6 +26,7 @@ describe('workspace Action qualified addresses', () => {
         const targetGroupId = Object.keys(paneState.scopes[scopeId].details.groupsById).find(id => id !== original)!;
         const context: AppPaneContextValue = { get state() { return paneState; }, getReadState: () => paneState,
             dispatch, registerDriver: () => () => {}, getDriver: () => null, driverRegistryVersion: 0,
+            detailsStartScopeId: null, presentDetailsStart: () => {},
             overlayFocusReturnOwner: createPaneOverlayFocusReturnOwner(), fileFindSeedHandoff: createFileFindSeedHandoff(),
             fileFindSeedAccountBindings: new Map() };
         const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => [],

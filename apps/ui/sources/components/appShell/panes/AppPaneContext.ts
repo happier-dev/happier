@@ -21,6 +21,9 @@ export type AppPaneContextValue = Readonly<{
     registerDriver: (driver: PaneDriver) => () => void;
     getDriver: (scopeId: PaneScopeId) => PaneDriver | null;
     driverRegistryVersion: number;
+    /** Transient presentation of the retained Details workspace, never a saved column preference. */
+    detailsStartScopeId: string | null;
+    presentDetailsStart: (scopeId: string) => void;
     overlayFocusReturnOwner: PaneOverlayFocusReturnOwner;
     fileFindSeedHandoff: FileFindSeedHandoff;
     fileFindSeedAccountBindings: ReadonlyMap<string, ServerCredentialAccountScopeBinding>;
@@ -29,6 +32,8 @@ export type AppPaneContextValue = Readonly<{
 export type AppPaneContextSubscription = Readonly<{
     getSnapshot: () => AppPaneContextValue;
     subscribe: (listener: () => void) => () => void;
+    /** Refresh projections of a mounted driver's adapters without changing its registration. */
+    notifyDriverUpdated: (driver: PaneDriver) => void;
 }>;
 
 export const AppPaneContext = createContext<AppPaneContextSubscription | null>(null);

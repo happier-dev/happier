@@ -35,6 +35,12 @@ export function readSettingWithPreview<K extends keyof Settings>(name: K): Setti
     return entry ? entry.value : stored.settings[name];
 }
 
+/** Current presentation preference for commands that do not need a mounted subscription. */
+export function readLocalSettingWithPreview<K extends keyof LocalSettings>(name: K): LocalSettings[K] {
+    const entry = useSettingsPreviewStore.getState().local[name];
+    return entry ? entry.value : getStorage().getState().localSettings[name];
+}
+
 export function readProjectAtmospherePreview(project: Readonly<{ serverId: string; projectKey: string }>) {
     const stored = getStorage().getState();
     const preview = useSettingsPreviewStore.getState();

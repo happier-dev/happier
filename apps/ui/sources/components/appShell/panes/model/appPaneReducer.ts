@@ -35,6 +35,7 @@ import type {
 import { arePaneStateJsonValuesEqual } from './paneStateStructuralEquality';
 import { readSessionTerminalWorkspace, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import { reconcilePersistedTerminalWorkspace } from './paneScopePersistence';
+import { placeDetailsInSideColumn } from './detailsPanePlacement';
 import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { fileChangesScopeOfComparison } from '@/components/workspaces/files/file/changes/fileChangesScope';
@@ -111,6 +112,7 @@ export type AppPaneAction =
         scopeId: string;
         tab: DetailsTab;
         openAs: DetailsTabOpenMode;
+        start?: boolean;
         /** The region the open came from; Details opening its own tabs keeps the recorded opener. */
         origin?: DetailsOpenerRegion | 'details' | null;
     }
@@ -291,8 +293,8 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
         case 'setDetailsTabPresentation':
             return updateScopeDetails(state, action.scopeId, details => applyDetailsTabPresentation(details, action.tabKey, action.presentation));
         case 'restoreScope':
-            return upsertScope(state, action.scopeId, () => reconcilePersistedTerminalWorkspace(action.scope,
-                state.scopes[action.scopeId]?.bottom.tabState.terminal));
+            return upsertScope(state, action.scopeId, () => placeDetailsInSideColumn(reconcilePersistedTerminalWorkspace(action.scope,
+                state.scopes[action.scopeId]?.bottom.tabState.terminal)));
         case 'setSelectedPanePresentation': {
             const prev = state.scopes[action.scopeId];
             if (!prev) return state;
@@ -595,7 +597,7 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     && prev.right.selectedDestination?.kind === 'builtin'
                     && prev.right.selectedDestination.id === SESSION_BOARD_DESTINATION.id
                     ? { ...prev.right, isOpen: false } : prev.right;
-                return details === prev.details && right === prev.right ? prev : { ...prev, details, right };
+                return placeDetailsInSideColumn(details === prev.details && right === prev.right ? prev : { ...prev, details, right }, action.start);
             });
         case 'replaceDetailsTab':
             return updateScopeDetails(state, action.scopeId, (details) => (
@@ -644,9 +646,10 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 applyCloseDetailsTab(details, action.tabKey)
             ));
         case 'setActiveDetailsTab':
-            return updateScopeDetails(state, action.scopeId, (details) => (
-                applySetActiveDetailsTab(details, action.tabKey)
-            ));
+            return upsertScope(state, action.scopeId, scope => {
+                const details = applySetActiveDetailsTab(scope.details, action.tabKey);
+                return placeDetailsInSideColumn(details === scope.details ? scope : { ...scope, details });
+            });
         case 'splitDetailsGroup':
             return updateScopeDetails(state, action.scopeId, (details) => (
                 applySplitDetailsGroup(details, {

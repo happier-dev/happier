@@ -21,6 +21,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useDestinationFocus } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useAppPaneContext } from './AppPaneProvider';
+import { AppPaneContext } from './AppPaneContext';
 import { PaneColumnsHost } from './PaneColumnsHost';
 import { usePaneArrangement } from './arrangement/usePaneArrangement';
 import { useOptionalAppPaneScopeLayout } from './hooks/useAppPaneScopeLayout';
@@ -99,7 +100,7 @@ export type AppPaneScopeHostProps = Readonly<{
     onPluginSurfaceNavigationBindingChange?: (
         binding: PluginSurfaceDestinationNavigationBinding | undefined,
     ) => void;
-    /** Direct scope adapters are for hosts without a registered PaneDriver. */
+    /** Direct scope adapters are published by this host as its PaneDriver. */
     surfaceScope?: PaneSurfaceScope;
     rightPaneBuiltinAdapter?: PaneBuiltinAdapter;
     rightSidebarAdapter?: PaneRightSidebarAdapter;
@@ -207,65 +208,13 @@ type ResolvedPaneAdapter = Readonly<{
     detailsPaneEnabled?: boolean;
 }>;
 
-function hasDirectPaneAdapter(props: AppPaneScopeHostProps): boolean {
+function hasDirectPaneAdapter(props: ResolvedPaneAdapter): boolean {
     return props.surfaceScope !== undefined
         || props.rightPaneBuiltinAdapter !== undefined
         || props.rightSidebarAdapter !== undefined
         || props.detailsPaneBuiltinAdapter !== undefined
         || props.bottomPaneBuiltinAdapter !== undefined
-        || props.detailsPaneEnabled !== undefined
-        || props.destinationDetails !== undefined;
-}
-
-/**
- * AppPane resolves exactly one adapter source. Direct props are normalized
- * once for direct-adapter hosts; a registered driver is likewise
- * normalized once. Supplying both is an authority collision and therefore
- * leaves the scope unresolved rather than granting either source precedence.
- */
-function resolvePaneAdapter(
-    driver: PaneDriver | null,
-    props: AppPaneScopeHostProps,
-): ResolvedPaneAdapter | null {
-    const hasDirectAdapter = hasDirectPaneAdapter(props);
-    if (driver && hasDirectAdapter) return null;
-
-    if (driver) {
-        return {
-            ...(driver.surfaceScope === undefined ? {} : { surfaceScope: driver.surfaceScope }),
-            ...(driver.rightPaneBuiltinAdapter === undefined
-                ? {}
-                : { rightPaneBuiltinAdapter: driver.rightPaneBuiltinAdapter }),
-            ...(driver.rightSidebarAdapter === undefined
-                ? {}
-                : { rightSidebarAdapter: driver.rightSidebarAdapter }),
-            ...(driver.detailsPaneBuiltinAdapter === undefined
-                ? {}
-                : { detailsPaneBuiltinAdapter: driver.detailsPaneBuiltinAdapter }),
-            ...(driver.bottomPaneBuiltinAdapter === undefined
-                ? {}
-                : { bottomPaneBuiltinAdapter: driver.bottomPaneBuiltinAdapter }),
-            ...(driver.detailsPaneEnabled === undefined ? {} : { detailsPaneEnabled: driver.detailsPaneEnabled }),
-        };
-    }
-
-    if (!hasDirectAdapter) return null;
-    return {
-        ...(props.surfaceScope === undefined ? {} : { surfaceScope: props.surfaceScope }),
-        ...(props.rightPaneBuiltinAdapter === undefined
-            ? {}
-            : { rightPaneBuiltinAdapter: props.rightPaneBuiltinAdapter }),
-        ...(props.rightSidebarAdapter === undefined
-            ? {}
-            : { rightSidebarAdapter: props.rightSidebarAdapter }),
-        ...(props.detailsPaneBuiltinAdapter === undefined
-            ? {}
-            : { detailsPaneBuiltinAdapter: props.detailsPaneBuiltinAdapter }),
-        ...(props.bottomPaneBuiltinAdapter === undefined
-            ? {}
-            : { bottomPaneBuiltinAdapter: props.bottomPaneBuiltinAdapter }),
-        ...(props.detailsPaneEnabled === undefined ? {} : { detailsPaneEnabled: props.detailsPaneEnabled }),
-    };
+        || props.detailsPaneEnabled !== undefined;
 }
 
 function renderBuiltinPane(input: Readonly<{
@@ -361,7 +310,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         right: value.state.scopes[props.scopeId]?.right,
         bottom: value.state.scopes[props.scopeId]?.bottom,
         detailsOverlay: value.state.scopes[props.scopeId]?.details.overlay,
-        detailsOpen: value.state.scopes[props.scopeId]?.details.isOpen === true,
+        detailsOpen: value.detailsStartScopeId !== props.scopeId && value.state.scopes[props.scopeId]?.details.isOpen === true,
         detailsOpenedFrom: value.state.scopes[props.scopeId]?.details.openedFrom ?? null,
         mainHidden: value.state.scopes[props.scopeId]?.mainHidden === true,
         overlayFocusReturnOwner: value.overlayFocusReturnOwner,
@@ -822,8 +771,50 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
  * remains the sole selection/layout owner.
  */
 export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
-    const driver = useAppPaneContext(value => value.getDriver(props.scopeId));
-    const paneAdapter = React.useMemo(() => resolvePaneAdapter(driver, props), [driver, props]);
+    const directProps = React.useRef(props);
+    directProps.current = props;
+    const registeredDirectDriver = React.useRef<PaneDriver | null>(null);
+    const subscription = React.useContext(AppPaneContext);
+    const { driver, getDriver, registerDriver } = useAppPaneContext(value => {
+        const driver = value.getDriver(props.scopeId);
+        // Selected destination hosts also observe adapter changes on the stable driver.
+        return { ...(driver === registeredDirectDriver.current ? null : driver),
+            driver, getDriver: value.getDriver, registerDriver: value.registerDriver };
+    });
+    // Editing a route changes render closures, not the lifetime of its pane driver.
+    const hasDirectAdapter = hasDirectPaneAdapter(props);
+    const directDriver = React.useMemo<PaneDriver | null>(() => hasDirectAdapter ? {
+        scopeId: props.scopeId,
+        get surfaceScope() { return directProps.current.surfaceScope; },
+        get rightPaneBuiltinAdapter() { return directProps.current.rightPaneBuiltinAdapter; },
+        get rightSidebarAdapter() { return directProps.current.rightSidebarAdapter; },
+        get detailsPaneBuiltinAdapter() { return directProps.current.detailsPaneBuiltinAdapter; },
+        get bottomPaneBuiltinAdapter() { return directProps.current.bottomPaneBuiltinAdapter; },
+        get detailsPaneEnabled() { return directProps.current.detailsPaneEnabled; },
+    } : null, [props.scopeId, hasDirectAdapter]);
+    const externalDriver = driver === registeredDirectDriver.current ? null : driver;
+    React.useEffect(() => {
+        if (!directDriver) return;
+        // A child can register its driver earlier in this same effect flush.
+        const incumbent = getDriver(directDriver.scopeId);
+        if (incumbent && incumbent !== registeredDirectDriver.current) return;
+        // The physical host and Start sheet consume the same registered adapter.
+        // Remember our registration so an updated direct adapter retains its body.
+        registeredDirectDriver.current = directDriver;
+        const retire = registerDriver(directDriver);
+        return () => {
+            retire();
+            registeredDirectDriver.current = null;
+        };
+    }, [directDriver, externalDriver, getDriver, registerDriver]);
+    React.useLayoutEffect(() => {
+        if (directDriver) subscription?.notifyDriverUpdated(directDriver);
+    }, [directDriver, subscription, props.surfaceScope, props.rightPaneBuiltinAdapter,
+        props.rightSidebarAdapter, props.detailsPaneBuiltinAdapter, props.bottomPaneBuiltinAdapter,
+        props.detailsPaneEnabled]);
+    // An independently registered driver and direct props remain an authority
+    // collision; the host never picks one of two competing producers.
+    const paneAdapter: ResolvedPaneAdapter | null = externalDriver && directDriver ? null : externalDriver ?? directDriver;
     const surfaceScope = paneAdapter?.surfaceScope;
     return <PluginDetailsDestinationLaunchScope accountLifetime={surfaceScope !== undefined
         ? surfaceScope.accountLifetime ?? null

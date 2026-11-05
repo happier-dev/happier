@@ -337,7 +337,7 @@ describe('workspace tabs production composition', () => {
                 workspaceRoot: '/repo', active: true });
             opener = useWorkspaceFileOpener(); return null;
         }
-        const screen = await renderScreen(<PanePresentationProvider value={intent => presentations.push(intent)}><AppPaneProvider>
+        const screen = await renderScreen(<PanePresentationProvider value={intent => { presentations.push(intent); }}><AppPaneProvider>
             <WorkspaceProvider enabled={platform === 'web'} phone={platform === 'ios'} catalog={catalog}>{owner => {
                 navigation = owner;
                 const current = owner.state.tabs[owner.state.groups[owner.state.focusedGroupId].activeTabId];

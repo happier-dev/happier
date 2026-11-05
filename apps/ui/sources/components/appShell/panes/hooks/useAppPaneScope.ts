@@ -5,11 +5,12 @@ import { usePanePresentation } from '../panePresentation';
 import { createBuiltinPaneDestination } from '../model/selectedPaneDestination';
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { getDeviceType } from '@/utils/platform/responsive';
 import { useAppPaneContext, useOptionalAppPaneContext } from '../AppPaneProvider';
 import { AppPaneContext } from '../AppPaneContext';
 import { usePaneOverlayFocusReturnRef } from './usePaneOverlayFocusReturnRef';
-import type { DetailsTab } from '../model/appPaneReducer';
-import { useLocalSetting } from '@/sync/domains/state/storage';
+import type { AppPaneAction, DetailsTab } from '../model/appPaneReducer';
+import { readLocalSettingWithPreview } from '@/sync/store/settingsPreview';
 import { resolveDetailsTabOpenAs, type LastPreviewOpen } from './resolveDetailsTabOpenAs';
 import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
 import { getOwnDetailsWorkspaceRecordEntry } from '../details/workspace/detailsWorkspaceTypes';
@@ -78,7 +79,7 @@ export type AppPaneScopeApi = {
     selectBottomDestination: (destination: SelectedPaneDestinationV1) => void;
     setBottomTabState: (tabId: string, nextState: unknown) => void;
     /** `origin` names the pane column a lent opener came from; it defaults to this caller's own column. */
-    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview'; present?: boolean; origin?: DetailsOpenerRegion }>) => void;
+    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview'; present?: boolean; origin?: DetailsOpenerRegion; start?: boolean }>) => void;
     replaceDetailsTab: (tabKey: string, tab: DetailsTab, options?: Readonly<{
         intent?: 'default' | 'pinned' | 'preview';
         restoreSourceOnRehydrate?: boolean;
@@ -118,33 +119,102 @@ function getScopeState(scopeState: PaneScopeState | null): AppPaneScopeStateView
     };
 }
 
-/** The registered driver and scope API share one Details admission/presentation owner. */
-export function useOptionalDetailsTabOpener(scopeId: string): AppPaneScopeApi['openDetailsTab'] | null {
+type DetailsTabOpenOptions = Parameters<AppPaneScopeApi['openDetailsTab']>[1];
+
+type DetailsTabOpenInScope = (scopeId: string, tab: DetailsTab, options?: DetailsTabOpenOptions, admission?: 'heldScopeOnly') => boolean;
+
+/**
+ * The Details admission for an opener that learns its pane scope only when pressed: a file opener names
+ * its Session in the target. With `heldScopeOnly` ordinary opens need a retained scope; Start can
+ * create its scope and present the same Details workspace in the host-owned sheet.
+ */
+export function useOptionalDetailsRegionTabOpener(): DetailsTabOpenInScope | null {
     const subscription = React.useContext(AppPaneContext);
     const context = useOptionalAppPaneContext(value => ({ dispatch: value.dispatch }));
     const dispatch = context?.dispatch;
     const presentPane = usePanePresentation();
-    const detailsPaneTabsBehavior = useLocalSetting('detailsPaneTabsBehavior');
     const paneRegion = usePaneRegion();
-    const lastPreviewOpenRef = React.useRef<LastPreviewOpen | null>(null);
-    const openDetailsTab = React.useCallback<AppPaneScopeApi['openDetailsTab']>((tab, options) => {
-        if (!dispatch) return;
+    const lastPreviewOpenRef = React.useRef<Readonly<{ scopeId: string; open: LastPreviewOpen | null }> | null>(null);
+    const openDetailsTab = React.useCallback<DetailsTabOpenInScope>((scopeId, tab, options, admission) => {
+        if (!dispatch) return false;
         tab = normalizeFileDetailsTab(tab, scopeId);
+        const snapshot = subscription!.getSnapshot();
+        const scope = snapshot.state.scopes[scopeId];
+        if (admission === 'heldScopeOnly' && !scope && options?.start !== true) return false;
         const intent = options?.intent ?? 'default';
-        const behavior = detailsPaneTabsBehavior === 'persistent' ? 'persistent' : 'preview';
-        const details = subscription?.getSnapshot().state.scopes[scopeId]?.details;
-        const existingTab = details ? getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tab.key) ?? null : null;
+        const behavior = readLocalSettingWithPreview('detailsPaneTabsBehavior') === 'persistent' ? 'persistent' : 'preview';
+        const existingTab = scope ? getOwnDetailsWorkspaceRecordEntry(scope.details.tabsByKey, tab.key) ?? null : null;
         const decision = resolveDetailsTabOpenAs({
             detailsPaneTabsBehavior: behavior, intent,
             platform: Platform.OS === 'web' ? 'web' : 'native', nowMs: Date.now(), tabKey: tab.key,
             existingTab: existingTab ? { isPreview: existingTab.isPreview, isPinned: existingTab.isPinned } : null,
-            lastPreviewOpen: lastPreviewOpenRef.current,
+            lastPreviewOpen: lastPreviewOpenRef.current?.scopeId === scopeId ? lastPreviewOpenRef.current.open : null,
         });
-        lastPreviewOpenRef.current = decision.nextLastPreviewOpen;
-        dispatch({ type: 'openDetailsTab', scopeId, tab, openAs: decision.openAs, origin: options?.origin ?? paneRegion });
-        if (options?.present !== false) presentPane?.({ scopeId, pane: 'details', tab });
-    }, [detailsPaneTabsBehavior, dispatch, paneRegion, presentPane, scopeId, subscription]);
+        lastPreviewOpenRef.current = { scopeId, open: decision.nextLastPreviewOpen };
+        dispatchDetailsTabOpen(dispatch, presentPane, snapshot.presentDetailsStart, { scopeId, tab, openAs: decision.openAs, origin: options?.origin ?? paneRegion,
+            present: options?.present !== false, held: existingTab !== null, start: options?.start === true,
+            hasDetailsRenderer: Boolean(snapshot.getDriver(scopeId)?.detailsPaneBuiltinAdapter) });
+        return true;
+    }, [dispatch, paneRegion, presentPane, subscription]);
     return dispatch ? openDetailsTab : null;
+}
+
+/** The registered driver and scope API share one Details admission/presentation owner. */
+export function useOptionalDetailsTabOpener(scopeId: string): AppPaneScopeApi['openDetailsTab'] | null {
+    const openInScope = useOptionalDetailsRegionTabOpener();
+    const openDetailsTab = React.useCallback<AppPaneScopeApi['openDetailsTab']>((tab, options) => {
+        openInScope?.(scopeId, tab, options);
+    }, [openInScope, scopeId]);
+    return openInScope ? openDetailsTab : null;
+}
+
+function dispatchDetailsTabOpen(
+    dispatch: (action: AppPaneAction) => void,
+    presentPane: ReturnType<typeof usePanePresentation>,
+    presentDetailsStart: (scopeId: string) => void,
+    input: Readonly<{
+        scopeId: string; tab: DetailsTab; openAs: 'preview' | 'pinned'; origin: DetailsOpenerRegion | 'details' | null; present: boolean;
+        /** The pane already holds this tab: re-addressing the page on screen stays in place. */
+        held: boolean;
+        start: boolean;
+        hasDetailsRenderer: boolean;
+    }>,
+): boolean {
+    // The layout admits an own-tab page before the pane takes it, including opens from the Session.
+    // Otherwise pane-to-URL sync would also attach that page to the Session's retained route.
+    // Re-addressing a page already held by its Details pane stays there; dispatch selects/updates that tab.
+    const presentation = input.present && !(input.origin === 'details' && input.held)
+        ? presentPane?.({ scopeId: input.scopeId, pane: 'details', tab: input.tab,
+            ...(input.start ? { start: true } : {}),
+            ...(input.origin === 'details' ? { fromDetails: true } : {}),
+        }) : undefined;
+    if (presentation === 'ownTab') return true;
+    dispatch({ type: 'openDetailsTab', scopeId: input.scopeId, tab: input.tab, openAs: input.openAs, origin: input.origin,
+        ...(input.present && input.start ? { start: true } : {}) });
+    if (input.present && input.start && (presentation === 'startSheet' || !input.hasDetailsRenderer || getDeviceType() === 'phone')) presentDetailsStart(input.scopeId);
+    return true;
+}
+
+/**
+ * The same pinned Details open for a per-row command (a transcript message's action): it reads the pane
+ * provider only when pressed, so a mounted row holds no pane-state or setting subscription. Returns
+ * whether a pane host took the tab. A pinned open needs no preview-replacement bookkeeping.
+ */
+export function useOptionalPinnedDetailsTabCommand(scopeId: string): (tab: DetailsTab, options?: Readonly<{ start?: boolean }>) => boolean {
+    const subscription = React.useContext(AppPaneContext);
+    const presentPane = usePanePresentation();
+    const paneRegion = usePaneRegion();
+    return React.useCallback((tab: DetailsTab, options?: Readonly<{ start?: boolean }>) => {
+        const snapshot = subscription?.getSnapshot();
+        const dispatch = snapshot?.dispatch;
+        if (!dispatch) return false;
+        tab = normalizeFileDetailsTab(tab, scopeId);
+        const details = snapshot.state.scopes[scopeId]?.details;
+        const held = Boolean(details && getOwnDetailsWorkspaceRecordEntry(details.tabsByKey, tab.key));
+        return dispatchDetailsTabOpen(dispatch, presentPane, snapshot.presentDetailsStart, { scopeId, tab, openAs: 'pinned', origin: paneRegion,
+            present: true, held, start: options?.start === true,
+            hasDetailsRenderer: Boolean(snapshot.getDriver(scopeId)?.detailsPaneBuiltinAdapter) });
+    }, [paneRegion, presentPane, scopeId, subscription]);
 }
 
 export function useAppPaneScope<T>(scopeId: string, selector: (scope: PaneScopeState | null) => T): Omit<AppPaneScopeApi, 'scopeState'> & { scopeState: T };
