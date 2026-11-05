@@ -67,7 +67,7 @@ export type ConnectedAccountRuntimeEstablishedInvocation<TOperation extends Conn
     context: Pick<ConnectedAccountEstablishedReadContext, 'account' | 'configuration' | 'credentials'>;
     isConfigurationCurrent(configuration: ConnectedAccountRuntimeConfiguration): boolean | Promise<boolean>;
     configurationRevocationSignal?(configuration: ConnectedAccountRuntimeConfiguration): AbortSignal | undefined;
-    isCredentialRevisionCurrent(): boolean | Promise<boolean>;
+    isCredentialRevisionCurrent(phase?: 'admission' | 'publication'): boolean | Promise<boolean>;
     assertProviderCallAllowed?: () => void;
     signal?: AbortSignal;
 }>;

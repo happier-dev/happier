@@ -157,6 +157,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     let statusEntered = false;
     let revokeAfterStatusFields = false;
     let rotateAfterStatusFields: 'credential' | 'configuration' | undefined;
+    let rotateAfterMaterialFields: 'credential' | 'configuration' | undefined;
     let cancelStatus: AbortController | undefined;
     const nativeRuntime = {
       authentication: { modes: {} },
@@ -180,6 +181,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         nativeEntered = true;
         const fields = await Promise.all(Array.from({ length: 5 }, (_, index) => context.credentials.get(`token${index}`)));
         if (revokeAfterFields) accountCurrent = false;
+        if (rotateAfterMaterialFields === 'credential') credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+        if (rotateAfterMaterialFields === 'configuration') configurationRevision = 'configuration-after-materialize';
         if (invokeNestedStatus) {
           accountCurrent = false;
           await owner.invoke({ account: target, operation: { kind: 'status' } });
@@ -311,36 +314,37 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       await expect(operation).resolves.toMatchObject({ result: { kind: 'environment', env: { TOKEN: Array(5).fill('native-token').join(':') } } });
       console.info('connected-account authority fixture', { kind, configured, accountCurrentnessChecks, credentialReads, credentialReadMs, elapsedMs: performance.now() - startedAt });
     }
-    // A fresh completion verification refuses authority revoked during the callback.
-    expect(accountCurrentnessChecks).toBe(2);
-    // Initial snapshot, context admission, callback entry and one detached-result
-    // settlement; plugin construction retains its additional policy fence.
-    expect(credentialReads).toBe(kind === 'host' ? 4 : 5);
+    // The finite operation consumes one admission, including its result receipt.
+    expect(accountCurrentnessChecks).toBe(1);
+    // Initial snapshot, one context admission and one detached-result
+    // qualification before the materialized credential leaves the host.
+    expect(credentialReads).toBe(3);
     // OAuth resource validation uses this public read before each request. It
     // is one preparation, just like materialization: nested field reads must
     // not each repeat the same Home/Machine/Session admission.
     const beforeSnapshot = accountCurrentnessChecks;
     const directSnapshot = await owner.readMaterialSnapshot({ account: target });
     expect(directSnapshot.credentialRevision).toBe(requestAuthCredentialRevision);
-    expect(accountCurrentnessChecks - beforeSnapshot).toBe(2);
+    expect(accountCurrentnessChecks - beforeSnapshot).toBe(1);
     const beforeSnapshotCheck = accountCurrentnessChecks;
     await expect(directSnapshot.isCurrent()).resolves.toBe(true);
-    expect(accountCurrentnessChecks - beforeSnapshotCheck).toBe(2);
+    expect(accountCurrentnessChecks - beforeSnapshotCheck).toBe(1);
     revokeDuringSnapshot = true;
-    await expect(owner.readMaterialSnapshot({ account: target })).rejects.toThrow('connected_account_runtime_not_current');
-    accountCurrent = true;
+    await expect(owner.readMaterialSnapshot({ account: target })).resolves.toMatchObject({ credentialRevision: requestAuthCredentialRevision });
     await expect(directSnapshot.isCurrent()).resolves.toBe(false);
     revokeDuringSnapshot = false;
     accountCurrent = true;
     const beforeStatus = accountCurrentnessChecks;
+    const beforeStatusCredentials = credentialReads;
     await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
       .resolves.toMatchObject({ status: 'connected' });
-    // Status consumes one immutable snapshot, with fresh entry and publication admission.
-    expect(accountCurrentnessChecks - beforeStatus).toBe(2);
+    // Status consumes one immutable snapshot under one fresh admission.
+    expect(accountCurrentnessChecks - beforeStatus).toBe(1);
+    expect(credentialReads - beforeStatusCredentials).toBe(1);
     const beforeNextStatus = accountCurrentnessChecks;
     await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
       .resolves.toMatchObject({ status: 'connected' });
-    expect(accountCurrentnessChecks - beforeNextStatus).toBe(2);
+    expect(accountCurrentnessChecks - beforeNextStatus).toBe(1);
     const beforeConcurrentRead = credentialReads;
     let preparedConsumers = 0;
     let releaseConsumers!: () => void;
@@ -386,16 +390,32 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       await expect(cancellation).resolves.toMatchObject({ status: { status: 'rejected' }, quota: { status: 'fulfilled' } });
     }
     for (const rotation of ['credential', 'configuration'] as const) {
+      // An admitted status read finishes over its snapshot; the next one reads
+      // the rotated revision.
       rotateAfterStatusFields = rotation;
       await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
-        .rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
+        .resolves.toMatchObject({ status: 'connected' });
       credentialRevision = requestAuthCredentialRevision;
       configurationRevision = snapshot.configurationRevision;
     }
     rotateAfterStatusFields = undefined;
+    const beforeMaterialCredentials = credentialReads;
+    await expect(owner.invoke({ account: target,
+      operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
+    })).resolves.toMatchObject({ kind: 'environment' });
+    expect(credentialReads - beforeMaterialCredentials).toBe(2);
+    for (const rotation of ['credential', 'configuration'] as const) {
+      rotateAfterMaterialFields = rotation;
+      await expect(owner.invoke({ account: target,
+        operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
+      })).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
+      credentialRevision = requestAuthCredentialRevision;
+      configurationRevision = snapshot.configurationRevision;
+    }
+    rotateAfterMaterialFields = undefined;
     revokeAfterStatusFields = true;
     await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
-      .rejects.toThrow('connected_account_runtime_not_current');
+      .resolves.toMatchObject({ status: 'connected' });
     revokeAfterStatusFields = false;
     statusEntered = false;
     await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
@@ -459,9 +479,9 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const checksBeforeRevocation = accountCurrentnessChecks;
     await expect(owner.invokeWithReceipt({
       account: target, operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
-    })).rejects.toThrow('connected_account_runtime_not_current');
+    })).resolves.toMatchObject({ result: { kind: 'environment' } });
     expect(nativeEntered).toBe(true);
-    expect(accountCurrentnessChecks - checksBeforeRevocation).toBe(2);
+    expect(accountCurrentnessChecks - checksBeforeRevocation).toBe(1);
     const checksBeforeNextCycle = accountCurrentnessChecks;
     await expect(owner.invokeWithReceipt({
       account: target, operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
@@ -1048,7 +1068,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     })).resolves.toBe(requestAuthCredentialRevision);
     // The caller's cancellation signal reaches the credential read itself, so an
     // aborted request-auth currentness check cannot keep an in-flight read alive.
-    expect(readCredential).toHaveBeenCalledWith({ token: 'token-1', ref: account, signal });
+    expect(readCredential).toHaveBeenCalledWith(expect.objectContaining({ token: 'token-1', ref: account, signal }));
     expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
   });
 
@@ -1090,7 +1110,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
 
     await expect(owner.readCredentialRevision({ account })).rejects
       .toMatchObject({ code: 'credential_snapshot_unfenced' });
-    expect(readCredential).toHaveBeenCalledWith({ token: 'token-1', ref: account });
+    expect(readCredential).toHaveBeenCalledWith(expect.objectContaining({ token: 'token-1', ref: account }));
     expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
   });
 
@@ -1307,14 +1327,14 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       delete: ['accessToken'],
     })).rejects.toThrow('cannot set and delete the same key');
 
-    expect(readCredential).toHaveBeenCalledWith({
+    expect(readCredential).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token-1',
       ref: account,
-    });
-    expect(readConfiguration).toHaveBeenCalledWith({
+    }));
+    expect(readConfiguration).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token-1',
       target: { kind: 'account', ref: account },
-    });
+    }));
     expect(hasSavedSecret).not.toHaveBeenCalled();
     expect(readSavedSecret).not.toHaveBeenCalled();
     expect(invokeEstablished).toHaveBeenCalledTimes(1);

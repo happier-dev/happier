@@ -902,13 +902,17 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                   Object.freeze({ kind: 'configurationUnknown' as const }),
                 );
           },
-          async isCredentialRevisionCurrent() {
-            // readCredential fences requester authority before and after transport.
-            const latest = await readCredential({
-              ref: input.account,
-              requestPurpose: 'connected-accounts:purpose-binding',
-              signal: input.signal,
-            });
+          async isCredentialRevisionCurrent(phase = 'publication') {
+            // Entry consumes the exact snapshot already admitted above. An
+            // intervening host callback and final credential disclosure retain
+            // their fresh qualification at the existing effect boundary.
+            const latest = phase === 'admission' && !input.beforeInvoke
+              ? initial.credential
+              : await readCredential({
+                  ref: input.account,
+                  requestPurpose: 'connected-accounts:purpose-binding',
+                  signal: input.signal,
+                });
             if (
               !latest
               || !sameQualifiedConnectedAccountRef(latest.ref, input.account)
@@ -918,8 +922,9 @@ export function createConnectedAccountEstablishedRuntimeOwner<
               // this read rather than reopening it in the parallel configuration guard.
               || latest.configurationRevision !== initial.credential.configurationRevision
             ) return false;
-            // Health can change without replacing either revision. Carry the
-            // already-required final read into status settlement as well.
+            // Health belongs to this qualified snapshot even when revisions
+            // stay unchanged. Status consumes admission; materialization
+            // publication supplies its later snapshot.
             observedCredentialHealth = latest.health ?? null;
             return true;
           },

@@ -39,12 +39,13 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
         input: ConnectedAccountRuntimeEstablishedInvocation,
         lease: Readonly<{ isCurrent(): boolean }>,
         signal: AbortSignal,
+        phase: 'admission' | 'publication' = 'admission',
     ): Promise<void> {
         signal.throwIfAborted();
         if (!lease.isCurrent()) throw staleConnectedAccountProducerResult(input.operation.kind);
         const [configurationCurrent, credentialCurrent] = await Promise.all([
             observeMaterializationPhase('runtime_configuration_currentness', () => input.isConfigurationCurrent(input.context.configuration)),
-            observeMaterializationPhase('runtime_credential_currentness', () => input.isCredentialRevisionCurrent()),
+            observeMaterializationPhase('runtime_credential_currentness', () => input.isCredentialRevisionCurrent(phase)),
         ]);
         signal.throwIfAborted();
         if (!lease.isCurrent() || !configurationCurrent || !credentialCurrent) {
@@ -60,7 +61,7 @@ export function createConnectedAccountEstablishedRuntimeDispatcher(params: Reado
         phase?: ConnectedAccountCallbackCurrentnessPhase,
     ): Promise<void> {
         if (phase === 'afterCallback' && input.operation.kind === 'materialize') {
-            return await assertEstablishedAuthorityCurrent(input, lease, signal);
+            return await assertEstablishedAuthorityCurrent(input, lease, signal, 'publication');
         }
         signal.throwIfAborted();
         // A successful refresh may already have consumed a single-use token.
