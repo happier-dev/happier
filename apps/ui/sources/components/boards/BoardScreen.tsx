@@ -47,7 +47,7 @@ import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 import { resolveBoardCardOpenTarget, type BoardCardAction } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
 import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
-import { BoardReadState } from './BoardReadState';
+import { BoardReadState, useBoardIndexSaidByColumn } from './BoardReadState';
 import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE } from './boardsRoutes';
 import { BoardSaveFailureLine, describeBoardSaveFailure } from './BoardSaveFailureLine';
@@ -62,10 +62,30 @@ import { buildPluginAppPageRoutePath } from '@/components/appShell/plugins/plugi
 export const BoardScreen = React.memo(function BoardScreen(props: Readonly<{ boardId: string }>) {
     const board = useWorkBoard(props.boardId);
     const read = useWorkBoardReadState(props.boardId);
+    if (!board && read.status === 'loading') return <BoardOpening boardId={props.boardId} />;
     if (!board && read.status !== 'ready') return <BoardReadState boardId={props.boardId} />;
     if (!board) return <MissingBoard boardId={props.boardId} />;
     // The Needs you section reads the Inbox's own model, mounted once for the open board.
     return <BoardsInboxBoundary boards={[board]}><BoardBody board={board} /></BoardsInboxBoundary>;
+});
+
+/**
+ * A board being read: its page already stands where it will (the header with the name the column shows, the
+ * body saying quietly that it is checking what belongs there, as the read board says until its sources answer,
+ * unless the column beside it is already saying the index is being read), so nothing moves when it lands.
+ */
+const BoardOpening = React.memo(function BoardOpening(props: Readonly<{ boardId: string }>) {
+    const phone = useDeviceType() === 'phone';
+    const name = useWorkBoardSummaries().find(board => board.id === props.boardId)?.name ?? t('boards.title');
+    const saidByColumn = useBoardIndexSaidByColumn();
+    return (
+        <View style={styles.root} testID="board-opening">
+            <PageHeader testID="board-header" title={name} alwaysShowTitle columnWidth="pane" />
+            <View style={styles.body}>
+                {saidByColumn ? null : <SurfaceStateCard testID="board-pending" size={phone ? 'phone' : 'page'} kind="loading" title={t('boards.empty.pendingTitle')} />}
+            </View>
+        </View>
+    );
 });
 
 /** The same Board read projection over a URL filter, with no Artifact or edit binding. */
@@ -457,6 +477,10 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
 });
 
 const styles = StyleSheet.create((theme) => ({
+    body: {
+        flex: 1,
+        minHeight: 0,
+    },
     root: {
         flex: 1,
         minHeight: 0,

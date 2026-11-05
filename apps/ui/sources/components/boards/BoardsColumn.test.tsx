@@ -16,6 +16,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PinnedBoardNeedsYouCount } from './PinnedBoardNeedsYouCount';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { act } from 'react-test-renderer';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 
@@ -49,6 +50,7 @@ let unreadableAlpha: 'malformed_json' | 'content_unavailable' | null = null;
 let liveBoard: WorkBoardV1 | null = null;
 let bodyGate: Promise<void> | null = null;
 let indexGate: Promise<void> | null = null;
+let failIndex = false;
 let previousStorageState = getStorage().getState();
 
 describe('BoardsColumn collection search', () => {
@@ -58,6 +60,7 @@ describe('BoardsColumn collection search', () => {
         liveBoard = null;
         bodyGate = null;
         indexGate = null;
+        failIndex = false;
         const artifactBoundary = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         home = await serveActionHomes({
             homes: [{ key: 'boards', serverUrl: 'https://boards-column.test', accountId: 'owner' }],
@@ -68,6 +71,7 @@ describe('BoardsColumn collection search', () => {
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(liveBoard) }),
                 } : artifact);
                 for (const row of rows) artifactBoundary.replaceStoredRow(row);
+                if (request.path === '/v1/artifacts' && failIndex) return new Response(null, { status: 500 });
                 if (request.path === '/v1/artifacts' && indexGate) await indexGate;
                 // The Artifact server selects by coarse kind and reports completeness; every row here is classified.
                 if (request.path === '/v1/artifacts') return Response.json(request.url.searchParams.has('kind') ? { items: rows, hasUnclassified: false } : rows);
@@ -143,9 +147,9 @@ describe('BoardsColumn collection search', () => {
 
     // Beside the column, the column says the index's read state; the page speaks only for its own Board.
     it.each([
-        ['the index', () => { const gate = createDeferred<void>(); indexGate = gate.promise; return gate; }, 'Opening Boards'],
-        ['the open Board body', () => { const gate = createDeferred<void>(); bodyGate = gate.promise; return gate; }, 'Opening Alpha release'],
-    ] as const)('says that %s is opening once across the column and the page', async (_label, hold, said) => {
+        ['the index', () => { const gate = createDeferred<void>(); indexGate = gate.promise; return gate; }, 'boards-read-state'],
+        ['the open Board body', () => { const gate = createDeferred<void>(); bodyGate = gate.promise; return gate; }, 'board-pending'],
+    ] as const)('presents the read state for %s once across the column and the page', async (_label, hold, stateId) => {
         const gate = hold();
         try {
             const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
@@ -155,13 +159,52 @@ describe('BoardsColumn collection search', () => {
             </InjectedAuthProvider>);
             await flushHookEffects({ runOnlyPendingTimers: true });
             await flushHookEffects({ runOnlyPendingTimers: true });
-            const text = screen.getTextContent();
-            expect(text.split(said).length - 1).toBe(1);
-            expect(text.split('Opening').length - 1).toBe(1);
+            const loading = screen.findAllByType(SurfaceStateCard)
+                .filter(state => state.props.kind === 'loading' && state.props.testID === stateId);
+            expect(loading).toHaveLength(1);
+            expect(screen.findAllByType(SurfaceStateCard)
+                .filter(state => state.props.kind === 'loading')).toHaveLength(1);
+            if (stateId === 'board-pending') {
+                expect(screen.findHostByTestId('board-header')).not.toBeNull();
+                expect(screen.getTextContent()).toContain('Alpha release');
+            }
         } finally {
             indexGate = null;
             bodyGate = null;
             gate.resolve();
+            await flushHookEffects();
+        }
+    });
+
+    it('still says the Board is opening when Retry re-reads a failed index and the column stays quiet over its rows', async () => {
+        const { useWorkBoardReadState } = await import('./model/useWorkBoards');
+        const body = createDeferred<void>();
+        bodyGate = body.promise;
+        let retry: () => unknown = () => undefined;
+        function Retry() { retry = useWorkBoardReadState().retry; return null; }
+        const index = createDeferred<void>();
+        try {
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+                <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                    <BoardsColumn /><BoardScreen boardId="alpha" /><Retry />
+                </AppShellColumnContext.Provider>
+            </InjectedAuthProvider>);
+            const loading = () => screen.findAllByType(SurfaceStateCard).filter(state => state.props.kind === 'loading').map(state => state.props.testID);
+            await waitForHomeGovernance(() => expect(loading()).toEqual(['board-pending']));
+            failIndex = true;
+            await act(async () => { await retry(); });
+            await waitForHomeGovernance(() => expect(screen.findAllByTestId('boards-read-stale').length).toBeGreaterThan(0));
+            failIndex = false;
+            indexGate = index.promise;
+            await act(async () => { void retry(); });
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('board-header')).not.toBeNull());
+            expect(loading()).toEqual(['board-pending']);
+        } finally {
+            failIndex = false;
+            indexGate = null;
+            bodyGate = null;
+            index.resolve();
+            body.resolve();
             await flushHookEffects();
         }
     });
