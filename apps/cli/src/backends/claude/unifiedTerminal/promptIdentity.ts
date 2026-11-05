@@ -17,6 +17,9 @@ const CLAUDE_PASTED_CONTENT_MARKER_LINE = /^<\/?pasted_content id="[^"]*">$/;
 export function normalizeClaudeUnifiedPromptIdentityText(value: string): string {
   return value
     .replace(/\r\n?/g, '\n')
+    // Claude's native paste editor expands each tab to four spaces before hooks and JSONL.
+    // Keep every acceptance and echo consumer on this same provider identity rule.
+    .replaceAll('\t', '    ')
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => !CLAUDE_PASTED_CONTENT_MARKER_LINE.test(line))

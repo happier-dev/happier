@@ -130,6 +130,13 @@ surfaces a runtime issue; it does not make an already accepted prompt undelivere
 or eligible for replay. The arbiter owns this ordering even when the transcript
 evidence arrives while the terminal injection is still completing.
 
+Claude unified-terminal prompt identity uses one normalizer for submission hooks,
+transcript acceptance, and echo suppression. In development source it accounts
+for native paste wrappers, line endings, and Claude's expansion of each pasted
+tab to four spaces (observed in Claude Code 2.1.316). A replay seed containing
+tab-indented history must therefore correlate with the provider's space-expanded
+prompt; other indentation and content differences remain distinct.
+
 An in-flight Claude unified-terminal steer stays pending while Claude holds it in
 its native queue. `UserPromptSubmit` can fire at enqueue and does not prove that
 Claude has consumed the steer. The arbiter accepts a steer from its exact

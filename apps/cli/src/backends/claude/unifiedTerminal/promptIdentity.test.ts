@@ -37,6 +37,19 @@ describe('normalizeClaudeUnifiedPromptIdentityText', () => {
       .not.toBe(normalizeClaudeUnifiedPromptIdentityText(right));
   });
 
+  it('matches Claude native paste tab expansion without ignoring other indentation changes', () => {
+    // Claude Code 2.1.316's native editor expands every pasted tab to four spaces.
+    const injected = 'History:\n\tconst value = 1;\n\t\treturn value;\nReply only ok';
+    const recorded = `${PASTE_OPEN}\nHistory:\n    const value = 1;\n        return value;\nReply only ok\n${PASTE_CLOSE}`;
+
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded))
+      .toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded.replace('    const', '  const')))
+      .not.toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+    expect(normalizeClaudeUnifiedPromptIdentityText(recorded.replace('value = 1', 'value = 2')))
+      .not.toBe(normalizeClaudeUnifiedPromptIdentityText(injected));
+  });
+
   it('matches a pasted prompt against the composer rendering of the injected text', () => {
     const injected = 'please review the queue drain\nand report back';
 
