@@ -42,10 +42,9 @@ import type {
  *
  * It exists because the two vocabularies are deliberately near-identical but not
  * equal: the public snapshot has no `kindId`, `webUrl` or provider clock (those are
- * observation- and locator-level facts), its row-fact arms name their payload `value`,
- * and every bounded text member rejects an empty string. Doing that rename inside the
- * provider modules would have coupled tolerant row decoding to the ABI; doing it in
- * more than one place would be two projections of one concept.
+ * observation- and locator-level facts), and every bounded text member rejects an
+ * empty string. Row facts already use the public vocabulary; this seam omits
+ * observations that tolerant provider decoding could not make emittable.
  *
  * Nothing here reaches a provider, a credential or a clock. It is a pure total
  * function over already-decoded provider evidence.
@@ -82,7 +81,7 @@ type ProjectedFacts = Readonly<{ facts: readonly TriageRowFactV1[]; dropped: boo
  * empty string would make the target reject the whole page atomically.
  */
 /**
- * Projects GitHub's private row-fact vocabulary to the published Triage one.
+ * Projects GitHub row facts onto the published Triage value constraints.
  *
  * The detail Feedback surface uses this same conversion when it replaces a
  * snapshot's stale review/check facts with its live state facts. Keeping that
@@ -97,7 +96,7 @@ export function toTriageFacts(facts: readonly GithubTriageRowFactV1[]): Projecte
     switch (value.kind) {
       case 'text':
       case 'actor': {
-        const text = value.kind === 'text' ? value.text : value.label;
+        const text = value.value;
         if (!text) {
           dropped = true;
           break;
@@ -110,14 +109,14 @@ export function toTriageFacts(facts: readonly GithubTriageRowFactV1[]): Projecte
         break;
       }
       case 'status': {
-        if (!value.label) {
+        if (!value.value) {
           dropped = true;
           break;
         }
         projected.push(Object.freeze({
           id: fact.id,
           importance: fact.importance,
-          value: Object.freeze({ kind: 'status' as const, value: value.label, tone: value.tone }),
+          value: Object.freeze({ kind: 'status' as const, value: value.value, tone: value.tone }),
         }));
         break;
       }

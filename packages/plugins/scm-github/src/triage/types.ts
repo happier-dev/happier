@@ -45,24 +45,14 @@ export type GithubTriageInvolvementV1 =
   | 'subscribed'
   | 'participating';
 
-export type GithubTriageRowFactToneV1 = 'success' | 'danger' | 'warning' | 'info' | 'neutral';
+export type GithubTriageRowFactToneV1 = Extract<GithubTriageRowFactValueV1, { kind: 'status' }>['tone'];
 
-export type GithubTriageRowFactImportanceV1 = 'primary' | 'secondary' | 'supplementary';
+export type GithubTriageRowFactImportanceV1 = GithubTriageRowFactV1['importance'];
 
 /** The six closed row-fact value arms. `detailOnly` is answered-but-not-here, not omission. */
-export type GithubTriageRowFactValueV1 =
-  | Readonly<{ kind: 'text'; text: string }>
-  | Readonly<{ kind: 'number'; value: number; format: 'plain' | 'compact' }>
-  | Readonly<{ kind: 'timestamp'; atMs: number; format: 'relative' | 'absolute' }>
-  | Readonly<{ kind: 'actor'; label: string }>
-  | Readonly<{ kind: 'status'; label: string; tone: GithubTriageRowFactToneV1 }>
-  | Readonly<{ kind: 'detailOnly' }>;
+export type GithubTriageRowFactValueV1 = GithubTriageRowFactV1['value'];
 
-export type GithubTriageRowFactV1 = Readonly<{
-  id: string;
-  importance: GithubTriageRowFactImportanceV1;
-  value: GithubTriageRowFactValueV1;
-}>;
+export type GithubTriageRowFactV1 = TriageSourceEntrySnapshotV1['facts'][number];
 
 export type GithubTriageEntryStateV1 = Readonly<{
   presentation: GithubTriagePresentationV1;

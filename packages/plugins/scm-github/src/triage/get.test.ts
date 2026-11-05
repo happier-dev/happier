@@ -534,9 +534,9 @@ describe('GitHub triage get', () => {
         : undefined);
 
     expect(readMergeability(computing.observation))
-      .toEqual({ kind: 'status', label: 'Computing', tone: 'info' });
+      .toEqual({ kind: 'status', value: 'Computing', tone: 'info' });
     expect(readMergeability(conflicts.observation))
-      .toEqual({ kind: 'status', label: 'Conflicts', tone: 'danger' });
+      .toEqual({ kind: 'status', value: 'Conflicts', tone: 'danger' });
     expect(readMergeability(clean.observation)).toBeUndefined();
   });
 });

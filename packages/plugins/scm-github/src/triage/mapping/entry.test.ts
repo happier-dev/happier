@@ -206,7 +206,7 @@ describe('GitHub triage entry mapping', () => {
     }).rowFacts.find((fact) => fact.id === 'github/additions-deletions');
 
     expect(readFact(scanRow)?.value).toEqual({ kind: 'detailOnly' });
-    expect(readFact(detailRow)?.value).toEqual({ kind: 'text', text: '+214 −88' });
+    expect(readFact(detailRow)?.value).toEqual({ kind: 'text', value: '+214 −88' });
     expect(readFact(omittedRow)).toBeUndefined();
   });
 

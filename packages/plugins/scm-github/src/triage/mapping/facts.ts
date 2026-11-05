@@ -89,18 +89,18 @@ function reviewDecisionFact(decision: GithubReviewDecisionV1): GithubTriageRowFa
   return Object.freeze({
     id: 'github/review-decision',
     importance: 'primary',
-    value: Object.freeze({ kind: 'status', label, tone }),
+    value: Object.freeze({ kind: 'status', value: label, tone }),
   });
 }
 
 function checksFact(state: NonNullable<GithubRowFactsInputV1['checks']>): GithubTriageRowFactV1 {
   const value = state === 'unavailable'
-    ? ({ kind: 'status', label: 'Checks unavailable', tone: 'warning' } as const)
+    ? ({ kind: 'status', value: 'Checks unavailable', tone: 'warning' } as const)
     : state.kind === 'failing'
-    ? ({ kind: 'status', label: `${state.failingCount} failing`, tone: 'danger' } as const)
+    ? ({ kind: 'status', value: `${state.failingCount} failing`, tone: 'danger' } as const)
     : state.kind === 'running'
-      ? ({ kind: 'status', label: 'Running', tone: 'info' } as const)
-      : ({ kind: 'status', label: 'All passing', tone: 'success' } as const);
+      ? ({ kind: 'status', value: 'Running', tone: 'info' } as const)
+      : ({ kind: 'status', value: 'All passing', tone: 'success' } as const);
   return Object.freeze({
     id: 'github/checks',
     importance: 'primary',
@@ -143,7 +143,7 @@ function mergeabilityFact(
   return Object.freeze({
     id: 'github/mergeability',
     importance: 'secondary',
-    value: Object.freeze({ kind: 'status', label, tone }),
+    value: Object.freeze({ kind: 'status', value: label, tone }),
   });
 }
 
@@ -153,18 +153,14 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
 
   const push = (fact: GithubTriageRowFactV1): void => {
     if (fact.value.kind === 'text' || fact.value.kind === 'actor' || fact.value.kind === 'status') {
-      const raw = fact.value.kind === 'text' ? fact.value.text : fact.value.label;
+      const raw = fact.value.value;
       const bounded = projectTriageDisplayTextV1(raw, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
       if (bounded.truncated) {
         truncated = true;
-        const rebound: GithubTriageRowFactV1 = fact.value.kind === 'text'
-          ? { ...fact, value: Object.freeze({ kind: 'text', text: bounded.value }) }
-          : fact.value.kind === 'actor'
-            ? { ...fact, value: Object.freeze({ kind: 'actor', label: bounded.value }) }
-            : {
-              ...fact,
-              value: Object.freeze({ kind: 'status', label: bounded.value, tone: fact.value.tone }),
-            };
+        const rebound: GithubTriageRowFactV1 = {
+          ...fact,
+          value: Object.freeze({ ...fact.value, value: bounded.value }),
+        };
         facts.push(Object.freeze(rebound));
         return;
       }
@@ -175,18 +171,18 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
   push({
     id: 'github/number',
     importance: 'primary',
-    value: Object.freeze({ kind: 'text', text: `#${input.number}` }),
+    value: Object.freeze({ kind: 'text', value: `#${input.number}` }),
   });
   push({
     id: 'github/repository',
     importance: 'primary',
-    value: Object.freeze({ kind: 'text', text: input.repositoryLabel }),
+    value: Object.freeze({ kind: 'text', value: input.repositoryLabel }),
   });
   if (input.authorLogin !== null) {
     push({
       id: 'github/author',
       importance: 'secondary',
-      value: Object.freeze({ kind: 'actor', label: input.authorLogin }),
+      value: Object.freeze({ kind: 'actor', value: input.authorLogin }),
     });
   }
   push({
@@ -212,7 +208,7 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
     push({
       id: 'github/labels',
       importance: 'supplementary',
-      value: Object.freeze({ kind: 'text', text: formatGithubLabelSummary(input.labelNames) }),
+      value: Object.freeze({ kind: 'text', value: formatGithubLabelSummary(input.labelNames) }),
     });
   }
   if (input.kindId === 'pull-request') {
@@ -234,7 +230,7 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
       push({
         id: 'github/additions-deletions',
         importance: 'supplementary',
-        value: Object.freeze({ kind: 'text', text: `+${additions} −${deletions}` }),
+        value: Object.freeze({ kind: 'text', value: `+${additions} −${deletions}` }),
       });
     }
   }
