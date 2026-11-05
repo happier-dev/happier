@@ -1,3 +1,4 @@
+import type { DesktopGlassPanelLabel } from '@/utils/platform/desktopGlassMaterial';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 export type DesktopWindowContext = Readonly<{
@@ -51,6 +52,10 @@ export function isDesktopAuxiliaryWindowContext(): boolean {
  * Whether this webview is a floating panel that shows the main window's glass behind its card
  * (`GLASS_PANEL_WINDOW_LABELS` in `window_chrome.rs`). The selection layer's dim is not a glass surface.
  */
-export function isDesktopGlassPanelWindowContext(): boolean {
-    return desktopWindowPathname() === '/desktop/capture';
+export function resolveDesktopGlassPanelLabel(): DesktopGlassPanelLabel | null {
+    switch (desktopWindowPathname()) {
+        case '/desktop/capture': return 'capture';
+        case '/desktop/activity-overlay': return 'activity_overlay';
+        default: return null;
+    }
 }

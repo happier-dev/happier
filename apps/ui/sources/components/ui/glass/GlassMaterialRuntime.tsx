@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { resolveDesktopWindowContext, isDesktopGlassPanelWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
+import { resolveDesktopWindowContext, resolveDesktopGlassPanelLabel } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { applyDesktopGlassMaterial, subscribeDesktopGlassState, type DesktopGlassState } from '@/utils/platform/desktopGlassMaterial';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
 
@@ -26,13 +26,14 @@ export function resolveDesktopGlassMaterialRequest(settings: GlassMaterialSettin
 
 /**
  * One narrow settings subscriber owns desktop application and web presentation variables. A glass
- * panel (the Capture window) cannot read the Account: it follows the main window's projected settings
+ * panel (the Capture window, the notch) cannot read the Account: it follows the main window's projected settings
  * and native backing, and never requests material itself.
  */
 export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode }>) {
     const storedSettings = useGlassMaterialSettings();
     const reduceTransparency = useReduceTransparency();
-    const panelWindow = Platform.OS === 'web' && isDesktopHost() && isDesktopGlassPanelWindowContext();
+    const panelLabel = Platform.OS === 'web' && isDesktopHost() ? resolveDesktopGlassPanelLabel() : null;
+    const panelWindow = panelLabel !== null;
     const mainWindow = Platform.OS === 'web' && isDesktopHost() && resolveDesktopWindowContext().role !== 'presenter';
     const desktopWindow = mainWindow || panelWindow;
     const [nativeState, setNativeState] = React.useState<DesktopGlassState | null>(null);
@@ -57,11 +58,11 @@ export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode
         if (!desktopWindow) return;
         let current = true;
         let unsubscribe: (() => void) | undefined;
-        void subscribeDesktopGlassState(state => { if (current) setNativeState(state); }, panelWindow ? 'capture' : undefined).then(stop => {
+        void subscribeDesktopGlassState(state => { if (current) setNativeState(state); }, panelLabel ?? undefined).then(stop => {
             if (current) unsubscribe = stop; else stop();
         }).catch(() => { if (current) setNativeState(null); });
         return () => { current = false; unsubscribe?.(); };
-    }, [desktopWindow, panelWindow]);
+    }, [desktopWindow, panelLabel]);
 
     React.useEffect(() => {
         if (!mainWindow) return;

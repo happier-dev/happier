@@ -15,6 +15,7 @@ import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/s
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
 import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { isDesktopMainWindowFocused } from '@/desktop/window/desktopMainWindowPresence';
+import { getFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
 import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import {
@@ -103,7 +104,12 @@ function resolveExpoLocalNotificationSound(
     };
 }
 
-function isSessionActivelyViewedForLocalNotification(event: ActivityLocalNotificationEvent): boolean {
+function isSessionActivelyViewedForLocalNotification(event: ActivityLocalNotificationEvent, accountId: string): boolean {
+    if (isDesktopHost()) {
+        const focused = getFocusedDesktopAppWindowSurface();
+        if (focused) return focused.sessionId === event.address.sessionId && focused.accountId === accountId
+            && areServerProfileIdentifiersEquivalent(focused.homeId, event.address.serverId);
+    }
     if (!isSessionSurfaceVisible(event.address.sessionId, event.address.serverId)) {
         return false;
     }
@@ -226,7 +232,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 localSettings,
                 event: resolveLocalNotificationEventKind(event),
                 channel: 'local_notification',
-                sameSessionVisible: isSessionActivelyViewedForLocalNotification(event),
+                sameSessionVisible: isSessionActivelyViewedForLocalNotification(event, scope.accountId),
                 now: new Date(),
                 ...(followEvent ? { follow: { event: followEvent, policies: followPolicy ? [followPolicy] : [] } } : {}),
             });

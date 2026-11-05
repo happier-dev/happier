@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import type { DesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
 
 import {
   areSessionAddressesEqual,
@@ -24,11 +25,20 @@ export function resolveVoiceIdleTarget(input: Readonly<{
   focusedSessionAddress: SessionAddress | null;
   lastFocusedSessionAddress: SessionAddress | null;
   restartTarget?: VoiceIdleTarget | null;
+  focusedWindowSurface?: Pick<DesktopAppWindowSurface, 'homeId' | 'accountId' | 'sessionId'> | null;
+  currentAccountId?: string | null;
 }>): VoiceIdleTarget {
   if (input.intent.kind === 'global') return input.intent;
   if (input.intent.kind === 'session') return { kind: 'session', sessionAddress: normalizeAddress(input.intent.sessionAddress) };
   if (input.restartTarget) return input.restartTarget;
   if (input.scopeDefault === 'global' && input.allowsGlobalStart) return { kind: 'global' };
+  if (input.focusedWindowSurface) {
+    const surface = input.focusedWindowSurface;
+    // The existing Voice intent carries a Home-qualified Session, within the executing Account.
+    // A different Account never falls through to a colliding Session in the primary renderer.
+    return { kind: 'session', sessionAddress: surface.accountId === input.currentAccountId
+      ? normalizeSessionAddress(surface.homeId, surface.sessionId) : null };
+  }
   return { kind: 'session', sessionAddress: normalizeAddress(input.focusedSessionAddress) ?? normalizeAddress(input.lastFocusedSessionAddress) };
 }
 

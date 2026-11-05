@@ -56,6 +56,8 @@ import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { getFocusedDesktopAppWindowSurface, subscribeFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { resolveVoiceIdleTarget, useVoiceTargetStore, type VoiceStartIntent } from '@/voice/runtime/voiceTargetStore';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -157,7 +159,7 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     preparedInstructionsFor?: SessionAddress | null;
     onPrimaryAction: () => void | Promise<boolean>;
     /** Starts the caller's idle target when idle; ends the running attempt otherwise. Never re-targets. */
-    onToggle: () => void;
+    onToggle: () => void | Promise<boolean>;
     onToggleMute: () => void;
     commitInputLabel?: string | null;
     onCommitInput?: () => void;
@@ -186,6 +188,7 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
  * lifecycle. Explicit composer/Home intents stay exact; default starts use the shared idle policy.
  */
 export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): VoiceAttemptControlProjection {
+    const ownsVoiceRuntime = resolveDesktopWindowContext().role === 'primary';
     const router = useRouter();
     const navigateWithFocusReturn = useNavigationFocusReturn();
     const snap = useVoiceSessionSnapshot();
@@ -260,6 +263,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         [idleTarget],
     );
     const focusedSessionAddress = useFocusedSessionAddress();
+    const focusedWindowSurface = React.useSyncExternalStore(subscribeFocusedDesktopAppWindowSurface,
+        getFocusedDesktopAppWindowSurface, getFocusedDesktopAppWindowSurface);
     const lastFocusedSessionAddress = useVoiceTargetStore((state) => explicitIntent.kind === 'default' ? state.lastFocusedSessionAddress : null);
     const resolvedIdleTarget = React.useMemo(() => resolveVoiceIdleTarget({
         intent: explicitIntent,
@@ -267,8 +272,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         scopeDefault: canonicalVoice.ui.scopeDefault,
         allowsGlobalStart: capabilities?.allowsGlobalStart === true,
         focusedSessionAddress,
+        focusedWindowSurface,
+        currentAccountId: currentAccountScope?.accountId,
         lastFocusedSessionAddress,
-    }), [explicitIntent, presentedEnded, expectedAttempt, snap, providerId, currentAccountScope, canonicalVoice.ui.scopeDefault, capabilities?.allowsGlobalStart, focusedSessionAddress, lastFocusedSessionAddress]);
+    }), [explicitIntent, presentedEnded, expectedAttempt, snap, providerId, currentAccountScope, canonicalVoice.ui.scopeDefault, capabilities?.allowsGlobalStart, focusedSessionAddress, focusedWindowSurface, lastFocusedSessionAddress]);
     const bindingScope = resolvedIdleTarget.kind;
     const startSessionAddress = resolvedIdleTarget.kind === 'session' ? resolvedIdleTarget.sessionAddress : null;
     const startSessionId = startSessionAddress?.sessionId ?? null;
@@ -578,8 +585,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         canCommitInput: snap.canCommitInput === true,
         muted: snap.micMuted === true,
         capturing,
-        startAdmitted: startAdmission.canStart,
-        hasRecovery: recoveryAvailable || setupIncomplete,
+        startAdmitted: ownsVoiceRuntime && startAdmission.canStart,
+        hasRecovery: ownsVoiceRuntime && (recoveryAvailable || setupIncomplete),
         canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snap),
         /*
          * Every mount of this projection is already behind the Voice feature gate (the global off
@@ -588,11 +595,12 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
          * Settings → Voice stays reachable). A malformed target (a session scope with no session) is
          * a caller mistake setup cannot fix — it fails closed.
          */
-        setupOffered: !setupDismissed && (bindingScope === 'global' || startSessionId !== null),
+        setupOffered: ownsVoiceRuntime && !setupDismissed && (bindingScope === 'global' || startSessionId !== null),
         sessionStatus,
         hiddenSession: presentedSessionIsHidden,
     }), [
         bindingScope,
+        ownsVoiceRuntime,
         setupDismissed,
         recoveryAvailable,
         setupIncomplete,

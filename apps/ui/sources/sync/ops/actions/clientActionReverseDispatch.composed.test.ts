@@ -174,6 +174,75 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       .toEqual({ ok: true, result: { anchor: input.anchor, value: null } });
     expect(unrelatedEffects).toBe(0);
   });
+  it('advertises remote mounted methods through the Home responder and withdraws them without removing local owners', async () => {
+    const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
+    const desktopHost = await import('@/utils/platform/desktopHost');
+    const { observeDesktopAppWindowSurfaces } = await import('@/desktop/window/appWindowSurface');
+    const { workflowDraftClientRpcMethod } = await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+    const { mountedWorkReadClientRpcMethod, currentUiContextCommandClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+    const { registerMountedWorkflowDraftOwner } = await import('./workflowAuthoringAction');
+    type Surface = import('@/desktop/window/appWindowSurface').DesktopAppWindowSurface;
+    const scope = { serverId, accountId: 'relay-account' };
+    const localAddress = { scope, draftId: 'local-review' };
+    const remoteAddress = { scope, draftId: 'window-workflow' };
+    const localMethod = workflowDraftClientRpcMethod(localAddress);
+    const sharedScopeMethod = workflowDraftClientRpcMethod({ scope });
+    const remoteMethods = [workflowDraftClientRpcMethod(remoteAddress), sharedScopeMethod,
+      mountedWorkReadClientRpcMethod('session.work.get', 'window-session'),
+      currentUiContextCommandClientRpcMethod('window.command')];
+    const foreignMethod = currentUiContextCommandClientRpcMethod('other-account.command');
+    const surfaceListeners = new Set<(surface: Surface) => void>();
+    // Only the native snapshot/event boundary is synthetic; its projection,
+    // mounted-owner registries and machine-scoped Socket registration stay real.
+    const snapshot = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue([]);
+    const nativeEvents = vi.spyOn(desktopHost, 'listenDesktopHostEvent').mockImplementation(async (event, handler) => {
+      if (event !== 'desktopAppWindow://surface') throw new Error(`Unexpected native event: ${event}`);
+      // Native SDK callbacks are generic; this fixture supplies the real surface payload.
+      const receive = handler as unknown as (surface: Surface) => void;
+      surfaceListeners.add(receive);
+      return () => { surfaceListeners.delete(receive); };
+    });
+    releases.push(() => snapshot.mockRestore(), () => nativeEvents.mockRestore());
+    const stopObserving = await observeDesktopAppWindowSurfaces();
+    const removeLocal = registerMountedWorkflowDraftOwner({ kind: 'review', getAddress: () => localAddress,
+      execute: async () => ({ status: 'unavailable' }) });
+    const machine = createMachineFixture({ id: 'window-method-machine', activeAt: Date.now() });
+    await act(async () => {
+      storage.setState(state => ({ profile: { ...state.profile!, id: scope.accountId },
+        machines: { [machine.id]: machine }, machineListByServerId: {} }));
+    });
+    const socket = clientSockets.slice().reverse().find(candidate => candidate.listeners(SOCKET_RPC_EVENTS.REQUEST).length > 0);
+    if (!socket) throw new Error('Account reverse receiver absent');
+    const registered = new Set<string>();
+    const emit = vi.spyOn(socket, 'emit').mockImplementation((event, ...args) => {
+      const payload: unknown = args[0];
+      if (payload && typeof payload === 'object' && 'method' in payload && typeof payload.method === 'string') {
+        if (event === SOCKET_RPC_EVENTS.REGISTER) registered.add(payload.method);
+        if (event === SOCKET_RPC_EVENTS.UNREGISTER) registered.delete(payload.method);
+      }
+      return socket;
+    });
+    releases.push(() => emit.mockRestore());
+    const runtime = await renderScreen(React.createElement(ClientActionReverseRuntime));
+    const wireMethod = (method: string) => `${machine.id}:${method}`;
+    const surface = { windowId: 'workflow-window', homeId: serverId, accountId: scope.accountId,
+      sessionId: 'window-session', focused: false, methods: remoteMethods };
+    try {
+      expect(registered.has(wireMethod(localMethod))).toBe(true);
+      await act(async () => { for (const receive of surfaceListeners) receive(surface); });
+      expect([...registered]).toEqual(expect.arrayContaining(remoteMethods.map(wireMethod)));
+      await act(async () => { for (const receive of surfaceListeners) receive({ ...surface,
+        windowId: 'other-account-window', accountId: 'other-account', methods: [foreignMethod] }); });
+      expect(registered.has(wireMethod(foreignMethod))).toBe(false);
+      await act(async () => { for (const receive of surfaceListeners) receive({ ...surface, methods: [] }); });
+      for (const method of remoteMethods.filter(method => method !== sharedScopeMethod)) {
+        expect(registered.has(wireMethod(method))).toBe(false);
+      }
+      expect([...registered]).toEqual(expect.arrayContaining([
+        wireMethod(localMethod), wireMethod(sharedScopeMethod), wireMethod(RPC_METHODS.UI_ACTION_EXECUTE),
+      ]));
+    } finally { await runtime.unmount(); removeLocal(); stopObserving(); }
+  });
   it('delivers unbound empty Next and All-Machines search through a connected app without an availability hint', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { NextPendingNavigationHost } = await import('@/components/sessions/pendingNavigation/NextPendingNavigationHost');
@@ -1310,5 +1379,35 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     await screen.unmount();
     expect(await receive(request, { signal: new AbortController().signal }))
       .toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
+  });
+  it('advertises window-mounted Session and Work handlers through the sole main reverse responder', async () => {
+    const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
+    const { observeDesktopAppWindowSurfaces } = await import('@/desktop/window/appWindowSurface');
+    const desktop = await import('@/utils/platform/desktopHost');
+    const { sessionUiActionClientRpcMethod, mountedWorkReadClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+    const scope = { serverId, accountId: 'relay-account' };
+    // Native reports committed mounted membership, not a persisted restore target.
+    // The surface projection and reverse registrations remain real.
+    const listen = vi.spyOn(desktop, 'listenDesktopHostEvent').mockResolvedValue(() => {});
+    const invoke = vi.spyOn(desktop, 'invokeDesktopHost').mockResolvedValue([{
+      windowId: 'rpc-window', homeId: serverId, accountId: scope.accountId, sessionId: 'window-session', focused: false,
+      methods: [sessionUiActionClientRpcMethod('window-session'), mountedWorkReadClientRpcMethod('session.work.get', 'window-session')],
+    }]);
+    let stopObserving: (() => void) | undefined;
+    const machine = createMachineFixture({ id: 'window-actions-machine', activeAt: Date.now() });
+    await act(async () => storage.setState(current => ({ profile: { ...current.profile!, id: scope.accountId },
+      machines: { [machine.id]: machine }, machineListByServerId: {} })));
+    const registered = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      stopObserving = await observeDesktopAppWindowSurfaces();
+      screen = await renderScreen(React.createElement(ClientActionReverseRuntime));
+      const methods = registered.mock.calls.filter(([id]) => id === machine.id).map(([, method]) => method);
+      expect(methods).toContain(sessionUiActionClientRpcMethod('window-session'));
+      expect(methods).toContain(mountedWorkReadClientRpcMethod('session.work.get', 'window-session'));
+      expect(methods.filter(method => method === RPC_METHODS.UI_ACTION_EXECUTE)).toHaveLength(1);
+    } finally {
+      await screen?.unmount(); stopObserving?.(); registered.mockRestore(); listen.mockRestore(); invoke.mockRestore();
+    }
   });
 });

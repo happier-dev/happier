@@ -10,7 +10,8 @@ import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { sessionSetManualReadStateWithServerScope } from '@/sync/ops';
 import {
     deleteSessionDraft, deleteSessionDraftWithScopedRuntime, getSessionDraftSnapshot,
-    materializeExactSessionDraftWithScopedRuntime,
+    materializeExactSessionDraftWithScopedRuntime, flushSessionDraft, flushSessionDraftLocally,
+    ensureSessionDraftRepositoryHydrated,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
@@ -18,7 +19,7 @@ import { applyRegisteredNewSessionDirectoryIntent } from '@/components/sessions/
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { invokeMountedWorkRead } from './mountedWorkReadAction';
 import { sync } from '@/sync/sync';
-import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
+import { appendToSessionDraft } from '@/components/sessions/composer/appendToSessionDraft';
 import { navigateToSavedNewSessionDraft } from '@/components/sessions/drafts/newSessionDraftNavigation';
 import { resolveRuntimeFeatureDecisionOrThrow } from '@/sync/domains/features/featureDecisionInputs';
 
@@ -34,12 +35,33 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 account.assertCurrent();
                 if ((context.serverId && !areServerProfileIdentifiersEquivalent(account.serverId, context.serverId))
                     || (context.runtimeAccountId && context.runtimeAccountId !== account.accountId)) return { status: 'unavailable' };
-                const { sessionId, text, sourceSessionId } = AppShellActionInputSchemas[actionId].parse(input);
+                const { sessionId, text, discussionSource } = AppShellActionInputSchemas[actionId].parse(input);
+                if (discussionSource && !areServerProfileIdentifiersEquivalent(discussionSource.serverId, account.serverId)) {
+                    return { status: 'unavailable' };
+                }
                 const createdAtMs = Date.now();
-                await sync.patchSessionMetadataWithRetry(sessionId, metadata => writeSessionInitialPromptV1({
-                    metadata, text, mode: 'append', createdAtMs, sourceSessionId,
-                }), { serverId: account.serverId, accountLifetime: account.accountOnlyLifetime });
+                const scope = account.accountOnlyLifetime.scope;
+                if (!areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) {
+                    return await runWithSessionDraftRepositoryScopedRuntime({ binding: account.accountOnlyLifetime,
+                        activeRequest: account.request, sessionId, operation: async ({ scope, runtime, isCurrent, session, syncEnabled }) => {
+                            if (!session) return { status: 'unavailable' as const };
+                            const address = { kind: 'session' as const, sessionId };
+                            if (syncEnabled) await materializeExactSessionDraftWithScopedRuntime({ scope, address, runtime, isCurrent });
+                            else await ensureSessionDraftRepositoryHydrated(scope);
+                            account.assertCurrent();
+                            const appended = appendToSessionDraft({ sessionTarget: { ...scope, sessionId },
+                                items: [{ kind: 'text', text }], sessionBinding: { scope, session, isCurrent }, discussionSource });
+                            if (appended.status !== 'applied') return { status: 'unavailable' as const };
+                            if (syncEnabled) await flushSessionDraft({ scope, address, scoped: { runtime, isCurrent } });
+                            else await flushSessionDraftLocally({ scope });
+                            return { status: 'appended' as const, sessionId, createdAtMs };
+                        } }) ?? { status: 'unavailable' };
+                }
+                await sync.materializeExistingSessionDraft(sessionId, account.accountOnlyLifetime);
                 account.assertAccountCurrent();
+                const appended = appendToSessionDraft({ sessionTarget: { serverId: account.serverId,
+                    accountId: account.accountId, sessionId }, items: [{ kind: 'text', text }], discussionSource });
+                if (appended.status !== 'applied') return { status: 'unavailable' };
                 return { status: 'appended', sessionId, createdAtMs };
             } finally { if (!accountContext) account.dispose(); }
         }

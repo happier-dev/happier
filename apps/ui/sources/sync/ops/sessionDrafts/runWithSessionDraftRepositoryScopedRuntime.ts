@@ -16,6 +16,9 @@ import {
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 
 import type { SessionDraftRepositoryScopedRuntime } from './sessionDraftRepository';
+import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+
+type ScopedDraftSession = Awaited<ReturnType<typeof readSessionSnapshotForAuthority>>['session'];
 
 type ActiveRequest = (
     path: string,
@@ -31,10 +34,13 @@ type ActiveRequest = (
 export async function runWithSessionDraftRepositoryScopedRuntime<TResult>(params: Readonly<{
     binding: Pick<ServerCredentialAccountScopeBinding, 'scope' | 'isCurrent'>;
     activeRequest: ActiveRequest;
+    sessionId?: string;
     operation: (input: Readonly<{
         scope: ServerAccountScope;
         runtime: SessionDraftRepositoryScopedRuntime;
         isCurrent: () => boolean;
+        session: ScopedDraftSession | null;
+        syncEnabled: boolean;
     }>) => Promise<TResult>;
 }>): Promise<TResult | null> {
     if (!params.binding.isCurrent()) return null;
@@ -58,12 +64,21 @@ export async function runWithSessionDraftRepositoryScopedRuntime<TResult>(params
             serverId: authority.scope.serverId,
         });
         if (!isCurrent()) return null;
-        if (featureDecision.state !== 'enabled') return null;
-        const mode = await fetchAccountEncryptionMode(credentials, { request });
+        const syncEnabled = featureDecision.state === 'enabled';
+        // Existing Session drafts retain their device-local owner when this Home
+        // disables synchronization; saved Account drafts still require its server.
+        if (!syncEnabled && !params.sessionId) return null;
+        const [mode, snapshot] = await Promise.all([
+            fetchAccountEncryptionMode(credentials, { request }),
+            params.sessionId ? readSessionSnapshotForAuthority({ authority: { ...authority, request },
+                sessionId: params.sessionId, isCurrent, includeTurns: false }) : null,
+        ]);
         if (!isCurrent()) return null;
         return await params.operation({
             scope: authority.scope,
             isCurrent,
+            session: snapshot?.session ?? null,
+            syncEnabled,
             runtime: {
                 transport: createApiSessionDraftsTransport({ request }),
                 cipher: createSessionDraftCipher({
@@ -71,9 +86,11 @@ export async function runWithSessionDraftRepositoryScopedRuntime<TResult>(params
                     accountCryptoMaterial: mode.mode === 'e2ee' && !isTokenOnlyAuthCredentials(credentials)
                         ? resolveAccountScopedCryptoMaterialFromCredentials(credentials)
                         : null,
-                    // This recovery projection admits only newSession drafts,
-                    // whose content is Account-bound rather than Session-bound.
-                    getSessionContext: () => null,
+                    getSessionContext: sessionId => {
+                        if (!snapshot || sessionId !== params.sessionId) return null;
+                        return snapshot.session.encryptionMode === 'plain' ? { mode: 'plain' }
+                            : { mode: 'e2ee', encryption: authority.context.encryption?.getSessionEncryption(sessionId) ?? null };
+                    },
                     randomBytes: getRandomBytes,
                 }),
             },

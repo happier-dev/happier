@@ -8,20 +8,14 @@ import { useMachinePresenceMembership } from '@/sync/domains/machines/reachabili
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { createUiClientActionReverseHandler } from '@/sync/ops/actions/clientActionReverseDispatch';
-import { getMountedWorkflowDraftAddresses, subscribeMountedWorkflowDraftOwners } from '@/sync/ops/actions/workflowAuthoringAction';
-import { workflowDraftClientRpcMethod } from '@happier-dev/protocol/actions/workflowAuthoringAction';
-import {
-    currentUiContextCommandClientRpcMethod,
-    currentUiContextReadClientRpcMethod,
-    mountedWorkReadClientRpcMethod,
-    sessionUiActionClientRpcMethod,
-} from '@happier-dev/protocol/actions/clientDispatchV1';
-import { getMountedWorkReadAddresses, subscribeMountedWorkReadOwners } from '@/sync/ops/actions/mountedWorkReadAction';
+import { sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCurrentUiContributedActionRpcHandler } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { getDesktopAppWindowMountedSurfaces, subscribeDesktopAppWindowMountedSurfaces } from '@/desktop/window/appWindowSurface';
+import { useMountedClientActionMethods } from './mountedClientActionAddresses';
 
 function useMachineClientActionBindings({
     serverId, generation, accountId, machineIds, methods, sessionId, readCurrentSessionId, contributedMachineIds,
@@ -79,7 +73,9 @@ function useMachineClientActionBindings({
                         && state.profile?.id === accountId && Boolean(machine
                             && isMachineSelectableForFleet({ serverId, accountId }, machine));
                 }, canExecute: () => mounted
-                    && (boundSessionId === null || sessionReader.current?.() === boundSessionId) };
+                    && (boundSessionId === null || sessionReader.current?.() === boundSessionId
+                        || getDesktopAppWindowMountedSurfaces().some(surface => surface.homeId === serverId
+                            && surface.accountId === accountId && surface.methods?.includes(method))) };
                 const handler = method === RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE
                     ? createCurrentUiContributedActionRpcHandler({
                         ...binding, machineId, readProjection: readCurrentAppShellPluginUiProjection,
@@ -107,36 +103,15 @@ export function ClientActionReverseRuntime(): null {
         return action.execution.target === 'client' && origin?.phase === 'current' && origin.interactionEnabled
             && origin.serverId === serverId ? [origin.machineId] : [];
     }));
-    const addresses = React.useSyncExternalStore(subscribeMountedWorkflowDraftOwners,
-        getMountedWorkflowDraftAddresses, getMountedWorkflowDraftAddresses);
-    const readAddresses = React.useSyncExternalStore(subscribeMountedWorkReadOwners,
-        getMountedWorkReadAddresses, getMountedWorkReadAddresses);
+    const localMethods = useMountedClientActionMethods(serverId, accountId);
+    const windowSurfaces = React.useSyncExternalStore(subscribeDesktopAppWindowMountedSurfaces,
+        getDesktopAppWindowMountedSurfaces, getDesktopAppWindowMountedSurfaces);
     const currentUiReader = useOptionalCurrentUiContextReader();
-    const subscribeCurrentUiRegistration = React.useCallback((listener: () => void) =>
-        currentUiReader?.subscribe(listener) ?? (() => {}), [currentUiReader]);
-    const readCurrentUiRegistration = React.useCallback(() => {
-        const snapshot = currentUiReader?.readCurrentUiContext() ?? null;
-        // The reader rebuilds its DTO on every call; only method membership is a stable store snapshot.
-        return snapshot ? JSON.stringify([currentUiReader?.readCurrentSessionId?.() ?? null,
-            snapshot.commands.map(command => command.id).sort()]) : null;
-    }, [currentUiReader]);
-    const currentUiRegistration = React.useSyncExternalStore(
-        subscribeCurrentUiRegistration,
-        readCurrentUiRegistration,
-        readCurrentUiRegistration,
-    );
     const currentSessionId = currentUiReader?.readCurrentSessionId?.() ?? null;
-    const methods = React.useMemo(() => {
-        const currentUiSnapshot = currentUiReader?.readCurrentUiContext() ?? null;
-        return [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...addresses.flatMap(address =>
-            address.scope.serverId === serverId && address.scope.accountId === accountId
-                ? [workflowDraftClientRpcMethod(address), workflowDraftClientRpcMethod({ scope: address.scope })] : []),
-            ...readAddresses.flatMap(address => address.scope.serverId === serverId && address.scope.accountId === accountId
-                ? [mountedWorkReadClientRpcMethod(address.actionId, address.sessionId)] : []),
-            ...(currentUiSnapshot ? [currentUiContextReadClientRpcMethod(), ...currentUiSnapshot.commands.map(command =>
-                currentUiContextCommandClientRpcMethod(command.id))] : []),
-        ])];
-    }, [serverId, accountId, addresses, readAddresses, currentUiReader, currentUiRegistration]);
+    const methods = React.useMemo(() => [...new Set([RPC_METHODS.UI_ACTION_EXECUTE, ...localMethods,
+        ...windowSurfaces.flatMap(surface => surface.homeId === serverId && surface.accountId === accountId
+            ? surface.methods ?? [] : []),
+    ])], [serverId, accountId, localMethods, windowSurfaces]);
     // Registration belongs to the runtime, without one React mount per Machine or method.
     useMachineClientActionBindings({ serverId, generation, accountId, machineIds: selectableMachineIds, methods,
         sessionId: currentSessionId, readCurrentSessionId: currentUiReader?.readCurrentSessionId, contributedMachineIds });

@@ -26,6 +26,10 @@ import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestratio
 
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
 import { PresentationNoticeHost } from './PresentationNoticeHost';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
+import { observeDesktopAppWindowSurfaces, publishDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useMountedClientActionMethods } from '@/components/appShell/runtime/mountedClientActionAddresses';
 import { publishPresentationNotice } from './presentationNotices';
 import {
     readSessionComposerPresentationTargetAtAddress,
@@ -60,6 +64,39 @@ type PresentationSyncBinding = Readonly<{
 
 export const CurrentSessionPresentationRuntime = React.memo(function CurrentSessionPresentationRuntime() {
     const clientIdRef = React.useRef<string>(randomUUID());
+    const scope = storage(state => state.profileScope);
+    const methods = useMountedClientActionMethods(scope?.serverId ?? null, scope?.accountId ?? null);
+
+    React.useEffect(() => {
+        if (desktopHostKind() !== 'tauri') return;
+        let previous: Parameters<typeof publishDesktopAppWindowSurface>[0] | undefined;
+        const publish = () => {
+            if (!scope) return;
+            const focused = getFocusedSessionAddress();
+            const next = { homeId: scope.serverId, accountId: scope.accountId,
+                sessionId: focused && areServerProfileIdentifiersEquivalent(focused.serverId, scope.serverId) ? focused.sessionId : null,
+                methods };
+            if (previous?.homeId === next.homeId && previous.accountId === next.accountId && previous.sessionId === next.sessionId) return;
+            previous = next;
+            fireAndForget(publishDesktopAppWindowSurface(next), { tag: 'appWindow.surface' });
+        };
+        publish();
+        const stopVisibility = subscribeSessionSurfaceVisibility(publish);
+        return stopVisibility;
+    }, [scope, methods]);
+
+    React.useEffect(() => {
+        if (desktopHostKind() !== 'tauri') return;
+        let disposed = false;
+        let stopObservation: (() => void) | undefined;
+        fireAndForget(observeDesktopAppWindowSurfaces().then(stop => {
+            if (disposed) stop(); else stopObservation = stop;
+        }), { tag: 'appWindow.focus' });
+        return () => {
+            disposed = true;
+            stopObservation?.();
+        };
+    }, []);
 
     React.useEffect(() => {
         const clientId = clientIdRef.current;

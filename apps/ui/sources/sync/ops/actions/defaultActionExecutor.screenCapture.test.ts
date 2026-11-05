@@ -13,6 +13,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { dispatchDesktopCaptureWindowAction } from '@/utils/platform/desktopWindowActionDispatch';
+import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 
 const events = vi.hoisted(() => new Map<string, Set<(event: { payload: unknown }) => void>>());
 // The native event SDK is the process boundary; capture admission and settlement remain real.
@@ -44,6 +46,8 @@ const { readComposerPresentationSnapshot } = await import('@/components/sessions
 const { readSessionAttachmentDrafts, clearSessionAttachmentDrafts, resolveSessionAttachmentDraftScope } = await import('@/components/sessions/attachments/sessionAttachmentDraftStore');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { createNativeScreenCaptureAction } = await import('./screenCaptureActions');
+const { registerDesktopAppWindowWorkspace } = await import('@/desktop/window/appWindowRuntime');
+const { registerDesktopAppWindowActionResponder } = await import('./desktopAppWindowActionDispatch');
 
 describe('screen capture through the default executor and native adapter', () => {
     const captured: NativeCaptureResult = { captureRef: 'capture-one', kind: 'still', path: '/Pictures/Happier/capture-one.png',
@@ -61,6 +65,7 @@ describe('screen capture through the default executor and native adapter', () =>
     let extractedWindowText: NativeCaptureWindowText;
     let openedTarget: unknown;
     let nativeWindowLabel: string | null = null;
+    let restoredWindows: AppWindowRecord[] = [];
     let target: Readonly<{ serverId: string; accountId: string; sessionId: string }>;
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
     beforeEach(async () => {
@@ -80,6 +85,7 @@ describe('screen capture through the default executor and native adapter', () =>
         writeExistingSessionDraft({ scope: target, sessionId: target.sessionId, patch: { text: 'Existing words' } });
         commands.length = 0; preparedMissing = false; inUse = true; settleFailed = false; openedTarget = undefined; windowTextRefusal = null;
         discardFailed = false; events.clear(); emitted.length = 0; nativeWindowLabel = null;
+        restoredWindows = [];
         disclosure = { hasMarks: true, includeWindowText: false }; cachedWindowText = null;
         extractedWindowText = { status: 'unavailable', reason: 'no_window_context', source: null };
         // The desktop invoke is the OS/file boundary; Action, adapter and draft owners are real.
@@ -87,6 +93,7 @@ describe('screen capture through the default executor and native adapter', () =>
         vi.stubGlobal('__TAURI_INTERNALS__', { metadata: { currentWindow: { get label() { return nativeWindowLabel; } } },
             invoke: async (command: string, args?: Record<string, unknown>) => {
             if (command.startsWith('desktop_secure_storage_')) return secureStorage.invoke(command, args);
+            if (command === 'desktop_app_window_restore') return restoredWindows;
             commands.push(command);
             if (command === 'desktop_capture_start') return { status: 'completed', operationRef: 1, result: captured };
             if (command === 'desktop_capture_read_state') return { status: 'idle' };
@@ -163,6 +170,40 @@ describe('screen capture through the default executor and native adapter', () =>
         expect(commands).toEqual(['desktop_capture_start']);
     });
 
+    it('forwards Capture Add once to the window composer while Extract leaves the same draft untouched', async () => {
+        restoredWindows = [{ windowId: 'capture-destination', layoutId: 'capture-destination', homeId: target.serverId,
+            accountId: target.accountId, selectedAddress: { kind: 'session', sessionId: target.sessionId } }];
+        const state = createWorkspaceState({ id: 'windowed-session', target: { kind: 'session', params: {
+            id: target.sessionId, serverId: target.serverId, accountId: target.accountId,
+        } }, pinned: false, preview: false, presentation: { windowId: 'capture-destination' } });
+        const releasePlacement = registerDesktopAppWindowWorkspace({ windowId: 'main-layout', scope: target,
+            getState: () => state, dispatch: () => {}, catalog: [], activateTab: () => {},
+            placementMetrics: { cascadeOffset: 24, screenInset: 24 } });
+        nativeWindowLabel = 'destination_capture-destination';
+        const stopResponder = await registerDesktopAppWindowActionResponder();
+        try {
+            nativeWindowLabel = 'main';
+            extractedWindowText = { status: 'ready', text: 'Extracted window words',
+                source: { appName: 'Editor', windowTitle: 'Current window', windowId: 7 } };
+            const beforeExtract = getSessionDraftSnapshot(target, { kind: 'session', sessionId: target.sessionId });
+            expect(await createDefaultActionExecutor().execute('screenCapture.windowText.read', { captureRef: captured.captureRef },
+                { surface: 'ui', serverId: target.serverId })).toMatchObject({ ok: true,
+                    result: { status: 'ready', text: 'Extracted window words' } });
+            expect(getSessionDraftSnapshot(target, { kind: 'session', sessionId: target.sessionId })).toBe(beforeExtract);
+            expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(target))).toEqual([]);
+            expect(commands).not.toContain('desktop_window_emit_action');
+            await dispatchDesktopCaptureWindowAction({ windowLabel: 'capture', requestId: 'window-add',
+                actionIdentifier: 'screenCapture.addToDraft', data: { captureRef: captured.captureRef, session: target, note: 'Capture note' } },
+                createDefaultActionExecutor({ screenCaptureWindowPress: true }));
+            expect(emitted.at(-1)).toMatchObject({ windowLabel: 'capture', ok: true });
+            expect(commands.filter(command => command === 'desktop_window_emit_action')).toHaveLength(1);
+            expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: target.sessionId })?.text).toContain('Capture note');
+            expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(target))).toHaveLength(1);
+        } finally {
+            emitNative('desktopAppWindow://records', []);
+            stopResponder(); releasePlacement();
+        }
+    });
 
     it('returns desktop_only off desktop without native acquisition', async () => {
         // Retain the browser storage boundary while removing only the desktop host.

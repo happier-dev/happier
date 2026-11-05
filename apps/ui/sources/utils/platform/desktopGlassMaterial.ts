@@ -22,7 +22,7 @@ export interface DesktopGlassMaterialRequest {
 }
 
 /** Floating panel windows that show the main window's material behind their card (`window_chrome.rs`). */
-export type DesktopGlassPanelLabel = 'capture';
+export type DesktopGlassPanelLabel = 'capture' | 'activity_overlay';
 
 const unavailable: DesktopGlassState = {
     supported: false,

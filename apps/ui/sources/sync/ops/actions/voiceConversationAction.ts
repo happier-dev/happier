@@ -5,6 +5,8 @@ import { readMicrophonePermissionState, requestMicrophonePermission, type Microp
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse, readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { getFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { getFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
+import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -44,6 +46,7 @@ import { setVoiceActivityFeedExpanded } from '@/components/voice/surface/voiceAc
 const registry = createDefaultVoiceProviderRegistry();
 
 async function readConversation(target: VoiceStartIntent = { kind: 'default' }): Promise<Readonly<{
+    ownsVoiceRuntime: boolean;
     voice: VoiceConversationStatus;
     idleTarget: VoiceIdleTarget;
     context: VoiceAttemptRecoveryContext;
@@ -52,6 +55,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     capabilities: VoiceAdapterSurfaceCapabilities | null;
     navigation: Readonly<{ href: unknown }> | null;
 }>> {
+    const ownsVoiceRuntime = resolveDesktopWindowContext().role === 'primary';
     let state = storage.getState();
     let voiceSettings = voiceSettingsParse(state.settings.voice);
     let snapshot = voiceSessionManager.getSnapshot();
@@ -80,6 +84,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const idleTarget = resolveVoiceIdleTarget({ intent: target, scopeDefault: voiceSettings.ui.scopeDefault,
         restartTarget: getVoiceSessionRestartTarget(providerId, state.profileScope),
         allowsGlobalStart: capabilities?.allowsGlobalStart === true, focusedSessionAddress: getFocusedSessionAddress(),
+        focusedWindowSurface: getFocusedDesktopAppWindowSurface(), currentAccountId: state.profileScope?.accountId,
         lastFocusedSessionAddress: useVoiceTargetStore.getState().lastFocusedSessionAddress });
     const admission = resolveVoiceStartAdmission({ bindingScope: idleTarget.kind,
         daemonLocalVoiceUnavailable: !voiceAgentEnabled, globalStartAuthorized: idleTarget.kind === 'global' && capabilities?.allowsGlobalStart === true,
@@ -122,9 +127,10 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const control = resolveVoiceAttemptControl({ surfaceState, tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
         status: snapshot.status, sessionId: snapshot.sessionId, canStop: snapshot.canStop,
         canCommitInput: snapshot.canCommitInput, muted: snapshot.micMuted === true, capturing: false,
-        startAdmitted: voiceEnabled && admission.canStart && getVoiceSessionLifecycleController() !== null,
-        hasRecovery: resolveVoiceAttemptRecoveryAvailable(recovery, context) || setupIncomplete,
-        canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snapshot), setupOffered: idleTarget.kind === 'global' || startAddress !== null });
+        startAdmitted: ownsVoiceRuntime && voiceEnabled && admission.canStart && getVoiceSessionLifecycleController() !== null,
+        hasRecovery: ownsVoiceRuntime && (resolveVoiceAttemptRecoveryAvailable(recovery, context) || setupIncomplete),
+        canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snapshot),
+        setupOffered: ownsVoiceRuntime && (idleTarget.kind === 'global' || startAddress !== null) });
     const voice: VoiceConversationStatus = { attemptId, adapterId: snapshot.adapterId, sessionId: snapshot.sessionId,
         status: snapshot.status, mode: snapshot.mode, target: attemptId
             ? (visibleEnded?.targetSessionAddress ?? capturedTarget) ? { kind: 'session', sessionAddress: visibleEnded?.targetSessionAddress ?? capturedTarget } : { kind: 'global' }
@@ -155,7 +161,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const navigation = navigationBinding ? { href: navigationAddress
         ? buildScopedSessionRouteHref({ sessionId: navigationAddress.sessionId, serverId: navigationAddress.serverId })
         : SETTINGS_ROUTES.voiceHistory } : null;
-    return { voice, idleTarget, context, recoveryAction, setupIncomplete, capabilities, navigation };
+    return { ownsVoiceRuntime, voice, idleTarget, context, recoveryAction, setupIncomplete, capabilities, navigation };
 }
 
 export async function executeVoiceConversationAction(
@@ -165,7 +171,8 @@ export async function executeVoiceConversationAction(
 ): Promise<Readonly<{ status: 'completed'; voice: VoiceConversationStatus; permission?: MicrophonePermissionState }>
     | Readonly<{ status: 'unavailable'; code: string; voice: VoiceConversationStatus; permission?: MicrophonePermissionState }>> {
     const parsed = VoiceConversationActionInputSchemas[actionId].safeParse(input);
-    if (parsed.success && ['ui.voice_global.start', 'ui.voice_global.new_conversation', 'ui.voice_global.continue_conversation'].includes(actionId)) {
+    if (parsed.success && ['ui.voice_global.start', 'ui.voice_global.new_conversation', 'ui.voice_global.continue_conversation'].includes(actionId)
+        && resolveDesktopWindowContext().role === 'primary') {
         const providerId = resolveVoicePresentedProviderId(voiceSessionManager.getSnapshot(),
             voiceSettingsParse(storage.getState().settings.voice), registry);
         if (providerId && !getVoiceAdapterRegistry().get(providerId)) {
@@ -177,6 +184,8 @@ export async function executeVoiceConversationAction(
         ...(actionId === 'ui.voice_global.setup.microphone.permission.request' ? { permission: 'unknown' as const } : {}) });
     if (deps.isCurrent?.() === false) return unavailable('voice_action_account_changed');
     if (!parsed.success) return unavailable('invalid_voice_action_input');
+    // History is ordinary local navigation. The retained primary owns every Voice runtime effect.
+    if (!current.ownsVoiceRuntime && actionId !== 'ui.voice_global.conversations.open') return unavailable('voice_presentation_unavailable');
     const value = parsed.data;
     if (actionId === 'ui.voice_global.get') return { status: 'completed', voice: current.voice };
     if (actionId === 'ui.voice_global.setup.microphone.permission.request') {

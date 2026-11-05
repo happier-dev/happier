@@ -13,7 +13,6 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider, ConcurrentSessionCacheRuntime } from '@/auth/context/AuthContext';
 import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { OrganizationPolicyDiagnostic } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -52,14 +51,12 @@ import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBu
 import { readAiAutoDebugRemoteLoggingEnabled } from '@/utils/system/aiAutoDebuggingEnv';
 import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
 import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
-import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
+import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigationThemeProvider';
 import { SurfaceFinishRuntime } from '@/theme/SurfaceFinishRuntime';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
-import { glassNavigationBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import { useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { preloadTranslations } from '@/text/i18n';
@@ -720,20 +717,7 @@ function FullAppRootLayout() {
     );
 }
 
-/** Inside the glass runtime, so the stack background clears only while the atmosphere paints behind the active route. */
-function useNavigationTheme() {
-    const { theme } = useUnistyles();
-    const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
-    const environment = useGlassRuntimeEnvironment();
-    const background = glassNavigationBackgroundColor(theme.colors.background.canvas, environment, isDesktopOverlayWindow);
-    return React.useMemo(() => {
-        const base = theme.dark ? DarkTheme : DefaultTheme;
-        return { ...base, colors: { ...base.colors, background } };
-    }, [background, theme.dark]);
-}
-
 function AppBoot() {
-    const navigationTheme = useNavigationTheme();
     //
     // Init sequence
     //
@@ -875,7 +859,7 @@ function AppBoot() {
                       * instead of the user silently appearing signed out.
                       */}
                     <AuthProvider initialCredentials={initState.credentials}>
-                        <ThemeProvider value={navigationTheme}>
+                        <GlassNavigationThemeProvider>
                             <StatusBarProvider />
                             <AppPaneModalProvider>
                                 <WebServerOverrideGate>
@@ -892,7 +876,7 @@ function AppBoot() {
                                 </ConcurrentSessionCacheRuntime>
                                 </WebServerOverrideGate>
                             </AppPaneModalProvider>
-                        </ThemeProvider>
+                        </GlassNavigationThemeProvider>
                     </AuthProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>

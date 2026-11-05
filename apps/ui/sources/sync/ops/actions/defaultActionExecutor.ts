@@ -246,6 +246,7 @@ import { createSettingsOwnerActionExecutor } from './settingsOwnerActionExecutor
 import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/automations/apiAutomations';
 import { createScmDiffSummarySettingsCatalogReader } from './scmDiffSummarySettingsCatalog';
 import { createAppShellAction } from './appShellAction';
+import { executeDesktopAppWindowClientAction } from './desktopAppWindowActionDispatch';
 import { createNotificationConfigurationAction } from './notificationConfigurationAction';
 import { createBugReportSubmitAction } from './bugReportSubmitAction';
 import { executeAppUpdateAction } from '@/updates/appUpdateActionRuntime';
@@ -1282,6 +1283,24 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     usageSourceAction: accountContext ? createUiUsageSourceActionPort(accountContext, opts?.usageSourceDismiss) : undefined,
     scmActionExecute,
     appShellAction: createAppShellAction(accountContext),
+    clientActionExecute: request => executeDesktopAppWindowClientAction(request, {
+      screenCaptureSendDraftOnly: opts?.screenCaptureSendDraftOnly,
+      screenCaptureWindowPress: opts?.screenCaptureWindowPress,
+    }),
+    desktopWindowsOpen: async ({ input, context }) => {
+      context.signal?.throwIfAborted();
+      // The native lifecycle producer owns creation, reuse and placement together.
+      const { openDesktopAppWindow } = await import('@/desktop/window/appWindowRuntime');
+      return await openDesktopAppWindow(input);
+    },
+    desktopNotchSet: async args => {
+      const { createDesktopNotchActionDeps } = await import('./desktopNotchActions');
+      return createDesktopNotchActionDeps().desktopNotchSet(args);
+    },
+    desktopDisplaysList: async args => {
+      const { createDesktopDisplayActionDeps } = await import('./desktopDisplayActions');
+      return createDesktopDisplayActionDeps().desktopDisplaysList(args);
+    },
     screenCaptureAction: async args => {
       const { createNativeScreenCaptureAction } = await import('./screenCaptureActions');
       return createNativeScreenCaptureAction({

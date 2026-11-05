@@ -7,6 +7,7 @@ import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
+import { DiscussionSelectionSourceV1Schema } from '../discussions/content.js';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '../discussions/replyTargets.js';
 import { DocEditProposalDispositionV1Schema } from '../discussions/docEditProposalDispositionV1.js';
 import { SessionQuestionContextV1Schema } from '../sessions/permissions/questionV1.js';
@@ -121,7 +122,8 @@ export const AppShellActionInputSchemas = {
   'session.draft.directory.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
     directory: SessionDirectoryIntentV1Schema }),
   'session.draft.append': z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)),
-    text: z.string().check(z.refine(text => text.trim().length > 0)), sourceSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
+    text: z.string().check(z.refine(text => text.trim().length > 0)), sourceSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    discussionSource: z.optional(z.omit(DiscussionSelectionSourceV1Schema, { draftCorrelationId: true })) }),
 } as const;
 export const AppShellActionOutputSchemas = {
   'session.work.get': z.discriminatedUnion('status', [ReadUnavailableSchema, ReadLoadingSchema, z.strictObject({
@@ -171,7 +173,7 @@ export const APP_SHELL_ACTION_SPECS = [
   {
     id: 'session.draft.append', approval: {result: 'required'}, title: 'Append to a Session draft',
     clientPresenter: 'session',
-    description: 'Persist an append handoff for the exact Session composer on the invoking Home. Preserves existing draft text and never submits a message.',
+    description: 'Append to the exact Session repository draft on the invoking Home. Preserves existing draft text and never submits a message.',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], bindings: { mcpToolName: 'session_draft_append' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },

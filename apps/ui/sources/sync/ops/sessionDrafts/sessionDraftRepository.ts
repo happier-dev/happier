@@ -2098,7 +2098,11 @@ export class SessionDraftRepository {
         if (this.storage.flush) await this.flushStorage(params.scope);
     }
 
-    flushSessionDraft(params: Readonly<{ scope: SessionDraftRepositoryScope; address: SessionDraftAddressV2 }>): Promise<SessionDraftFlushResult> {
+    flushSessionDraft(params: Readonly<{ scope: SessionDraftRepositoryScope; address: SessionDraftAddressV2;
+        scoped?: Readonly<{ runtime: SessionDraftRepositoryScopedRuntime; isCurrent: () => boolean }>;
+    }>): Promise<SessionDraftFlushResult> {
+        if (params.scoped) return this.flushSessionDraftWithScopedRuntime({ scope: params.scope,
+            address: params.address, ...params.scoped });
         const key = this.replicaListenerKey(params.scope, params.address);
         const existing = this.flushInFlight.get(key);
         if (existing) return existing;
