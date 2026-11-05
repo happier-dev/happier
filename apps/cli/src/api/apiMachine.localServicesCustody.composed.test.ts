@@ -22,6 +22,10 @@ import { updateSettings } from '@/persistence';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadRequestV1Schema,
     WorkspaceExecutionConfigReadResponseV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 const boundary = vi.hoisted(() => ({
     control: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -147,6 +151,38 @@ it('starts and restarts a native owner Service through Home admission and real d
             const refused = await relay.invokeUi(restartMethod, createTargetedActionRpcRequestV1(restartRequest, target), { actorAccountId });
             expect(refused).toHaveProperty('errorCode');
         }
+        // The Home-admitted Action delegates through the real CLI Machine
+        // adapter. This exact in-process hop spends admissionResult instead of
+        // invoking the receiver authorizer again. The registered service owner
+        // must still retain the Use member's identity, never the daemon's bearer.
+        const admittedEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+            requestId: 'member-use-admitted-restart', target, input: restartRequest });
+        const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-member-use-restart', binding: {
+            accountId: 'member-use', custodianAccountId: 'requester', serverIdentityId: home,
+            authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+            machineId: 'machine', installationId: h.f.installation.installationId,
+            actionId: 'localServices.actions.restartManaged', requestId: admittedEnvelope.requestId, target,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(admittedEnvelope),
+        } });
+        const credentials = h.f.bootstrap.credentials;
+        const admittedExecutor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+            sessionId: '', mode: 'plain', ctx: null, serverId: home, serverIdentityId: home,
+            serverHttpBaseUrl: 'https://session-home.test',
+            externalActionMachineInstallationId: h.f.installation.installationId,
+            externalActionMachineRequestPrivateKey: Buffer.from(h.f.installation.privateKey, 'base64url'),
+            actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ actionsSettingsV1: settings }) }),
+            machineActionDirectTargetTransport: { machineId: 'machine',
+                invoke: (method, input, options) => h.machine.invokeLocalMachineAction(method, input, options) },
+            resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features }),
+        }));
+        expect(await admittedExecutor.execute('localServices.actions.restartManaged', restartRequest, {
+            surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' },
+            actionRequestId: admittedEnvelope.requestId, runtimeAccountId: 'member-use', serverId: home, serverIdentityId: home,
+            machineAdmission: { actorAccountId: 'member-use', custodianAccountId: 'requester', machineId: 'machine',
+                installationId: h.f.installation.installationId, role: 'use', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true,
+            externalActionExecutionAuthorization: admitted, externalActionTarget: target,
+        })).toMatchObject({ ok: false, errorCode: 'requester_credentials_unavailable' });
         expect(original.snapshot().state).toBe('running');
         expect(await readFile(nativeLog, 'utf8')).toBe('owner-native-service\n');
         const restarted = LocalServiceActionResultV1Schema.parse(await relay.invokeUi(restartMethod,
