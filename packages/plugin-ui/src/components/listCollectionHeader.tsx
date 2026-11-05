@@ -140,8 +140,8 @@ function SearchTokens(props: Readonly<{ tokens: readonly ListCollectionSearchTok
               ...happierFocusRingStyle({ visible: state.focused, color: theme.colors.focus }),
             }]}
           >
-            {token.qualifier === undefined ? null : <HappierText variant="meta" tone="secondary">{token.qualifier}</HappierText>}
-            <HappierText variant="meta" tone="neutral">{token.label}</HappierText>
+            {token.qualifier === undefined ? null : <HappierText variant="meta" tone="secondary" numberOfLines={1}>{token.qualifier}</HappierText>}
+            <HappierText variant="meta" tone="neutral" numberOfLines={1} style={searchTokenLabelStyle}>{token.label}</HappierText>
           </HappierPressable>
         );
       })}
@@ -172,8 +172,13 @@ export function CollectionKeyCap(props: Readonly<{ label: string; testID?: strin
   );
 }
 
-const searchTokensStyle = { flexShrink: 1, minWidth: 0 } as const;
+// The tokens stay inside the field: a narrow field truncates their labels and clips the rest rather than drawing
+// them over the controls beside it (Views, Filters).
+const searchTokensStyle = { flexShrink: 1, minWidth: 0, overflow: 'hidden' } as const;
+const searchTokenLabelStyle = { flexShrink: 1, minWidth: 0 } as const;
 const searchTokenStyle = {
+  flexShrink: 1,
+  minWidth: 0,
   flexDirection: 'row',
   alignItems: 'center',
   gap: 4,

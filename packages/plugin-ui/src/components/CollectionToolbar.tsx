@@ -153,6 +153,11 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const chrome = useHappierPageChromeInternal();
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
+  // A healthy freshness is the first thing the one row gives up: its words go (Refresh still says them) before the
+  // toolbar folds, at the row width that needed it and anything narrower. Words that warn are never given up.
+  const quietable = freshness != null && freshness.tone === 'muted';
+  const [quietBelowPx, setQuietBelowPx] = useState<number | null>(null);
+  const quiet = quietable && quietBelowPx !== null;
   const rowRef = useRef<ComponentRef<typeof View>>(null);
   const leadRef = useRef<ComponentRef<typeof View>>(null);
   const trailRef = useRef<ComponentRef<typeof View>>(null);
@@ -171,8 +176,13 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
       widths[name] = width;
       const { row: rowWidth, lead: leadWidth, trail: trailWidth } = widths;
       if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0) return;
-      if (leadWidth + trailWidth + spacing.small > rowWidth) fit?.overflow(rowWidth);
-      else fit?.width(rowWidth);
+      if (leadWidth + trailWidth + spacing.small > rowWidth) {
+        if (quietable && !quiet) setQuietBelowPx(rowWidth);
+        else fit?.overflow(rowWidth);
+      } else {
+        if (quiet && rowWidth > quietBelowPx!) setQuietBelowPx(null);
+        fit?.width(rowWidth);
+      }
     });
     read('row', row);
     read('lead', lead);
@@ -202,7 +212,7 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
       <View ref={trailRef} style={[wideRowStyle, trailStyle, { gap: spacing.xsmall }]}
         onLayout={measure}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:trail` })}>
-        {freshness == null ? null : (
+        {freshness == null || quiet ? null : (
           <Status
             tone={freshness.tone}
             pulsing={freshness.pulsing}
@@ -213,7 +223,7 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         {refresh === undefined ? null : (
           <IconButton
             icon={<Icon name="refresh" />}
-            accessibilityLabel={refresh.label}
+            accessibilityLabel={quiet ? `${refresh.label}, ${freshness!.label}` : refresh.label}
             busy={refresh.busy}
             disabled={refresh.disabled}
             onPress={refresh.onPress}
@@ -331,7 +341,8 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
         </View>
         <Views views={props.views} compact />
         {head ? null : buttons}
-        {measured('pageActions', slots?.pageActions)}
+        {/* The host's route controls (Run on) and the column's Hide stay one line, as they end the wide row. */}
+        {measured('pageActions', slots?.pageActions, compactPageActionsStyle)}
       </Row>
     </Stack>
   );
@@ -434,6 +445,7 @@ const leadStyle: HappierPortableStyle = {
 // pane): freshness, Refresh, the switch and Run on stay where the eye finds them, never stranded on the left.
 const trailStyle: HappierPortableStyle = { maxWidth: '100%', minWidth: 0, marginLeft: 'auto', justifyContent: 'flex-end' };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
+const compactPageActionsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0 };
 /** A control's words never break inside the folded toolbar; search gives way. */
 const compactSelectionStyle: HappierPortableStyle = { flexShrink: 0 };
 const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };

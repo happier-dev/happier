@@ -5227,6 +5227,8 @@ describe('the Collection toolbar', () => {
     // their shared room. Internal wrapping inside a cluster keeps its existing composition policy.
     boxes['toolbar:lead'] = { width: 1300, height: 36 };
     layout('toolbar', 76);
+    // A healthy freshness gives its words up first; the row lays out again without them and still does not fit.
+    layout('toolbar', 76);
     expect(view.query('refine:toolbar')).toBeNull();
     view.unmount();
   });
@@ -5315,6 +5317,48 @@ describe('the Collection toolbar', () => {
     view.unmount();
   });
 
+  it('gives up a healthy freshness\'s words before it gives up the one row, and keeps them one tap away', () => {
+    const view = mount({ search, header: toolbarHeader([], { tone: 'muted', label: 'Updated 10 minutes ago' }), renderPopover: openPopover });
+    view.measure(1120);
+    const toolbar = view.query('toolbar')!;
+    expect(toolbar.textContent).toContain('Updated 10 minutes ago');
+    reportToolbarLayout(view, 'toolbar:lead', 0, 650, 36);
+    reportToolbarLayout(view, 'toolbar', 0, 1000, 36);
+    reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    expect(toolbar.textContent).not.toContain('Updated 10 minutes ago');
+    // Without the words the row holds, and stays one row.
+    reportToolbarLayout(view, 'toolbar:trail', 0, 300, 32);
+    expect(view.query('refine:toolbar')).not.toBeNull();
+    // Only a row that still does not fit folds.
+    reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
+    expect(view.query('refine:toolbar')).toBeNull();
+    view.unmount();
+  });
+
+  it('never hides a freshness that is warning the reader to keep the one row', () => {
+    const view = mount({ search, header: toolbarHeader([], { tone: 'warning', label: 'Stale since 09:00' }), renderPopover: openPopover });
+    view.measure(1120);
+    reportToolbarLayout(view, 'toolbar:lead', 0, 650, 36);
+    reportToolbarLayout(view, 'toolbar', 0, 1000, 36);
+    reportToolbarLayout(view, 'toolbar:trail', 0, 450, 32);
+    expect(view.query('refine:toolbar')).toBeNull();
+    expect(view.query('toolbar')!.textContent).toContain('Stale since 09:00');
+    view.unmount();
+  });
+
+  it('keeps the host\'s page actions on one line in the folded toolbar, not stacked under each other', () => {
+    const header: CollectionProps<Entry>['header'] = (slots) => (
+      <CollectionToolbar slots={{ ...slots, pageActions: <><Text testID="run-on">Run on</Text><Text testID="hide-column">Hide</Text></> }}
+        lens={<Text testID="lens">My work</Text>} testID="toolbar" />
+    );
+    const view = mount({ search, header });
+    view.measure(780);
+    expect(getComputedStyle(view.query('run-on')!.parentElement!).flexDirection).toBe('row');
+    expect(view.query('run-on')!.parentElement).toBe(view.query('hide-column')!.parentElement);
+    view.unmount();
+  });
+
   it('folds as soon as its one row no longer fits its real controls, not at a guessed width', () => {
     const view = mount({
       search,
@@ -5333,6 +5377,8 @@ describe('the Collection toolbar', () => {
     layout('toolbar', 0, 36, 1000);
     expect(view.query('refine:toolbar')).not.toBeNull();
     // Freshness makes the trailing cluster wider; the current widths no longer fit the same 1000px row.
+    layout('toolbar:trail', 44, 32, 450);
+    // A healthy freshness gives its words up first; the row lays out again without them and still does not fit.
     layout('toolbar:trail', 44, 32, 450);
     const toolbar = view.query('toolbar')!;
     expect(view.query('refine:toolbar')).toBeNull();
@@ -5398,9 +5444,10 @@ describe('the Collection toolbar', () => {
     // The long freshness is gone: the controls the row needed room for got shorter, so the wide row is tried again.
     await view.update({ search, header: toolbarHeader([]), renderPopover: openPopover });
     expect(view.query('refine:toolbar')).not.toBeNull();
-    // It still does not fit: it folds again and stays folded while nothing shrinks.
+    // It still does not fit: its healthy freshness gives its words up, then it folds and stays folded while nothing shrinks.
     layout('toolbar:lead', 0, 36);
     layout('toolbar:trail', 44, 32);
+    layout('toolbar', 0, 76);
     layout('toolbar', 0, 76);
     expect(view.query('refine:toolbar')).toBeNull();
     await view.update({ search, header: toolbarHeader([]), renderPopover: openPopover });
