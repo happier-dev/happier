@@ -76,7 +76,7 @@ function fixture(scrollRef?: React.RefObject<ScrollView | null>, acknowledgement
             return { status: 'applied' };
         },
     });
-    const render = () => <StagedMoveDockSlotContext.Provider value={model.dockSlot}><RuntimeProbe enumerate={enumerate} /><EntityFlatReorderList binding={binding()} testID="list" initialOrganizing scrollRef={scrollRef}>
+    const render = () => <StagedMoveDockSlotContext.Provider value={model.dockSlot}><RuntimeProbe enumerate={enumerate} /><EntityFlatReorderList binding={binding()} testID="list" alwaysOrganizing scrollRef={scrollRef}>
         {model.ids.map(id => <EntityFlatReorderRow key={id} id={id} pending={model.pending.has(id)}>
             {({ renderHandle }) => <>{renderHandle(`grip:${id}`)}<Text>{id}</Text></>}
         </EntityFlatReorderRow>)}

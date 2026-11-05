@@ -133,7 +133,7 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
                     accessibilitySemantics="alert"
                 />
             ) : null}
-            <EntityFlatReorderList binding={binding} testID="home-layout.reorder" initialOrganizing>
+            <EntityFlatReorderList binding={binding} testID="home-layout.reorder" alwaysOrganizing>
                 {rows.map((row, index) => (
                     <EditorRowView
                         key={row.id}

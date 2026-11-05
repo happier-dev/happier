@@ -97,7 +97,7 @@ export function NavigationPlacementCustomizerView(props: CustomizerProps & Reado
     };
     return <ItemList testID={testID}>
         {props.showHeader !== false ? <PageHeader title={t(`navigationPlacement.${props.surfaceId}`)} description={t('navigationPlacement.description')} /> : null}
-        <EntityFlatReorderList binding={binding} testID={`${testID}.reorder`} initialOrganizing>
+        <EntityFlatReorderList binding={binding} testID={`${testID}.reorder`} alwaysOrganizing>
             <ItemGroup>
                 {items.map(item => <EntityFlatReorderRow key={item.id} id={item.id}>
                     {({ renderHandle }) => <SegmentedChoiceItem title={item.title}

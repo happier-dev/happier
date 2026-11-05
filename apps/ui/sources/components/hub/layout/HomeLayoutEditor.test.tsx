@@ -560,7 +560,7 @@ describe('Home Customize entity reorder binding', () => {
         const screen = await renderScreen(<AccountShell><HomeLayoutEditor /></AccountShell>);
         await flushHookEffects({ cycles: 3 });
         const list = () => screen.root.findByType(EntityFlatReorderList);
-        expect(list().props.initialOrganizing).toBe(true);
+        expect(list().props.alwaysOrganizing).toBe(true);
         const binding = list().props.binding;
         expect(binding.getItem('setup')).toEqual({ kind: 'home-section', scope, sectionId: 'setup' });
         expect(binding.resolve('setup', { anchorId: 'start', placement: 'before' })).toMatchObject({ status: 'allowed', effect: { actionId: 'home.hub.layout.update', input: { intent: { kind: 'move_to', sectionId: 'setup', position: { anchorId: 'start', placement: 'before' } } } } });

@@ -137,7 +137,11 @@ export function EntityFlatReorderList(props: Readonly<{
     binding: EntityFlatReorderBinding;
     children: React.ReactNode;
     testID: string;
-    initialOrganizing?: boolean;
+    /**
+     * An editor whose whole job is arranging (a customizer, the Home layout) keeps every grip showing on touch and
+     * offers no Organize toggle: its own Done closes the editor, so a second Done inside the list would duplicate it.
+     */
+    alwaysOrganizing?: boolean;
     /** `horizontal`: the items sit in a row (the spaces strip); places split at each item's horizontal middle. */
     axis?: EntityFlatAxis;
     scrollRef?: React.RefObject<ScrollView | null>;
@@ -159,7 +163,7 @@ export function EntityFlatReorderList(props: Readonly<{
     const contentHeight = useSharedValue(0);
     const viewportBounds = React.useRef<WindowBounds | null>(null);
     const registry = useTreeDropRegistry(runtime.refresh);
-    const [organizing, setOrganizing] = React.useState(props.initialOrganizing === true);
+    const [organizing, setOrganizing] = React.useState(props.alwaysOrganizing === true);
     const inheritedScroll = usePopoverScrollSourceRef();
     const scrollRef = props.scrollRef ?? inheritedScroll;
     const latest = React.useRef(props);
@@ -263,7 +267,7 @@ export function EntityFlatReorderList(props: Readonly<{
     );
     // Organize is for coarse pointers only, and only when there is something to organize: hover-capable
     // pointers already have the grip on every row (lab K1h; a control with an empty target set is hidden).
-    const canOrganize = !pointerInteraction && props.binding.scope !== null && props.binding.items.length > 1;
+    const canOrganize = props.alwaysOrganizing !== true && !pointerInteraction && props.binding.scope !== null && props.binding.items.length > 1;
     return <FlatContext.Provider value={context}>
         <View ref={node} testID={props.testID} style={axis === 'horizontal' ? HORIZONTAL_LIST_STYLE : undefined} onLayout={() => { void measure(); }}>
             {children}
