@@ -29,7 +29,7 @@ export function pluralRu(count: number, one: string, few: string, many: string):
 export const en = {
     fields: workflowFieldTranslations.en,
     blocks: {
-        actionSub: 'Action · no agent turn',
+        actionSub: 'Action',
         notSet: 'Not set',
         set: 'Set',
         clear: 'Clear',

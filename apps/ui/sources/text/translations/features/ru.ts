@@ -15068,7 +15068,7 @@ const pluralRu = Shared_workflowEditorPageTranslations.pluralRu;
 const ru: WorkflowEditorPageTranslations = {
     fields: workflowFieldTranslations.ru,
     blocks: {
-        actionSub: 'Действие · без хода агента',
+        actionSub: 'Действие',
         notSet: 'Не задано',
         set: 'Задать',
         clear: 'Очистить',
@@ -15851,7 +15851,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         generationRequested: "Создание результата запрошено",
         startsResume: "Начнётся, когда вы возобновите запуск.",
         generateBody: "Агент создаст новый результат в этой беседе. Если он допустим, выполнение продолжится без повторного вопроса.",
-        acceptedPaused: "Использование результата оставляет процесс на паузе.",
+        acceptedPaused: "Результат принят. Процесс остаётся на паузе.",
         editResult: "Изменить результат",
         generate: "Создать результат и продолжить",
         discuss: "Обсудить",
@@ -16225,7 +16225,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         pauseAtBoundary: 'Приостановить на ближайшей границе',
         pause: 'Пауза',
         pausePending: 'Завершает текущую работу, затем приостанавливается.',
-        paused: 'Приостановлено после последней завершённой границы.',
+        paused: 'Новая работа не начнётся, пока вы не продолжите.',
         resume: 'Продолжить',
         runAgain: 'Запустить рабочий процесс снова',
         retryStep: 'Повторить шаг',
@@ -16275,8 +16275,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         notStarted: 'Не запускалось',
         machineUnavailable: ({ machine }) => `Этот запуск потерял связь с ${machine}.`,
         machineUnavailableBody: 'Варианты продолжения появятся, когда станет известно текущее состояние.',
-        completedCount: ({ count }) =>
-            count === 1 ? 'Единственный шаг завершён.' : `Все шаги (${count}) завершены.`,
+        completedCount: ({ count }) => (count === 1 ? 'единственный шаг завершён.' : `все шаги (${count}) завершены.`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Завершено шагов: ${completed} из ${total}.`,
         notAnswered: 'Без ответа',
         waitContinued: 'Продолжено',

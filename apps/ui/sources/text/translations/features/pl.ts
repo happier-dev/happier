@@ -15056,7 +15056,7 @@ const pluralRu = Shared_workflowEditorPageTranslations.pluralRu;
 const pl: WorkflowEditorPageTranslations = {
     fields: workflowFieldTranslations.pl,
     blocks: {
-        actionSub: 'Akcja · bez tury agenta',
+        actionSub: 'Akcja',
         notSet: 'Nie ustawiono',
         set: 'Ustaw',
         clear: 'Wyczyść',
@@ -15839,7 +15839,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         generationRequested: "Zlecono generowanie",
         startsResume: "Zacznie się po wznowieniu uruchomienia.",
         generateBody: "Agent zapisze nowy wynik w tej rozmowie. Jeśli będzie poprawny, uruchomienie będzie kontynuowane bez ponownego pytania.",
-        acceptedPaused: "Użycie wyniku pozostawia workflow wstrzymany.",
+        acceptedPaused: "Wynik zaakceptowany. Workflow jest nadal wstrzymany.",
         editResult: "Edytuj wynik",
         generate: "Wygeneruj wynik i kontynuuj",
         discuss: "Porozmawiaj",
@@ -16213,7 +16213,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         pauseAtBoundary: 'Wstrzymaj na najbliższej granicy',
         pause: 'Wstrzymaj',
         pausePending: 'Kończy bieżącą pracę, a potem się wstrzymuje.',
-        paused: 'Wstrzymano po ostatniej ukończonej granicy.',
+        paused: 'Nowa praca nie zacznie się, dopóki nie wznowisz.',
         resume: 'Wznów',
         runAgain: 'Uruchom przepływ pracy ponownie',
         retryStep: 'Powtórz krok',
@@ -16263,8 +16263,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         notStarted: 'Nie uruchomiono',
         machineUnavailable: ({ machine }) => `To uruchomienie straciło kontakt z ${machine}.`,
         machineUnavailableBody: 'Możliwości wznowienia pojawią się, gdy poznamy bieżący stan.',
-        completedCount: ({ count }) =>
-            count === 1 ? 'Jedyny krok jest gotowy.' : `Wszystkie kroki (${count}) są gotowe.`,
+        completedCount: ({ count }) => (count === 1 ? 'jedyny krok jest gotowy.' : `wszystkie kroki (${count}) są gotowe.`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Ukończone kroki: ${completed} z ${total}.`,
         notAnswered: 'Bez odpowiedzi',
         waitContinued: 'Kontynuowano',
