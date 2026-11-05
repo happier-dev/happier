@@ -604,6 +604,38 @@ Native and upload consumers propagate that refusal without another ownership
 check. Stored definitions and workspace-free provider Git paths do not acquire
 a checkout and are unchanged.
 
+## Authored Domain and binding Actions (0.3 development)
+
+`deployments.domains.add` accepts either authored `content` or prepared Artifact
+references. Both forms use the same canonical Domain content schema. The installed
+Domain owner reads authored content for review without publishing it, then creates
+the invocation's private Domain candidate after Action admission, before native
+discovery opens it. Home permits only that signed candidate and binds the prepared reference
+back to the admitted routing metadata. Team content uses the Environment owner's
+existing Artifact grant path. Refused Action admission creates no private content.
+
+After a template's Deploy succeeds, its Domain step invokes that same authored
+Action through the admitted reviewed-child issuer. The existing signed child
+proof carries the Domain-native projection, and Home binds its candidate to the
+template's allocated Environment and exact child input. The template does not
+publish private Domain content before child admission. The finite Deploy receipt
+does not authorize generic Artifact publication afterward. Native failures retain
+the canonical typed Home refusal and HTTP status through Domain settlement.
+
+The shared UI API sends `set` and `remove` to `deployments.bindings.set`; the
+deployment editor migration is pending its UI base producer commit.
+`prepareDeploymentBindingsForHost` owns applying the patch, preparing the private
+Environment candidate and sealing its admitted secret uses. UI and agent callers
+of that shared API do not publish those private candidates themselves.
+
+For `deployments.environments.update`, the current content reference, revision CAS
+and `patch.ingress` already express the authored change. The Environment content
+owner opens the current private content and prepares the changed candidate after
+Action admission. The same Action serves UI and agent callers. Home binds the
+candidate to the admitted patch and CAS; dedicated binding, backup and template
+fields remain unchanged by this ingress preparation. Cloudflare Tunnel accepts a
+nonempty own-server member set; edge Caddy retains its two-Machine requirement.
+
 ## Implementation references
 - Entrypoint: `apps/server/sources/main.ts`
 - Dockerfile: `Dockerfile`

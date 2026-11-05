@@ -24,6 +24,40 @@ authorization are unchanged. The declaration and existing carrier envelopes
 remain closed, with matching development Protocol and dispatch/daemon readers;
 no wire field, codec purpose, epoch or rollback adapter is added.
 
+## Authored Domain preparation (unreleased 0.3)
+
+The existing `deployments.domains.add` Action adds an authored `content` arm;
+prepared Artifact operands remain accepted. Private content uses the incumbent
+Domain schema, now owned by Protocol and re-exported by deployment-protocol.
+The native admission projection carries the authored metadata digest, and the
+storage admission carries the original input digest to bind its exact prepared
+candidate. Load matching UI, Protocol, controller and Home server together;
+older strict development readers reject these fields. No persisted Domain
+format, migration, protocol epoch or released compatibility obligation changes.
+The inspected `../0.2` checkout at `4aa70a37c4` has neither deployment Domain nor
+deployment Action protocol files.
+
+Template Domain children add the existing Domain-native admission projection as
+an optional field on the signed reviewed-child proof. Both HTTP and Machine RPC
+serializers preserve it; the issuer derives it from the admitted authored child.
+Home requires the exact template Environment and child-derived private candidate.
+This unreleased change needs the matching Protocol, controller and Home versions;
+it neither adds another Action nor changes the finite Deploy receipt's purpose.
+
+Environment ingress updates retain the existing current-reference, revision CAS
+and patch input. The controller derives private content after admission; its
+ingress-only native admission and storage digest bind the exact authored patch
+and CAS. Domain discovery receives a prepared candidate, checked against the
+same admitted authored metadata. These additive development fields require the
+matching Protocol, controller and Home versions described above; they add no
+persisted format or migration.
+
+The existing `deployments.bindings.set` success result adds optional
+`preparedArtifact` references from the controller's prepared operand. The UI
+uses those exact references when sharing a candidate before changing a source
+to Team ownership. Load matching Protocol, controller and UI readers together;
+the Home storage acknowledgment retains its existing shape.
+
 ## Local Services observation lifetime (unreleased 0.3)
 
 The existing closed inventory-watch request accepts optional `observationOnly`.
