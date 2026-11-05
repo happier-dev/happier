@@ -1950,10 +1950,18 @@ export function createStablePluginExecService(params: Readonly<{
             await supervised.dispose('caller');
         };
         void supervised.handle.wait().then((result) => {
-            protocol.settleExit(new PluginExecClientError(
-                'PLUGIN_EXEC_CLIENT_EXITED',
-                `Plugin process terminated (${result.termination.observed.kind})`,
-            ));
+            const observed = result.termination.observed;
+            protocol.settleExit(createPluginExecClientExitError({
+                exitCode: observed.kind === 'exit' ? observed.exitCode : null,
+                signal: observed.kind === 'signal' ? observed.signal : null,
+                ...(observed.kind === 'failed'
+                    ? { diagnostic: observed.diagnostic.message ?? observed.diagnostic.code }
+                    : {}),
+            }, sanitizeExecDiagnosticText(
+                Buffer.from(result.stderr).toString('utf8'),
+                // The process result already obeys the launch owner's capture budget.
+                -1,
+            )));
         });
         const handle: PluginProtocolClientHandle<'jsonRpc'> = Object.freeze({
             client,

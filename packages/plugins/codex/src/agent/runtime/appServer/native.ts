@@ -431,9 +431,7 @@ function logCodexNativeStartupFailure(error: unknown, logger: LoggerService,
     failureCause: readCodexAppServerFailureCause(sanitized),
   };
   const startupFailure = readCodexAppServerStartupFailure(sanitized);
-  if (startupFailure) {
-    logger.warn('Codex native startup failed', { ...fields, startupFailure });
-  } else logger.debug('Codex native startup failed', fields);
+  logger.warn('Codex native startup failed', { ...fields, ...(startupFailure ? { startupFailure } : {}) });
   return sanitized;
 }
 

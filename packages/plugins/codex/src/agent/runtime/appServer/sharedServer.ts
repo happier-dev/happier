@@ -2,7 +2,8 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { LoggerService } from '@happier-dev/plugin-sdk';
+import { redactBugReportSensitiveText, type LoggerService } from '@happier-dev/plugin-sdk';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -163,14 +164,14 @@ async function createInitialClientWhenReady(params: Readonly<{
   const signal = params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal;
   let active = true;
   let processFailure: CodexSharedAppServerStartupError | undefined;
-  const fail = (reason: StartupFailureReason, result?: PluginProcessResult) => {
+  const fail = (reason: StartupFailureReason, result?: PluginProcessResult, cause?: unknown) => {
     if (!active) return;
-    processFailure = new CodexSharedAppServerStartupError(reason, result);
+    processFailure = new CodexSharedAppServerStartupError(reason, result, cause);
     controller.abort(processFailure);
   };
   void params.process.wait().then(
     result => fail('process_exited', result),
-    () => fail('process_observation_failed'),
+    error => fail('process_observation_failed', undefined, error),
   );
   try {
     while (true) {
@@ -194,13 +195,16 @@ async function createInitialClientWhenReady(params: Readonly<{
 export class CodexSharedAppServerStartupError extends Error {
   readonly code = 'agent_startup_transport_failed';
   readonly startupFailure: CodexSharedAppServerStartupFailure;
+  readonly stderrPreview?: string;
 
-  constructor(reason: StartupFailureReason, result?: PluginProcessResult) {
-    super('Codex shared app-server did not become ready.');
+  constructor(reason: StartupFailureReason, result?: PluginProcessResult, cause?: unknown) {
+    super('Codex shared app-server did not become ready.', { cause });
     this.name = 'CodexSharedAppServerStartupError';
     const observed = result?.termination.observed;
-    // Native output can contain credentials or configuration. Retain only
-    // closed process facts, never stderr, diagnostic payloads or error prose.
+    // Exec sanitizes native output at its boundary; redact again before this
+    // retained error can cross the public Session diagnostic boundary.
+    this.stderrPreview = result ? redactBugReportSensitiveText(new TextDecoder().decode(result.stderr))
+      .trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined : undefined;
     this.startupFailure = Object.freeze({
       phase: 'socket_wait', reason,
       ...(observed ? { terminationKind: observed.kind } : {}),
@@ -261,8 +265,10 @@ async function waitForSocket(
   signal?: AbortSignal,
 ): Promise<void> {
   let result: PluginProcessResult | undefined;
-  let observationFailed = false;
-  void process.wait().then(value => { result = value; }, () => { observationFailed = true; });
+  let observationFailure: CodexSharedAppServerStartupError | undefined;
+  void process.wait().then(value => { result = value; }, error => {
+    observationFailure = new CodexSharedAppServerStartupError('process_observation_failed', undefined, error);
+  });
   // A cold native home backfills its history before publishing the socket.
   // That work is not an initialize RPC and can outlast its request budget;
   // killing it leaves Codex's native backfill lease running on the next start.
@@ -270,7 +276,7 @@ async function waitForSocket(
   while (true) {
     signal?.throwIfAborted();
     if (result) throw new CodexSharedAppServerStartupError('process_exited', result);
-    if (observationFailed) throw new CodexSharedAppServerStartupError('process_observation_failed');
+    if (observationFailure) throw observationFailure;
     try {
       const publication = await lstat(socketPath);
       if (publication.isSymbolicLink() || publication.isSocket()) return;

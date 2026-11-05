@@ -1757,6 +1757,21 @@ describe('createStablePluginExecService', () => {
         });
     });
 
+    it('retains sanitized stderr when a JSON-RPC child exits before its first request', async () => {
+        const handle = await createService().clients.spawn({
+            kind: 'jsonRpc', framing: 'jsonLines',
+            launch: { executable, args: ['-e', 'process.stderr.write("Native startup refused: api_key=private-exit-token", () => process.exit(23))'] },
+        });
+        try {
+            await handle.wait();
+            const error: unknown = await handle.client.request('initialize', {}).catch(error => error);
+            expect(error).toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_EXITED',
+                stderrPreview: expect.stringContaining('Native startup refused:') });
+            expect(error).toMatchObject({ stderrPreview: expect.stringContaining('[REDACTED]') });
+            expect(JSON.stringify(error)).not.toContain('private-exit-token');
+        } finally { await handle.dispose(); }
+    });
+
     it('round-trips multi-MiB JSON-RPC through the supervised service without a frame budget', async () => {
         const service = createService();
         const handle = await service.clients.spawn({

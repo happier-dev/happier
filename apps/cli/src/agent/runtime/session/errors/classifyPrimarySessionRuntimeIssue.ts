@@ -122,7 +122,8 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
   return {
     originalCode,
     reason: reason === 'unknown' && causeReason ? causeReason
-      : reason === 'unknown' && originalCode === 'agent_isolation_unavailable' ? originalCode : reason,
+      : reason === 'unknown' && (readAgentStartupFailureCode(originalCode)
+        || originalCode === 'agent_isolation_unavailable') ? originalCode : reason,
     contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
     ...(parsedCause.success ? { failureCause: parsedCause.data } : {}),
   };

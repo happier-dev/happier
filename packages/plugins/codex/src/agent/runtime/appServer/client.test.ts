@@ -197,7 +197,7 @@ describe('createCodexAppServerClient', () => {
     it.each(['spawn', 'initialize'] as const)(
         'retains the initiating failure beneath realtime startup wrapping at %s', async stage => {
             const original = stage === 'spawn'
-                ? Object.assign(new Error('PRIVATE_SOCKET /private/native'), { code: 'EACCES', syscall: 'connect' })
+                ? Object.assign(new Error('Native socket refused: api_key=PRIVATE_SOCKET'), { code: 'EACCES', syscall: 'connect' })
                 : createJsonRpcApplicationError({ method: 'initialize', code: -32603,
                     message: 'Native initialization rejected: Bearer private-provider-token' });
             const capture = createCapturingExec({
@@ -226,7 +226,7 @@ describe('createCodexAppServerClient', () => {
         vi.mocked(capture.exec.run).mockRejectedValue(refusal);
         // Exec is the genuine process boundary; shared server, native startup and sanitizers are real.
         const context = { signal: new AbortController().signal, services: { exec: capture.exec,
-            logger: { debug() {} }, sessions: { current: null } }, session: { id: 'member-startup', services: {} } } as unknown as AgentSessionRuntimeContext;
+            logger: { debug() {}, warn() {} }, sessions: { current: null } }, session: { id: 'member-startup', services: {} } } as unknown as AgentSessionRuntimeContext;
         const error: unknown = await openCodexNativeAppServerSession({ kind: 'create', sessionId: 'member-startup',
             cwd: osBoundary.home }, context).then(async runtime => { await runtime.dispose(); return null; }, error => error);
         expect(error).toMatchObject({ code: 'agent_cli_not_runnable', retryable: false });

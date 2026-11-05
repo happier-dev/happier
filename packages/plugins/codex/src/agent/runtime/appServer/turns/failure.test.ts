@@ -13,6 +13,41 @@ import {
 } from './failure.js';
 
 describe('createCodexAppServerTurnFailure', () => {
+  it('retains closed native transport facts and redacted startup prose without arbitrary system fields', () => {
+    const failure = createCodexAppServerTurnFailure({
+      phase: 'client_start',
+      value: Object.assign(new Error('Native connect failed: api_key=PRIVATE_NATIVE_OUTPUT'), {
+        code: 'ENOENT',
+        syscall: 'connect',
+        path: '/PRIVATE_SOCKET',
+      }),
+    });
+    expect(failure).toMatchObject({
+      code: 'agent_startup_transport_failed',
+      startupFailure: {
+        phase: 'native_system_error',
+        reason: 'system_error',
+        errnoCode: 'ENOENT',
+        syscall: 'connect',
+      },
+    });
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+    expect(readCodexAppServerFailureCause(failure).providerErrorMessage)
+      .toContain('Native connect failed:');
+    expect(readCodexAppServerFailureCause(failure).providerErrorMessage).toContain('[REDACTED]');
+    expect(
+      createCodexAppServerTurnFailure({
+        phase: 'client_start',
+        value: new Error('Native launch failed: api_key=PRIVATE_UNCLASSIFIED'),
+      }),
+    ).toMatchObject({
+      code: 'agent_startup_transport_failed',
+      failureReason: 'unclassified_provider_error',
+      details: { failureCause: { providerErrorMessage: expect.stringContaining('Native launch failed:') } },
+    });
+  });
+
+
   it('retains Provider transport retryability at the turn-start boundary', () => {
     const failure = createCodexAppServerTurnFailure({
       phase: 'turn_start',

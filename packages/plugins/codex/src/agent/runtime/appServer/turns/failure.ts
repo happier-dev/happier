@@ -3,9 +3,9 @@ import { readCodexAppServerErrorPayload, type CodexAppServerErrorPayload } from 
 import { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
 export { readCodexAppServerPrimaryFailure } from '../startupFailure.js';
 import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationRejectionDetails, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeFailureCauseV1Schema, sanitizeSessionRuntimeIssueV1, readAgentStartupFailureCode, readAgentStartupFailureDetails, readSessionPreparationFailureCode, readSessionStartupFailurePreview, readSessionRuntimeIssueCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
+import { CodexSharedAppServerStartupError, readCodexNativeTransportStartupFailure, readCodexSharedAppServerStartupFailure, type CodexSharedAppServerStartupFailure } from '../sharedServer.js';
 
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
@@ -167,10 +167,18 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
   return retained.success ? retained.data : null;
 }
 
-function readRedactedProviderErrorMessage(error: unknown): string | undefined {
-  // Only a correlated provider response admits prose; native/transport errors do not.
-  if (!(error instanceof Error) || !readJsonRpcApplicationRejection(error)) return undefined;
-  return redactBugReportSensitiveText(error.message).trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined;
+function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  // Typed refusals already name their cause. Untyped startup exceptions need
+  // their initiating message retained under the same redaction and preview budget.
+  const preview = readRecord(error)?.stderrPreview;
+  const nativeError = error instanceof CodexSharedAppServerStartupError && error.cause instanceof Error
+    ? error.cause : error;
+  const message = readJsonRpcApplicationRejection(error) ? error.message
+    : typeof preview === 'string' ? preview
+      : nativeStartup && (!readSessionRuntimeIssueCode(readRecord(nativeError)?.code)
+        || readCodexNativeTransportStartupFailure(nativeError)) ? nativeError.message : undefined;
+  return message ? redactBugReportSensitiveText(message).trim().slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH) || undefined : undefined;
 }
 
 export function readCodexAppServerFailureCause(
@@ -432,15 +440,16 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     };
   }
     const retainedCause = readRetainedFailureCause(params.value);
-    const providerErrorMessage = readRedactedProviderErrorMessage(params.value);
     const phase = retainedCause?.phase ?? params.phase;
+    const nativeStartup = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication';
+    const providerErrorMessage = readRedactedProviderErrorMessage(params.value, nativeStartup);
     const startupFailure = readCodexAppServerStartupFailure(params.value);
     const rawCode = readRecord(params.value)?.code;
     const knownCode = readAgentStartupFailureCode(rawCode) ?? readSessionPreparationFailureCode(rawCode);
-    const phaseCode = phase === 'client_start' || phase === 'thread_open' || phase === 'authentication'
+    const phaseCode = nativeStartup
         ? params.value instanceof Error && params.value.name === 'JsonRpcApplicationError' && typeof rawCode === 'number'
             ? 'agent_startup_rpc_rejected' : params.value instanceof TypeError ? 'agent_startup_invalid_state'
-                : startupFailure ? 'agent_startup_transport_failed' : 'agent_startup_failed'
+                : params.value instanceof Error || startupFailure ? 'agent_startup_transport_failed' : 'agent_startup_failed'
         : undefined;
     const code = knownCode ?? phaseCode;
     const daemonPreparationCause = RunnerDaemonPluginServicesPreparationCauseV1Schema.safeParse(

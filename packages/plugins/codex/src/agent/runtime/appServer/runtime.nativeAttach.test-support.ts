@@ -74,6 +74,8 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   nativeSpawnFailure?: Error;
   nativeCleanupFailure?: Error;
   nativeProcessResult?: PluginProcessResult;
+  nativeProcessFailure?: Error;
+  nativeProxyStderr?: string;
   logger?: CodexAppServerRuntimeHost['logger'];
   beforeExtraRootsSetResponse?: (input: Readonly<{ occurrence: number; params: Record<string, unknown> }>) => Promise<void>;
   directory?: string;
@@ -248,7 +250,9 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     server.listen(socketPath, resolve);
   });
   const connectClient = (request?: { maxFrameBytes?: number; requestTimeoutMs?: number }) => createManagedJsonRpcTestClient({
-    cwd: root, command: process.execPath, args: ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, socketPath],
+    cwd: root, command: process.execPath, args: options.nativeProxyStderr === undefined
+      ? ['-e', CODEX_RAW_PROXY_FIXTURE_SCRIPT, socketPath]
+      : ['-e', 'process.stderr.write(process.argv[1], () => process.exit(23))', options.nativeProxyStderr],
     maxFrameBytes: request?.maxFrameBytes, requestTimeoutMs: request?.requestTimeoutMs,
   });
   // Substitute the native executable with a byte relay; host framing and RPC remain real.
@@ -289,7 +293,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     ...exec,
     prepareNativeSocketDirectory: async () => {
       const directory = await prepareTestNativeSocketDirectory();
-      return { ...directory, dispose: async () => {
+      return { ...directory, nativeProxy: options.nativeProxyStderr !== undefined, dispose: async () => {
         await directory.dispose();
         if (options.nativeCleanupFailure) throw options.nativeCleanupFailure;
       } };
@@ -309,10 +313,13 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     spawn: async (request: { args: readonly string[]; env?: Readonly<Record<string, string>> }) => {
       if (options.nativeSpawnFailure) throw options.nativeSpawnFailure;
       options.observer?.recordLaunch({ argv: request.args, env: request.env });
-      if (options.nativeProcessResult) return {
+      if (options.nativeProcessResult || options.nativeProcessFailure) return {
         write: async () => undefined, closeStdin: async () => undefined,
         onOutput: () => ({ dispose() {} }), dispose: async () => undefined,
-        wait: async () => options.nativeProcessResult!,
+        wait: async () => {
+          if (options.nativeProcessFailure) throw options.nativeProcessFailure;
+          return options.nativeProcessResult!;
+        },
       };
       nativeLaunches.push([...request.args]);
       const endpoint = request.args[request.args.indexOf('--listen') + 1];

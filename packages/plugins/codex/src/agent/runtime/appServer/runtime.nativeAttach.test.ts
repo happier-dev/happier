@@ -1,6 +1,6 @@
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, StrictJsonValueSchema } from '@happier-dev/protocol';
 import type { AgentExecutionRunConversationEventV1, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -20,6 +20,53 @@ vi.mock('node:os', async importOriginal => {
 });
 
 describe('native Codex attachment preparation', () => {
+  it.each([
+    { stage: 'spawn', options: { nativeSpawnFailure: new Error('Native launch refused: api_key=private-native-token') } },
+    { stage: 'process observation', options: { nativeProcessFailure: new Error('Native wait failed: Bearer private-native-token') } },
+    { stage: 'initialize', options: { initializeFailure: { code: -32000, message: 'Native initialize refused: api_key=private-native-token' } } },
+  ])('retains a closed category and sanitized native preview from $stage in runner and Session failures', async ({ stage, options }) => {
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    await withFixture(async ({ openConfiguredSession }) => {
+      const failure: unknown = await openConfiguredSession().catch(error => error);
+      const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+      const diagnostic = readSessionPreparationFailureDiagnostic(retained);
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+      }));
+      const code = stage === 'initialize' ? 'agent_startup_rpc_rejected' : 'agent_startup_transport_failed';
+      expect(diagnostic).toMatchObject({ originalCode: code, reason: code,
+        failureCause: { phase: 'client_start', providerErrorMessage: expect.stringContaining('[REDACTED]') } });
+      expect(issue).toMatchObject({ code, failureCause: diagnostic.failureCause });
+      expect(logger.warn).toHaveBeenCalledWith('Codex native startup failed', expect.objectContaining({
+        failureCause: diagnostic.failureCause,
+      }));
+      expect(JSON.stringify([diagnostic, issue, logger.warn.mock.calls])).not.toContain('private-native-token');
+    }, { logger, ...options });
+  });
+
+  it('retains a redacted bounded stderr preview when the native proxy exits before its handshake is ready', async () => {
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    await withFixture(async ({ openConfiguredSession }) => {
+      const failure: unknown = await openConfiguredSession().catch(error => error);
+      const retained = sanitizeNativeAgentSessionBoundaryError(failure, true);
+      const diagnostic = readSessionPreparationFailureDiagnostic(retained);
+      const issue = SessionRuntimeIssueV1Schema.parse(classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: retained, provider: 'codex', occurredAt: 100,
+      }));
+      expect(diagnostic).toMatchObject({ originalCode: 'agent_startup_transport_failed', reason: 'agent_startup_transport_failed', failureCause: {
+        phase: 'client_start', providerErrorMessage: expect.stringContaining('Native proxy refused:'),
+      } });
+      expect(issue.failureCause).toEqual(diagnostic.failureCause);
+      expect(diagnostic.failureCause?.providerErrorMessage).toContain('[REDACTED]');
+      expect(diagnostic.failureCause?.providerErrorMessage).toHaveLength(SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
+      expect(logger.warn).toHaveBeenCalledWith('Codex native startup failed', expect.objectContaining({
+        failureCause: diagnostic.failureCause,
+      }));
+      expect(JSON.stringify([diagnostic, issue, logger.warn.mock.calls])).not.toContain('private-proxy-token');
+    }, { logger, nativeProxyStderr: `Native proxy refused: api_key=private-proxy-token; ${'x'.repeat(SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH)}` });
+  });
+
+
   it.each(['session', 'run'] as const)('retains %s startup rejection when native cleanup also fails', async surface => {
     await withFixture(async ({ openConfiguredSession, openConfiguredRun, failResume, nativeProcessExits }) => {
       failResume('Native startup refused: Bearer private-provider-token');
@@ -490,9 +537,9 @@ describe('native Codex attachment preparation', () => {
     });
     await withFixture(async ({ openConfiguredSession, openConfiguredRun }) => {
       await expect(scope === 'session' ? openConfiguredSession() : openConfiguredRun()).rejects.toMatchObject({
-        code: 'agent_startup_failed',
+        code: 'agent_startup_transport_failed',
       });
-      expect(logs).toContainEqual({ stage: 'skills', errorName: 'Error', errorCode: 'PLUGIN_EXEC_GENERATION_STALE' });
+      expect(logs).toContainEqual(expect.objectContaining({ stage: 'skills', errorName: 'Error', errorCode: 'PLUGIN_EXEC_GENERATION_STALE' }));
       expect(JSON.stringify(logs)).not.toContain(secret);
     }, {
       nativeSpawnFailure: failure,
