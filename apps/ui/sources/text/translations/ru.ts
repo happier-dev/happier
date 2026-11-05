@@ -5986,6 +5986,7 @@ export const ru: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `Этот провайдер просит сессию подождать до ${time} перед продолжением.`,
       genericBody: "Этот провайдер просит сессию подождать перед продолжением.",
+      stoppedBody: "Автоматическое восстановление остановлено и не будет повторяться само. Повторите попытку ниже.",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} ${count === 1 ? "сброс использования доступен" : "сброса использования доступны"}.`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

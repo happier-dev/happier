@@ -1,6 +1,9 @@
 import {
   buildUsageLimitIssueFingerprint,
+  isConnectedServiceRuntimeAuthRecoveryCancellation,
   isSessionUsageLimitRecoveryForIssue,
+  isSessionUsageLimitRecoveryStoppedByPolicy,
+  SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
   ConnectedServiceIdSchema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
@@ -21,6 +24,7 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
   const status: SessionUsageLimitRecoveryV1['status'] = intent.status === 'recovered'
     ? 'paused'
     : intent.status === 'resumed_awaiting_proof' ? 'waiting' : intent.status;
+  const stoppedByPolicy = intent.status === 'cancelled' && !isConnectedServiceRuntimeAuthRecoveryCancellation(intent.terminalReason);
   const selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] = intent.groupId
     ? { kind: 'group', serviceId: service.data, groupId: intent.groupId, profileId: intent.profileId }
     : { kind: 'profile', serviceId: service.data, profileId: intent.profileId! };
@@ -30,7 +34,8 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
     // A delayed visible-event delivery must not replace a newer attempt or undo Stop.
     if (current && (current.armedAtMs > intent.armedAtMs || (
       current.runtimeAuthRecoveryAttemptId === intent.attemptId
-      && current.status === 'cancelled' && status !== 'cancelled'
+      && current.status === 'cancelled'
+      && (status !== 'cancelled' || (stoppedByPolicy && !isSessionUsageLimitRecoveryStoppedByPolicy(current)))
     ))) return metadata;
     const sameAttempt = current?.runtimeAuthRecoveryAttemptId === intent.attemptId;
     const recovery = {
@@ -42,7 +47,7 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       resetAtMs: intent.classification.resetsAtMs ?? null,
       nextCheckAtMs: status === 'cancelled' || status === 'exhausted' || status === 'paused' ? null : intent.nextRetryAtMs,
       attemptCount: intent.attemptCount, maxAttempts: intent.maxAttempts,
-      lastProbeError: intent.lastError,
+      lastProbeError: stoppedByPolicy ? SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR : intent.lastError,
       resumePromptMode: intent.resumePromptMode ?? 'standard', selectedAuth,
       ...(sameAttempt && current?.recoveryCredits ? { recoveryCredits: current.recoveryCredits } : {}),
     } satisfies SessionUsageLimitRecoveryV1;

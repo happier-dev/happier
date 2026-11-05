@@ -1,4 +1,5 @@
 import {
+  isSessionUsageLimitRecoveryStoppedByPolicy,
   SessionUsageLimitRecoveryV1Schema,
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
@@ -104,12 +105,14 @@ export function mergeUsageLimitRecoveryRearm(
   };
 }
 
-/** Explicit user enable may reopen a user-cancelled attempt, but never an exhausted one. */
+/** Explicit user enable may reopen a cancelled or daemon-stopped attempt, but not one exhausted by its own backoff. */
 export function mergeUsageLimitRecoveryExplicitRearm(
   previous: SessionUsageLimitRecoveryV1 | null,
   next: SessionUsageLimitRecoveryV1,
 ): SessionUsageLimitRecoveryV1 {
-  if (previous?.status !== 'cancelled') return mergeUsageLimitRecoveryRearm(previous, next);
+  if (!previous || (previous.status !== 'cancelled' && !isSessionUsageLimitRecoveryStoppedByPolicy(previous))) {
+    return mergeUsageLimitRecoveryRearm(previous, next);
+  }
   return {
     ...next,
     armedAtMs: Math.max(next.armedAtMs, previous.armedAtMs + 1),

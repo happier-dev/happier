@@ -69,6 +69,21 @@ export const SessionUsageLimitRecoveryV1Schema = lazySchema(() => z
 
 export type SessionUsageLimitRecoveryV1 = z.infer<typeof SessionUsageLimitRecoveryV1Schema>;
 
+/**
+ * `lastProbeError` stamp for a daemon recovery that ended by policy rather than by the user. It stays
+ * on the `cancelled` carrier, so readers that predate this stamp still treat it as terminal.
+ */
+export const SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR = 'usage_limit_recovery_stopped' as const;
+
+/** A daemon recovery that will not retry on its own; an explicit enable can start a fresh one. */
+export function isSessionUsageLimitRecoveryStoppedByPolicy(
+  recovery: Partial<Pick<SessionUsageLimitRecoveryV1, 'status' | 'lastProbeError' | 'runtimeAuthRecoveryAttemptId'>>,
+): boolean {
+  return recovery.status === 'exhausted'
+    ? Boolean(recovery.runtimeAuthRecoveryAttemptId)
+    : recovery.status === 'cancelled' && recovery.lastProbeError === SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR;
+}
+
 /** Stable issue identity shared by recovery producers, controls, and presentation. */
 export function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1, fallbackProviderId = 'unknown-provider'): string {
   return ['usage-limit', issue.provider ?? fallbackProviderId, issue.providerTurnId ?? 'unknown-turn',
@@ -78,7 +93,7 @@ export function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1, fa
 export function isSessionUsageLimitRecoveryForIssue(
   issue: SessionRuntimeIssueV1,
   recovery: Pick<SessionUsageLimitRecoveryV1, 'issueFingerprint'> & Partial<Pick<
-    SessionUsageLimitRecoveryV1, 'armedAtMs' | 'runtimeAuthRecoveryAttemptId' | 'status' | 'selectedAuth'
+    SessionUsageLimitRecoveryV1, 'armedAtMs' | 'runtimeAuthRecoveryAttemptId' | 'status' | 'selectedAuth' | 'lastProbeError'
   >>,
   fallbackProviderId?: string,
 ): boolean {
@@ -86,7 +101,7 @@ export function isSessionUsageLimitRecoveryForIssue(
   // A daemon-owned report can predate an enriched projection of the same failed
   // turn. Arming fences later failures; an attempt id alone is never evidence.
   if (!recovery.runtimeAuthRecoveryAttemptId
-    || recovery.status === 'cancelled'
+    || (recovery.status === 'cancelled' && !isSessionUsageLimitRecoveryStoppedByPolicy(recovery))
     || recovery.armedAtMs === undefined || issue.occurredAt > recovery.armedAtMs
     || issue.source !== 'usage_limit' || !issue.usageLimit) return false;
   // Turn ids may contain colons. Only the occurrence/reset suffix is numeric.

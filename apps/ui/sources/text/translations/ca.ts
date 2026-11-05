@@ -5103,6 +5103,7 @@ deps: {
             readyTitle: 'El límit d’ús s’ha restablert',
             resetBody: ({ time }: { time: string }) => `Aquest proveïdor demana esperar fins a ${time} abans de continuar.`,
             genericBody: 'Aquest proveïdor demana esperar abans de continuar.',
+            stoppedBody: 'La recuperació automàtica s’ha aturat i no es tornarà a intentar sola. Torna-ho a provar a sota.',
             resetCreditBody: ({ count }: { count: number }) => `${count} ${count === 1 ? 'restabliment d’ús disponible' : 'restabliments d’ús disponibles'}.`,
             resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) => `${count} ${count === 1 ? 'restabliment d’ús disponible' : 'restabliments d’ús disponibles'}; el següent caduca ${time}.`,
             readyBody: 'Ara pots reprendre aquesta sessió.',

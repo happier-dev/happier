@@ -231,6 +231,39 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       .toBeGreaterThan(cancelled.armedAtMs);
   });
 
+  it.each([
+    ['stopped', 'cancelled', 'usage_limit_recovery_stopped'],
+    ['dead-lettered', 'exhausted', 'max_attempts_exhausted'],
+] as const)('re-arms a %s daemon attempt as a fresh wait for the current issue, detached from that attempt', async (_label, status, lastProbeError) => {
+    const issue = createUsageLimitIssue();
+    const terminal = {
+      v: 1, status, issueFingerprint: 'usage-limit:codex:turn-1:1699999999000:no-reset',
+      runtimeAuthRecoveryAttemptId: 'dead-attempt', armedAtMs: 1_700_000_001_000,
+      resetAtMs: null, nextCheckAtMs: null, attemptCount: 3, maxAttempts: 3,
+      lastProbeError, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+    };
+
+    await routeSessionUsageLimitRecoveryWaitResumeEnable({
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_1',
+      rawSession: createRawSession({ latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: terminal }),
+      currentMachineId: 'machine-local', ctx, mode: 'plain',
+      request: { sessionId: 'sess_1', issueFingerprint: terminal.issueFingerprint },
+      callLiveSessionRpc: vi.fn(), resolveAdapter: vi.fn(),
+    });
+
+    const persisted = lastMetadataUpdaterResult({ sessionUsageLimitRecoveryV1: terminal })
+      .sessionUsageLimitRecoveryV1 as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      status: 'waiting', attemptCount: 0, lastProbeError: null,
+      issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+      resetAtMs: issue.usageLimit?.resetAtMs,
+      nextCheckAtMs: issue.usageLimit?.resetAtMs,
+    });
+    expect(persisted).not.toHaveProperty('runtimeAuthRecoveryAttemptId');
+    expect(persisted.armedAtMs).toBeGreaterThan(terminal.armedAtMs);
+  });
+
   it('preserves an existing inactive recovery resumePromptMode when re-arming without explicit input', async () => {
     const recovery = {
       v: 1,

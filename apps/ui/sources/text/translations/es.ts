@@ -5430,6 +5430,7 @@ export const es: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `Este proveedor pide esperar hasta ${time} antes de continuar.`,
       genericBody: "Este proveedor pide esperar antes de continuar.",
+      stoppedBody: "La recuperación automática se detuvo y no se reintentará sola. Vuelve a intentarlo abajo.",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} ${count === 1 ? "restablecimiento de uso disponible" : "restablecimientos de uso disponibles"}.`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

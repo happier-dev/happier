@@ -1,6 +1,7 @@
 import {
     buildUsageLimitIssueFingerprint,
     isSessionUsageLimitRecoveryForIssue,
+    isSessionUsageLimitRecoveryStoppedByPolicy,
     type ConnectedServiceQuotaRecoveryCreditsV1,
     type PrimaryTurnStatusV1,
     type SessionRuntimeIssueV1,
@@ -102,6 +103,7 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.readyTitle'
     | 'session.usageLimitRecovery.resetBody'
     | 'session.usageLimitRecovery.genericBody'
+    | 'session.usageLimitRecovery.stoppedBody'
     | 'session.usageLimitRecovery.readyBody'
     | 'session.usageLimitRecovery.enableAction'
     | 'session.usageLimitRecovery.cancelAction'
@@ -237,8 +239,9 @@ function shouldSurfaceRecoveryIssue(params: Readonly<{
         const hasProjection = params.recovery?.issueFingerprint.startsWith('temporary-throttle:');
         return params.latestTurnStatus !== 'completed' && (hasProjection || params.hasActivityAfterRuntimeIssue !== true);
     }
-    // A cancelled durable recovery intent is a genuine terminal resolution: hide it.
-    if (params.recovery?.status === 'cancelled') return false;
+    // A user-cancelled or settled recovery is a genuine terminal resolution: hide it. A recovery the
+    // daemon stopped by policy stays visible so the existing enable/switch actions can retry it.
+    if (params.recovery?.status === 'cancelled' && !isSessionUsageLimitRecoveryStoppedByPolicy(params.recovery)) return false;
     // `runtimeWorking` only proves the runtime is live and ticking thinking/in-progress signals; it is
     // NOT proof that the provider accepted the recovered state or moved to a fresh quota. An unproven,
     // in-progress recovery (waiting-for-reset / provider-outcome-waiting / action-required / exhausted)
@@ -390,10 +393,11 @@ function resolvePrimaryRecoveryAction(params: Readonly<{
     recovery: SessionUsageLimitRecoveryV1 | null | undefined;
     ready: boolean;
     activeRecovery: boolean;
+    stopped: boolean;
     checkNowSupported: boolean;
     translate: SessionUsageLimitRecoveryTranslate;
 }>): SessionUsageLimitRecoveryActionPresentation {
-    if (params.ready) {
+    if (params.ready && !params.stopped) {
         return buildAction('resume_now', 'session.usageLimitRecovery.resumeNowAction', 'session-usageLimit-recovery-resumeNow', params.translate);
     }
     if (params.activeRecovery) {
@@ -429,11 +433,17 @@ function resolvePrimaryRecoveryAction(params: Readonly<{
                 params.translate,
             );
     }
-    return buildAction('enable', 'session.usageLimitRecovery.enableAction', 'session-usageLimit-recovery-enable', params.translate);
+    return buildAction(
+        'enable',
+        params.stopped && params.ready ? 'session.usageLimitRecovery.resumeNowAction' : 'session.usageLimitRecovery.enableAction',
+        'session-usageLimit-recovery-enable',
+        params.translate,
+    );
 }
 
 function shouldOfferCheckNowSecondary(params: Readonly<{
     ready: boolean;
+    stopped: boolean;
     checkNowSupported: boolean;
     primaryAction: SessionUsageLimitRecoveryActionPresentation;
 }>): boolean {
@@ -441,7 +451,9 @@ function shouldOfferCheckNowSecondary(params: Readonly<{
     // check-now secondary: a fresh quota probe can clear stale limiter fields
     // (F7) without attempting a switch. Temporary-throttle retries are already
     // a cheap re-probe, so a second probe button would be redundant there.
+    // A check on a stopped daemon recovery would route to its finished attempt.
     return !params.ready
+        && !params.stopped
         && params.checkNowSupported
         && params.primaryAction.kind !== 'retry_temporary_throttle';
 }
@@ -493,6 +505,7 @@ export function buildSessionUsageLimitRecoveryPresentation(
         hasInterruptedWorkToResume: params.hasInterruptedWorkToResume,
     });
     const activeRecovery = isActiveRecovery(params.recovery);
+    const stopped = params.recovery != null && isSessionUsageLimitRecoveryStoppedByPolicy(params.recovery);
     const checkNowSupported = params.checkNowSupported === true;
     const recoveryCreditSummary = summarizeConnectedServiceQuotaRecoveryCredits(
         params.recoveryCredits ?? params.recovery?.recoveryCredits ?? null,
@@ -503,6 +516,7 @@ export function buildSessionUsageLimitRecoveryPresentation(
         recovery: params.recovery,
         ready,
         activeRecovery,
+        stopped,
         checkNowSupported,
         translate: params.translate,
     });
@@ -511,7 +525,9 @@ export function buildSessionUsageLimitRecoveryPresentation(
         operationStatus: params.operationStatus,
         operationRetryAtMs: params.operationRetryAtMs,
     });
-    const body = ready
+    const body = stopped
+        ? params.translate('session.usageLimitRecovery.stoppedBody')
+        : ready
         ? params.translate('session.usageLimitRecovery.readyBody')
         : waitUntilMs !== null
         ? params.translate('session.usageLimitRecovery.resetBody', {
@@ -533,7 +549,7 @@ export function buildSessionUsageLimitRecoveryPresentation(
             : {}),
         banner: {
             testID: 'session-usageLimit-recovery',
-            title: ready
+            title: ready && !stopped
                 ? params.translate('session.usageLimitRecovery.readyTitle')
                 : params.translate('session.usageLimitRecovery.title'),
             body: bodyWithRecoveryCredits,
@@ -547,7 +563,7 @@ export function buildSessionUsageLimitRecoveryPresentation(
                         params.translate,
                     ),
                 ] : []),
-                ...(shouldOfferCheckNowSecondary({ ready, checkNowSupported, primaryAction }) ? [
+                ...(shouldOfferCheckNowSecondary({ ready, stopped, checkNowSupported, primaryAction }) ? [
                     buildAction('check_now', 'session.usageLimitRecovery.checkNowAction', 'session-usageLimit-recovery-checkNow', params.translate),
                 ] : []),
                 params.rememberedMode === 'auto_wait'

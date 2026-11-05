@@ -5087,6 +5087,7 @@ export const fr: TranslationStructure = {
             readyTitle: 'Limite d’utilisation réinitialisée',
             resetBody: ({ time }: { time: string }) => `Ce provider demande à la session d’attendre jusqu’à ${time} avant de continuer.`,
             genericBody: 'Ce provider demande à la session d’attendre avant de continuer.',
+            stoppedBody: 'La récupération automatique s’est arrêtée et ne réessaiera pas d’elle-même. Réessayez ci-dessous.',
             resetCreditBody: ({ count }: { count: number }) => `${count} ${count === 1 ? 'réinitialisation de quota' : 'réinitialisations de quota'} en attente.`,
             resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) => `${count} ${count === 1 ? 'réinitialisation de quota' : 'réinitialisations de quota'} en attente ; la prochaine expire ${time}.`,
             readyBody: 'Tu peux reprendre cette session maintenant.',

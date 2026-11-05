@@ -5712,6 +5712,7 @@ localTailscale: {
       resetBody: ({ time }: { time: string }) =>
         `このプロバイダーは、続行する前に ${time} まで待機するよう求めています。`,
       genericBody: "このプロバイダーは、続行する前に待機するよう求めています。",
+      stoppedBody: "自動リカバリーは停止し、自動では再試行しません。下から再試行してください。",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} 件の使用リセットを利用できます。`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

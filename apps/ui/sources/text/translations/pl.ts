@@ -5451,6 +5451,7 @@ export const pl: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `Ten dostawca prosi sesję o czekanie do ${time} przed kontynuacją.`,
       genericBody: "Ten dostawca prosi sesję o czekanie przed kontynuacją.",
+      stoppedBody: "Automatyczne odzyskiwanie zostało zatrzymane i nie ponowi się samo. Spróbuj ponownie poniżej.",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} ${count === 1 ? "reset użycia jest dostępny" : "resety użycia są dostępne"}.`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

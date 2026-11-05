@@ -4783,6 +4783,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             readyTitle: '使用限制已重設',
             resetBody: ({ time }: { time: string }) => `此提供者要求工作階段等到 ${time} 後再繼續。`,
             genericBody: '此提供者要求工作階段等待後再繼續。',
+            stoppedBody: '自動復原已停止，不會自行重試。請在下方重試。',
             resetCreditBody: ({ count }: { count: number }) => `${count} 次使用重設可用。`,
             resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) => `${count} 次使用重設可用；下一個將於 ${time} 到期。`,
             readyBody: '你現在可以恢復此工作階段。',

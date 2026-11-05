@@ -5087,6 +5087,7 @@ export const de: TranslationStructure = {
             readyTitle: 'Nutzungslimit zurückgesetzt',
             resetBody: ({ time }: { time: string }) => `Dieser Provider bittet die Session zu warten bis ${time} bevor es weitergeht.`,
             genericBody: 'Dieser Provider bittet die Session, vor dem Weitermachen zu warten.',
+            stoppedBody: 'Die automatische Wiederherstellung wurde beendet und versucht es nicht selbst erneut. Versuche es unten erneut.',
             resetCreditBody: ({ count }: { count: number }) => `${count} Nutzungs-Resets ${count === 1 ? 'Reset ist' : 'Resets sind'} verfügbar.`,
             resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) => `${count} Nutzungs-Resets ${count === 1 ? 'Reset ist' : 'Resets sind'} verfügbar; der nächste läuft ab ${time}.`,
             readyBody: 'Du kannst diese Session jetzt fortsetzen.',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   hasSameUsageLimitRecoveryIdentity,
+  mergeUsageLimitRecoveryExplicitRearm,
   mergeUsageLimitRecoveryIntent,
   mergeUsageLimitRecoverySchedule,
 } from './mergeUsageLimitRecoveryIntent';
@@ -83,6 +84,14 @@ describe('mergeUsageLimitRecoveryIntent', () => {
     });
     expect(mergeUsageLimitRecoveryIntent(staleChecking, exhausted))
       .toEqual(mergeUsageLimitRecoveryIntent(exhausted, staleChecking));
+  });
+
+  it('lets explicit enable reopen a daemon-stopped attempt but not one exhausted by its own backoff', () => {
+    const next = intent({ status: 'waiting', attemptCount: 0 });
+    const owned = intent({ status: 'exhausted', attemptCount: 3, runtimeAuthRecoveryAttemptId: 'dead-attempt' });
+    expect(mergeUsageLimitRecoveryExplicitRearm(owned, next)).toMatchObject({ status: 'waiting', attemptCount: 0 });
+    const local = intent({ status: 'exhausted', attemptCount: 3 });
+    expect(mergeUsageLimitRecoveryExplicitRearm(local, next)).toMatchObject({ status: 'exhausted', attemptCount: 3 });
   });
 
   it('lets a genuinely newer issue supersede an older terminal intent', () => {

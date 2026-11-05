@@ -5550,6 +5550,7 @@ export const pt: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `Este provedor pede que a sessão espere até ${time} antes de continuar.`,
       genericBody: "Este provedor pede que a sessão espere antes de continuar.",
+      stoppedBody: "A recuperação automática parou e não tentará novamente sozinha. Tente novamente abaixo.",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} ${count === 1 ? "redefinição de uso disponível" : "redefinições de uso disponíveis"}.`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

@@ -1,6 +1,9 @@
 import {
   buildUsageLimitIssueFingerprint,
+  isSessionUsageLimitRecoveryStoppedByPolicy,
+  SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
   type SessionRuntimeIssueV1,
+  type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import type { RuntimeAuthRecoveryIntent } from '../RuntimeAuthRecoveryScheduler';
@@ -81,6 +84,38 @@ describe('daemon recovery intent metadata projection', () => {
     } });
     expect(project({ ...issue, usageLimit: { ...issue.usageLimit, connectedService: { ...issue.usageLimit.connectedService, profileId: 'other' } } }))
       .toMatchObject({ sessionUsageLimitRecoveryV1: { issueFingerprint: buildUsageLimitIssueFingerprint(first) } });
+  });
+
+  it.each([
+    'connected_service_continuation_turn_projection_unavailable',
+    'connected_service_continuation_failure_superseded',
+])('stamps %s as a stop the user can retry, leaving user cancellation unstamped', (terminalReason) => {
+    const stopped = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      intent: { ...intent, status: 'cancelled', lastError: terminalReason, terminalReason },
+    })!;
+    expect(stopped({})).toMatchObject({ sessionUsageLimitRecoveryV1: {
+      status: 'cancelled', lastProbeError: SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
+    } });
+    const cancelled = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      intent: { ...intent, status: 'cancelled', lastError: null, terminalReason: null },
+    })!({});
+    expect(isSessionUsageLimitRecoveryStoppedByPolicy(
+      cancelled.sessionUsageLimitRecoveryV1 as SessionUsageLimitRecoveryV1,
+    )).toBe(false);
+    expect(stopped(cancelled)).toBe(cancelled);
+  });
+  it('keeps a stopped attempt on a re-reported failure so its retry stays offered', () => {
+    const first = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+      provider: 'codex', occurredAt: 1793871333659, usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null,
+        quotaScope: 'account', recoverability: 'wait', connectedService: { serviceId: 'openai-codex', groupId: 'pool', profileId: 'primary' } } } as const;
+    const issue = { ...first, occurredAt: 1793871333704, usageLimit: { ...first.usageLimit, resetAtMs: 1794283200000 } };
+    expect(buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ issue, intent: {
+      ...intent, armedAtMs: 1793871335690, status: 'cancelled', terminalReason: 'connected_service_continuation_failure_superseded',
+      classification: { ...intent.classification, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(first) },
+    } })!({})).toMatchObject({ sessionUsageLimitRecoveryV1: {
+      issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+      lastProbeError: SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
+    } });
   });
   it('does not turn an authentication failure into a usage-limit wait', () => {
     expect(buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({

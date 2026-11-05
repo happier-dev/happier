@@ -5108,6 +5108,7 @@ export const en = {
             readyTitle: 'Usage limit reset',
             resetBody: ({ time }: { time: string }) => `This provider is asking the session to wait until ${time} before continuing.`,
             genericBody: 'This provider is asking the session to wait before continuing.',
+            stoppedBody: 'Automatic recovery stopped and won’t retry on its own. Try again below.',
             resetCreditBody: ({ count }: { count: number }) => `${count} usage ${count === 1 ? 'reset is' : 'resets are'} available.`,
             resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) => `${count} usage ${count === 1 ? 'reset is' : 'resets are'} available; next expires ${time}.`,
             readyBody: 'You can resume this session now.',

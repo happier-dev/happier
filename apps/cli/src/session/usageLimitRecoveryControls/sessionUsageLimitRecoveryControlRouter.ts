@@ -315,9 +315,14 @@ async function buildEnabledRecoveryIntent(
   params: RouteSessionUsageLimitRecoveryWaitResumeEnableParams,
   metadata: Record<string, unknown>,
 ): Promise<SessionUsageLimitRecoveryV1 | null> {
-  const existing = parseRecoveryIntent(metadata, params.rawSession);
-  const issueFingerprint =
-    typeof params.request.issueFingerprint === 'string' && params.request.issueFingerprint.trim().length > 0
+  const associated = parseRecoveryIntent(metadata, params.rawSession);
+  // A finished daemon attempt can no longer be woken, so its retry is a new wait for the current
+  // issue and takes neither that attempt's id nor the fingerprint it was armed with.
+  const existing = associated?.runtimeAuthRecoveryAttemptId
+    && (associated.status === 'cancelled' || associated.status === 'exhausted') ? null : associated;
+  const issueFingerprint = !existing && associated
+    ? undefined
+    : typeof params.request.issueFingerprint === 'string' && params.request.issueFingerprint.trim().length > 0
       ? params.request.issueFingerprint.trim()
       : undefined;
   const rawExisting = metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY];

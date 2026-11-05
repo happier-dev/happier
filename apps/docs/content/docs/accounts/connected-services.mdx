@@ -162,6 +162,10 @@ not dismiss the warning. Accepted Pending delivery, explicit cancellation, or
 subsequent Agent activity can end the wait presentation.
 If **Apply reset** fails, its action becomes available again.
 
+If automatic recovery stops without resuming the session, the usage-limit banner stays
+with an action to try again. Depending on the failure, that action switches accounts or
+starts a new wait for the limit to reset. Cancelling a wait yourself still dismisses it.
+
 Pool quota selection determines which meters affect account eligibility before
 a request. A supported limit error that actually fails the Agent's main operation
 still follows the pool's configured switching rules and limits. Create separate

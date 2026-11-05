@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import {
+    buildUsageLimitIssueFingerprint,
+    SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
+    type SessionRuntimeIssueV1,
+    type SessionUsageLimitRecoveryV1,
+} from '@happier-dev/protocol';
 
 import {
     buildSessionUsageLimitRecoveryPresentation,
@@ -925,6 +930,107 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
 
         expect(presentation?.banner.testID).toBe('session-usageLimit-recovery');
         expect(badge?.key).toBe('session-usage-limit-recovery');
+    });
+
+    it('keeps a recovery the daemon stopped by policy actionable through the existing retry actions', () => {
+        const stopped = (issue: SessionRuntimeIssueV1): SessionUsageLimitRecoveryV1 => ({
+            v: 1,
+            status: 'cancelled',
+            issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+            runtimeAuthRecoveryAttemptId: 'attempt-1',
+            armedAtMs: 1,
+            resetAtMs: null,
+            nextCheckAtMs: null,
+            attemptCount: 2,
+            maxAttempts: 3,
+            lastProbeError: SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR,
+            resumePromptMode: 'standard',
+            selectedAuth: { kind: 'group', serviceId: 'openai-codex', groupId: 'pool', profileId: 'primary' },
+        });
+        const build = (issue: SessionRuntimeIssueV1) => buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            latestTurnStatus: 'failed',
+            issue,
+            recovery: stopped(issue),
+            rememberedMode: 'ask',
+            checkNowSupported: true,
+            translate: (key) => key,
+            formatTime: (value) => String(value),
+        });
+
+        const poolIssue = usageIssue('codex', null, {
+            recoverability: 'switch_account',
+            connectedService: { serviceId: 'openai-codex', profileId: 'primary', groupId: 'pool' },
+        });
+        const pool = build(poolIssue);
+        expect(pool?.banner.body).toBe('session.usageLimitRecovery.stoppedBody');
+        expect(pool?.banner.primaryAction.kind).toBe('switch_account_now');
+
+        const waitIssue = usageIssue('codex', null);
+        expect(build(waitIssue)?.banner.primaryAction.kind).toBe('enable');
+        expect(buildSessionUsageLimitStatusBadgePresentation({
+            featureEnabled: true,
+            latestTurnStatus: 'failed',
+            issue: waitIssue,
+            recovery: stopped(waitIssue),
+            translate: (key) => key,
+            formatTime: (value) => String(value),
+        })?.key).toBe('session-usage-limit-recovery');
+    });
+
+    describe('recovery stopped by the daemon', () => {
+        const recoveryFor = (issue: SessionRuntimeIssueV1, overrides: Partial<SessionUsageLimitRecoveryV1> = {}): SessionUsageLimitRecoveryV1 => ({
+            v: 1, status: 'cancelled', issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+            runtimeAuthRecoveryAttemptId: 'attempt-1', armedAtMs: issue.occurredAt + 1_000,
+            resetAtMs: null, nextCheckAtMs: null, attemptCount: 2, maxAttempts: 3,
+            lastProbeError: SESSION_USAGE_LIMIT_RECOVERY_STOPPED_PROBE_ERROR, resumePromptMode: 'standard',
+            selectedAuth: { kind: 'native' }, ...overrides,
+        });
+        const build = (issue: SessionRuntimeIssueV1, recovery: SessionUsageLimitRecoveryV1, overrides: { nowMs?: number; hasInterruptedWorkToResume?: boolean } = {}) => (
+            buildSessionUsageLimitRecoveryPresentation({
+                featureEnabled: true, latestTurnStatus: 'failed', issue, recovery, rememberedMode: 'ask',
+                checkNowSupported: true, translate: (key) => key, formatTime: String, ...overrides,
+            })
+        );
+
+        it('stays stopped when one failure was reported twice', () => {
+            const first = { ...usageIssue('claude', null), occurredAt: 1793871333659 };
+            const enriched = { ...usageIssue('claude', 1794283200000), occurredAt: 1793871333704 };
+            const recovery = recoveryFor(first);
+            const presentation = build(enriched, recovery);
+            expect(presentation?.banner.body).toBe('session.usageLimitRecovery.stoppedBody');
+            expect(presentation?.banner.primaryAction.kind).toBe('enable');
+            expect(presentation?.issueFingerprint).toBe(recovery.issueFingerprint);
+        });
+
+        it('does not lend a stopped attempt to a later failure', () => {
+            const issue = usageIssue('claude', null);
+            const later = { ...issue, providerTurnId: 'new-turn', occurredAt: issue.occurredAt + 5_000 };
+            expect(build(later, recoveryFor(issue))?.banner.body).toBe('session.usageLimitRecovery.genericBody');
+        });
+
+        it('offers one re-arm instead of the controls bound to the dead attempt', () => {
+            const issue = usageIssue('claude', 5_000);
+            const presentation = build(issue, recoveryFor(issue), { nowMs: 6_000, hasInterruptedWorkToResume: true });
+            expect(presentation?.banner.primaryAction).toMatchObject({
+                kind: 'enable', label: 'session.usageLimitRecovery.resumeNowAction',
+            });
+            expect(presentation?.banner.secondaryActions.map(({ kind }) => kind)).toEqual(['remember']);
+        });
+
+        it('treats a dead-lettered daemon attempt the same way, keeping pool switching', () => {
+            const issue = usageIssue('claude', null);
+            const exhausted = recoveryFor(issue, { status: 'exhausted', lastProbeError: 'max_attempts_exhausted' });
+            expect(build(issue, exhausted)?.banner).toMatchObject({
+                body: 'session.usageLimitRecovery.stoppedBody',
+                primaryAction: { kind: 'enable' },
+            });
+            const poolIssue = usageIssue('claude', null, {
+                recoverability: 'switch_account',
+                connectedService: { serviceId: 'openai-codex', profileId: 'primary', groupId: 'pool' },
+            });
+            expect(build(poolIssue, recoveryFor(poolIssue, exhausted))?.banner.primaryAction.kind).toBe('switch_account_now');
+        });
     });
 
     it('hides recovery once the durable recovery intent is cancelled, even while working', () => {

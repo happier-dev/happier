@@ -5255,6 +5255,7 @@ export const zhHans: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `此提供方要求会话等到 ${time} 后再继续。`,
       genericBody: "此提供方要求会话等待后再继续。",
+      stoppedBody: "自动恢复已停止，不会自行重试。请在下方重试。",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} 次使用重置可用。`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>

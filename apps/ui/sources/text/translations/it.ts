@@ -5785,6 +5785,7 @@ export const it: TranslationStructure = {
       resetBody: ({ time }: { time: string }) =>
         `Questo provider chiede alla sessione di attendere fino a ${time} prima di continuare.`,
       genericBody: "Questo provider chiede alla sessione di attendere prima di continuare.",
+      stoppedBody: "Il recupero automatico si è interrotto e non riproverà da solo. Riprova qui sotto.",
       resetCreditBody: ({ count }: { count: number }) =>
         `${count} ${count === 1 ? "reset di utilizzo disponibile" : "reset di utilizzo disponibili"}.`,
       resetCreditExpiresBody: ({ count, time }: { count: number; time: string }) =>
