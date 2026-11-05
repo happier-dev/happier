@@ -3,9 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { t } from '@/text';
 
@@ -165,9 +164,7 @@ export function PluginDetailRecoveryHeader(props: Readonly<{
             description={t('common.unavailable')}
             meta={[{ key: 'id', text: props.pluginId }]}
             leading={(
-                <PageHeaderMarkSlot>
-                    <Icon name="cloud-slash" size={20} color={theme.colors.text.secondary} />
-                </PageHeaderMarkSlot>
+                <PageHeaderMarkIcon name="cloud-slash" />
             )}
         />
     );

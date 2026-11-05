@@ -6,7 +6,7 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -65,9 +65,7 @@ export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView
                 alwaysShowTitle
                 description={t('connectedServicesPool.newPoolDescription', { service: props.serviceLabel })}
                 leading={(
-                    <PageHeaderMarkSlot>
-                        <Icon name="stack" size={26} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkSlot>
+                    <PageHeaderMarkIcon name="stack" />
                 )}
             />
             <ItemGroup>

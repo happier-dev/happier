@@ -41,7 +41,7 @@ import { t } from '@/text';
 import { CollectionStatusGlyph, type CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { useNavigation } from '@/components/appShell/workspace/destinationRoute';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -744,9 +744,7 @@ const OwnedSecretPage = React.memo(function OwnedSecretPage(props: Readonly<{
                 alwaysShowTitle
                 compactPresentation="centered"
                 leading={(
-                    <PageHeaderMarkSlot>
-                        <Icon name="key" size={26} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkSlot>
+                    <PageHeaderMarkIcon name="key" />
                 )}
                 meta={meta}
                 // Renaming is rare: the pencil beside the name (as on pools and accounts), and in ⋯.

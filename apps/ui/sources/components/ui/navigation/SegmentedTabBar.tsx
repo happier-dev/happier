@@ -968,7 +968,8 @@ function PlainTabCaption(props: Readonly<{
         <View style={[styles.tabCaption, styles.plainCaption]}>
             {props.icon && props.tab.icon ? <View style={styles.tabIcon}>{props.tab.icon}</View> : null}
             {props.more ? <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
-            {props.label === false ? null : (
+            {/* The overflow trigger is the glyph alone everywhere; its word is the accessible name. */}
+            {props.label === false || props.more ? null : (
                 <Text numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null]}>
                     {props.tab.label}
                     {props.tab.count && props.count !== false ? <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text> : null}

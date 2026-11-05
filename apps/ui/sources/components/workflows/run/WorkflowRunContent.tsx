@@ -29,7 +29,7 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Item } from '@/components/ui/lists/Item';
@@ -1122,9 +1122,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     alwaysShowTitle
                     // A phone gives the title the full width; the origin fact keeps the workflow glyph (lab P1).
                     leading={phone ? undefined : (
-                        <PageHeaderMarkSlot>
-                            <Icon name="tree-structure" size={22} color={theme.colors.text.secondary} />
-                        </PageHeaderMarkSlot>
+                        <PageHeaderMarkIcon name="tree-structure" />
                     )}
                     meta={headerMeta}
                     actions={runControls}

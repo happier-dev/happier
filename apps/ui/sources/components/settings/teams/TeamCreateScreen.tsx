@@ -18,9 +18,8 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
@@ -556,9 +555,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
             title={name.trim() || t('teams.create.title')}
             description={t('teams.directory.emptyBody')}
             leading={(
-                <PageHeaderMarkSlot>
-                    <Icon name="users" size={22} color={theme.colors.text.secondary} />
-                </PageHeaderMarkSlot>
+                <PageHeaderMarkIcon name="users" />
             )}
             details={props.details}
             meta={singleHome ? [{

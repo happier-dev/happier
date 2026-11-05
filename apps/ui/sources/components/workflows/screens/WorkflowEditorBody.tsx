@@ -26,7 +26,7 @@ import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
-import { PAGE_HEADER_MARK_SLOT_SIZE_PX, PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon, PAGE_HEADER_MARK_SLOT_SIZE_PX } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -146,7 +146,7 @@ const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
 
 /** The page title's left edge from the column's (its text inset, the leading mark, the header's gap). */
 const WORKFLOW_PAGE_TITLE_EDGE_PX = HAPPIER_PAGE_METRICS.pageTextInsetPx
-    + PAGE_HEADER_MARK_SLOT_SIZE_PX.page + HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx;
+    + PAGE_HEADER_MARK_SLOT_SIZE_PX.page + HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
 
 const styles = StyleSheet.create((theme) => ({
     /**
@@ -1184,9 +1184,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             // A phone's page gives its width to the editable name (lab `editor-P1`: no mark); wide
             // pages lead with the workflow's mark, its steps' ordinals hanging under it.
             {...(compactLayout ? {} : { leading: (
-                <PageHeaderMarkSlot>
-                    <Icon name="tree-structure" size={22} color={theme.colors.text.secondary} />
-                </PageHeaderMarkSlot>
+                <PageHeaderMarkIcon name="tree-structure" />
             ) })}
             {...(!documentEditable ? { description: joinReadOnlyDescription([props.description, ...(props.headerMeta?.map((fact) => fact.text) ?? [])]) } : {})}
             {...(props.showNameField === false || !documentEditable ? {} : {

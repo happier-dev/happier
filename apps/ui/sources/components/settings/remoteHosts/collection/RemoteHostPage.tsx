@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -55,7 +54,6 @@ export const RemoteHostPage = React.memo(function RemoteHostPage(props: Readonly
 });
 
 const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Readonly<{ host: RemoteHost | null }>) {
-    const { theme } = useUnistyles();
     const router = useRouter();
     const navigation = useNavigation();
     const collection = useRemoteHostsCollection();
@@ -145,9 +143,7 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                 description={t(isNew ? 'settingsRemoteHostsPage.newHostDescription' : 'settingsRemoteHostsPage.hostPageDescription')}
                 meta={host ? [{ key: 'target', text: host.ssh.target }] : undefined}
                 leading={(
-                    <PageHeaderMarkSlot>
-                        <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkSlot>
+                    <PageHeaderMarkIcon name="desktop" />
                 )}
                 primaryAction={{
                     testID: 'settings.remoteHosts.host.save',

@@ -15,9 +15,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -972,9 +971,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 title={group.name}
                 description={group.description ?? undefined}
                 leading={(
-                    <PageHeaderMarkSlot>
-                        <Icon name="users" size={22} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkSlot>
+                    <PageHeaderMarkIcon name="users" />
                 )}
                 meta={[
                     { key: 'team', text: context.team.name },

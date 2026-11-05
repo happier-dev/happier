@@ -334,10 +334,15 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
       {props.titleAccessory}
     </View>
   ) : title;
+  // The split title line keeps a control's height so its actions never move it. That room is already air
+  // under the title, so the purpose line takes only what the line gap has left: title and purpose read as one block.
+  const titleLineSlackPx = !centered && !inlineActions
+    ? Math.max(0, HAPPIER_PAGE_METRICS.controlHeightPx - titleLineHeight) / 2 : 0;
+  const titleToDescriptionGapPx = Math.max(0, HAPPIER_PAGE_METRICS.pageHeaderLineGapPx - titleLineSlackPx);
   const textBelowTitleContent = (
     <>
       {props.description ? (
-        <View style={showTitle ? { marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx } : undefined}>
+        <View style={showTitle ? { marginTop: titleToDescriptionGapPx } : undefined}>
           {renderPageText(props.description, 'pageDescription', renderText)}
         </View>
       ) : null}
@@ -432,7 +437,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           testID={props.testID ? `${props.testID}-title-row` : undefined}
           // Inline actions (and the status line under them) hang from the title's top edge, so a status
           // that wraps to another line never re-centres, and so moves, the identity beside it.
-          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx, rowGap: 12 }}
+          style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered ? 'nowrap' : 'wrap', alignItems: inlineActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx, rowGap: 12 }}
         >
           {renderBack && centered && backPlacement === 'above-title'
             // A compact centred identity keeps back at the pane's top-left corner.
@@ -473,6 +478,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                     testID={actionsBelowIdentity && props.testID ? `${props.testID}-actions-below` : undefined}
                     style={[
                       { flexShrink: inlineActions ? 0 : 1, maxWidth: '100%' },
+                      // The title keeps the text edge; its controls end on the sheets' and fields' edge under them.
+                      centered || actionsBelowIdentity ? null : { marginRight: -Math.max(0, textInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx) },
                       actionsBelowIdentity ? {
                         position: 'absolute',
                         left: -leadingInsetPx,

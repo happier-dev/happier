@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -45,9 +45,7 @@ export const PromptEditorHeader = React.memo(function PromptEditorHeader(props: 
                 </Text>
             ) : undefined}
             leading={(
-                <PageHeaderMarkSlot>
-                    <Icon name={props.mark} size={20} color={theme.colors.text.secondary} />
-                </PageHeaderMarkSlot>
+                <PageHeaderMarkIcon name={props.mark} />
             )}
             primaryAction={{
                 testID: props.saveTestID,

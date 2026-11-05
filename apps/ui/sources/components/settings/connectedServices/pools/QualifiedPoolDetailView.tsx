@@ -13,7 +13,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
@@ -617,9 +617,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 compactPresentation="centered"
                 primaryAction={compact ? { title: t('connectedServicesPool.rename'), onPress: () => { void rename(); } } : undefined}
                 leading={(
-                    <PageHeaderMarkSlot>
-                        <Icon name="stack" size={26} color={theme.colors.text.secondary} />
-                    </PageHeaderMarkSlot>
+                    <PageHeaderMarkIcon name="stack" />
                 )}
                 titleAccessory={!compact ? (
                     <IconButton

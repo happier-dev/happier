@@ -21,7 +21,7 @@ import {
   PageHeader,
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -563,13 +563,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
         }
         alwaysShowTitle
         leading={
-          <PageHeaderMarkSlot>
-            <Icon
-              name="git-branch"
-              size={22}
-              color={theme.colors.text.secondary}
-            />
-          </PageHeaderMarkSlot>
+          <PageHeaderMarkIcon name="git-branch" />
         }
         {...(canEdit && (props.creating || view)
           ? {
