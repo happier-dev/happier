@@ -240,10 +240,7 @@ function UsageModelPriceRow(
     }
   };
   const price = props.row.effectivePrice;
-  const unpricedTokens = props.row.unpricedContributions.reduce(
-    (sum, row) => sum + row.tokens.total,
-    0,
-  );
+  const unpricedTokens = props.row.unpricedTokens;
   const source =
     price === null
       ? t('usage.board.page.priceNone')
