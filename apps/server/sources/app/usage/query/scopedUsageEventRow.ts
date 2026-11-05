@@ -10,10 +10,15 @@ export interface ScopedUsageAccountingEvidence {
     subject: UsageNativeAccountingSubject | null;
 }
 
+export function isScopedUsageTurnDelta(row: Pick<ScopedUsageEventRow, 'scope' | 'isCumulative'>): boolean {
+    return row.scope === 'turn_delta' && !row.isCumulative;
+}
+
 const nativeSubjectReadSchema = createStoredReadSchema(UsageNativeAccountingSubjectSchema);
 
 /** Exclude known Team usage; unknown ownership keeps ordinary Usage reconciliation. */
-export function isPublicEligibleUsageRow(row: ScopedUsageEventRow): boolean {
+export function isPublicEligibleUsageRow(row: Pick<ScopedUsageEventRow, 'metadata' | 'teamCredentialResourceId'
+    | 'teamCredentialActorAccountId' | 'teamCredentialExternalApiKeyId' | 'teamCredentialSourceCredentialId'>): boolean {
     if (row.teamCredentialResourceId || row.teamCredentialActorAccountId
         || row.teamCredentialExternalApiKeyId || row.teamCredentialSourceCredentialId) return false;
     const attribution = readUsageRequestAttribution(row.metadata);
@@ -25,7 +30,7 @@ export function readScopedUsageAccountingEvidence(
     row: Pick<ScopedUsageEventRow, "metadata" | "accountingEvidence">,
 ): ScopedUsageAccountingEvidence {
     if (row.accountingEvidence) return row.accountingEvidence;
-    const metadata = row.metadata;
+    const metadata = parseUsageEventMetadata(row.metadata);
     const subject = metadata && typeof metadata === "object" && !Array.isArray(metadata)
         ? nativeSubjectReadSchema.safeParse(Reflect.get(metadata, "accountingSubject"))
         : undefined;
@@ -33,6 +38,11 @@ export function readScopedUsageAccountingEvidence(
         accounting: readUsageAccountingMetadata(metadata),
         subject: subject?.success ? subject.data : null,
     };
+}
+
+function parseUsageEventMetadata(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    try { return JSON.parse(value); } catch { return null; }
 }
 
 /**
@@ -83,6 +93,37 @@ export type ScopedUsageEventDbRow = Readonly<{
     contextWindowTokens: number | null;
 }>;
 
+type UsageEvidenceField = 'id' | 'sessionId' | 'observedAt' | 'createdAt' | 'agentId' | 'backendMode'
+    | 'modelId' | 'projectKey' | 'workspaceId' | 'machineId' | 'source' | 'metadata' | 'scope' | 'isCumulative'
+    | 'teamCredentialResourceId' | 'teamCredentialActorAccountId' | 'teamCredentialExternalApiKeyId'
+    | 'teamCredentialSourceCredentialId';
+
+export type ScopedUsageEvidenceDbRow = Pick<ScopedUsageEventDbRow, UsageEvidenceField>;
+export type ScopedUsageEvidenceRow = Pick<ScopedUsageEventRow, UsageEvidenceField>
+    & { accountingEvidence: ScopedUsageAccountingEvidence };
+
+function normalizeScopedUsageMetadata(value: unknown) {
+    const metadata = parseUsageEventMetadata(value);
+    const accountingEvidence = readScopedUsageAccountingEvidence({ metadata });
+    const { accounting, subject: accountingSubject } = accountingEvidence;
+    // Team coverage also consumes metadata outside the accounting projection.
+    const internalMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== 'usageAccounting' && key !== 'accountingSubject'))
+        : {};
+    const projectedMetadata = {
+        ...internalMetadata,
+        ...(accounting ? { usageAccounting: accounting } : {}),
+        ...(accountingSubject ? { accountingSubject } : {}),
+    };
+    return { metadata: Object.keys(projectedMetadata).length > 0 ? projectedMetadata : undefined, accountingEvidence };
+}
+
+/** Normalize historical identity and coverage without token or monetary row bodies. */
+export function toScopedUsageEvidenceRow<Row extends ScopedUsageEvidenceDbRow>(row: Row):
+    Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> {
+    return { ...row, ...normalizeScopedUsageMetadata(row.metadata) };
+}
+
 function readCostBreakdown(value: string | null): Record<string, number> | undefined {
     if (!value) return undefined;
     try {
@@ -120,22 +161,12 @@ function readCostSource(value: string | null, cost: UsageObservationCost): NonNu
 }
 
 export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEventRow {
-    let metadata: unknown = row.metadata;
-    if (typeof metadata === "string") {
-        try { metadata = JSON.parse(metadata); } catch { metadata = null; }
-    }
-    const accountingEvidence = readScopedUsageAccountingEvidence({ metadata });
-    const { accounting, subject: accountingSubject } = accountingEvidence;
-    // This internal mapper also serves Team usage coverage. Preserve its
-    // distinct evidence while normalizing only the accounting-owned fields.
-    const internalMetadata = metadata && typeof metadata === "object" && !Array.isArray(metadata)
-        ? Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== "usageAccounting" && key !== "accountingSubject"))
-        : {};
-    const projectedMetadata = {
-        ...internalMetadata,
-        ...(accounting ? { usageAccounting: accounting } : {}),
-        ...(accountingSubject ? { accountingSubject } : {}),
-    };
+    return toScopedUsageEventRowWithEvidence(row);
+}
+
+/** Captured thin evidence already owns metadata normalization for this row. */
+export function toScopedUsageEventRowWithEvidence(row: ScopedUsageEventDbRow, evidence?: ScopedUsageEvidenceRow): ScopedUsageEventRow {
+    const { metadata, accountingEvidence } = evidence ?? normalizeScopedUsageMetadata(row.metadata);
     const cost: UsageObservationCost = {
         reportedUsd: row.reportedCostUsd,
         estimatedUsd: row.estimatedCostUsd,
@@ -165,7 +196,7 @@ export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEv
         teamCredentialSourceCredentialId: row.teamCredentialSourceCredentialId,
         brokerMachineId: row.brokerMachineId,
         credentialDeliveryMode: row.credentialDeliveryMode,
-        metadata: Object.keys(projectedMetadata).length > 0 ? projectedMetadata : undefined,
+        metadata,
         accountingEvidence,
         contextUsedTokens: row.contextUsedTokens,
         contextWindowTokens: row.contextWindowTokens,

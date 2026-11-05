@@ -3,11 +3,12 @@ import type { UsageAnalyticsQueryRequest, UsageAnalyticsQueryResponse } from '@h
 import type { UsageMessageCounts } from "./loadUsageMessageStatsForQuery";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
 import { resolveUsageContributionSourceContext } from "./resolveScopedUsageContributions";
-import { buildUsageLeaderList, type UsageLeaderDimension } from '@happier-dev/protocol/usage/usageLeaderProjection';
+import { buildUsageLeaderList, selectUsageLeaderTokenFrontier, type UsageLeaderDimension } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { resolveUsageBucketBounds as resolveBucketBounds, resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
 import { resolveUsageContributionDimensionKey } from '@happier-dev/protocol/usage/usageCostFacts';
 import { resolveUsageCostMode } from "./resolveUsageCostMode";
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
+import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -61,31 +62,23 @@ function buildLeaderList(
     dimension: UsageLeaderDimension,
     requestedMode: UsageAnalyticsQueryRequest["costMode"],
     includeSources = false,
+    deferPricing = false,
 ): UsageAnalyticsLeader[] | undefined {
-    return buildUsageLeaderList(rows.map(row => ({ ...row, eventCount: row.contributingEventIds.length,
-        sourceContext: resolveUsageContributionSourceContext(row) })),
-        dimension, topLimit, resolveUsageCostMode(requestedMode), undefined, includeSources);
-}
-
-export function buildUsageLeaders(
-    rows: UsageEventRow[],
-    topLimit: number,
-    requestedMode?: UsageAnalyticsQueryRequest["costMode"],
-): UsageLeaderGroup | undefined {
-    const leaders: UsageLeaderGroup = {
-        agents: buildLeaderList(rows, topLimit, "agent", requestedMode),
-        models: buildLeaderList(rows, topLimit, "model", requestedMode),
-        sessions: buildLeaderList(rows, topLimit, "session", requestedMode),
-        projects: buildLeaderList(rows, topLimit, "project", requestedMode),
-        workspaces: buildLeaderList(rows, topLimit, "workspace", requestedMode),
-        engines: buildLeaderList(rows, topLimit, "engine", requestedMode),
-    };
-
-    return Object.values(leaders).some((value) => value && value.length > 0) ? leaders : undefined;
+    const admitted = rows.map(row => ({ ...row, eventCount: row.contributingEventIds.length,
+        sourceContext: resolveUsageContributionSourceContext(row) }));
+    if (deferPricing) {
+        const candidates = selectUsageLeaderTokenFrontier(admitted, dimension, topLimit);
+        // The pricing owner rebuilds these leaders from the complete bucket.
+        // Only membership/count and labels survive this preparation. Money is
+        // needed here solely when a frontier tie changes witnessed membership.
+        if (candidates.length <= topLimit) return candidates.map(candidate => candidate.value);
+    }
+    return buildUsageLeaderList(admitted, dimension, topLimit, resolveUsageCostMode(requestedMode), undefined,
+        includeSources && !deferPricing);
 }
 
 export function buildUsageActivity(
-    rows: UsageEventRow[],
+    rows: readonly Pick<UsageEventRow, 'observedAt' | 'contributingEventIds'>[],
     resolution: UsageAnalyticsQueryRequest["activityResolution"],
     timeZoneOffsetMinutes = 0,
 ): UsageActivity | undefined {
@@ -141,12 +134,12 @@ function buildTopKeyedLabel(values: Map<string, number>): { key: string; label: 
         .map(([key]) => ({ key, label: key }))[0];
 }
 
-function countFavoriteModelChanges(rows: UsageEventRow[]): number {
+function countFavoriteModelChanges(rows: readonly { modelId: string | null }[]): number {
     let previous: string | null = null;
     let changes = 0;
 
     for (const row of rows) {
-        const modelId = resolveUsageContributionDimensionKey(row, 'model');
+        const modelId = canonicalUsageModelPriceId(row.modelId);
         if (!modelId) {
             continue;
         }
@@ -167,6 +160,7 @@ export function buildUsageInsights(
     rows: UsageEventRow[],
     messageCounts: UsageMessageCounts,
     timeZoneOffsetMinutes = 0,
+    modelOrderRows: readonly { modelId: string | null }[] = rows,
 ): UsageInsights {
     const activeDays = new Set<string>();
     const sessions = new Set<string>();
@@ -203,7 +197,7 @@ export function buildUsageInsights(
         messagesUsed: messageCounts.messageCount,
         modelsTried: models.size,
         favoriteModel: buildTopKeyedLabel(models),
-        favoriteModelChangeCount: countFavoriteModelChanges(rows),
+        favoriteModelChangeCount: countFavoriteModelChanges(modelOrderRows),
         busiestMonth: buildTopKeyedLabel(months),
         busiestDay: buildTopKeyedLabel(days),
         busiestHour: buildTopKeyedLabel(hours),
@@ -218,6 +212,7 @@ function buildTimeline(
     dimension: UsageLeaderDimension,
     timeZoneOffsetMinutes: number,
     requestedMode: UsageAnalyticsQueryRequest["costMode"],
+    deferPricing = false,
 ): UsageTimeline | undefined {
     const buckets = new Map<number, {
         bucketStartMs: number;
@@ -245,7 +240,7 @@ function buildTimeline(
         .map((bucket) => ({
             bucketStartMs: bucket.bucketStartMs,
             bucketEndMs: bucket.bucketEndMs,
-            leaders: buildLeaderList(bucket.rows, topLimit, dimension, requestedMode, true) ?? [],
+            leaders: buildLeaderList(bucket.rows, topLimit, dimension, requestedMode, true, deferPricing) ?? [],
         }));
 }
 
@@ -255,8 +250,9 @@ export function buildUsageModelTimeline(
     topLimit: number,
     timeZoneOffsetMinutes = 0,
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
+    deferPricing = false,
 ): UsageTimeline | undefined {
-    return buildTimeline(rows, granularity, topLimit, "model", timeZoneOffsetMinutes, requestedMode);
+    return buildTimeline(rows, granularity, topLimit, "model", timeZoneOffsetMinutes, requestedMode, deferPricing);
 }
 
 export function buildUsageEngineTimeline(
@@ -265,6 +261,7 @@ export function buildUsageEngineTimeline(
     topLimit: number,
     timeZoneOffsetMinutes = 0,
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
+    deferPricing = false,
 ): UsageTimeline | undefined {
-    return buildTimeline(rows, granularity, topLimit, "engine", timeZoneOffsetMinutes, requestedMode);
+    return buildTimeline(rows, granularity, topLimit, "engine", timeZoneOffsetMinutes, requestedMode, deferPricing);
 }

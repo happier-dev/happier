@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 
 function row(id: string, time: number, scope: string, total: number): ScopedUsageEventRow {
@@ -17,6 +18,26 @@ function row(id: string, time: number, scope: string, total: number): ScopedUsag
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it('preserves global same-instant runtime ranks when unrelated subject bodies are omitted', () => {
+        const ordered = (id: string, scope: string, total: number, createdAt: number, runtime: string, sequence: number) => ({
+            ...row(id, 100, scope, total), source: 'runtime', createdAt: new Date(createdAt),
+            metadata: { usageAccounting: { path: 'runtime', runtimeEventOrder: { runtimeIncarnationId: runtime, sequence } } },
+        });
+        const rows = [
+            ordered('selected-snapshot', 'session_cumulative', 100, 101, 'runtime-x', 2),
+            ordered('selected-delta', 'turn_delta', 10, 102, 'runtime-y', 1),
+            { ...ordered('unrelated-peer', 'turn_delta', 7, 103, 'runtime-x', 1), sessionId: 'other-session' },
+            row('selected-latest', 200, 'session_cumulative', 120),
+        ].map(event => ({ ...event, accountingEvidence: readScopedUsageAccountingEvidence(event) }));
+        const range = { startMs: 175, endMs: 225 };
+        const expected = resolveScopedUsageContributions(rows, range);
+        expect(expected.totalContributions.map(event => [event.id, event.tokens.total])).toEqual([['selected-latest', 20]]);
+        const context = prepareScopedUsageReplayContext(rows, range);
+        expect([...context.selectedEventIds]).toEqual(['selected-snapshot', 'selected-delta', 'selected-latest']);
+        const selected = rows.filter(event => context.selectedEventIds.has(event.id));
+        expect(resolveScopedUsageContributions(selected, range, context)).toEqual(expected);
+    });
+
     it("does not reset an inference counter when an intervening context snapshot carries no billed usage", () => {
         const context = { ...row("context", 200, "session_cumulative", 0),
             contextUsedTokens: 25, contextWindowTokens: 1000 };
@@ -130,6 +151,22 @@ describe("resolveScopedUsageContributions", () => {
         expect(result.totalContributions.map((event) => event.tokens.total)).toEqual([20]);
         expect(result.totalContributions.flatMap((event) => event.contributingEventIds)).toEqual(["selected"]);
         expect(result.bucketAttributions).toEqual(result.totalContributions);
+    });
+
+    it("keeps pre-range replay evidence even when the latest cumulative baseline is unchanged", () => {
+        const subject = { kind: "native", machineId: "machine", agent: { pluginId: "happier.agent.claude", localId: "claude" },
+            sourceRootKey: "root", nativeSessionKey: "native" };
+        const runtime = { ...row("runtime", 100, "turn_delta", 10), source: "runtime",
+            metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "inference", path: "runtime" } } };
+        const baseline = { ...row("baseline", 150, "session_cumulative", 100), metadata: { accountingSubject: subject } };
+        const native = { ...row("native", 200, "turn_delta", 10), sessionId: null,
+            metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "inference", path: "native" } } };
+        const range = { startMs: 175, endMs: 225 };
+
+        expect(resolveScopedUsageContributions([runtime, baseline, native], range).totalContributions).toEqual([]);
+        const withoutReplay = resolveScopedUsageContributions([baseline, native], range);
+        expect(withoutReplay.totalContributions.map((event) => [event.id, event.tokens.total, event.cost.estimatedUsd]))
+            .toEqual([["native", 10, 0.1]]);
     });
 
     it("keeps model and inference attribution and assigns only final residual to unknown model", () => {

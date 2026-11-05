@@ -1,9 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { buildUsageEngineTimeline, buildUsageInsights, buildUsageLeaders, buildUsageModelTimeline } from "./buildUsagePremiumSections";
+import { buildUsageEngineTimeline, buildUsageInsights, buildUsageModelTimeline } from "./buildUsagePremiumSections";
 import { resolveScopedUsageContributions } from "./resolveScopedUsageContributions";
 
 describe("buildUsagePremiumSections", () => {
+    it("defers timeline money reads until pricing, except to preserve a truncated token tie", () => {
+        for (const count of [2, 128]) {
+            let moneyReads = 0;
+            const rows = Array.from({ length: count }, (_, index) => ({ sessionId: "session",
+                observedAt: new Date(100), agentId: "codex", backendMode: null, modelId: `model-${index % 2}`,
+                projectKey: null, workspaceId: null, source: "runtime", contributingEventIds: [String(index)],
+                tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+                cost: { get reportedUsd() { moneyReads++; return index % 2 ? 2 : 1; }, estimatedUsd: 0, currency: "USD" },
+            }));
+            const prepared = buildUsageModelTimeline(rows, "day", 2, 0, "auto", true);
+            expect(moneyReads, "timeline preparation must not price money that the canonical pricing pass rebuilds").toBe(0);
+            expect(prepared?.[0]?.leaders.map(leader => leader.key).sort()).toEqual(["model-0", "model-1"]);
+            const truncated = buildUsageModelTimeline(rows, "day", 1, 0, "auto", true);
+            expect(moneyReads).toBeGreaterThan(0);
+            expect(truncated?.[0]?.leaders.map(leader => leader.key)).toEqual(["model-1"]);
+        }
+    });
     it("does not count the real QA snapshot alias as a different model or model switch", () => {
         const rows = ["claude-haiku-4-5-20251001", "claude-haiku-4-5", "claude-haiku-5-5"].map((modelId, index) => ({
             sessionId: "session", observedAt: new Date(1791720000000 + index), agentId: "claude", backendMode: null,
@@ -47,16 +64,14 @@ describe("buildUsagePremiumSections", () => {
             { ...base, modelId: "known", tokens: { ...base.tokens, input: 2, total: 2 }, cost: { reportedUsd: 2, estimatedUsd: 0, costSource: "provider_reported" as const, currency: "USD" } },
             { ...base, modelId: null, cost: { reportedUsd: 0, estimatedUsd: 0, costSource: "none" as const, currency: "USD" } },
         ];
-        const automatic = buildUsageLeaders(rows, 10)?.models;
+        const automatic = buildUsageModelTimeline(rows, "day", 10)?.[0].leaders;
         expect(automatic?.map((row) => row.key)).toEqual(["mixed", "known", "unknown"]);
         expect(automatic?.[0]?.cost).toMatchObject({ reportedUsd: 10, estimatedUsd: 10, effectiveUsd: 20, costSource: "none" });
-        expect(buildUsageModelTimeline(rows, "day", 10)?.[0].leaders.map((row) => row.key)).toEqual(["mixed", "known", "unknown"]);
-        const reported = buildUsageLeaders(rows, 10, "reported")?.models;
+        const reported = buildUsageModelTimeline(rows, "day", 10, 0, "reported")?.[0].leaders;
         expect(reported?.map((row) => row.key)).toEqual(["known", "mixed", "unknown"]);
         expect(reported?.find((row) => row.key === "mixed")?.cost?.effectiveUsd).toBeUndefined();
-        expect(buildUsageModelTimeline(rows, "day", 10, 0, "reported")?.[0].leaders.map((row) => row.key)).toEqual(["known", "mixed", "unknown"]);
     });
-    it("keeps aggregated tokens and cost on leaders and timelines", () => {
+    it("keeps aggregated tokens and cost on timeline leaders", () => {
         const rows = [
             {
                 sessionId: "session-1",
@@ -86,26 +101,6 @@ describe("buildUsagePremiumSections", () => {
             },
         ];
 
-        const leaders = buildUsageLeaders(rows, 10);
-        expect(leaders?.agents?.[0]).toMatchObject({
-            key: "claude",
-            eventCount: 2,
-            tokens: {
-                input: 18,
-                output: 12,
-                reasoning: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                total: 30,
-            },
-            cost: {
-                reportedUsd: 0.22,
-                estimatedUsd: 0.16999999999999998,
-                invoiceUsd: 0.15000000000000002,
-                currency: "USD",
-            },
-        });
-
         const timeline = buildUsageModelTimeline(rows, "day", 10);
         expect(timeline?.[0]).toMatchObject({
             leaders: [
@@ -122,8 +117,8 @@ describe("buildUsagePremiumSections", () => {
                     },
                     cost: {
                         reportedUsd: 0.22,
-                        estimatedUsd: 0.16999999999999998,
-                        invoiceUsd: 0.15000000000000002,
+                        estimatedUsd: 0.17,
+                        invoiceUsd: 0.15,
                         currency: "USD",
                     },
                 },

@@ -4,10 +4,17 @@ import {
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { inTx, type Tx } from "@/storage/inTx";
+import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from '../usageSourceClassifier';
 
 export type UsageMessageCounts = {
     messageCount: number;
 };
+
+/** Only private transcript demands admit Session message counts into a query snapshot. */
+export function hasUsageMessageCountDemand(request: UsageAnalyticsQueryRequest): boolean {
+    return request.population !== 'public_eligible_personal' && request.filters?.execution === undefined
+        && (request.includeMessageStats === true || request.includeInsights === true);
+}
 
 function toObservedAtFilter(request: UsageAnalyticsQueryRequest) {
     if (!request.dateRange) {
@@ -34,16 +41,21 @@ export async function loadUsageMessageCountsBySessionInTx(
     tx: Tx,
     accountId: string,
     request: UsageAnalyticsQueryRequest,
-    sessionIds: string[],
+    sessionIds?: string[],
 ): Promise<ReadonlyMap<string, number>> {
-    if (sessionIds.length === 0) {
+    if (sessionIds?.length === 0) {
         return new Map();
     }
 
     const publicationRows = await tx.session.findMany({
         where: {
-            id: { in: sessionIds },
+            id: sessionIds === undefined ? undefined : { in: sessionIds },
             accountId,
+            OR: [
+                { usageEvents: { some: { observedAt: toObservedAtFilter(request),
+                    source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } } } },
+                { usageReports: { some: { updatedAt: toObservedAtFilter(request) } } },
+            ],
         },
         select: {
             id: true,

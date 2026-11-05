@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { Session } from "node:inspector";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
-import { buildUsageResultProjection } from "./buildUsageResultProjection";
+import { buildUsageResultProjection, resolveUsageContributionProviderAttribution } from "./buildUsageResultProjection";
 
 function row(id: string, total: number): ScopedUsageContribution {
     return {
@@ -16,6 +18,56 @@ function row(id: string, total: number): ScopedUsageContribution {
 }
 
 describe("canonical usage result projection", () => {
+    it("exposes the same witnessed attribution tuple for native and unknown hourly contributions", () => {
+        const service = { pluginId: "acme.accounts", localId: "native" };
+        const known = { ...row("known", 10), metadata: {
+            usageAccounting: { path: "runtime", status: "available", historyComplete: true },
+            usageAttribution: { v: 1, turnId: "known", source: { kind: "native",
+                connectedAccount: { service, accountId: "account-a" } } },
+        } };
+        const unknown = { ...row("unknown", 10), metadata: {
+            usageAccounting: { path: "runtime", status: "available", historyComplete: true },
+            usageAttribution: { v: 1, turnId: "another-turn", source: { kind: "native",
+                connectedAccount: { service, accountId: "account-b" } } },
+        } };
+        expect(resolveUsageContributionProviderAttribution(known)).toEqual({
+            providerId: null, providerConnectionId: null, providerAttribution: "known",
+            providerSource: "native", connectedAccount: { service, accountId: "account-a" },
+        });
+        expect(resolveUsageContributionProviderAttribution(unknown)).toEqual({
+            providerId: null, providerConnectionId: null, providerAttribution: "unknown",
+            providerSource: "unknown", connectedAccount: null,
+        });
+        const projected = buildUsageResultProjection({ contributions: [known, unknown], evidenceRows: [],
+            coverageReasons: [], request: { granularity: "day", timeZoneOffsetMinutes: 0,
+                includeSeries: false, topLimit: 20 } });
+        expect(projected.contributions.map(({ providerId, providerConnectionId, providerAttribution,
+            providerSource, connectedAccount }) => ({ providerId, providerConnectionId, providerAttribution,
+            providerSource, connectedAccount }))).toEqual([
+            resolveUsageContributionProviderAttribution(known), resolveUsageContributionProviderAttribution(unknown),
+        ]);
+    });
+    it("releases historical evidence after materializing coverage while keeping its selector usable", async () => {
+        const request = { granularity: "day" as const, timeZoneOffsetMinutes: 0, includeSeries: false, topLimit: 20 };
+        const prepare = () => {
+            const evidence = row("historical-evidence", 10);
+            const weak = new WeakRef(evidence);
+            const projection = buildUsageResultProjection({ contributions: [], evidenceRows: [evidence],
+                coverageReasons: [], request });
+            return { weak, projection };
+        };
+        const { weak, projection } = prepare();
+        // A WeakRef keeps its target alive until the current job finishes.
+        await nextTurn();
+        const inspector = new Session();
+        inspector.connect();
+        try {
+            await new Promise<void>((resolve, reject) => inspector.post("HeapProfiler.collectGarbage",
+                error => error ? reject(error) : resolve()));
+        } finally { inspector.disconnect(); }
+        expect(weak.deref(), "coverage retains aggregated facts, not the historical evidence population").toBeUndefined();
+        expect(projection.projectCoverage(request, [], false)).toEqual(projection.coverage);
+    });
     it("retains witnessed machine origins and capture kinds without publishing private source metadata", () => {
         const measured = row("measured", 10);
         const otherMachine = { ...measured, id: "measured-other-machine", machineId: "other-machine" };

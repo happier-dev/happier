@@ -1,9 +1,14 @@
-import { bundledUsageModelPriceCatalog, estimateUsageModelCost, repriceUsageAnalyticsResponse, UsageAnalyticsQueryRequestSchema } from "@happier-dev/protocol";
+import { bundledUsageModelPriceCatalog, estimateUsageModelCost, repriceUsageAnalyticsResponse,
+    UsageAnalyticsQueryRequestSchema } from "@happier-dev/protocol";
+import { getUsageAnalyticsQueryRequestKey } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { queryUsageAnalytics } from "./usageQueryService";
+import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from "./query/readUsageAnalyticsBatch";
+import { prepareUsageAnalyticsSnapshot } from './query/projectUsageAnalyticsPopulation';
+import { captureUsageAnalyticsInTx, projectUsageAnalytics, queryUsageAnalytics } from "./usageQueryService";
 import { recordLegacyUsageReport, recordUsageEvent } from "./usageWriteService";
 
 async function createUsageOwner(label: string): Promise<{ accountId: string; sessionId: string }> {
@@ -83,6 +88,179 @@ describe("usageQueryService scoped aggregation", () => {
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it('hydrates window fold groups while retaining exact historical coverage and legacy evidence', async () => {
+        const owner = await createUsageOwner('thin-history');
+        const bridged = await db.session.create({ data: { accountId: owner.accountId, tag: 'thin-history-bridge',
+            encryptionMode: 'e2ee', metadata: 'ciphertext' } });
+        await db.usageEvent.createMany({ data: [
+            ...Array.from({ length: 128 }, (_, index) => ({
+                ...buildUsageEvent({ ...owner, observedAt: new Date(50).toISOString(), scope: 'turn_delta', totalTokens: 10 }),
+                sessionId: null, source: 'historical-only', machineId: `history-${index}`,
+                metadata: { usageAccounting: { path: 'native', status: 'unsupported', historyComplete: false,
+                    nativeSessionId: `history-${index}`, asOfMs: 50 } },
+            })),
+            ...[50, 150].map((at, index) => ({
+                ...buildUsageEvent({ ...owner, observedAt: new Date(at).toISOString(), scope: 'session_cumulative', totalTokens: index ? 120 : 100 }),
+                source: index ? 'runtime' : 'baseline', modelId: index ? 'new-model' : 'old-model',
+                metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+            })),
+            { ...buildUsageEvent({ accountId: owner.accountId, sessionId: bridged.id, observedAt: new Date(50).toISOString(),
+                scope: 'turn_delta', totalTokens: 7 }), source: 'legacy_usage_report', metadata: { legacyKey: 'bridge' } },
+        ] });
+        await db.usageReport.create({ data: { accountId: owner.accountId, sessionId: bridged.id, key: 'bridge',
+            data: { tokens: { total: 99 }, cost: { total: 1 } }, createdAt: new Date(50), updatedAt: new Date(150) } });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 },
+            includeSeries: true, includeActivity: true, breakdowns: ['source', 'model', 'machine'] });
+        const requests = [request,
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, filters: { sources: ['runtime'] } }),
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, filters: { sources: ['historical-only'] } }),
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, filters: { execution: 'happier' } }),
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, population: 'public_eligible_personal' }),
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, dateRange: { startMs: 300, endMs: 400 } }),
+            UsageAnalyticsQueryRequestSchema.parse({ ...request, dateRange: { startMs: 100, endMs: 150 } }),
+        ];
+        const allHistory = UsageAnalyticsQueryRequestSchema.parse({ ...request, dateRange: { endMs: 400 } });
+        const baseline = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, allHistory), { readOnly: true });
+        const scalar = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, request), { readOnly: true });
+        const batch = await inTx(tx => captureUsageAnalyticsBatchInTx(tx, owner.accountId, requests), { readOnly: true });
+        for (const query of requests) {
+            const full = { ...baseline, rows: baseline.rows.filter(row => row.observedAt.getTime() < query.dateRange!.endMs!) };
+            const expected = projectUsageAnalytics(full, query);
+            const captured = batch.snapshots.get(getUsageAnalyticsQueryRequestKey(query))!;
+            expect(JSON.stringify(projectUsageAnalytics(captured, query))).toBe(JSON.stringify(expected));
+        }
+        const projected = projectUsageAnalytics(scalar, request);
+        expect(projected.totals.tokens.total).toBe(20);
+        expect(projected.coverage?.sources.find(source => source.source === 'historical-only')?.eventCount).toBe(1);
+        expect(projected.coverage?.sources.filter(source => source.source === 'historical-only')).toHaveLength(128);
+        expect(projected.coverage?.reasons).toContain('incomplete_history');
+        expect(prepareUsageAnalyticsSnapshot(scalar, request).rows, 'post-commit body normalization scales with selected fold history').toHaveLength(2);
+        expect(prepareUsageAnalyticsSnapshot(batch.snapshots.get(getUsageAnalyticsQueryRequestKey(request))!, request).rows).toHaveLength(2);
+        const mixed = await inTx(tx => captureUsageAnalyticsBatchInTx(tx, owner.accountId, [request, allHistory]), { readOnly: true });
+        expect(mixed.snapshots.get(getUsageAnalyticsQueryRequestKey(allHistory))!.rows).toHaveLength(baseline.rows.length);
+        expect(JSON.stringify(projectUsageAnalytics(mixed.snapshots.get(getUsageAnalyticsQueryRequestKey(allHistory))!, allHistory)))
+            .toBe(JSON.stringify(projectUsageAnalytics(baseline, allHistory)));
+    });
+
+    it('does not consume stored Usage rows until its capture transaction has committed', async () => {
+        const owner = await createUsageOwner('fair-thin-history');
+        await db.usageEvent.createMany({ data: [150, 160, 170].map((at, index) => ({
+            ...buildUsageEvent({ ...owner, observedAt: new Date(at).toISOString(), scope: 'turn_delta', totalTokens: index + 1 }),
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+        })) });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 } });
+        const baseline = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, request), { readOnly: true });
+        let captureOpen = false;
+        const observed = new Set<unknown>();
+        const observedDuringCapture: boolean[] = [];
+        const captured = await inTx(async tx => {
+            captureOpen = true;
+            return captureUsageAnalyticsInTx(new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property !== 'usageEvent') return Reflect.get(target, property, receiver);
+                    return new Proxy(target.usageEvent, {
+                        get(delegate, method, delegateReceiver) {
+                            if (method !== 'findMany') return Reflect.get(delegate, method, delegateReceiver);
+                            // Observe first metadata consumption on real storage rows; every parser stays real.
+                            return async (...args: unknown[]) => {
+                                const rows: unknown = await Reflect.apply(Reflect.get(delegate, method), delegate, args);
+                                if (Array.isArray(rows)) for (const row of rows) {
+                                    if (!Object.hasOwn(row, 'metadata')) continue;
+                                    const metadata: unknown = Reflect.get(row, 'metadata');
+                                    const id: unknown = Reflect.get(row, 'id');
+                                    Object.defineProperty(row, 'metadata', { enumerable: true, get() {
+                                        if (!observed.has(id)) {
+                                            observed.add(id);
+                                            observedDuringCapture.push(captureOpen);
+                                        }
+                                        return metadata;
+                                    } });
+                                }
+                                return rows;
+                            };
+                        },
+                    });
+                },
+            }), owner.accountId, request);
+        }, { readOnly: true });
+        captureOpen = false;
+        expect(observedDuringCapture, 'normalization, subject selection and body hydration must wait for commit').toEqual([]);
+        expect(JSON.stringify(projectUsageAnalytics(captured, request))).toBe(JSON.stringify(projectUsageAnalytics(baseline, request)));
+        expect(observedDuringCapture).toEqual([false, false, false]);
+        expect(projectUsageAnalytics(captured, request).totals.tokens.total).toBe(6);
+    });
+
+    it('hydrates complete demanded subjects only, preserving native competitors, baselines and historical coverage', async () => {
+        const owner = await createUsageOwner('demanded-subjects');
+        const subject = { kind: 'native', machineId: 'machine', agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'root', nativeSessionKey: 'selected', linkedSessionId: owner.sessionId };
+        await db.usageEvent.createMany({ data: [
+            ...[50, 150, 160].map((at, index) => ({
+                ...buildUsageEvent({ ...owner, observedAt: new Date(at).toISOString(), scope: 'session_cumulative',
+                    totalTokens: [100, 120, 125][index]! }),
+                id: `demand-selected-${index}`, sessionId: index === 2 ? null : owner.sessionId,
+                source: index === 2 ? 'native' : 'runtime', modelId: index === 0 ? 'old-model' : 'new-model',
+                metadata: { accountingSubject: subject, usageAccounting: { path: index === 2 ? 'native' : 'runtime',
+                    status: 'available', historyComplete: true } },
+            })),
+            // Live QA's seven-day population has 891 subjects; unrelated activity must not widen body demand.
+            ...Array.from({ length: 890 }, (_, index) => ({
+                ...buildUsageEvent({ ...owner, observedAt: new Date(150).toISOString(), scope: 'turn_delta', totalTokens: 3 }),
+                sessionId: null, source: 'unrelated', modelId: 'unrelated-model',
+                metadata: { usageAccounting: { path: 'native', nativeSessionId: `unrelated-${index}`,
+                    status: 'unsupported', historyComplete: false } },
+            })),
+        ] });
+        const all = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { endMs: 200 }, includeSeries: true });
+        const baseline = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, all), { readOnly: true });
+        const queries = [
+            { ...all, dateRange: { startMs: 100, endMs: 200 }, filters: { sessionIds: [owner.sessionId] } },
+            { ...all, dateRange: { startMs: 100, endMs: 200 }, filters: { modelIds: ['new-model'] } },
+            { ...all, dateRange: { startMs: 100, endMs: 200 }, filters: { modelIds: ['unknown'] } },
+            { ...all, filters: { sessionIds: [owner.sessionId] } },
+        ].map(query => UsageAnalyticsQueryRequestSchema.parse(query));
+        for (const query of queries) {
+            const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, query), { readOnly: true });
+            const prepared = prepareUsageAnalyticsSnapshot(captured, query);
+            expect(prepared.rows.map(row => row.id).sort(), 'hydrate the whole selected subject after commit, including its outside/native competitor')
+                .toEqual(['demand-selected-0', 'demand-selected-1', 'demand-selected-2']);
+            expect(JSON.stringify(projectUsageAnalytics(captured, query))).toBe(JSON.stringify(projectUsageAnalytics(baseline, query)));
+            if (query.filters?.modelIds?.includes('unknown')) {
+                expect(projectUsageAnalytics(captured, query).totals.tokens.total).toBe(25);
+            }
+            expect(prepared.evidenceRows?.length, 'thin historical coverage remains available').toBe(893);
+        }
+    });
+
+    it('stops a closed reader before normalizing historical evidence', async () => {
+        const owner = await createUsageOwner('closed-thin-history');
+        await db.usageEvent.createMany({ data: buildUsageEvent({ ...owner,
+            observedAt: new Date(50).toISOString(), scope: 'turn_delta', totalTokens: 10 }) });
+        let metadataReads = 0;
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 } });
+        await expect(inTx(tx => captureUsageAnalyticsInTx(new Proxy(tx, {
+            get(target, property, receiver) {
+                if (property !== 'usageEvent') return Reflect.get(target, property, receiver);
+                return new Proxy(target.usageEvent, {
+                    get(delegate, method, delegateReceiver) {
+                        if (method !== 'findMany') return Reflect.get(delegate, method, delegateReceiver);
+                        // Observe real DB results at the storage boundary; normalization remains real.
+                        return async (...args: unknown[]) => {
+                            const rows: unknown = await Reflect.apply(Reflect.get(delegate, method), delegate, args);
+                            if (Array.isArray(rows)) for (const row of rows) {
+                                const metadata: unknown = Reflect.get(row, 'metadata');
+                                Object.defineProperty(row, 'metadata', { enumerable: true,
+                                    get() { metadataReads++; return metadata; } });
+                            }
+                            return rows;
+                        };
+                    },
+                });
+            },
+        }), owner.accountId, request, () => true), { readOnly: true })).rejects.toThrow('Usage reader closed');
+        expect(metadataReads, 'closed readers release storage results before metadata parsing').toBe(0);
     });
 
     it('excludes only known Team requests after reconciliation, without admitting mixed-Session evidence', async () => {
@@ -167,6 +345,40 @@ describe("usageQueryService scoped aggregation", () => {
         expect(filtered.totals.tokens.total).toBe(1);
         await db.session.update({ where: { id: partial.id }, data: { acceptedThroughServerSeq: 1 } });
         expect((await queryUsageAnalytics(owner.accountId, request)).messageStats).toEqual({ sessionCount: 2, messageCount: 2 });
+    });
+
+    it("loads transcript publication only for Sessions with in-range usage candidates in scalar and batch queries", async () => {
+        const owner = await createUsageOwner("message-candidate-range");
+        const historical = await db.session.create({ data: { accountId: owner.accountId, tag: "historical-only",
+            encryptionMode: "e2ee", metadata: "ciphertext", currentStorageState: "hosted" } });
+        const retained = await db.session.create({ data: { accountId: owner.accountId, tag: "retained-report",
+            encryptionMode: "e2ee", metadata: "ciphertext", currentStorageState: "hosted" } });
+        await db.session.update({ where: { id: owner.sessionId }, data: { currentStorageState: "hosted" } });
+        await db.usageEvent.createMany({ data: [
+            buildUsageEvent({ accountId: owner.accountId, sessionId: historical.id,
+                observedAt: "1970-01-01T00:00:00.050Z", scope: "turn_delta", totalTokens: 10 }),
+            buildUsageEvent({ ...owner, observedAt: "1970-01-01T00:00:00.150Z", scope: "turn_delta", totalTokens: 20 }),
+        ] });
+        await db.usageReport.create({ data: { accountId: owner.accountId, sessionId: retained.id, key: "retained",
+            data: { tokens: { total: 30 }, cost: { total: 0.3 } },
+            createdAt: new Date(140), updatedAt: new Date(140) } });
+        await db.sessionMessage.createMany({ data: [owner.sessionId, historical.id, retained.id].map(sessionId => ({
+            sessionId, seq: 1, content: { t: "encrypted", c: "ciphertext" }, createdAt: new Date(160),
+        })) });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 },
+            includeInsights: true, includeMessageStats: true });
+        const scalar = await inTx(tx => captureUsageAnalyticsInTx(tx, owner.accountId, request), { readOnly: true });
+        expect([...scalar.messageCountsBySession!.keys()].sort()).toEqual([owner.sessionId, retained.id].sort());
+        const wider = UsageAnalyticsQueryRequestSchema.parse({ ...request, dateRange: { startMs: 0, endMs: 200 } });
+        const batch = await inTx(tx => captureUsageAnalyticsBatchInTx(tx, owner.accountId, [request, wider]), { readOnly: true });
+        expect([...batch.snapshots.get(getUsageAnalyticsQueryRequestKey(request))!.messageCountsBySession!.keys()].sort())
+            .toEqual([owner.sessionId, retained.id].sort());
+        expect([...batch.snapshots.get(getUsageAnalyticsQueryRequestKey(wider))!.messageCountsBySession!.keys()].sort())
+            .toEqual([owner.sessionId, historical.id, retained.id].sort());
+        expect((await queryUsageAnalytics(owner.accountId, request)).messageStats)
+            .toEqual({ sessionCount: 2, messageCount: 2 });
+        const delivered = await projectUsageAnalyticsBatch(batch, [request], false);
+        expect(delivered.results[0]).toMatchObject({ value: { messageStats: { sessionCount: 2, messageCount: 2 } } });
     });
 
     it("filters both real QA Haiku 4.5 spellings through their one model identity", async () => {
@@ -283,9 +495,42 @@ describe("usageQueryService scoped aggregation", () => {
         expect(privatelyRepriced.breakdowns?.model?.[0]?.key).toBe('a-model');
     });
 
+    it("keeps exact-tie top-N leaders stable through real DB queries and private repricing", async () => {
+        const owner = await createUsageOwner('exact-tie-ranking');
+        const modelIds = ['z-model', 'c-model', 'b-model', 'a-model'];
+        await db.usageEvent.createMany({ data: modelIds.map((modelId) => ({
+            ...buildUsageEvent({ ...owner, observedAt: '2026-07-01T10:00:00.000Z', scope: 'turn_delta', totalTokens: 1_000_000 }), modelId,
+        })) });
+        await db.simpleCache.create({ data: { key: 'usage:model-price-catalog:v1', value: JSON.stringify({
+            v: 1, models: Object.fromEntries(modelIds.map(modelId => [modelId, { inputUsdPerMillion: 1, outputUsdPerMillion: 1 }])),
+            provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1, revision: 'exact-ties', fetchStatus: 'ready' },
+        }) } });
+        const query = () => querySession(owner.accountId, owner.sessionId, {
+            costMode: 'api_equivalent', includeLeaders: true, includeModelTimeline: true, breakdowns: ['model'], topLimit: 2,
+        });
+        const result = await query();
+        const serverLeaders = ['a-model', 'b-model'];
+        expect(result.leaders?.models?.map(row => row.key)).toEqual(serverLeaders);
+        expect(result.modelTimeline?.[0]?.leaders.map(row => row.key)).toEqual(serverLeaders);
+        expect(result.breakdowns?.model?.map(row => row.key)).toEqual(serverLeaders);
+
+        // All four token-frontier ties must survive server truncation: private
+        // prices promote three candidates, with an exact tie across the cutoff.
+        const privatePrices = Object.fromEntries(['z-model', 'c-model', 'b-model'].map(modelId => [modelId,
+            { kind: 'rates' as const, inputUsdPerMillion: 10, outputUsdPerMillion: 10 }]));
+        const privatelyRepriced = repriceUsageAnalyticsResponse(result, result.priceCatalog, privatePrices, 'api_equivalent');
+        const privateLeaders = ['b-model', 'c-model'];
+        expect(privatelyRepriced.leaders?.models?.map(row => row.key)).toEqual(privateLeaders);
+        expect(privatelyRepriced.modelTimeline?.[0]?.leaders.map(row => row.key)).toEqual(privateLeaders);
+        expect(privatelyRepriced.breakdowns?.model?.map(row => row.key)).toEqual(privateLeaders);
+        const repeated = await query();
+        expect(repeated.leaders?.models?.map(row => row.key)).toEqual(serverLeaders);
+        expect(repriceUsageAnalyticsResponse(repeated, repeated.priceCatalog, privatePrices, 'api_equivalent')).toEqual(privatelyRepriced);
+    });
+
     it("re-prices historical API-equivalent tokens from the effective catalog without rewriting reported or retained estimates", async () => {
         const owner = await createUsageOwner("catalog-repricing");
-        await db.usageEvent.create({ data: {
+        await db.usageEvent.createMany({ data: {
             ...buildUsageEvent({ ...owner, observedAt: "2026-07-01T10:00:00Z", scope: "turn_delta", totalTokens: 1_000_000 }),
             reportedCostUsd: 9, estimatedCostUsd: 7, costSource: "provider_reported",
         } });
@@ -335,7 +580,7 @@ describe("usageQueryService scoped aggregation", () => {
         const updated = await querySession(owner.accountId, owner.sessionId);
         expect(updated.totals.tokens.total).toBe(120);
         expect(updated.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "reported", amountUsd: 1.2 })]));
-        await db.usageEvent.create({ data: buildUsageEvent({ ...owner, observedAt: "2026-07-02T10:00:00Z", scope: "turn_delta", totalTokens: 80 }) });
+        await db.usageEvent.createMany({ data: buildUsageEvent({ ...owner, observedAt: "2026-07-02T10:00:00Z", scope: "turn_delta", totalTokens: 80 }) });
         expect((await querySession(owner.accountId, owner.sessionId)).totals.tokens.total).toBe(80);
     });
 
@@ -672,7 +917,7 @@ describe("usageQueryService scoped aggregation", () => {
 
     it("keeps series and premium timeline day buckets aligned regardless of server timezone", async () => {
         const owner = await createUsageOwner("timezone-owner");
-        await db.usageEvent.create({
+        await db.usageEvent.createMany({
             data: buildUsageEvent({
                 ...owner,
                 observedAt: "2026-07-01T23:30:00.000Z",
@@ -697,7 +942,7 @@ describe("usageQueryService scoped aggregation", () => {
 
     it("shifts day boundaries by a client-supplied minutes-east offset", async () => {
         const owner = await createUsageOwner("timezone-offset");
-        await db.usageEvent.create({
+        await db.usageEvent.createMany({
             data: buildUsageEvent({
                 ...owner,
                 observedAt: "2026-07-01T23:30:00.000Z",
@@ -715,7 +960,7 @@ describe("usageQueryService scoped aggregation", () => {
 
     it("uses insights sessionsUsed as the messageStats session count", async () => {
         const owner = await createUsageOwner("message-session-count");
-        await db.usageEvent.create({
+        await db.usageEvent.createMany({
             data: buildUsageEvent({
                 ...owner,
                 observedAt: "2026-07-01T10:00:00.000Z",
