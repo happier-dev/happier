@@ -426,7 +426,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           // list the list's header is that chrome's row: the title row centres on it, so the column title,
           // the page title and their actions read as one band (owner 2026-10-30; Lane 12 Main approved). A window
           // wide enough for a split with no detail open has no such band: the page keeps the page's top.
-          paddingTop: showTitle && collectionLayout?.detailBeside !== true
+          // A large title hangs from the phone bar that left it the name, as close as the purpose line would.
+          paddingTop: showTitle && collectionLayout?.detailBeside !== true && props.largeTitle !== true
             ? HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx
             : HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
           paddingBottom: HAPPIER_PAGE_METRICS.pageHeaderPaddingBottomPx,

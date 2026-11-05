@@ -42,6 +42,11 @@ describe('the top of the page', () => {
   const page = HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx;
   const band = HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx;
 
+  // A large title is a phone page whose bar left the name to the page: it sits right under that bar.
+  it('keeps a large title under the bar it hangs from', () => {
+    expect(renderHeader({ largeTitle: true }, null).paddingTop).toBe(band);
+  });
+
   it('joins the list+detail band only when a detail really stands beside the list', () => {
     expect(renderHeader({}, { mode: 'split', detailBeside: true }).paddingTop).toBe(band);
   });
