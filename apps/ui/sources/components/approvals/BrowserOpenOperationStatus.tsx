@@ -11,6 +11,10 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { ActionOperationGetV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { presentFailure as presentActionOperationFailure } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
+import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { t } from '@/text';
 
 /** What each state of the open reads as: the same words the Session Browser uses for the same state. */
@@ -104,6 +108,58 @@ export function BrowserOpenOperationStatusRow(props: Readonly<{
             />
             {state.kind === 'sandboxUnavailable' ? <BrowserSandboxAllowRow scope={scope} testID={`${props.testID}-allow-sandbox`} /> : null}
         </>
+    );
+}
+
+/**
+ * The detached Action operation an executed request accepted (a managed Create or Delete, for example): its
+ * result names the operation, and `executed` then only means the work was admitted. Null for any other request.
+ */
+export function readApprovalAcceptedOperationId(request: ApprovalRequest): string | null {
+    if (request.status !== 'executed' || request.execution?.ok !== true || readBrowserOpenAcceptance(request)) return null;
+    const result = request.execution.result;
+    const operation = result && typeof result === 'object' && !Array.isArray(result)
+        ? (result as Readonly<Record<string, unknown>>).operation : undefined;
+    const parsed = ActionOperationGetV1RequestSchema.safeParse(operation);
+    return parsed.success ? parsed.data.operationId : null;
+}
+
+/** Where that operation stands, in the words the operation's own Activity row uses; null until it is read. */
+function useApprovalAcceptedOperation(request: ApprovalRequest, serverId: string | null): Readonly<{
+    title: string; text: string; active: boolean;
+}> | null {
+    const operationId = readApprovalAcceptedOperationId(request);
+    // Operations are keyed by the Home's scope id, not by this device's profile id for it.
+    const operationServerId = operationId && serverId ? resolveServerProfileScopeIdForIdentifier(serverId) : null;
+    const operation = useActionOperation({ serverId: operationServerId, operationId: operationId ?? '' });
+    if (!operation) return null;
+    const status = resolveActionOperationStatus(operation.snapshot, operation.observation);
+    const label = describeActionOperationStatusLabel(status.label);
+    const failure = operation.snapshot.state === 'failed' ? presentActionOperationFailure(operation.snapshot) : null;
+    return { title: operation.snapshot.title, text: failure ? `${label} · ${failure.reason}` : label, active: status.tone === 'active' };
+}
+
+/**
+ * The live state of the operation an executed request accepted: the receipt above reads Executed (it was
+ * admitted); this row follows the work until it succeeds, fails or is cancelled. Nothing for any other request.
+ */
+export function ApprovalAcceptedOperationStatusRow(props: Readonly<{
+    request: ApprovalRequest;
+    serverId: string | null;
+    testID: string;
+}>): React.ReactElement | null {
+    const operation = useApprovalAcceptedOperation(props.request, props.serverId);
+    if (!operation) return null;
+    return (
+        <Item
+            testID={props.testID}
+            title={operation.title}
+            subtitle={operation.text}
+            subtitleLines={0}
+            mode="info"
+            showChevron={false}
+            rightElement={operation.active ? <ActivitySpinner size="small" /> : undefined}
+        />
     );
 }
 

@@ -123,7 +123,7 @@ function summarizeResult(value: unknown): readonly ActionOperationDetailSummaryR
 }
 
 /** The shared failure presenter reads the operation's failure: readable words first, the code only as a detail. */
-function presentFailure(snapshot: ActionOperationSnapshot): ActionOperationDetailFailure | null {
+export function presentFailure(snapshot: ActionOperationSnapshot): ActionOperationDetailFailure | null {
     if (!snapshot.error) return null;
     const { errorCode, error } = snapshot.error;
     const observedStepExit = readProjectCommandStepExitCode(snapshot);

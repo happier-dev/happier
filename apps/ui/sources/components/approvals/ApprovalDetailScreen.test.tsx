@@ -1231,6 +1231,41 @@ describe('ApprovalDetailScreen', () => {
     }
   });
 
+  it('follows the detached operation an executed receipt accepted until it settles (CLOUD-ACQ)', async () => {
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    currentArtifact = await createBuiltInApprovalArtifact({
+      // Any executed result that names its detached operation (managed Create and Delete do) is followed alike.
+      actionId: 'machines.presets.archive',
+      actionArgs: { homeId: 'home-1', id: 'preset-1', expectedRevision: 0 },
+      summary: 'Delete machine',
+      executedResult: { kind: 'accepted', managedId: 'managed-1', intentRevision: 2, operation: { operationId: 'delete-1' } },
+    });
+    await prepareApprovalFixture();
+    const operationServerId = resolveServerProfileScopeIdForIdentifier(account.serverId);
+    const operation = (overrides: Record<string, unknown>) => ActionOperationSnapshotV1Schema.parse({
+      version: 1, operationId: 'delete-1', revision: 1, actionId: 'machines.presets.archive', state: 'running',
+      title: 'Delete machine', createdAt: 1, startedAt: 2, cancellation: 'unsupported',
+      scope: { accountId: 'account-1', machineId: 'controller-1' }, ...overrides });
+    const { ApprovalDetailScreen } = approvalDetailScreenModule;
+    try {
+      actionOperationStore.mergeSnapshots({ serverId: operationServerId, snapshots: [operation({})] });
+      const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+      // Executed only accepted the Delete: the operation row says it is still running.
+      expect(approvalItem(screen, 'approvals.operation')?.props.subtitle).toBe('inbox.actionOperations.status.running');
+
+      await act(async () => {
+        actionOperationStore.mergeSnapshots({ serverId: operationServerId, snapshots: [operation({ revision: 2, state: 'failed', settledAt: 3,
+          error: { errorCode: 'provider_unavailable', error: 'Hetzner refused the request.' } })] });
+      });
+      const failed = String(approvalItem(screen, 'approvals.operation')?.props.subtitle);
+      expect(failed).toContain('inbox.actionOperations.status.failed');
+      expect(failed).not.toContain('inbox.actionOperations.status.running');
+    } finally {
+      actionOperationStore.reset();
+    }
+  });
+
   it('names an agent draft for a Discussion as Post and Decline', async () => {
     const artifact = await createCurrentApprovalArtifact('server-cache');
     const produced = JSON.parse(artifact.body);

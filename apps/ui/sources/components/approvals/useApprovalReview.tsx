@@ -34,7 +34,7 @@ import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ApprovalRequesterConfirmationSection, useApprovalRequesterViewer } from './ApprovalRequesterConfirmationSection';
 import { readApprovalOperationCredentialUses } from './approvalRequesterThreadState';
 import { readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
-import { BrowserOpenOperationStatusRow } from './BrowserOpenOperationStatus';
+import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow } from './BrowserOpenOperationStatus';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from './ActionApprovalFieldsCard';
 import {
   ProjectCommandApprovalFacts,
@@ -566,6 +566,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         {/* Executed means the open was accepted; the bound operation says whether the page opened. */}
         {parsed.kind === 'built_in' ? (
           <BrowserOpenOperationStatusRow request={parsed.request} serverId={approvalServerId} testID="approvals.browser-open" />
+        ) : null}
+        {/* Likewise a detached operation (a managed Create or Delete): Executed admitted it; its row says how it went. */}
+        {parsed.kind === 'built_in' ? (
+          <ApprovalAcceptedOperationStatusRow request={parsed.request} serverId={approvalServerId} testID="approvals.operation" />
         ) : null}
         {executionFailure ? (
           <Item
