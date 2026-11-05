@@ -1,5 +1,5 @@
 import { normalizeSessionListFilterHomeIds } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById, type ScopeActionOutputById, type ShellColumn, type FileViewMode } from '@happier-dev/protocol/actions/scopeActionFamily';
+import { ScopeActionInputSchemas, type ScopeActionId, type ScopeActionInputById, type ScopeActionOutputById, type ShellColumn, type FileViewMode, type SettingsColumnFilterColumn, type SettingsColumnFilterV1 } from '@happier-dev/protocol/actions/scopeActionFamily';
 import type { FileChangesScope } from '@happier-dev/protocol/scm';
 import type { SessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { resolveSessionListViewContextDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
@@ -10,6 +10,11 @@ import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/ac
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchScopeSeed } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import type { WorkspaceSymbolSearchInput } from '@/components/appShell/search/workspaceSymbolSearchSource';
+import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import type { SettingsCollectionFilter } from '@/components/settings/shell/settingsCollectionAdapter';
+import type { DiscussionListFilterV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type SessionListScopeActionController = Pick<SessionListViewFilterController,
   'filters' | 'updateFilters' | 'resetFilters' | 'viewContext' | 'viewContextKey' | 'corpusStorage'
@@ -144,6 +149,42 @@ function selectFileViewActionOwner(tabId: string | undefined,
 export function readActiveFileViewActionOwner(): FileViewActionOwner | null {
   return selectFileViewActionOwner(undefined);
 }
+export type DiscussionListScopeActionController = Readonly<{
+  lifetime: ServerAccountScopeLifetime;
+  focused: boolean;
+  filters: DiscussionListFilterV1;
+  searchQuery: string;
+  selectedSpaceId: string;
+  coverage: 'complete' | 'partial' | 'unavailable';
+  update(patch: Readonly<{ filters?: Partial<DiscussionListFilterV1>; searchQuery?: string }>): boolean;
+  reset(): boolean;
+}>;
+const discussionListOwners = new Set<() => DiscussionListScopeActionController>();
+
+export function registerDiscussionListScopeActionOwner(read: () => DiscussionListScopeActionController): () => void {
+  discussionListOwners.add(read);
+  return () => { discussionListOwners.delete(read); };
+}
+
+export type SettingsColumnFilterScopeActionController = Readonly<{
+  column: SettingsColumnFilterColumn;
+  lifetime: ServerAccountScopeLifetime;
+  presented: boolean;
+  filters: SettingsCollectionFilter;
+  searchQuery?: string;
+  setSearchQuery?: (query: string) => void;
+  result: EntityListFilterResultV1;
+  set(filters: SettingsColumnFilterV1): boolean;
+  clear(): void;
+}>;
+const settingsColumnFilterOwners = new Set<() => SettingsColumnFilterScopeActionController | null>();
+
+/** Readers and commands only: the mounted column keeps the sole transient filter draft. */
+export function registerSettingsColumnFilterScopeActionOwner(read: () => SettingsColumnFilterScopeActionController | null): () => void {
+  settingsColumnFilterOwners.add(read);
+  return () => { settingsColumnFilterOwners.delete(read); };
+}
+
 let readLibraryOwner: (() => WorkflowLibraryViewController) | null = null;
 
 /** The focused Library joins the same client-local view-control bridge as Sessions and shell chrome. */
@@ -184,6 +225,35 @@ function readSessionListOwner(input: ScopeActionInputById['session.list.view.get
 export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unknown,
   context?: Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId'>,
   mountedOwner?: MountedScopeActionOwner): Promise<unknown> {
+  // Persisted viewer intent belongs to the captured Account adapter, never a mounted view owner.
+  if (actionId === 'file.view.preference.set') return unavailable('client_control_unavailable');
+  if (actionId === 'settings.column.filter.get' || actionId === 'settings.column.filter.set' || actionId === 'settings.column.filter.clear') {
+    const input = ScopeActionInputSchemas[actionId].parse(rawInput);
+    const owners = [...settingsColumnFilterOwners].map(read => read()).filter(owner => owner !== null
+      && owner.column === input.column && owner.presented && owner.lifetime.isCurrent()
+      && areServerProfileIdentifiersEquivalent(owner.lifetime.scope.serverId, input.serverId)
+      && owner.lifetime.scope.accountId === input.accountId
+      && (!context?.serverId || areServerProfileIdentifiersEquivalent(owner.lifetime.scope.serverId, context.serverId))
+      && (!context?.runtimeAccountId || owner.lifetime.scope.accountId === context.runtimeAccountId));
+    // A hidden, retired or ambiguous surface cannot be picked by registration order.
+    if (owners.length !== 1 || !owners[0]) return unavailable('client_surface_unavailable');
+    const owner = owners[0];
+    if (actionId === 'settings.column.filter.get') return {
+      column: owner.column, serverId: owner.lifetime.scope.serverId, accountId: owner.lifetime.scope.accountId,
+      filters: owner.filters, ...owner.result,
+      ...(owner.searchQuery !== undefined ? { searchQuery: owner.searchQuery } : {}),
+    };
+    if (actionId === 'settings.column.filter.clear') {
+      owner.clear();
+      return { ok: true };
+    }
+    const next = ScopeActionInputSchemas['settings.column.filter.set'].parse(rawInput);
+    // Refuse an unsupported query before changing any conditions.
+    if (next.searchQuery !== undefined && !owner.setSearchQuery) return unavailable('client_control_unavailable');
+    if (!owner.set(next.filters)) return unavailable('client_control_unavailable');
+    if (next.searchQuery !== undefined) owner.setSearchQuery!(next.searchQuery);
+    return { ok: true };
+  }
   if (actionId === 'file.editor.save' || actionId === 'file.editor.resolve') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
     const owners = [...fileEditorOwners].map(owner => owner.read()).filter(owner =>
@@ -222,6 +292,24 @@ export async function invokeScopeAction(actionId: ScopeActionId, rawInput: unkno
     const patch = actionId === 'workflow.library.view.reset' ? { view: 'all' as const, searchQuery: '' }
       : ScopeActionInputSchemas['workflow.library.view.set'].parse(rawInput);
     return controller.update(patch) ? { ok: true } : unavailable('client_control_unavailable');
+  }
+  if (actionId === 'discussion.list.view.get' || actionId === 'discussion.list.view.set' || actionId === 'discussion.list.view.reset') {
+    const input = ScopeActionInputSchemas[actionId].parse(rawInput);
+    const owners = [...discussionListOwners].map(read => read()).filter(owner => owner.focused && owner.lifetime.isCurrent()
+      && areServerProfileIdentifiersEquivalent(owner.lifetime.scope.serverId, input.serverId)
+      && owner.lifetime.scope.accountId === input.accountId
+      && (!context?.serverId || areServerProfileIdentifiersEquivalent(owner.lifetime.scope.serverId, context.serverId))
+      && (!context?.runtimeAccountId || owner.lifetime.scope.accountId === context.runtimeAccountId));
+    if (owners.length !== 1) return unavailable('client_surface_unavailable');
+    const controller = owners[0]!;
+    if (actionId === 'discussion.list.view.get') return {
+      serverId: controller.lifetime.scope.serverId,
+      accountId: controller.lifetime.scope.accountId,
+      filters: controller.filters, searchQuery: controller.searchQuery, selectedSpaceId: controller.selectedSpaceId, coverage: controller.coverage,
+    };
+    const accepted = actionId === 'discussion.list.view.reset' ? controller.reset()
+      : controller.update(ScopeActionInputSchemas['discussion.list.view.set'].parse(rawInput));
+    return accepted ? { ok: true } : unavailable('client_control_unavailable');
   }
   if (actionId === 'shell.column.get' || actionId === 'shell.column.set') {
     const input = ScopeActionInputSchemas[actionId].parse(rawInput);
