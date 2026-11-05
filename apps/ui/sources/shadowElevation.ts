@@ -200,6 +200,15 @@ export function buildPaneHeaderShade(dark: boolean): string {
 }
 
 /**
+ * The joined right panel's Shadow divider (R11-3, owner 11-01): the start colour of the short sideways fade the
+ * panel casts onto the page. Softer than the header's shade, since it stands the whole window's height: it
+ * reads as the panel's edge, never as a band.
+ */
+export function buildJoinedPanelShade(dark: boolean): string {
+    return dark ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.028)';
+}
+
+/**
  * View shadow styles for a themed elevation step.
  */
 export function shadowLevelStyle(level: ShadowElevationToken): ShadowLevelStyle {

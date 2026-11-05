@@ -209,7 +209,7 @@ const FullSidebarNavigator = React.memo(() => {
             leftOffsetPx={shellLeftPx}
             sidebarWidth={sidebarWidth}
             columnResizeState={{ collapseArmed: sidebarCollapseArmed, overshootPx: sidebarOvershootPx, dragging: dragSidebarWidthPx !== null }}
-            rightPanelPlacement={rightPanelPlacement === 'sheet' ? 'sheet' : 'canvas'}
+            rightPanelPlacement={rightPanelPlacement}
             titleStrip={showSidebar || workspace?.active ? (
                 <AppShellTitleStrip key="title-strip" columnVisible={columnShown}
                     columnToggleAvailable={column.kind !== 'none'} onToggleColumn={handleToggleColumn}

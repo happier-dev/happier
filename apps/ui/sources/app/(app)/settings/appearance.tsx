@@ -495,10 +495,11 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                                     accessibilityLabel={t(APPEARANCE_SETTINGS.settings.rightPanelPlacement.titleKey)}
                                     testIdPrefix="settings-appearance-rightPanelPlacement"
                                     value={rightPanelPlacement}
-                                    onChange={(next) => { if (next === 'canvas' || next === 'sheet') setRightPanelPlacement(next); }}
+                                    onChange={(next) => { if (next === 'separate' || next === 'line' || next === 'shadow') setRightPanelPlacement(next); }}
                                     options={[
-                                        { id: 'canvas', title: t('settingsAppearance.rightPanelPlacementCanvas'), subtitle: t('settingsAppearance.rightPanelPlacementCanvasCaption'), preview: <PaneArrangementPreview arrangement="session" rightPanel="canvas" /> },
-                                        { id: 'sheet', title: t('settingsAppearance.rightPanelPlacementSheet'), subtitle: t('settingsAppearance.rightPanelPlacementSheetCaption'), preview: <PaneArrangementPreview arrangement="session" rightPanel="sheet" /> },
+                                        { id: 'separate', title: t('settingsAppearance.rightPanelPlacementSeparate'), subtitle: t('settingsAppearance.rightPanelPlacementSeparateCaption'), preview: <PaneArrangementPreview arrangement="session" rightPanel="separate" /> },
+                                        { id: 'line', title: t('settingsAppearance.rightPanelPlacementLine'), subtitle: t('settingsAppearance.rightPanelPlacementLineCaption'), preview: <PaneArrangementPreview arrangement="session" rightPanel="line" /> },
+                                        { id: 'shadow', title: t('settingsAppearance.rightPanelPlacementShadow'), subtitle: t('settingsAppearance.rightPanelPlacementShadowCaption'), preview: <PaneArrangementPreview arrangement="session" rightPanel="shadow" /> },
                                     ]}
                                 />
                             }

@@ -44,7 +44,7 @@ it('stands the docked right panel and its rail on the canvas beside the page, an
     }
     const countMain = () => { mainMounts += 1; };
     const countPanel = () => { panelMounts += 1; };
-    const render = async (placement: 'canvas' | 'sheet', chrome = true) => act(async () => root.render(
+    const render = async (placement: 'separate' | 'line' | 'shadow', chrome = true) => act(async () => root.render(
         <AppShellMaterialFrame showChrome={chrome} dragEnabled={false} leftOffsetPx={0} sidebarWidth={0}
             titleStrip={null} rail={null} column={null} peek={null} rightPanelPlacement={placement}>
             <PaneColumnsHost main={<Field name="main" onMount={countMain} />} arrangement="session"
@@ -55,7 +55,7 @@ it('stands the docked right panel and its rail on the canvas beside the page, an
     const q = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
     const inTail = (id: string) => q('app-shell-tail').contains(q(id));
 
-    await render('canvas');
+    await render('separate');
     const main = q('main') as HTMLInputElement;
     main.value = 'Retained draft';
     expect(q('multi-pane-right-docked')).not.toBeNull();
@@ -65,14 +65,20 @@ it('stands the docked right panel and its rail on the canvas beside the page, an
     expect(inTail('main')).toBe(false);
 
     // Sheet: both return inside the page; the page itself never remounts and keeps its draft.
-    await render('sheet');
+    await render('line');
     expect(inTail('panel')).toBe(false);
-    expect(inTail('rail-button')).toBe(false);
+    expect(q('app-shell-tail-rail').contains(q('rail-button'))).toBe(true);
     expect(q('main')).toBe(main);
     expect(main.value).toBe('Retained draft');
 
+    // Shadow: the same join, divided by the header's soft shade instead of the hairline.
+    await render('shadow');
+    expect(inTail('panel')).toBe(false);
+    expect(q('app-shell-tail-rail').contains(q('rail-button'))).toBe(true);
+    expect(q('multi-pane-right-joined-shade')).not.toBeNull();
+
     // Without the shell's chrome (a phone) the page placement holds whatever the setting says.
-    await render('canvas', false);
+    await render('separate', false);
     expect(container.querySelector('[data-testid="app-shell-tail"]')).toBeNull();
     expect(q('main')).toBe(main);
     expect(mainMounts).toBe(1);

@@ -14,6 +14,7 @@ import { t } from '@/text';
 import { SidebarCollapseIcon } from './SidebarIcons';
 import { AppShellTailContext, AppShellTitleMoreHostProvider, type AppShellRightPanelPlacement, type AppShellTail } from './appShellTail';
 import { AppShellContentPaneContext } from './appShellContentPane';
+import { DEFAULT_RIGHT_PANEL_PLACEMENT, type RightPanelPlacement } from '@/components/appShell/panes/arrangement/useRightPanelPlacement';
 import { APP_SHELL_SHEET_INSET_PX, APP_SHELL_SHEET_RADIUS_PX, AppShellMaterialPlane, AppShellSheetCorners, useAppShellCanvasCoat, type AppShellPlaneCoat } from './appShellMaterialPlane';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -192,8 +193,8 @@ export function AppShellMaterialFrame(props: Readonly<{
     rail: React.ReactNode;
     column: React.ReactNode;
     peek: React.ReactNode;
-    /** The person's right panel position; the frame resolves it for this window (`sheet` without chrome or off the web). */
-    rightPanelPlacement?: AppShellRightPanelPlacement;
+    /** The person's right panel separation; the frame resolves it for this window (joined by a line without chrome or off the web). */
+    rightPanelPlacement?: RightPanelPlacement;
     children: React.ReactNode;
 }>) {
     const styles = stylesheet;
@@ -204,8 +205,9 @@ export function AppShellMaterialFrame(props: Readonly<{
     const { theme } = useUnistyles();
     // The seam lift and the tail hosts are web only, and a phone has no side panel: those keep the sheet.
     const webChrome = props.showChrome && Platform.OS === 'web';
-    const placement: AppShellRightPanelPlacement = webChrome ? props.rightPanelPlacement ?? 'sheet' : 'sheet';
-    const divider = 'line';
+    const separation = webChrome ? props.rightPanelPlacement ?? DEFAULT_RIGHT_PANEL_PLACEMENT : 'line';
+    const placement: AppShellRightPanelPlacement = separation === 'separate' ? 'canvas' : 'sheet';
+    const divider = separation === 'shadow' ? 'shadow' : 'line';
     const [rightHost, setRightHost] = React.useState<HTMLElement | null>(null);
     const [railHost, setRailHost] = React.useState<HTMLElement | null>(null);
     // On the web a View's ref is its element: the tail hosts a page's panel and rail portal into.

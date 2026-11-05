@@ -53,7 +53,7 @@ export const LookPanel = React.memo(function LookPanel(
 });
 
 /**
- * Where the right panels stand (calm-shell R4-2), beside the glass it composes with. Only where panes
+ * How the right panel stands against the page (calm-shell R4-2, R11-3), beside the glass it composes with. Only where panes
  * sit side by side, like the Appearance row; it writes the same device setting.
  */
 function RightPanelPlacementBlock() {
@@ -67,8 +67,9 @@ function RightPanelPlacementBlock() {
         label={title}
         testIDPrefix="look-right-panel-placement"
         options={[
-          { id: 'canvas', label: t('settingsAppearance.rightPanelPlacementCanvas') },
-          { id: 'sheet', label: t('settingsAppearance.rightPanelPlacementSheet') },
+          { id: 'separate', label: t('settingsAppearance.rightPanelPlacementSeparate') },
+          { id: 'line', label: t('settingsAppearance.rightPanelPlacementLine') },
+          { id: 'shadow', label: t('settingsAppearance.rightPanelPlacementShadow') },
         ]}
         value={placement}
         onChange={setPlacement}

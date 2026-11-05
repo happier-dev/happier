@@ -628,6 +628,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 rightOverlayFocusReturnRef={props.rightOverlayFocusReturnRef}
                 detailsOverlayFocusReturnRef={props.detailsOverlayFocusReturnRef}
                 rightTail={rightTail}
+                rightJoinsTopTab={panelAttached && panelTabAtTop}
+                rightDivider={railTail?.divider ?? 'line'}
                 bottomOverlayFocusReturnRef={props.bottomOverlayFocusReturnRef}
             />
             {mountActionRail ? (

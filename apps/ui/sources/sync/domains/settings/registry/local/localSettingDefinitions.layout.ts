@@ -38,11 +38,15 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         schema: z.catch(z.enum(['session', 'editor']), 'session'), default: 'session',
         description: 'Pane arrangement on this device', storageScope: 'local',
     },
-    // Where the docked right panel and its rail stand: on the canvas beside the page, mirroring the
-    // sidebar (calm-shell R4-2), or inside the page sheet. Window geometry, like the arrangement.
+    // How the docked right panel stands against the page (calm-shell R4-2, R11-3): `separate`, its own sheet
+    // on the canvas beside the page like the sidebar; or joined to the page, divided by a `line` or by a soft
+    // `shadow` (the default, owner 11-01). Window geometry, like the arrangement. The values before R11-3 read
+    // as their successors: `canvas` is Separate, `sheet` is Line; anything else reads as the default.
     rightPanelPlacement: {
-        schema: z.catch(z.enum(['canvas', 'sheet']), 'canvas'), default: 'canvas',
-        description: 'Right panel position on this device', storageScope: 'local',
+        schema: z.catch(z.pipe(z.transform((value: unknown) => value === 'canvas' ? 'separate' : value === 'sheet' ? 'line' : value),
+            z.enum(['separate', 'line', 'shadow'])), 'shadow'),
+        default: 'shadow',
+        description: 'Right panel separation on this device', storageScope: 'local',
     },
     // How a session that needs you stands out in the list (owner ruling 2026-11-01): Dot (the amber dot alone),
     // Accent, Glint, Shimmer or Pulse. A device preference, like the pane geometry around it.

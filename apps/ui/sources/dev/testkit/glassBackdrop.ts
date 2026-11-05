@@ -1,3 +1,5 @@
+import Color from 'color';
+
 /**
  * The browser is the boundary that applies a CSS `backdrop-filter` and composites the coat over it.
  * This mirrors that math (Filter Effects shorthands in sRGB, clamped per function, then source-over
@@ -83,4 +85,42 @@ export function glassContrastRatio(a: Rgb, b: Rgb): number {
   };
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi! + 0.05) / (lo! + 0.05);
+}
+
+// JSDOM retains CSS variables and color-mix. Resolve the emitted browser paint boundary.
+export function resolveBrowserMaterialPaint(input: string, variables: Readonly<Record<string, string>> = {}): string {
+    const split = (value: string) => {
+        let depth = 0;
+        for (let i = 0; i < value.length; i++) {
+            if (value[i] === '(') depth++;
+            if (value[i] === ')') depth--;
+            if (value[i] === ',' && depth === 0) return [value.slice(0, i).trim(), value.slice(i + 1).trim()];
+        }
+        return [value.trim(), ''];
+    };
+    let value = input;
+    while (value.includes('var(')) {
+        const start = value.lastIndexOf('var(');
+        let end = start + 4, depth = 1;
+        for (; depth > 0 && end < value.length; end++) {
+            if (value[end] === '(') depth++;
+            if (value[end] === ')') depth--;
+        }
+        end--;
+        const [key, fallback] = split(value.slice(start + 4, end));
+        const published = (variables[key!] ?? globalThis.document?.documentElement.style.getPropertyValue(key!) ?? '').trim();
+        value = value.slice(0, start) + (published && published !== 'initial' ? published : fallback) + value.slice(end + 1);
+    }
+    if (value.startsWith('color-mix(in srgb, ')) {
+        const [first, second] = split(value.slice(19, -1));
+        const match = /^(.*) ([\d.]+)%$/.exec(first!);
+        if (!match) throw new Error('Unsupported material color-mix');
+        if (match[2] === '0' || match[2] === '100') {
+            return resolveBrowserMaterialPaint(match[2] === '100' ? match[1]! : second!, variables);
+        }
+        if (second !== 'transparent') throw new Error('Unsupported material color-mix');
+        const color = Color(resolveBrowserMaterialPaint(match[1]!, variables));
+        return color.alpha(color.alpha() * Number(match[2]) / 100).hexa();
+    }
+    return Color(value).hexa();
 }

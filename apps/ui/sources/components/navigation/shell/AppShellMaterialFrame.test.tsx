@@ -82,8 +82,8 @@ describe('real shell material planes', () => {
         </GlassRuntimeEnvironmentProvider>);
         const backdrop = (node: ReactTestInstance) => typeof node.type === 'string'
             && typeof StyleSheet.flatten(node.props.style)?.backdropFilter === 'string';
-        // The two floating surfaces plus the title, sidebar and two edge siblings.
-        expect(screen.findAll(backdrop)).toHaveLength(6);
+        // The two floating surfaces plus the title, sidebar, two edge strips and the four page-corner cutouts.
+        expect(screen.findAll(backdrop)).toHaveLength(10);
         for (const id of ['chrome-popover', 'sidebar-popover']) {
             for (let node = screen.findHostByTestId(id)?.parent; node; node = node.parent) {
                 expect(backdrop(node)).toBe(false);
@@ -107,6 +107,45 @@ describe('real shell material planes', () => {
         check(glassPresetMaterials('everywhere'));
         check(glassPresetMaterials('auto'));
         check(glassPresetMaterials('solid'));
+    });
+
+    it('coats the cutouts outside every rounded page corner once, with the canvas beside them, and nothing behind the page or a canvas panel', async () => {
+        // Contrasting coats: a bare cutout reads 0, the chrome canvas 0.2, the column plane 0.7. Everything on the
+        // trailing side is the canvas the left rail stands on (R11-1), never the column's plane.
+        const materials = { ...glassPresetMaterials('everywhere'), chrome: { blur: 'off', opacity: 0.2 }, sidebar: { blur: 'off', opacity: 0.7 }, content: { blur: 'off', opacity: 0.45 } } as const;
+        const frame = (column: boolean, placement: 'separate' | 'line' | 'shadow') => <AppShellMaterialFrame showChrome dragEnabled={false}
+            leftOffsetPx={column ? 384 : 64} sidebarWidth={column ? 320 : 0} rightPanelPlacement={placement}
+            titleStrip={<View testID="title" />} rail={<View testID="rail" />}
+            column={column ? <View testID="sidebar-body" /> : null} peek={<View testID="peek-probe" />}><View testID="content" /></AppShellMaterialFrame>;
+        const screen = await renderScreen(frame(true, 'separate'));
+        const doc = document.implementation.createHTMLDocument();
+        const stop = applyGlassDocumentPresentation(doc, { glassSurfaceMaterials: materials }, { desktopWindow: true, nativeWindowMaterialLive: true });
+        try {
+            const style = (node: ReactTestInstance) => StyleSheet.flatten(node.props.style) ?? {};
+            for (const [column, placement] of [[true, 'separate'], [false, 'separate'], [true, 'line'], [false, 'shadow']] as const) {
+                await screen.update(frame(column, placement));
+                const leading = column ? materials.sidebar.opacity : materials.chrome.opacity;
+                for (const [corner, at, expected] of [
+                    ['tl', '100% 100%', leading], ['bl', '100% 0%', leading],
+                    ['tr', '0% 100%', materials.chrome.opacity], ['br', '0% 0%', materials.chrome.opacity],
+                ] as const) {
+                    const cutout = screen.findHostByTestId(`app-shell-sheet-corner-${corner}`);
+                    expect(cutout, `${corner} ${placement}`).not.toBeNull();
+                    // The coat covers only what lies outside the page's curve.
+                    expect(String(style(cutout!).maskImage), corner).toContain(`circle at ${at}, transparent 11.5px`);
+                    expect(alphaAt(cutout!.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop !== 'true').at(-1)!, doc), `${corner} ${placement} column=${column}`).toBeCloseTo(expected);
+                    expect(cutout!.findAll(node => node.props.testID === 'content')).toHaveLength(0);
+                }
+                // The page and the tail's panel host keep exactly their own coat: no canvas under the translucent page.
+                expect(alphaAt(screen.findHostByTestId('content')!, doc)).toBeCloseTo(materials.content.opacity);
+                expect(alphaAt(screen.findHostByTestId('app-shell-tail-right')!, doc)).toBeCloseTo(0);
+                expect(alphaAt(screen.findHostByTestId('app-shell-tail-rail')!, doc)).toBeCloseTo(0);
+                expect(alphaAt(screen.findHostByTestId('app-shell-tail-inset')!, doc)).toBeCloseTo(materials.chrome.opacity);
+            }
+        } finally {
+            stop();
+            await screen.unmount();
+        }
     });
 
     it('lifts the page alone: the column stands on the navigation plane beside it and the seam traces the page edge', async () => {
@@ -138,8 +177,9 @@ describe('real shell material planes', () => {
             const column = screen.findHostByTestId('navigation-sidebar')!;
             expect(style(column).borderRightWidth ?? 0).toBe(0);
             expect(style(column).width).toBe(320);
-            // One inert seam, beside the sheet in the page's own slot (it moves with the page, never offset by the rail).
-            const seams = screen.findAll(node => typeof node.type === 'string' && style(node).boxShadow === lightTheme.colors.shadowSeamCastBoxShadow);
+            // One inert seam, beside the sheet in the page's own slot (it moves with the page, never offset by the rail),
+            // casting on both edges: the action rail stands on the canvas after the page in every placement.
+            const seams = screen.findAll(node => typeof node.type === 'string' && style(node).boxShadow === lightTheme.colors.shadowSeamCastBothBoxShadow);
             expect(seams).toHaveLength(1);
             expect(seams[0]!.props.pointerEvents).toBe('none');
             expect(hostAncestors(seams[0]!)[0]).toBe(hostAncestors(sheet!)[0]);

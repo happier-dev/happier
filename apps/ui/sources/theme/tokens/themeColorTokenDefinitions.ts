@@ -319,6 +319,7 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
     { path: ['shadowPopoverArrowBoxShadow'], status: 'internal', reason: 'Popover arrow shadow recipe string, not a standalone editable color token.' },
     { path: ['shadowSeamCastBoxShadow'], status: 'internal', reason: 'Sideways cast from the page sheet onto the navigation plane beside it; internal chrome recipe rather than a standalone editable color token.' },
     { path: ['shadowPaneHeaderShade'], status: 'internal', reason: 'Start colour of the scroll-linked shade under a pane header; internal chrome recipe rather than a standalone editable color token.' },
+    { path: ['shadowJoinedPanelShade'], status: 'internal', reason: 'Start colour of the sideways fade the joined right panel casts onto the page (Shadow divider); internal chrome recipe rather than a standalone editable color token.' },
     { path: ['shadowSeamCastBothBoxShadow'], status: 'internal', reason: 'The page sheet\'s seam cast on both edges, when the right panel stands on the canvas beside it; internal chrome recipe rather than a standalone editable color token.' },
     { path: ['glass', 'border'], status: 'internal', reason: 'Floating glass surface rim recipe (GlassPanel); V1 exposes shared border tokens rather than feature-specific chrome details.' },
     { path: ['glass', 'innerShadow'], status: 'internal', reason: 'Floating glass surface inner shadow recipe string (GlassPanel), not a standalone editable color token.' },

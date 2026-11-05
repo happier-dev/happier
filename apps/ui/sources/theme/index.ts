@@ -9,6 +9,7 @@ import {
     buildGlassCastShadow,
     buildGlassInnerShadow,
     buildLightShadowLevels,
+    buildJoinedPanelShade,
     buildPaneHeaderShade,
     buildSeamCastShadow,
     buildShadowPopoverArrowBoxShadow,
@@ -210,6 +211,7 @@ const lightThemeBase = {
         shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(false),
         shadowSeamCastBoxShadow: buildSeamCastShadow(false),
         shadowPaneHeaderShade: buildPaneHeaderShade(false),
+        shadowJoinedPanelShade: buildJoinedPanelShade(false),
         shadowSeamCastBothBoxShadow: `${buildSeamCastShadow(false)}, ${buildSeamCastShadow(false, 'trailing')}`,
         glass: {
             border: buildGlassBorderColor(false),
@@ -572,6 +574,7 @@ const darkThemeBase = {
         shadowPopoverArrowBoxShadow: buildShadowPopoverArrowBoxShadow(true),
         shadowSeamCastBoxShadow: buildSeamCastShadow(true),
         shadowPaneHeaderShade: buildPaneHeaderShade(true),
+        shadowJoinedPanelShade: buildJoinedPanelShade(true),
         shadowSeamCastBothBoxShadow: `${buildSeamCastShadow(true)}, ${buildSeamCastShadow(true, 'trailing')}`,
         glass: {
             border: buildGlassBorderColor(true),

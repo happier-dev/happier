@@ -24,7 +24,10 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { AppShellTailSlot } from '@/components/navigation/shell/appShellTail';
 import { PaneHeaderScrollIsolation } from '@/components/appShell/panes/paneHeaderScroll';
-import { appShellColumnPlaneColor } from '@/components/navigation/shell/appRail/appShellColumnSurface';
+import { APP_SHELL_SHEET_INSET_PX, APP_SHELL_SHEET_RADIUS_PX, AppShellMaterialPlane, AppShellSheetCorners, useAppShellCanvasCoat } from '@/components/navigation/shell/appShellMaterialPlane';
+import type { AppShellPanelDivider } from '@/components/navigation/shell/appShellTail';
+import { LinearGradient } from 'expo-linear-gradient';
+import { parseThemeColor } from '@/theme/parseThemeColor';
 
 // A pane floating over the main content (overlay presentation) rounds the one edge that shows.
 const PANE_OVERLAY_CORNER_RADIUS_PX = 16;
@@ -83,6 +86,10 @@ export type MultiPaneHostProps = Readonly<{
      * screen. The column keeps one mounted instance whichever place it stands in.
      */
     rightTail?: Readonly<{ host: HTMLElement | null; hidden: boolean }>;
+    /** On the canvas, the rail's tab for this panel is its first action and continues the panel's top edge. */
+    rightJoinsTopTab?: boolean;
+    /** How the docked right panel, joined to the page, is divided from it (R11-3); a hairline by default. */
+    rightDivider?: AppShellPanelDivider;
 }>;
 
 export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
@@ -384,12 +391,17 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             backgroundColor: mainModalActive ? theme.colors.overlay.scrimSoft : 'transparent' }} /> : null}
                 </PaneColumn>
             ) : null}
+            {rightPresence.present && rightDocked && !rightOnCanvas && !mirrored && props.rightDivider === 'shadow' ? (
+                <JoinedPanelShade key="right-shade" progress={rightPresence.progress} />
+            ) : null}
             {rightPresence.present ? (
                 <MaybeTailSlot key="right" tail={props.rightTail} host={rightOnCanvas ? props.rightTail?.host ?? null : null}>
                 <PaneColumn
                     name="right"
                     mirrored={mirrored}
                     onCanvas={rightOnCanvas}
+                    divider={props.rightDivider ?? 'line'}
+                    joinsTopTab={rightOnCanvas && props.rightJoinsTopTab === true}
                     presentation={rightInMain ? (rightInMainVisible ? 'main' : 'hidden') : layout.right}
                     modalActive={rightModalActive}
                     progress={rightPresence.progress}
@@ -442,11 +454,62 @@ function MaybeTailSlot(props: Readonly<{
     return <AppShellTailSlot host={props.host} hidden={props.tail.hidden}>{props.children}</AppShellTailSlot>;
 }
 
+const JOINED_TOP_CORNER = ['tr'] as const;
+/** The header's shade depth (`PaneHeaderShade`), turned on its side: the joined panel casts its own softer shade this far. */
+const JOINED_PANEL_SHADE_PX = 14;
+
+/**
+ * The Shadow divider (R11-3): the joined panel lifts off the page the way a pane header does, with the
+ * header's own soft shade falling from the panel's leading edge onto the page. It stands at the panel's
+ * edge in the row (zero width), so it follows the panel through open, close and resize.
+ */
+const JoinedPanelShade = React.memo(function JoinedPanelShade(props: Readonly<{ progress: Animated.Value }>) {
+    const { theme } = useUnistyles();
+    const start = theme.colors.shadowJoinedPanelShade;
+    const end = React.useMemo(() => parseThemeColor(start)?.alpha(0).rgb().string() ?? 'transparent', [start]);
+    return <View pointerEvents="none" testID="multi-pane-right-joined-shade" aria-hidden
+        style={{ width: 0, alignSelf: 'stretch', position: 'relative', zIndex: 2 }}>
+        <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: JOINED_PANEL_SHADE_PX, opacity: props.progress }}>
+            <LinearGradient colors={[end, start]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={{ flex: 1 }} />
+        </Animated.View>
+    </View>;
+});
+
+/** The panel's sheet on the canvas: the window's inset beneath it and the page's corners (the gap stands before it). */
+const CANVAS_PANEL_SHEET_STYLE = {
+    marginBottom: APP_SHELL_SHEET_INSET_PX,
+    borderRadius: APP_SHELL_SHEET_RADIUS_PX,
+} as const;
+
+/**
+ * The canvas around a panel sheet, inside the column's own width (so the gap moves with the panel's
+ * width as it opens, closes and resizes): the gap strip, the inset strip and the cutouts outside the
+ * sheet's corners, each coated once with the navigation plane and never behind the sheet itself.
+ */
+const CanvasPanelBacking = React.memo(function CanvasPanelBacking(props: Readonly<{ joinsTopTab: boolean }>) {
+    const coat = useAppShellCanvasCoat();
+    return <>
+        <AppShellMaterialPlane pointerEvents="none" testID="multi-pane-canvas-gap" group={coat.group} color={coat.color} translucentColor={coat.translucentColor}
+            style={{ position: 'absolute', left: -APP_SHELL_SHEET_INSET_PX, top: 0, bottom: 0, width: APP_SHELL_SHEET_INSET_PX }} />
+        <AppShellMaterialPlane pointerEvents="none" testID="multi-pane-canvas-inset" group={coat.group} color={coat.color} translucentColor={coat.translucentColor}
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: APP_SHELL_SHEET_INSET_PX }} />
+        <AppShellSheetCorners testIDPrefix="multi-pane-canvas-corner" leading={coat} trailing={coat}
+            inset={{ bottom: APP_SHELL_SHEET_INSET_PX }} omit={props.joinsTopTab ? JOINED_TOP_CORNER : undefined} />
+    </>;
+});
+
 function PaneColumn(props: Readonly<{
     name: 'right' | 'details';
     mirrored?: boolean;
-    /** Docked on the shell's canvas beside the page: the navigation plane's paint, no edge of its own. */
+    /**
+     * Docked on the shell's canvas beside the page: a sheet of its own, a canvas gap from the page, its own
+     * rounded corners and no hairline (owner F3).
+     */
     onCanvas?: boolean;
+    /** Its top trailing corner continues into the rail's first-action tab, so it is square. */
+    joinsTopTab?: boolean;
+    /** Joined to the page (not on the canvas): its edge against the page is a hairline, or the shade beside it draws it. */
+    divider?: AppShellPanelDivider;
     flexible?: boolean;
     /** `main`: laid over the main column down to its composer (lab AR1 EFv). */
     presentation: ResolvedPaneLayout['details'] | 'main';
@@ -499,8 +562,9 @@ function PaneColumn(props: Readonly<{
                 width: props.widthPx,
                 zIndex: props.mainZIndex,
                 overflow: 'hidden',
+                ...(props.onCanvas ? { zIndex: 3 } : null),
                 opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
-                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [props.onCanvas ? 0 : 12, 0] }) }],
             } : docked ? {
                 position: 'relative',
                 // Longhands only: the flexible column (Editor first) grows from a zero basis, others keep
@@ -508,13 +572,14 @@ function PaneColumn(props: Readonly<{
                 flexGrow: props.flexible ? 1 : 0,
                 flexBasis: props.flexible ? 0 : 'auto',
                 minWidth: 0,
-                width: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, props.widthPx] }),
+                width: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, props.widthPx + (props.onCanvas ? APP_SHELL_SHEET_INSET_PX : 0)] }),
                 overflow: 'hidden',
                 flexShrink: 0,
                 alignSelf: 'stretch',
                 height: '100%',
+                ...(props.onCanvas ? { zIndex: 3 } : null),
                 opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
-                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [props.onCanvas ? 0 : 12, 0] }) }],
             } : {
                 position: 'absolute',
                 top: 0,
@@ -549,7 +614,8 @@ function PaneColumn(props: Readonly<{
                         ? { inert: true, 'aria-hidden': true as const }
                         : { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const }),
                 } : {})}
-                style={{ flex: 1, minHeight: 0, minWidth: 0, zIndex: overlay ? props.overlayZIndex : undefined }}
+                style={{ flex: 1, minHeight: 0, minWidth: 0, zIndex: overlay ? props.overlayZIndex : undefined,
+                    ...(props.onCanvas ? { marginLeft: APP_SHELL_SHEET_INSET_PX } : null) }}
             >
                 <ResizableDockedPane
                     testID={`multi-pane-${props.name}-${inMain ? 'main' : docked ? 'docked' : 'overlay'}`}
@@ -570,11 +636,16 @@ function PaneColumn(props: Readonly<{
                         {/* Docked and in the column the pane is page; over the page it is a sheet that floats (DESIGN.md →
                             "Flat edge in flow; the rim only for what floats"): the floating paint, finish and rim. It keeps the
                             content material, so a transcript read in it stays as legible as in the column (lab FB1). */}
-                        <GlassSurface surfaceGroup={props.onCanvas ? 'sidebar' : 'content'}
-                            solidColor={overlay ? theme.colors.edge.floatingFill : props.onCanvas ? appShellColumnPlaneColor(theme.colors) : theme.colors.surface.base}
-                            finishRole={overlay ? 'floating' : null} nested={docked || inMain} style={{
+                        {props.onCanvas ? <CanvasPanelBacking joinsTopTab={props.joinsTopTab === true} /> : null}
+                        {/* A canvas panel stands beside the page coat; a joined panel inherits it. Both use the
+                            existing content material, including the user's chosen opacity and blur. */}
+                        <GlassSurface surfaceGroup="content"
+                            solidColor={overlay ? theme.colors.edge.floatingFill : theme.colors.surface.base}
+                            finishRole={overlay ? 'floating' : null} nested={inMain || (docked && !props.onCanvas)} style={{
                             flex: 1, minHeight: 0, minWidth: 0,
-                            borderLeftWidth: docked && !props.mirrored && !props.onCanvas ? StyleSheet.hairlineWidth : 0,
+                            ...(props.onCanvas ? CANVAS_PANEL_SHEET_STYLE : null),
+                            ...(props.onCanvas && props.joinsTopTab ? { borderTopRightRadius: 0 } : null),
+                            borderLeftWidth: docked && !props.mirrored && !props.onCanvas && props.divider !== 'shadow' ? StyleSheet.hairlineWidth : 0,
                             borderRightWidth: docked && props.mirrored ? StyleSheet.hairlineWidth : 0,
                             borderLeftColor: theme.colors.border.subtle, borderRightColor: theme.colors.border.subtle,
                             overflow: 'hidden',
