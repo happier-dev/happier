@@ -16,6 +16,7 @@ function distroPackages(family: 'ubuntu' | 'debian') {
 /** Distro packages only. Shared engine data has no safe automatic inverse. */
 export const dockerEngine: Omit<MachineRecipeV1, 'id'> = {
   revision: '1', title: 'Docker Engine', software: true, icon: 'desktop',
+  description: 'Containers, and the engine your apps deploy onto.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   checks: [
     commandCheck('supported-distro', 'grep', ['-Eq', '^ID="?(ubuntu|debian)"?$', '/etc/os-release']),

@@ -11,7 +11,6 @@ import Animated, {
     useAnimatedStyle,
     useSharedValue,
     withTiming,
-    type SharedValue,
 } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HappierSkeletonBlock, isHappierFocusVisible, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
@@ -34,7 +33,6 @@ import {
     AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX,
     AGENT_INPUT_FOLDER_CHIP_RESOLVING_SIZE,
 } from './agentInputChipIconMetrics';
-import { AGENT_INPUT_ACTION_CHIP_STYLE } from '../components/agentInputChromeStyles';
 
 /**
  * Where the new session lives, as the one folder chip shows it. Four states, never conflated:
@@ -112,9 +110,8 @@ function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string
 /**
  * The one folder chip of the new-session composer (both the action row and the secondary
  * path row render it). The chip opens the folder choices; × is a sibling pressable, never
- * nested, so pressing it can never open the picker. × lies over the folder glyph, taking no room in the
- * row, so the next chip sits right after the name and showing × moves nothing (owner 2026-11-05). It never
- * covers the name: a path's tail is what tells two folders apart.
+ * nested, so pressing it can never open the picker. Its slot is reserved wherever × can appear,
+ * so showing it never changes the chip's width.
  */
 export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.ReactElement {
     const { theme } = useUnistyles();
@@ -129,20 +126,10 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     // Plan 03 §4.1: keyboard focus exposes × independently of the primary pointer. Without
     // hover or keyboard focus, touch keeps the natural chip width and uses the picker to remove.
     const hoverCapablePrimaryPointer = useHoverCapablePrimaryPointer();
-    const offersRemove = removable && (hoverCapablePrimaryPointer || chipFocusVisible || removeFocusVisible);
+    const reservesRemoveSlot = removable && (hoverCapablePrimaryPointer || chipFocusVisible || removeFocusVisible);
     const openRef = React.useRef<ChipControl>(null);
     const focusAfterRemoveRef = React.useRef(false);
-    const showRemove = offersRemove && (hoverRegion.isHovered || chipFocusVisible || removeFocusVisible);
-    const removeShown = useSharedValue(showRemove ? 1 : 0);
-    React.useEffect(() => {
-        // Enter at the fast step, exit quicker: attention is moving on.
-        removeShown.value = withTiming(showRemove ? 1 : 0, {
-            duration: showRemove ? reanimatedMotionTokens.durationMs.fast : reanimatedMotionTokens.durationMs.press,
-            easing: reanimatedMotionTokens.easing.standard,
-        });
-    }, [showRemove, removeShown]);
-    // The folder gives its place to ×, so the two glyphs never sit on top of each other.
-    const folderGlyphStyle = useAnimatedStyle(() => ({ opacity: 1 - removeShown.value }));
+    const showRemove = reservesRemoveSlot && (hoverRegion.isHovered || chipFocusVisible || removeFocusVisible);
 
     const setOpenRef = React.useCallback((node: ChipControl) => {
         openRef.current = node;
@@ -205,7 +192,7 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
             testID="agent-input-path-chip-region"
             layout={layoutTransition}
             style={[ROW_STYLE, props.layout === 'wrap' ? WRAP_STYLE : SHRINK_STYLE]}
-            {...(offersRemove ? hoverRegion.hoverProps : {})}
+            {...(reservesRemoveSlot ? hoverRegion.hoverProps : {})}
         >
             <HappierPressable
                 controlRef={setOpenRef}
@@ -223,13 +210,12 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
                 style={({ pressed, focused }) => [
                     props.chipStyle(pressed),
                     props.layout === 'wrap' ? WRAP_STYLE : SHRINK_STYLE,
+                    reservesRemoveSlot ? { paddingRight: theme.space.s2 } : null,
                     focusRingStyle({ focused, color: theme.colors.border.focus }),
                 ]}
             >
                 <Animated.View key={labelState.kind} entering={labelEntering} style={[ROW_STYLE, SHRINK_STYLE, { gap: 6 }]}>
-                    <Animated.View style={folderGlyphStyle}>
-                        <Icon name={glyph} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={foreground} style={AGENT_INPUT_CHIP_ICON_STYLE} />
-                    </Animated.View>
+                    <Icon name={glyph} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={foreground} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                     {/* The folder stays label-visible even in icon-only chip density. */}
                     {labelText !== null ? (
                         <Text
@@ -252,10 +238,9 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
                     )}
                 </Animated.View>
             </HappierPressable>
-            {offersRemove ? (
+            {reservesRemoveSlot ? (
                 <FolderChipRemoveButton
                     visible={showRemove}
-                    shown={removeShown}
                     tint={props.tint}
                     reducedMotion={reducedMotion}
                     onPress={remove}
@@ -287,14 +272,20 @@ function useSettledFocusVisible(setVisible: (visible: boolean) => void): (focuse
 
 const FolderChipRemoveButton = React.memo(function FolderChipRemoveButton(props: Readonly<{
     visible: boolean;
-    shown: SharedValue<number>;
     tint: string;
     reducedMotion: boolean;
     onPress: () => void;
     onFocusChange: (focused: boolean) => void;
 }>) {
     const { theme } = useUnistyles();
-    const { shown } = props;
+    const shown = useSharedValue(props.visible ? 1 : 0);
+    React.useEffect(() => {
+        // Enter at the fast step, exit quicker: attention is moving on.
+        shown.value = withTiming(props.visible ? 1 : 0, {
+            duration: props.visible ? reanimatedMotionTokens.durationMs.fast : reanimatedMotionTokens.durationMs.press,
+            easing: reanimatedMotionTokens.easing.standard,
+        });
+    }, [props.visible, shown]);
     const reducedMotion = props.reducedMotion;
     const glyphStyle = useAnimatedStyle(() => ({
         opacity: shown.value,
@@ -311,9 +302,6 @@ const FolderChipRemoveButton = React.memo(function FolderChipRemoveButton(props:
     return (
         // Hidden × leaves the accessibility tree; the chip's "Remove folder" action stays the AT path.
         <View
-            testID="agent-input-path-chip-remove-slot"
-            // While hidden the glyph beneath is the chip's own: a press there opens the picker.
-            pointerEvents={props.visible ? 'auto' : 'none'}
             style={REMOVE_SLOT_STYLE}
             accessibilityElementsHidden={!props.visible}
             importantForAccessibility={props.visible ? 'auto' : 'no-hide-descendants'}
@@ -345,13 +333,8 @@ const FolderChipRemoveButton = React.memo(function FolderChipRemoveButton(props:
     );
 });
 
-// Centred on the folder glyph, over the chip: out of the row's flow, so it never takes room from a neighbour.
-const REMOVE_SLOT_STYLE = {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: AGENT_INPUT_ACTION_CHIP_STYLE.paddingHorizontal + (AGENT_INPUT_CHIP_ICON_SIZE_PX - AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX) / 2,
-} as const;
+// The reserved × slot is the only extra space after the chip; the row's own gap already separates it from its neighbour.
+const REMOVE_SLOT_STYLE = { alignSelf: 'stretch' } as const;
 const REMOVE_TARGET_STYLE = {
     width: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX,
     flex: 1,

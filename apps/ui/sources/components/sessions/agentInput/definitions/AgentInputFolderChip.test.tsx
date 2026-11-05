@@ -81,15 +81,6 @@ describe('AgentInputFolderChip', () => {
         expect(onRemove).toHaveBeenCalledOnce();
     });
 
-    it('lays × over the folder glyph, taking no room in the row before or while it shows', async () => {
-        const { screen } = await renderChip({});
-        establishKeyboardFocus();
-        const chip = screen.findByTestId('agent-input-path-chip')!;
-        await act(async () => { chip.props.onFocus({}); });
-        expect(flattenStyle(screen.findByTestId('agent-input-path-chip')!.props.style).paddingRight).toBeUndefined();
-        expect(flattenStyle(screen.findByTestId('agent-input-path-chip-remove-slot')!.props.style).position).toBe('absolute');
-    });
-
     it('paints the canonical focus ring on the chip and on × for keyboard focus', async () => {
         const { screen } = await renderChip({});
         establishKeyboardFocus();
