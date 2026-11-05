@@ -8,10 +8,18 @@ import { RegistryUpstreamV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@ha
 import { PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { createCliRegistryUpdateCheck } from '@/registries/updates/createCliRegistryUpdateCheck';
 import { createMcpRegistryUpdateTracker } from './registryUpdateTracker';
+import { manifest as machineServicesManifest } from '../../../../../packages/plugins/machine-services/src/manifest';
+import { AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
+  type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
+import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 
 afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.unstubAllGlobals(); });
 
@@ -133,6 +141,93 @@ describe('MCP registry update tracker', () => {
       await fixture.checker.checkNow({ kind: 'mcpServer', keys: ['registered'] });
       expect(fixture.catalog().servers[0]!.origin).toEqual(origin);
       expect(fixture.writes()).toBe(1);
+    });
+  });
+
+  it('rereads and emits only a changed MCP server while preserving admission replay and reconnect catch-up', async () => {
+    expect(machineServicesManifest.contributes?.events?.some(event => event.id === 'mcp-update-available')).toBe(true);
+    const { createMcpUpdateEventSourceAdapter } = await import('../../../../../packages/plugins/machine-services/src/mcpUpdateEvents');
+    await withAccount(async fixture => {
+      const upstream = RegistryUpstreamV1Schema.parse({ state: 'update_available', latest: { kind: 'version', version: 'v2' } });
+      await fixture.tracker.record([{ key: 'registered', upstream }]);
+      const server = fixture.catalog().servers[0]!;
+      const servers = Array.from({ length: 64 }, (_, index) => ({ ...server, id: index === 0 ? 'registered' : `registered-${index}`, name: `registered-${index}` }));
+      fixture.replace({ ...fixture.catalog(), servers });
+      await fixture.tracker.record([{ key: 'registered', upstream: { ...upstream, latest: { kind: 'version', version: 'v2.1' } } }]);
+      const materialization = { pluginId: machineServicesManifest.id, machineId: 'observer', materializationId: 'installed' };
+      const definition: PluginCheckpointedEventSourceDefinitionV1 = { automationId: '11111111-1111-4111-8111-111111111111',
+        triggerId: 'update-trigger', triggerRevision: 1, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+        eventRef: { pluginId: machineServicesManifest.id, localId: 'mcp-update-available' }, sourceInstanceId: 'mcp-update:source', sourceContractVersion: 1,
+        sourceConfig: { v: 1, mcpServerId: 'registered', observingSince: 0 },
+        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization }, filter: null, maximumObservationAgeMs: null };
+      const definitions = servers.map(server => ({ ...definition, sourceInstanceId: `mcp-update:${server.id}`,
+        sourceConfig: { v: 1, mcpServerId: server.id, observingSince: 0 } }));
+      const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
+      type Listener = (event: { payload: JsonValue }) => void | Promise<void>;
+      const listeners = new Map<string, Set<Listener>>();
+      let safe = false;
+      // Only Host Actions and delivery are substituted; reads consume the real
+      // registry tracker's committed catalog through the strict read schema.
+      const execute = vi.fn(async (id: string, input: Record<string, unknown>) => {
+        if (id === 'automation.event.sources.list') return { kind: 'page', revision: '1', definitions, nextCursor: null };
+        if (id === 'automation.event.source.status.report') return { kind: 'reported' };
+        if (id === 'mcp.servers.read') return MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.read'].parse({ status: 'present', server: fixture.catalog().servers.find(server => server.id === input.serverId), bindings: [],
+          revision: fixture.revision(), authority: 'active', complete: true, diagnostics: [] });
+        if (id === 'automation.event.admit') { admissions.push(AutomationEventAdmitInputV1Schema.parse(input));
+          return { results: safe ? [{ kind: 'admitted', checkpointSafe: true, runId: 'run' }] : [] }; }
+        throw new Error(`Unexpected Action ${id}`);
+      });
+      const context = { plugin: { id: machineServicesManifest.id, version: machineServicesManifest.version },
+        contribution: { id: 'mcp-update-observer', qualifiedId: `${machineServicesManifest.id}/backgroundServices/mcp-update-observer` },
+        surface: 'background', invokedAtMs: Date.now(), materialization, signal: new AbortController().signal,
+        services: { actions: { execute }, events: { host: { subscribe(target: { eventId: string }, listener: (event: { payload: JsonValue }) => void | Promise<void>) {
+          const group = listeners.get(target.eventId) ?? new Set<Listener>();
+          listeners.set(target.eventId, group); group.add(listener); return { dispose() { group.delete(listener); } };
+        } } } } } as unknown as BackgroundServiceContext;
+      const adapter = createMcpUpdateEventSourceAdapter(context.services.events.host);
+      const subscription = adapter.subscribeWake?.(async () => {});
+      const cycle = (source = adapter) => runCheckpointedPluginEventObserverV1({ context, source, mode: 'once' });
+      const reads = () => execute.mock.calls.filter(([id]) => id === 'mcp.servers.read').length;
+      const releasePublication = subscribeActiveAccountSettingsKeys({ facets: ['mcpServerCatalog'] }, (previous, next) => {
+        const event = projectAccountEntitiesInvalidationForHost({ t: 'account-change', entityIds: [MCP_SERVER_CATALOG_ACCOUNT_KEY_V1] }, {
+          previous: previous?.mcpServerCatalog, next: next?.mcpServerCatalog,
+        });
+        if (event) for (const listener of listeners.get(event.eventId) ?? []) void listener(event);
+      });
+      try {
+        await cycle(); safe = true; await cycle();
+        expect(admissions).toHaveLength(servers.length * 2);
+        expect(admissions.slice(0, servers.length)).toEqual(admissions.slice(servers.length));
+        expect(admissions[0].payload).toEqual({ mcpServerId: 'registered', observedAt: expect.any(Number),
+          installedRefDigest: expect.any(String), upstreamRefDigest: expect.any(String) });
+        await cycle();
+        expect(admissions).toHaveLength(servers.length * 2);
+        expect(reads()).toBe(servers.length);
+        const beforeReads = reads();
+        const beforeAdmissions = admissions.length;
+        await fixture.tracker.record([{ key: 'registered', upstream: { ...upstream, latest: { kind: 'version', version: 'v3' } } }]);
+        await cycle();
+        expect(reads() - beforeReads).toBe(1);
+        expect(admissions.length - beforeAdmissions).toBe(1);
+        expect(admissions.at(-1)?.occurrenceId).not.toBe(admissions[0].occurrenceId);
+        const changedReads = reads();
+        const changedAdmissions = admissions.length;
+        for (let index = 0; index < 3; index++) {
+          await fixture.tracker.record([{ key: 'registered', upstream: { ...upstream, latest: { kind: 'version', version: 'v3' } } }]);
+          const unrelated = projectAccountEntitiesInvalidationForHost({ t: 'account-change', entityIds: ['unrelated-row'] });
+          if (unrelated) for (const listener of listeners.get(unrelated.eventId) ?? []) await listener(unrelated);
+          await cycle();
+        }
+        expect(reads() - changedReads).toBe(0);
+        expect(admissions.length - changedAdmissions).toBe(0);
+        await fixture.tracker.record([{ key: 'registered', upstream: { ...upstream, latest: { kind: 'version', version: 'v4' } } }]);
+        for (const listener of listeners.get('@happier/automation/event-sources-invalidated') ?? []) await listener({ payload: { reason: 'reconnect' } });
+        await cycle();
+        expect(reads() - changedReads).toBe(servers.length);
+        expect(admissions.at(-servers.length)?.occurrenceId).not.toBe(admissions[0].occurrenceId);
+        await cycle(createMcpUpdateEventSourceAdapter(context.services.events.host));
+        expect(admissions.at(-servers.length)?.occurrenceId).toBe(admissions.at(-servers.length * 2)?.occurrenceId);
+      } finally { releasePublication(); subscription?.dispose(); }
     });
   });
 

@@ -1,0 +1,4 @@
+{
+  "machineServices.events.mcpUpdateAvailable.title": "Actualización de MCP disponible",
+  "machineServices.events.mcpUpdateAvailable.description": "Hay una actualización del registro para el servidor MCP seleccionado."
+}

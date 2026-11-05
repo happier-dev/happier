@@ -3980,6 +3980,13 @@ and `RPC_OUTCOME_UNKNOWN` values remain accepted.
 MCP registry origins retain optional `upstreamObservedAt` on changed upstream
 observations. Duplicate reports/checks retain those values.
 
+MCP uses the retained observation clock and installed /
+upstream reference digests.
+
+Committed Account
+entity ids reach the observers through the new strict content-free
+`@happier/account/entities-invalidated` Host hint.
+
 Machine presence Events `machine-offline` / `machine-online` retain the existing
 timeout and recovery decisions in nullable `Machine.presenceTransitions`.
 The owner-approved append-only `20261102101034_add_machine_presence_transitions`

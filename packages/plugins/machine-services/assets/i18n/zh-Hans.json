@@ -1,0 +1,4 @@
+{
+  "machineServices.events.mcpUpdateAvailable.title": "MCP有可用更新",
+  "machineServices.events.mcpUpdateAvailable.description": "注册表中有所选MCP服务器的可用更新。"
+}

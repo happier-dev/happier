@@ -1,0 +1,4 @@
+{
+  "machineServices.events.mcpUpdateAvailable.title": "Доступно обновление MCP",
+  "machineServices.events.mcpUpdateAvailable.description": "В реестре доступно обновление выбранного MCP-сервера."
+}

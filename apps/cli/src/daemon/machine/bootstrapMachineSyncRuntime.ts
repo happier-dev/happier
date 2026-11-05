@@ -1,4 +1,6 @@
 import fs from 'fs/promises';
+import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
+import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import type { PendingSessionResumePort } from '../sessions/activatePendingInactiveSession';
 import type { DaemonShutdownSource } from '../lifecycle/shutdown';
 import os from 'os';
@@ -90,7 +92,7 @@ import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
-import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, subscribeActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createRuntimeProviderConnectionServices } from '@/providers/connections/runtimeServices';
 import { createMachineSharedProviderGatewayResolver } from '@/providers/lifecycle/sharedGatewayIdentity';
@@ -1880,6 +1882,20 @@ export async function bootstrapMachineSyncRuntime(
     connectedApiMachine.onAutomationWorkInvalidated(async () => {
       if (!params.isShuttingDown()) await activeAutomationWorker?.catchUp();
     });
+    const priorHeartbeatLifetimeCleanup = machineConnectionStateCleanup;
+    const mcpCatalogScopeKey = storedCredentials ? resolveAccountSettingsScopeKey(storedCredentials) : undefined;
+    const cleanupMcpCatalog = subscribeActiveAccountSettingsKeys({ facets: ['mcpServerCatalog'] }, (previous, next) => {
+      if (!mcpCatalogScopeKey || next?.scopeKey !== mcpCatalogScopeKey) return;
+      const event = projectAccountEntitiesInvalidationForHost({ t: 'account-change', entityIds: [MCP_SERVER_CATALOG_ACCOUNT_KEY_V1] }, {
+        previous: previous?.scopeKey === mcpCatalogScopeKey ? previous.mcpServerCatalog : undefined,
+        next: next.mcpServerCatalog,
+      });
+      if (event) publishDaemonHostEvent(event, params.isShuttingDown);
+    });
+    machineConnectionStateCleanup = () => {
+      cleanupMcpCatalog();
+      priorHeartbeatLifetimeCleanup?.();
+    };
     connectedApiMachine.onAutomationEventSourcesInvalidated(payload => {
       publishDaemonHostEvent({
         eventId: HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
@@ -1889,6 +1905,10 @@ export async function bootstrapMachineSyncRuntime(
     });
     connectedApiMachine.onUpdate((update) => {
       const body = UpdateBodySchema.safeParse(update?.body);
+      if (body.success && body.data.t === 'account-change' && !params.isShuttingDown()) {
+        const entities = projectAccountEntitiesInvalidationForHost(body.data);
+        if (entities) publishDaemonHostEvent(entities, params.isShuttingDown);
+      }
       if (body.success && body.data.t === 'pending-changed' && !params.isShuttingDown()) {
         void inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(body.data.sessionId ?? body.data.sid)
           .catch(error => logger.warn('[DAEMON RUN] Pending reset live demand remains held', error));

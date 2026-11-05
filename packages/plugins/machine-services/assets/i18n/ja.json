@@ -1,0 +1,4 @@
+{
+  "machineServices.events.mcpUpdateAvailable.title": "MCPの更新あり",
+  "machineServices.events.mcpUpdateAvailable.description": "選択したMCPサーバーの更新がレジストリにあります。"
+}
