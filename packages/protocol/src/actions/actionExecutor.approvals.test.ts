@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
 
 import { ApprovalRequestSchema, ApprovalRequestPublicSettlementSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, requiresExactDaemonApprovalReplay, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionIdSchema } from './actionIds.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
@@ -3953,6 +3954,46 @@ describe('createActionExecutor (approvals)', () => {
       errorCode: 'action_failed',
       error: 'action_failed',
     });
+  });
+
+  it('refuses RPC automation before claiming a live CLI approval and preserves present-user delivery', async () => {
+    const proposal = ApprovalRequestV2Schema.parse(createApprovalRequest('open', {
+      actionId: 'session.title.set', actionArgs: { sessionId: 's1', title: 'Reviewed title' },
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      approval: { flow: 'blocking', result: 'required' },
+    }));
+    const { machineId: _contextualMachine, ...origin } = proposal.executionOriginV1;
+    let storedRequest = ApprovalRequestV2Schema.parse({ ...proposal,
+      executionOriginV1: { ...origin, authority: 'present_user' } });
+    const originalRequest = structuredClone(storedRequest);
+    expect(readLiveCliApprovalOriginScope(storedRequest)).not.toBeNull();
+    // Artifact storage and the exact live-origin RPC are the boundaries. All
+    // caller authority, approval admission and transition logic remain real.
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(storedRequest, next);
+      if (!transition.ok) return transition;
+      storedRequest = next;
+      return { ok: true as const };
+    });
+    const approvalRequestApprovedReplay = vi.fn(async () => ({ ok: true as const,
+      result: { ok: true, status: 'executed' } }));
+    const executor = createExecutor({ approvalsGet: async () => storedRequest,
+      approvalsUpdate, approvalRequestApprovedReplay });
+    const input = { artifactId: 'a1', decision: 'approve' };
+    const context = { surface: 'rpc' as const, actionCaller: { kind: 'host' as const } };
+
+    expect(await executor.execute('approval.request.decide', input, { ...context, authority: 'account_automation' }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(storedRequest).toEqual(originalRequest);
+    expect(approvalsUpdate).not.toHaveBeenCalled();
+    expect(approvalRequestApprovedReplay).not.toHaveBeenCalled();
+
+    expect(await executor.execute('approval.request.decide', input, { ...context, authority: 'present_user' }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(storedRequest).toMatchObject({ status: 'approved', decision: { authority: 'present_user' } });
+    expect(approvalsUpdate).toHaveBeenCalledOnce();
+    expect(approvalRequestApprovedReplay).toHaveBeenCalledOnce();
   });
 
   it.each(['deferred', 'blocking'] as const)('persists the present-user decision before delegating exact-daemon replay with %s custody', async flow => {

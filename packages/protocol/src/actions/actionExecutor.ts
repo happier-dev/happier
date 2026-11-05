@@ -6279,9 +6279,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!admitted?.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           narrowedActionArgs = admitted.data;
         }
-        if (requestedActionId.success
-          && decision !== 'cancel'
-          && requiresPresentUserDecisionForActionInputV1(getActionSpec(requestedActionId.data), existing.actionArgs, decision)
+        if (decision !== 'cancel'
+          && (readLiveCliApprovalOriginScope(existing) !== null
+            || (requestedActionId.success
+              && requiresPresentUserDecisionForActionInputV1(getActionSpec(requestedActionId.data), existing.actionArgs, decision)))
           && resolveHostStampedAuthority(ctx) !== 'present_user') {
           return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
         }
