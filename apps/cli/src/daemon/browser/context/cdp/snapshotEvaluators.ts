@@ -3,6 +3,7 @@ import type {
     BrowserContextSnapshotInteractiveElementV1,
 } from '@happier-dev/protocol';
 import { synthesizeLocatorNameExpression } from '../../automation/locators';
+import type { SnapshotMasking } from './snapshotMasking';
 
 /**
  * Combined-snapshot extraction shared by context capture and automation semantic snapshots.
@@ -109,57 +110,17 @@ function axValue(node: Record<string, unknown>, field: string): string | undefin
     return nonEmptyString(wrapped?.value);
 }
 
-function editableDomNodes(document: unknown): ReadonlyMap<number, boolean> {
-    const nodes = new Map<number, boolean>();
-    const root = record(record(document)?.root);
-    const pending = root ? [{ node: root, editable: false, secret: false }] : [];
-    while (pending.length) {
-        const current = pending.pop()!;
-        const { node } = current;
-        const attributes = new Map<string, string>();
-        if (Array.isArray(node.attributes)) {
-            for (let index = 0; index + 1 < node.attributes.length; index += 2) {
-                const key = node.attributes[index];
-                const value = node.attributes[index + 1];
-                if (typeof key === 'string' && typeof value === 'string') attributes.set(key.toLowerCase(), value);
-            }
-        }
-        const contenteditable = attributes.get('contenteditable')?.toLowerCase();
-        const editable = contenteditable === 'false' ? false
-            : contenteditable === '' || contenteditable === 'true' || contenteditable === 'plaintext-only'
-                ? true : current.editable;
-        const type = (attributes.get('type') ?? 'text').toLowerCase();
-        const secret = current.secret || type === 'password'
-            || (attributes.get('autocomplete') ?? '').toLowerCase().split(/\s+/u).includes('one-time-code');
-        if (typeof node.backendNodeId === 'number' && Array.isArray(node.attributes)) {
-            const tag = typeof node.nodeName === 'string' ? node.nodeName.toLowerCase() : '';
-            const textInput = tag === 'input' && ['text', 'search', 'email', 'url', 'tel'].includes(type);
-            nodes.set(node.backendNodeId, !secret && !attributes.has('readonly') && !attributes.has('disabled')
-                && (textInput || tag === 'textarea' || editable));
-        }
-        for (const children of [node.children, node.shadowRoots, [node.contentDocument]]) {
-            if (!Array.isArray(children)) continue;
-            for (const child of children) {
-                const next = record(child);
-                if (next) pending.push({ node: next, editable, secret });
-            }
-        }
-    }
-    return nodes;
-}
-
 /**
  * AX supplies current values; DOM metadata establishes which editable fields may disclose them.
  * Unknown metadata fails closed for values while preserving the structural snapshot.
  */
 export function parseAxNodes(
     value: unknown,
-    document?: unknown,
+    masking?: SnapshotMasking,
 ): Readonly<{ nodes: readonly BrowserContextSnapshotAxNodeV1[]; truncated: boolean }> {
     const raw = record(value)?.nodes;
     if (!Array.isArray(raw)) return { nodes: [], truncated: false };
     const nodes: BrowserContextSnapshotAxNodeV1[] = [];
-    const editable = editableDomNodes(document);
     let valuesTruncated = false;
     for (const entry of raw) {
         const node = record(entry);
@@ -174,7 +135,10 @@ export function parseAxNodes(
             const kind = record(entry?.value)?.value;
             return entry?.name === 'editable' && (kind === 'plaintext' || kind === 'richtext');
         });
-        const allowed = typeof node.backendDOMNodeId === 'number' ? editable.get(node.backendDOMNodeId) : undefined;
+        const allowed = typeof node.backendDOMNodeId === 'number'
+            ? masking?.sensitiveBackendNodeIds.has(node.backendDOMNodeId) ? false
+                : masking?.editableBackendNodeIds.get(node.backendDOMNodeId)
+            : undefined;
         const fieldValue = isEditable && allowed === true && typeof rawValue === 'string'
             ? rawValue : undefined;
         if (isEditable && typeof rawValue === 'string' && allowed === undefined) valuesTruncated = true;

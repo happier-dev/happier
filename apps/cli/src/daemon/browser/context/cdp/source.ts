@@ -1,9 +1,9 @@
 import { BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
-import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 
 import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceTargetRef } from '../capture';
 import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 import type { SidecarSummaryContextKind } from '../../sidecar/context/capture';
+import { redactSidecarContextUrl } from '../../sidecar/diagnostics/redaction';
 import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type {
     BrowserContextCdpPageHandle,
@@ -163,16 +163,19 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
         }, scope);
     }
 
+    async function readMasking(handle: BrowserContextCdpPageHandle, scope: BrowserContextCaptureScope) {
+        return readSnapshotMasking(await dispatch(handle, 'DOMSnapshot.captureSnapshot', {
+            computedStyles: ['-webkit-text-security'],
+        }, scope));
+    }
+
     const source: BrowserContextSource = {
         async readPrivacyState(view) {
             const handle = resolve(view);
             if (!handle) return ADAPTER_UNAVAILABLE;
             try {
-                // A boolean presence probe never reads field values or page contents.
-                const present = evaluateValue(await evaluate(handle,
-                    browserContextSensitiveFieldsExpression, view));
-                if (typeof present !== 'boolean') return CAPTURE_FAILED;
-                return { ok: true, privacyState: present ? 'sensitiveFieldsPresent' : null };
+                const masking = await readMasking(handle, view);
+                return { ok: true, privacyState: masking.hasSensitiveFields ? 'sensitiveFieldsPresent' : null };
             } catch {
                 return CAPTURE_FAILED;
             }
@@ -309,13 +312,11 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             if (!handle) return ADAPTER_UNAVAILABLE;
 
             try {
-                const readMasking = async () => readSnapshotMasking(await dispatch(handle,
-                    'DOMSnapshot.captureSnapshot', { computedStyles: ['-webkit-text-security'] }, view));
-                const masking = await readMasking();
+                const masking = await readMasking(handle, view);
                 const mask = snapshotTextMasker(masking);
                 // URL/title from navigation history (metadata).
                 const entry = readCurrentHistoryEntry(await dispatch(handle, 'Page.getNavigationHistory', undefined, view));
-                const url = stringField(entry, 'url');
+                const url = redactSidecarContextUrl(stringField(entry, 'url'));
                 const title = stringField(entry, 'title');
                 const focusedCredentialTarget = await input.readFocusedCredentialTarget?.(view);
 
@@ -328,15 +329,11 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     evaluateValue(await evaluate(handle, interactiveElementsExpression(), view)),
                 );
 
-                // AX owns current text values. One DOM metadata read classifies all fields;
-                // never read a field's value from HTML attributes or issue a request per field.
+                // AX owns current values; the privacy census owns field classification.
                 await dispatch(handle, 'Accessibility.enable', undefined, view);
                 const ax = parseAxNodes(
                     await dispatch(handle, 'Accessibility.getFullAXTree', undefined, view),
-                    await dispatch(handle, 'DOM.getDocument', { depth: -1, pierce: true }, view).catch((error: unknown) => {
-                        if (view.signal?.aborted) throw error;
-                        return null;
-                    }),
+                    masking,
                 );
 
                 // Console summary from the redacted diagnostics ring (never a live DOM query).
@@ -360,7 +357,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     // Screenshot is best-effort; the structural snapshot still resolves without it.
                 }
 
-                const after = await readMasking();
+                const after = await readMasking(handle, view);
                 if (masking.hasSensitiveFields !== after.hasSensitiveFields
                     || masking.values.length !== after.values.length
                     || masking.values.some((value, index) => value !== after.values[index])) return CAPTURE_FAILED;

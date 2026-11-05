@@ -459,7 +459,8 @@ describe('control adapter automation transport bridge', () => {
     expect(snapshot).not.toHaveProperty('title');
     expect(snapshot).not.toHaveProperty('url');
     expect(boundary.calls.some(call => call.method === 'Page.captureScreenshot')).toBe(false);
-    expect(boundary.calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(2);
+    // Admission and egress now use the same census as the two snapshot boundaries.
+    expect(boundary.calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(4);
     expect(JSON.stringify(observed)).not.toContain('fixture-password');
     policyAllowed = false;
     const count = boundary.calls.length;

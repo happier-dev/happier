@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { interactiveElementsExpression, parseAxNodes, parseInteractiveElements } from './snapshotEvaluators';
+import { readSnapshotMasking, snapshotTextMasker } from './snapshotMasking';
+import { createSnapshotMaskingFixture } from './snapshotMasking.testkit';
 
 describe('CDP editable AX values', () => {
   it('excludes secret fields and omits values without DOM evidence', () => {
     const tree = { nodes: [1, 2, 3].map(id => ({ backendDOMNodeId: id, role: { value: 'textbox' },
       value: { value: `field-${id}` }, properties: [{ name: 'editable', value: { value: 'plaintext' } }],
     })) };
-    const document = { root: { children: [
-      { backendNodeId: 1, nodeName: 'INPUT', attributes: ['type', 'PASSWORD'] },
-      { backendNodeId: 2, nodeName: 'INPUT', attributes: ['autocomplete', 'one-time-code'] },
-      { backendNodeId: 3, nodeName: 'TEXTAREA', attributes: [] },
-    ] } };
-    expect(parseAxNodes(tree, document).nodes).toEqual([
+    const masking = readSnapshotMasking(createSnapshotMaskingFixture([
+      { backendNodeId: 1, type: 'PASSWORD', value: 'field-1' },
+      { backendNodeId: 2, autocomplete: 'one-time-code', value: 'field-2' },
+      { backendNodeId: 3, nodeName: 'TEXTAREA', value: 'field-3' },
+    ]));
+    expect(parseAxNodes(tree, masking).nodes).toEqual([
       { role: 'textbox' }, { role: 'textbox' }, { role: 'textbox', value: 'field-3' },
     ]);
     const unavailable = parseAxNodes(tree);
@@ -19,6 +21,22 @@ describe('CDP editable AX values', () => {
       { role: 'textbox' }, { role: 'textbox' }, { role: 'textbox' },
     ]);
     expect(unavailable.truncated).toBe(true);
+  });
+
+  it('omits CSS-masked editable values using census node identities', () => {
+    const masking = readSnapshotMasking(createSnapshotMaskingFixture([{ backendNodeId: 7,
+      type: 'text', security: 'disc', value: 'css-secret' }]));
+    expect(parseAxNodes({ nodes: [{ backendDOMNodeId: 7, role: { value: 'textbox' },
+      properties: [{ name: 'editable', value: { value: 'plaintext' } }], value: { value: 'css-secret' },
+    }] }, masking).nodes).toEqual([{ role: 'textbox' }]);
+  });
+
+  it('preserves ordinary whitespace while masking CSS-sensitive text', () => {
+    const mask = snapshotTextMasker(readSnapshotMasking(createSnapshotMaskingFixture([
+      { security: 'disc', text: true, value: ' ' }, { security: 'disc', text: true, value: '1234' },
+    ])));
+    expect(mask('Public page 1234 content')).toBe('Public page [MASKED] content');
+    expect(mask('body > button')).toBe('body > button');
   });
 });
 

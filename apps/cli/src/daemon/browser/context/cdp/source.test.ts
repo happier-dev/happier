@@ -8,7 +8,6 @@ import type { BrowserSidecarCdpCommandScope } from '../../sidecar/controlAdapter
 import type { BrowserContextCdpPageHandle } from './transport';
 import type { BrowserContextScreenshotMediaWriter } from './screenshotMedia';
 import { BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
-import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 import { createSnapshotMaskingFixture as maskingSnapshot } from './snapshotMasking.testkit';
 
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 3 } as const;
@@ -57,12 +56,44 @@ function fakeMediaWriter(): BrowserContextScreenshotMediaWriter & { writes: unkn
 }
 
 describe('cdp browser context source', () => {
+    it('redacts query values and fragments from token URLs through snapshot capture', async () => {
+        const { transport } = fakeTransport(method => method === 'Page.getNavigationHistory'
+            ? { currentIndex: 0, entries: [{ url: 'https://example.test/reset-password?token=query-canary#access_token=fragment-canary' }] }
+            : method === 'Runtime.evaluate' ? { result: { type: 'boolean', value: false } }
+            : {});
+        const service = createBrowserContextCaptureService({ ownerAccountId: 'owner',
+            source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: fakeMediaWriter() }),
+            resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+        });
+        expect(await service.captureSnapshot({ ...VIEW, requesterAccountId: 'owner', contextId: 'url' }))
+            .toMatchObject({ status: 'captured', snapshot: { url: 'https://example.test/reset-password' } });
+    });
+
+    it.each([
+        { autocomplete: 'section-login ONE-TIME-CODE', value: '482913' },
+        { security: 'disc', value: 'css-secret' },
+    ])('blocks sensitive census fields before screenshot persistence: %j', async field => {
+        const writer = fakeMediaWriter();
+        const { transport, calls } = fakeTransport(method => {
+            if (method === 'DOMSnapshot.captureSnapshot') return maskingSnapshot([field]);
+            if (method === 'Runtime.evaluate') return { result: { type: 'boolean', value: false } };
+            if (method === 'Page.captureScreenshot') return { data: 'sensitive-pixels' };
+            return {};
+        });
+        const service = createBrowserContextCaptureService({ ownerAccountId: 'owner',
+            source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: writer }),
+            resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+        });
+        expect(await service.captureScreenshot({ ...VIEW, requesterAccountId: 'owner', contextId: 'sensitive' }))
+            .toMatchObject({ status: 'unavailable', item: { lifecycleState: 'sensitiveFieldsPresent' } });
+        expect(writer.writes).toEqual([]);
+        expect(calls.filter(call => call.method === 'Page.captureScreenshot')).toHaveLength(0);
+    });
+
     it.each([8192, 8193])('preserves the Protocol summary budget through capture for %i characters', async length => {
         const text = 'x'.repeat(length);
-        const { transport } = fakeTransport((method, params) => method === 'Runtime.evaluate'
-            ? params?.expression === browserContextSensitiveFieldsExpression
-                ? { result: { type: 'boolean', value: false } }
-                : { result: { type: 'string', value: text } }
+        const { transport } = fakeTransport((method) => method === 'Runtime.evaluate'
+            ? { result: { type: 'string', value: text } }
             : {});
         const service = createBrowserContextCaptureService({ ownerAccountId: 'owner',
             source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: fakeMediaWriter() }),
@@ -104,6 +135,7 @@ describe('cdp browser context source', () => {
     it('retains a privacy denial discovered at screenshot egress', async () => {
         let passwordPresent = false;
         const { transport } = fakeTransport(method => {
+            if (method === 'DOMSnapshot.captureSnapshot') return maskingSnapshot(passwordPresent ? [{ type: 'password', value: 'secret' }] : []);
             if (method === 'Runtime.evaluate') return { result: { type: 'boolean', value: passwordPresent } };
             if (method === 'Page.captureScreenshot') {
                 passwordPresent = true;
@@ -121,12 +153,8 @@ describe('cdp browser context source', () => {
 
     it('blocks a password-bearing page before pixels or media are read through the capture owner', async () => {
         const writer = fakeMediaWriter();
-        const { transport, calls } = fakeTransport((method, params) => {
-            if (method === 'Runtime.evaluate') {
-                const document = { querySelector: (selector: string) => selector === 'input[type="password"]' ? {} : null };
-                const value: unknown = Function('document', `return ${String(params?.expression)};`)(document);
-                return { result: { type: typeof value, value } };
-            }
+        const { transport, calls } = fakeTransport((method) => {
+            if (method === 'DOMSnapshot.captureSnapshot') return maskingSnapshot([{ type: 'password', value: 'secret' }]);
             if (method === 'Page.captureScreenshot') return { data: 'AQID' };
             return {};
         });
@@ -150,11 +178,9 @@ describe('cdp browser context source', () => {
             // The actual CDP connection rejects aborted commands. Keep that external behavior
             // here while exercising the real route, service, and context producer beneath it.
             receivedScope = scope;
-            if (phase === 'during field metadata' && method === 'DOM.getDocument') controller.abort();
+            if (phase === 'during field metadata' && method === 'Accessibility.getFullAXTree') controller.abort();
             if (scope.signal?.aborted) throw new Error('CDP command aborted');
-            if (method === 'Runtime.evaluate') return params?.expression === browserContextSensitiveFieldsExpression
-                ? { result: { type: 'boolean', value: false } }
-                : { result: { type: 'string', value: 'Page text' } };
+            if (method === 'Runtime.evaluate') return { result: { type: 'string', value: 'Page text' } };
             if (method === 'Page.getNavigationHistory') {
                 return { currentIndex: 0, entries: [{ url: 'https://example.test', title: 'Example' }] };
             }
@@ -463,7 +489,6 @@ describe('cdp browser context source', () => {
             const { transport, calls } = fakeTransport((method, params) => {
                 if (method === 'DOMSnapshot.captureSnapshot') return census;
                 if (method === 'Runtime.evaluate') {
-                    if (params?.expression === browserContextSensitiveFieldsExpression) return { result: { type: 'boolean', value: true } };
                     if (String(params?.expression).includes('querySelectorAll(sel)')) return { result: { value: [
                         { role: 'button', name: `Submit ${password}`, selector: '#submit', rect: { x: 0, y: 0, width: 10, height: 10 } },
                         { role: 'button', name: 'Secret identifier', selector: `#${password}`, rect: { x: 0, y: 0, width: 10, height: 10 } },
@@ -473,13 +498,10 @@ describe('cdp browser context source', () => {
                 if (method === 'Accessibility.getFullAXTree') return { nodes: [
                     { role: { value: 'textbox' }, name: { value: 'Password' }, value: { value: password } },
                     { role: { value: 'StaticText' }, name: { value: `${password} ${normalizedSecret}` } },
-                    { backendDOMNodeId: 7, role: { value: 'textbox' }, name: { value: 'Masked field' },
+                    { backendDOMNodeId: 2, role: { value: 'textbox' }, name: { value: 'Masked field' },
                         properties: [{ name: 'editable', value: { value: 'plaintext' } }], value: { value: normalizedSecret } },
                     { role: { value: 'button' }, name: { value: 'Submit' } },
                 ] };
-                if (method === 'DOM.getDocument') return { root: { nodeName: '#document', children: [
-                    { backendNodeId: 7, nodeName: 'INPUT', attributes: ['type', 'text'] },
-                ] } };
                 if (method === 'Page.captureScreenshot') return { data: 'must-not-persist' };
                 return {};
             });
@@ -489,7 +511,7 @@ describe('cdp browser context source', () => {
             });
             const result = await routes.captureSnapshot?.({ ...VIEW, contextId: 'masked' });
             expect(result).toMatchObject({ visibleText: 'Login [MASKED] [MASKED] Welcome',
-                axNodes: expect.arrayContaining([{ role: 'button', name: 'Submit' }, { role: 'textbox', name: 'Masked field', value: '[MASKED]' }]),
+                axNodes: expect.arrayContaining([{ role: 'button', name: 'Submit' }, { role: 'textbox', name: 'Masked field' }]),
                 interactiveElements: [{ role: 'button', name: 'Submit [MASKED]', selector: '#submit', rect: { x: 0, y: 0, width: 10, height: 10 } }],
                 interactiveElementsTruncated: true,
             });
@@ -498,7 +520,9 @@ describe('cdp browser context source', () => {
             expect(JSON.stringify(result)).not.toContain(normalizedSecret);
             expect(writer.writes).toEqual([]);
             expect(calls.filter(call => call.method === 'Page.captureScreenshot')).toHaveLength(0);
-            expect(calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(2);
+            // Admission, two snapshot boundaries, and egress each use the same census.
+            expect(calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(4);
+            expect(calls.filter(call => call.method === 'DOM.getDocument')).toHaveLength(0);
         });
 
         it.each(['late field', 'late value', 'unreadable census', 'invalid field index', 'missing element style'] as const)('fails closed before media persistence on %s', async phase => {
@@ -546,9 +570,11 @@ describe('cdp browser context source', () => {
             ];
             const elements = fields.map(field => ({ role: 'textbox', name, selector: `#field-${field.id}`, rect: { x: 0, y: 0, width: 10, height: 10 } }));
             const { transport, calls } = fakeTransport((method, params) => {
+                if (method === 'DOMSnapshot.captureSnapshot') return maskingSnapshot(fields.map(field => ({
+                    backendNodeId: field.id, nodeName: field.nodeName, attributes: field.attributes, value: field.value,
+                })));
                 if (method === 'Runtime.evaluate') {
                     const expression = String(params?.expression);
-                    if (expression === browserContextSensitiveFieldsExpression) return { result: { type: 'boolean', value: false } };
                     if (expression.includes('querySelectorAll(sel)')) return { result: { type: 'object', value: elements } };
                     return { result: { type: 'string', value: expression.includes('innerText') ? visibleText : 'Page title' } };
                 }
@@ -556,9 +582,6 @@ describe('cdp browser context source', () => {
                     backendDOMNodeId: field.id, role: { value: 'textbox' }, name: { value: name },
                     properties: [{ name: 'editable', value: { value: 'plaintext' } }], value: { value: field.value },
                 })) };
-                if (method === 'DOM.getDocument') return { root: { nodeName: '#document', children: fields.map(field => ({
-                    backendNodeId: field.id, nodeName: field.nodeName, attributes: field.attributes,
-                })) } };
                 return {};
             });
             // CDP is the external boundary. Real source, capture admission and strict wire
@@ -578,7 +601,7 @@ describe('cdp browser context source', () => {
             expect(snapshot.axNodesTruncated).toBe(false);
             expect(snapshot.interactiveElementsTruncated).toBe(false);
             expect(snapshot.visibleTextTruncated).toBe(false);
-            expect(calls.filter(call => call.method === 'DOM.getDocument')).toHaveLength(1);
+            expect(calls.filter(call => call.method === 'DOM.getDocument')).toHaveLength(0);
             expect(JSON.stringify(snapshot)).not.toContain('fixture-otp');
         });
 

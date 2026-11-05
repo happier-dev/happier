@@ -359,8 +359,10 @@ These are current 0.3 development-source contracts, not loaded-runtime certifica
 An agent's Session-owned Chromium profile is its browser workspace. Ephemeral
 storage retention does not make it private browsing: its owning Session may
 capture screenshots. Session-bound daemon Actions reject a different Session's
-browser target. Capture probes password-field presence before reading pixels or
-writing media and uses the same Protocol privacy decision as UI context.
+browser target. CDP captures use the snapshot privacy census before reading pixels or
+writing media: password, one-time-code and CSS-masked fields include shadow and child
+documents. AX value disclosure consumes the same census's node identities. Snapshot
+URLs use the context URL redactor, which removes query values and fragments.
 `sensitiveOrigin`, `sensitiveFieldsPresent`, and human private/incognito
 `ephemeralOnly` facts still block export; missing or failed CDP privacy probes fail
 closed. Linux sandbox setup and recovery are described in
