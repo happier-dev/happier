@@ -623,7 +623,7 @@ describe('ActionExecutor prepared invocation', () => {
       replayMaxSeedChars: 40_000,
       requestId: 'fork-request-1',
       serverId: 'server-1',
-    });
+    }, expect.objectContaining({ surface: 'rpc', authority: 'present_user', serverId: 'server-1' }));
   });
 
   it.each(['Session MCP', 'mounted plugin'] as const)('completes %s blocking approval admission before dispatch', async (origin) => {

@@ -274,6 +274,7 @@ export function createCliMachineActionTransport(
           ...(input.signal ? { signal: input.signal } : {}),
           ...(hasLocalActionContext ? { localActionContext } : {}),
           ...(rpcContext ? { rpcContext } : {}),
+          ...(admittedLocalAction ? { admissionResult: { ok: true as const } } : {}),
         } : undefined,
       ));
     }

@@ -112,7 +112,7 @@ export function createCliSessionLifecycleActionDeps(
       replayMaxSeedChars,
       requestId,
       signal,
-    }) => {
+    }, context) => {
       if (!params.credentials) return notSupported();
       const transport = await resolveTransportForSession(sessionId, signal);
       if (!transport.ok) {
@@ -127,6 +127,8 @@ export function createCliSessionLifecycleActionDeps(
       return await callMachineAction({
         machineId,
         method: RPC_METHODS.SESSION_FORK,
+        context,
+        effectActionId: 'session.fork',
         authorization: { kind: 'session.write', sessionId: transport.sessionId },
         request: {
           v: 1,

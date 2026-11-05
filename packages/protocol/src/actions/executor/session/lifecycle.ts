@@ -115,7 +115,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
             ...(forkRequest.data.requestId ? { requestId: forkRequest.data.requestId } : {}),
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
-          });
+          }, ctx);
           return completeActionResult(res);
         }
 

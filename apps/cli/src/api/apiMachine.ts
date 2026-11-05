@@ -2634,10 +2634,12 @@ export class ApiMachineClient {
             localActionContext?: RpcLocalActionContext;
             /** Existing requester custody for host-owned exact-daemon replay. */
             rpcContext?: NonNullable<Parameters<RpcHandlerManager['invokeLocal']>[2]>['rpcContext'];
+            admissionResult?: NonNullable<Parameters<RpcHandlerManager['invokeLocal']>[2]>['admissionResult'];
         }>,
     ): Promise<unknown> {
         return await this.rpcHandlerManager.invokeLocal(method, request, {
             ...(options?.signal ? { signal: options.signal } : {}),
+            ...(options?.admissionResult ? { admissionResult: options.admissionResult } : {}),
             ...(options?.rpcContext ? { rpcContext: options.rpcContext } : {}),
             ...(options?.executionRunPermissionRequestStore === undefined
                 && options?.executionRunWorkflowObservationSink === undefined

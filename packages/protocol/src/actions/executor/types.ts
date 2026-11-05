@@ -1713,7 +1713,7 @@ export type ActionExecutorDeps = Readonly<{
       serverId?: string | null;
       signal?: AbortSignal;
     }
-  >) => Promise<unknown>;
+  >, context?: ActionExecutorContext) => Promise<unknown>;
   sessionContinueWithReplay?: (args: SessionContinueWithReplayRpcParams & Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
   sessionRollback?: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget; signal?: AbortSignal }>) => Promise<unknown>;
   checkpointCodeRollback?: (args: Readonly<{

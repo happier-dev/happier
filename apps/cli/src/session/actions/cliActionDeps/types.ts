@@ -129,6 +129,8 @@ export type MachineActionDirectTargetTransport = Readonly<{
       localActionContext?: RpcLocalActionContext;
       /** Existing admitted requester custody; never serialized in Machine RPC input. */
       rpcContext?: NonNullable<Parameters<RpcHandlerManager['invokeLocal']>[2]>['rpcContext'];
+      /** Exact native effect already admitted by the receiving Action owner. */
+      admissionResult?: NonNullable<Parameters<RpcHandlerManager['invokeLocal']>[2]>['admissionResult'];
     }>,
   ) => Promise<unknown>;
 }>;
