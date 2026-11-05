@@ -42,6 +42,23 @@ describe('Sky of days', () => {
       }
     } finally { mount.unmount(); }
   });
+  it('keeps a month that starts in the last days of the period inside the drawing (a phone sky ending on Nov 1)', () => {
+    const start = Date.UTC(2026, 7, 4);
+    const days = Array.from({ length: 90 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      state: 'active' as const, value: 30, leader: null,
+    }));
+    const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days };
+    const mount = mountThroughReactNativeWeb(<UsageSkyOfDays theme={SURFACE_CONTEXT_THEME_FIXTURE} paint={paint} agents={agents} model={model}
+      labels={labels} label="Sky of days" width={358} testID="sky-phone" />);
+    try {
+      const last = [...mount.container.querySelectorAll('svg text')].find((node) => node.textContent === '11');
+      expect(last).toBeDefined();
+      // A label that would start within a month label's width of the edge ends at the edge instead.
+      expect(last!.getAttribute('text-anchor')).toBe('end');
+    } finally { mount.unmount(); }
+  });
+
   it('says each day exactly, keeps unknown apart from no activity, and names a tie by both Agents', () => {
     const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days: [
       { date: '2026-09-01', state: 'active', value: 90, leader: { kind: 'agent', agentId: 'claude' } },

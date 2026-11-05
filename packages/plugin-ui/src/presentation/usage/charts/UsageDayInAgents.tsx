@@ -2,6 +2,8 @@ import { useId } from 'react';
 import { View } from 'react-native';
 
 import { HappierText } from '../../text/Text.js';
+import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
+import { formatHappierDataValue } from '../../data/dataModel.js';
 import { Circle, Defs, G, Path, Pattern, Rect, Svg } from 'react-native-svg';
 
 import {
@@ -72,10 +74,10 @@ export function UsageDayInAgents(props: UsageDayInAgentsProps) {
 function UsageDayPeakOnly(props: UsageDayInAgentsProps & Readonly<{ model: UsageDayPeakModel }>) {
   const text = useUsageChartSvgText(props.theme).styles;
   return <UsageChartColumn testID={props.testID}>
-    <View accessible accessibilityLabel={`${props.label}: ${props.labels.peakCount(props.model.count)}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+    <ChartDatum datum={{ label: props.label, value: formatHappierDataValue(props.model.count), subtitle: props.labels.peakCount(props.model.count), color: props.paint.accent }}><View accessible accessibilityLabel={`${props.label}: ${props.labels.peakCount(props.model.count)}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: props.paint.accent }} />
       <HappierText tabularNumbers style={{ ...text.metric }}>{props.labels.peakCount(props.model.count)}</HappierText>
-    </View>
+    </View></ChartDatum>
     <UsageChartCaption theme={props.theme}>{props.labels.peakOnlyCaption}</UsageChartCaption>
   </UsageChartColumn>;
 }
@@ -108,6 +110,18 @@ function UsageDayInAgentsDrawn(props: UsageDayInAgentsProps & Readonly<{ model: 
 
 type DayDrawProps = UsageDayInAgentsProps & Readonly<{ model: UsageDayModel; width: number; lanes: UsageDayModel['lanes']; name: (id: string | null) => string }>;
 
+function workingSpans(span: UsageDayModel['lanes'][number]['spans'][number]) {
+  const ranges: (readonly [number, number])[] = [];
+  let cursor = span.fromHour;
+  for (const [from, to] of span.waits) {
+    if (from > cursor) ranges.push([cursor, from]);
+    cursor = to;
+  }
+  if (span.toHour > cursor) ranges.push([cursor, span.toHour]);
+  return ranges;
+}
+
+
 function DayLanes(props: DayDrawProps & Readonly<{ phone: boolean }>) {
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
@@ -130,7 +144,7 @@ function DayLanes(props: DayDrawProps & Readonly<{ phone: boolean }>) {
   const right = px > label + plot * 0.62;
   const hatch = `usage-day-hatch-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
   const colour = (id: string | null) => props.agents.find((agent) => agent.id === id)?.color ?? ink.neutral;
-  return <View style={{ height }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+  return <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
     <Svg width={width} height={height}>
       <Defs>
         <Pattern id={hatch} width={4} height={4} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -165,7 +179,21 @@ function DayLanes(props: DayDrawProps & Readonly<{ phone: boolean }>) {
       {[0, 6, 12, 18].map((hour) => svgText.draw({ x: x(hour), y: height - 4, text: props.labels.clock(hour) }, `t${hour}`))}
       {!phone && plot > 440 ? svgText.draw({ x: x(24), y: height - 4, anchor: 'end', text: props.labels.clock(24) }, 't24') : null}
     </Svg>
-  </View>;
+    {model.atOnce.map((count, index) => <ChartMark key={`count-${index}`} datum={{ label: `${props.labels.atOnce} · ${props.labels.clock(((index + 0.5) / bins) * 24)}`, value: formatHappierDataValue(count), color: props.paint.accent }}
+      bounds={{ x: x((index / bins) * 24), y: top, width: plot / bins, height: curveHeight }} />)}
+    {props.lanes.map((lane, index) => {
+      const y = top + curveHeight + 10 + index * (nameRow + laneHeight + gap) + nameRow;
+      return <View key={`marks-${JSON.stringify(lane.agentId)}`} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height }}>
+        <ChartMark datum={{ label: props.name(lane.agentId), value: `${formatHappierDataValue(lane.agentTimeMs)} ms`, subtitle: `${props.labels.agentTime} · ${props.labels.duration(lane.agentTimeMs)}`, color: colour(lane.agentId) }}
+          bounds={{ x: phone ? width - 84 : width - figures, y: phone ? y - nameRow : y, width: 84, height: laneHeight }} />
+        {lane.spans.map((span, spanIndex) => <View key={spanIndex} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height }}>
+          <ChartMark datum={{ label: props.name(lane.agentId), value: props.labels.values.formatSpan(span.fromHour, span.toHour), color: colour(lane.agentId) }} bounds={{ x: x(span.fromHour), y: y + 2, width: Math.max(3, x(span.toHour) - x(span.fromHour)), height: laneHeight - 4 }} />
+          {span.waits.map(([from, to], waitIndex) => <ChartMark key={waitIndex} datum={{ label: `${props.name(lane.agentId)} · ${props.labels.waiting}`, value: props.labels.values.formatSpan(from, to) }} bounds={{ x: x(from), y: y + 2, width: Math.max(2.5, x(to) - x(from)), height: laneHeight - 4 }} />)}
+        </View>)}
+      </View>;
+    })}
+    {model.peak.count > 0 ? <ChartMark datum={{ label: props.labels.atOnce, value: formatHappierDataValue(model.peak.count), subtitle: props.labels.peak(model.peak.count, model.peak.atHour), color: props.paint.accent }} bounds={{ x: px - 4, y: py - 4, width: 8, height: 8 }} /> : null}
+  </ChartDrawing>;
 }
 
 function DayDial(props: DayDrawProps) {
@@ -179,6 +207,7 @@ function DayDial(props: DayDrawProps) {
   const at = (radius: number, hour: number) => [center + radius * Math.cos(angle(hour)), center + radius * Math.sin(angle(hour))] as const;
   const bins = model.atOnce.length || 1;
   const shape = model.atOnce.map((count, index) => at(inner + ((outer - inner) * Math.min(6, count)) / 6, ((index + 0.5) / bins) * 24));
+  const shapePath = shape.length > 2 ? `M${shape.map(([x, y]) => `${r1(x)},${r1(y)}`).join('L')}Z` : '';
   const colour = (id: string | null) => props.agents.find((agent) => agent.id === id)?.color ?? ink.neutral;
   const peakAt = at(inner + ((outer - inner) * Math.min(6, model.peak.count)) / 6, model.peak.atHour);
   const peakLine = props.labels.peakLine(model.peak.atHour, model.peak.byAgent.map((entry) => ({ name: props.name(entry.agentId), count: entry.count })));
@@ -187,6 +216,10 @@ function DayDial(props: DayDrawProps) {
     return `M${r1(x1)},${r1(y1)}A${r1(radius)},${r1(radius)} 0 ${to - from > 12 ? 1 : 0} 1 ${r1(x2)},${r1(y2)}`;
   };
   const offset = room ? width - size : (width - size) / 2;
+  const laneArcs = props.lanes.map((lane, index) => {
+    const radius = trackStart + index * (trackWidth + 1.6);
+    return lane.spans.map(span => ({ span, d: workingSpans(span).map(([from, to]) => arc(radius, from, to)).join(' ') }));
+  });
   return <View style={{ gap: 8 }}>
     {!room ? <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <Svg width={Math.min(width, 360)} height={18}>
@@ -194,7 +227,7 @@ function DayDial(props: DayDrawProps) {
         {svgText.draw({ x: 13, y: 13, text: `${props.labels.peakCount(model.peak.count)} · ${peakLine}`, tone: 'strong', size: 'body' })}
       </Svg>
     </View> : null}
-    <View style={{ height: size }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+    <ChartDrawing style={{ height: size }} accessibilityLabel={props.label}>
       <Svg width={width} height={size}>
         {room ? <G>
           <Circle cx={5} cy={9} r={3.2} fill={props.paint.accent} />
@@ -210,26 +243,50 @@ function DayDial(props: DayDrawProps) {
               {svgText.draw({ x: lx + 2, y: ly - 1, text: String(count) })}
             </G>;
           })}
-          {shape.length > 2 ? <Path d={`M${shape.map(([x, y]) => `${r1(x)},${r1(y)}`).join('L')}Z`} fill={props.paint.accent} fillOpacity={0.16}
+          {shapePath ? <Path d={shapePath} fill={props.paint.accent} fillOpacity={0.16}
             stroke={props.paint.accent} strokeWidth={1.1} strokeLinejoin="round" /> : null}
           <Circle cx={center} cy={center} r={inner} fill={props.paint.paper} stroke={ink.grid} strokeWidth={1} />
           {props.lanes.map((lane, index) => {
             const radius = trackStart + index * (trackWidth + 1.6);
-            const segments: string[] = [];
-            for (const span of lane.spans) {
-              let cursor = span.fromHour;
-              for (const [from, to] of span.waits) { if (from > cursor) segments.push(arc(radius, cursor, from)); cursor = to; }
-              if (span.toHour > cursor) segments.push(arc(radius, cursor, span.toHour));
-            }
             return <G key={JSON.stringify(lane.agentId)}>
               <Circle cx={center} cy={center} r={r1(radius)} fill="none" stroke={ink.grid} strokeWidth={trackWidth} />
-              {segments.map((d, segment) => <Path key={segment} d={d} fill="none" stroke={colour(lane.agentId)} strokeWidth={trackWidth} />)}
+              {laneArcs[index]!.map(({ d }, segment) => <Path key={segment} d={d} fill="none" stroke={colour(lane.agentId)} strokeWidth={trackWidth} />)}
             </G>;
           })}
           {[0, 6, 12, 18].map((hour) => { const [x, y] = at(inner - 10, hour); return svgText.draw({ x, y: y + 3.5, anchor: 'middle', text: String(hour).padStart(2, '0') }, `h${hour}`); })}
           {model.peak.count > 0 ? <Circle cx={r1(peakAt[0])} cy={r1(peakAt[1])} r={3.2} fill={props.paint.accent} /> : null}
         </G>
       </Svg>
-    </View>
+      {model.atOnce.map((count, index) => {
+        const datum = { label: `${props.labels.atOnce} · ${props.labels.clock(((index + 0.5) / bins) * 24)}`, value: formatHappierDataValue(count), color: props.paint.accent };
+        const focusBounds = { x: offset + shape[index]![0] - 5, y: shape[index]![1] - 5, width: 10, height: 10 };
+        const from = index / bins * 24, to = (index + 1) / bins * 24;
+        const [x1, y1] = at(outer, from), [x2, y2] = at(outer, to);
+        const [ix1, iy1] = at(inner, from), [ix2, iy2] = at(inner, to);
+        const clip = `M${r1(ix1)},${r1(iy1)}L${r1(x1)},${r1(y1)}A${outer},${outer} 0 ${to - from > 12 ? 1 : 0} 1 ${r1(x2)},${r1(y2)}L${r1(ix2)},${r1(iy2)}A${inner},${inner} 0 ${to - from > 12 ? 1 : 0} 0 ${r1(ix1)},${r1(iy1)}Z`;
+        return <View key={`count-${index}`} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height: size }}>
+          {shapePath ? <ChartPathMark datum={datum} d={shapePath} transform={`translate(${r1(offset)},0)`} clipPathD={clip} hitMode="fill" strokeWidth={1.1}
+            bounds={{ x: offset + center - outer, y: center - outer, width: outer * 2, height: outer * 2 }} focusBounds={focusBounds} /> : null}
+          <ChartMark datum={{ ...datum, keyboard: !shapePath }} bounds={focusBounds} />
+        </View>;
+      })}
+      {props.lanes.map((lane, index) => {
+        const radius = trackStart + index * (trackWidth + 1.6);
+        const [totalX, totalY] = at(radius, lane.spans[0]?.fromHour ?? 0);
+        const bounds = { x: offset + center - radius - trackWidth, y: center - radius - trackWidth, width: (radius + trackWidth) * 2, height: (radius + trackWidth) * 2 };
+        return <View key={`marks-${JSON.stringify(lane.agentId)}`} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height: size }}>
+          <ChartPathMark datum={{ label: props.name(lane.agentId), value: `${formatHappierDataValue(lane.agentTimeMs)} ms`, subtitle: `${props.labels.agentTime} · ${props.labels.duration(lane.agentTimeMs)}`, color: colour(lane.agentId) }}
+            d={`${arc(radius, 0, 12)} ${arc(radius, 12, 24)}`} transform={`translate(${r1(offset)},0)`} bounds={bounds} strokeWidth={trackWidth} focusBounds={{ x: offset + totalX - 4, y: totalY - 4, width: 8, height: 8 }} />
+          {laneArcs[index]!.map(({ span, d }, spanIndex) => {
+            return <View key={spanIndex} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height: size }}>
+              {d ? <ChartPathMark datum={{ label: props.name(lane.agentId), value: props.labels.values.formatSpan(span.fromHour, span.toHour), color: colour(lane.agentId) }} d={d} transform={`translate(${r1(offset)},0)`} bounds={bounds} strokeWidth={trackWidth}
+                focusBounds={{ x: offset + totalX - 4, y: totalY - 4, width: 8, height: 8 }} /> : null}
+              {span.waits.map(([from, to], waitIndex) => { const [wx, wy] = at(radius, (from + to) / 2); return <ChartMark key={waitIndex} datum={{ label: `${props.name(lane.agentId)} · ${props.labels.waiting}`, value: props.labels.values.formatSpan(from, to) }} bounds={{ x: offset + wx - 4, y: wy - 4, width: 8, height: 8 }} />; })}
+            </View>;
+          })}
+        </View>;
+      })}
+      {model.peak.count > 0 ? <ChartMark datum={{ label: props.labels.atOnce, value: formatHappierDataValue(model.peak.count), subtitle: peakLine, color: props.paint.accent }} bounds={{ x: offset + peakAt[0] - 4, y: peakAt[1] - 4, width: 8, height: 8 }} /> : null}
+    </ChartDrawing>
   </View>;
 }

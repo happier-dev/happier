@@ -1,7 +1,10 @@
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { Circle, Ellipse, Path, Svg } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
+import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
+import { formatHappierDataExactShare, formatHappierDataValue } from '../../data/dataModel.js';
 import {
   UsageChartCaption,
   UsageChartColumn,
@@ -104,9 +107,7 @@ export function UsageAgentMoons(
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
-        accessible
-        accessibilityRole="image"
+      <ChartDrawing
         accessibilityLabel={props.label}
         style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 16 }}
       >
@@ -162,6 +163,7 @@ export function UsageAgentMoons(
                       />
                     </Svg>
                   )}
+                  <ChartMark datum={{ label: name(member), value: member.share === null ? '—' : formatHappierDataExactShare(member.share), subtitle: [member.share === null ? null : `${props.labels.values.shareColumn} · ${props.labels.percent(member.share)}`, daysText(member)].filter(Boolean).join(' · ') || undefined, color: colour }} bounds={{ x: (box - size) / 2, y: (box - size) / 2, width: size, height: size }} />
                 </View>
                 <HappierText
                   numberOfLines={1}
@@ -189,7 +191,7 @@ export function UsageAgentMoons(
         ) : (
           <View style={{ height: box + 44 }} />
         )}
-      </View>
+      </ChartDrawing>
       <UsageChartCaption theme={props.theme}>
         {props.labels.caption(members.some((member) => phase(member) !== null))}
       </UsageChartCaption>
@@ -263,10 +265,8 @@ export function UsageMachines(
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null
@@ -390,11 +390,12 @@ export function UsageMachines(
                       ))}
                     </>
                   ) : null}
+                  {placed.map(planet => <ChartMark key={`datum-${planet.entry.kind}`} datum={{ label: props.labels.kind(planet.entry.kind, planet.entry.count), value: formatHappierDataExactShare(planet.entry.agentTimeShare), subtitle: `${props.labels.values.countColumn} · ${formatHappierDataValue(planet.entry.count)} · ${props.labels.values.shareColumn} · ${props.labels.percent(planet.entry.agentTimeShare)}`, color: props.paint.accent }} bounds={{ x: planet.x - planet.size / 2, y: planet.y - planet.size / 2, width: planet.size, height: planet.size }} />)}
                 </>
               );
             })()
           : null}
-      </View>
+      </ChartDrawing>
       <UsageChartValues
         theme={props.theme}
         label={props.label}
@@ -524,7 +525,7 @@ export function UsageProjects(
                       paddingHorizontal: 6,
                     }}
                   >
-                    {star(18)}
+                    <ChartDatum datum={{ label: project.label, value: project.url, color: props.paint.accent }}>{star(18)}</ChartDatum>
                     {link(project)}
                   </View>
                 ))}
@@ -545,7 +546,7 @@ export function UsageProjects(
                   borderColor: ink.grid,
                 }}
               >
-                {star(14)}
+                <ChartDatum datum={{ label: project.label, value: project.url, color: props.paint.accent }}>{star(14)}</ChartDatum>
                 <View style={{ flex: 1, minWidth: 0 }}>{link(project)}</View>
               </View>
             ))}
@@ -601,10 +602,8 @@ export function UsageAtmosphere(
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null && weeks.length
@@ -614,17 +613,22 @@ export function UsageAtmosphere(
                 radius = Math.round(Math.min(height, width) * 0.24),
                 slice = (2 * Math.PI) / weeks.length;
               const rim = radius + 4;
+              const targets: ReactNode[] = [];
               const marks = weeks.flatMap((week, k) => {
                 const start = -Math.PI / 2 + k * slice;
                 const key = String(week.startMs);
+                const datum = { label: props.labels.week(week.startMs), value: unrecorded(week) ? props.labels.values.notRecorded : formatHappierDataValue(week.peak), subtitle: unrecorded(week) ? undefined : props.labels.peak(week.peak), color: props.paint.accent };
                 // An unrecorded week keeps its sector as a dotted arc on the rim; it never reads as a calm week.
                 if (unrecorded(week)) {
                   const a = start + slice * 0.15,
                     b = start + slice * 0.85;
+                  const middle = start + slice / 2;
+                  const d = `M${r1(cx + rim * Math.cos(a))},${r1(cy + rim * Math.sin(a))}A${rim},${rim} 0 0 1 ${r1(cx + rim * Math.cos(b))},${r1(cy + rim * Math.sin(b))}`;
+                  targets.push(<ChartPathMark key={key} datum={datum} d={d} strokeWidth={1} bounds={{ x: cx - rim - 1, y: cy - rim - 1, width: 2 * (rim + 1), height: 2 * (rim + 1) }} focusBounds={{ x: cx + rim * Math.cos(middle) - 4, y: cy + rim * Math.sin(middle) - 4, width: 8, height: 8 }} />);
                   return [
                     <Path
                       key={`u${key}`}
-                      d={`M${r1(cx + rim * Math.cos(a))},${r1(cy + rim * Math.sin(a))}A${rim},${rim} 0 0 1 ${r1(cx + rim * Math.cos(b))},${r1(cy + rim * Math.sin(b))}`}
+                      d={d}
                       fill="none"
                       stroke={ink.neutral}
                       strokeWidth={1}
@@ -635,24 +639,32 @@ export function UsageAtmosphere(
                 const reach =
                   radius *
                   (0.12 + 0.62 * Math.min(1, week.peak / ATMOSPHERE_FULL_AT));
-                return Array.from(
+                const dots = Array.from(
                   { length: Math.round(14 + week.peak * 10) },
                   (_, q) => {
                     const angle = start + scatter(key, q * 2 + 1) * slice;
                     const fall = Math.pow(scatter(key, q * 2 + 2), 1.8);
                     const distance = radius + 3 + fall * reach;
-                    return (
-                      <Circle
-                        key={`${key}-${q}`}
-                        cx={r1(cx + distance * Math.cos(angle))}
-                        cy={r1(cy + distance * Math.sin(angle))}
-                        r={r1(0.8 + scatter(key, q + 97) * 0.6)}
-                        fill={props.paint.accent}
-                        fillOpacity={r1(0.3 + 0.55 * (1 - fall))}
-                      />
-                    );
+                    return { x: r1(cx + distance * Math.cos(angle)), y: r1(cy + distance * Math.sin(angle)), radius: r1(0.8 + scatter(key, q + 97) * 0.6), opacity: r1(0.3 + 0.55 * (1 - fall)) };
                   },
                 );
+                const left = Math.min(...dots.map(dot => dot.x - dot.radius));
+                const top = Math.min(...dots.map(dot => dot.y - dot.radius));
+                const right = Math.max(...dots.map(dot => dot.x + dot.radius));
+                const bottom = Math.max(...dots.map(dot => dot.y + dot.radius));
+                targets.push(<ChartPathMark key={key} datum={datum} hitMode="fill" strokeWidth={0}
+                  d={dots.map(dot => `M${dot.x - dot.radius},${dot.y}a${dot.radius},${dot.radius} 0 1 0 ${dot.radius * 2},0a${dot.radius},${dot.radius} 0 1 0 ${-dot.radius * 2},0`).join(' ')}
+                  bounds={{ x: left, y: top, width: right - left, height: bottom - top }} focusBounds={{ x: dots[0]!.x - 2, y: dots[0]!.y - 2, width: 4, height: 4 }} />);
+                return dots.map((dot, q) => (
+                      <Circle
+                        key={`${key}-${q}`}
+                        cx={dot.x}
+                        cy={dot.y}
+                        r={dot.radius}
+                        fill={props.paint.accent}
+                        fillOpacity={dot.opacity}
+                      />
+                ));
               });
               const size = Math.ceil(radius * 2.2);
               return (
@@ -699,11 +711,12 @@ export function UsageAtmosphere(
                       'first',
                     )}
                   </Svg>
+                  {targets}
                 </>
               );
             })()
           : null}
-      </View>
+      </ChartDrawing>
       <UsageChartCaption theme={props.theme}>
         {props.labels.caption(props.model.peakParallel ?? null)}
       </UsageChartCaption>

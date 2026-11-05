@@ -1,5 +1,4 @@
 import { useId, useMemo } from 'react';
-import { View } from 'react-native';
 import {
   Circle,
   Defs,
@@ -11,6 +10,8 @@ import {
 } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
+import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
+import { formatHappierDataValue } from '../../data/dataModel.js';
 
 import {
   UsageChartCaption,
@@ -29,6 +30,9 @@ import {
   type UsageChartKeyItem,
   type UsageChartValuesLabels,
 } from './chartKit.js';
+
+/** The room one month label needs: months closer than this to the last one, or to the edge, are not drawn there. */
+const MONTH_LABEL_GAP_PX = 36;
 
 /** Who led a day on the selected metric. `null` = the model has no per-day attribution (public, or not derived). */
 export type UsageSkyLeader =
@@ -328,10 +332,8 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
 
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={scaled && width !== null ? { width: '100%', maxWidth: width, aspectRatio: width / height } : { height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {geometry && width !== null ? (
@@ -568,13 +570,26 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
               svgText.draw(
                 geometry.dayLabels
                   ? { x: month.x, y: height - 4, anchor: 'middle', text: labels.day(month.date) }
-                  : { x: month.x, y: height - 4, text: labels.month(month.date) },
+                  // A month starting in the period's last days would run off the drawing: it ends at the edge.
+                  : month.x > geometry.right - MONTH_LABEL_GAP_PX
+                    ? { x: geometry.right, y: height - 4, anchor: 'end', text: labels.month(month.date) }
+                    : { x: month.x, y: height - 4, text: labels.month(month.date) },
                 `m${month.date}`,
               ),
             )}
           </Svg>
         ) : null}
-      </View>
+        {geometry && width !== null ? [...geometry.stars.map(star => ({ index: star.index, x: star.x, y: star.y, radius: starRadius(star.level, small, geometry.scale) })),
+          ...geometry.floor.map(point => ({ index: point.index, x: point.x, y: geometry.bottom, radius: 2 }))].map(point => {
+          const day = model.days[point.index]!;
+          const value = day.state === 'unknown' ? labels.values.notRecorded : day.state === 'inactive' ? labels.values.noActivity
+            : ordinal ? levelNames[day.level ?? 0] ?? '—' : day.value == null ? '—' : formatHappierDataValue(day.value);
+          return <ChartMark key={`datum-${point.index}`} datum={{ label: labels.day(day.date), value,
+            subtitle: [!ordinal && day.state === 'active' && day.value != null ? `${labels.values.valueColumn} · ${labels.formatValue(day.value)}` : null, byAgent ? leaderName(day.leader) : null].filter(Boolean).join(' · ') || undefined,
+            color: day.leader?.kind === 'agent' ? colourOf(day.leader.agentId) : props.paint.accent }}
+            bounds={{ x: point.x - point.radius, y: point.y - Math.max(3, point.radius), width: point.radius * 2, height: Math.max(6, point.radius * 2) }} coordinateSpace={scaled ? { width, height } : undefined} />;
+        }) : null}
+      </ChartDrawing>
       {/* A streak shared as a count only (no dates) is said in words; the body never invents its position. */}
       {streakWords ? (
         <HappierText
@@ -785,7 +800,7 @@ function layoutSky(
     )
     .filter(
       (month, index, all) =>
-        dayLabels || index === 0 || month.x - all[index - 1]!.x > 36,
+        dayLabels || index === 0 || month.x - all[index - 1]!.x > MONTH_LABEL_GAP_PX,
     );
   return {
     dayLabels,

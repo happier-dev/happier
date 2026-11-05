@@ -7,6 +7,7 @@ import {
   UsageConstellation,
   UsageCrew,
   UsageOrbit,
+  UsageShipped,
 } from './UsageAgentsCharts.js';
 import {
   UsageStreakThread,
@@ -422,6 +423,25 @@ describe('Planet family', () => {
       expect(table).not.toContain('Up to 0');
     } finally {
       mount.unmount();
+    }
+  });
+});
+
+describe('Shipped with nothing merged', () => {
+  it('says the count and draws no axis, instead of an empty shelf', () => {
+    const labels = { week: (start: string) => start, noDate: 'No date', countLine: (total: number) => `${total} merged pull requests`,
+      mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent' as const };
+    const draw = (model: Parameters<typeof UsageShipped>[0]['model']) => mountThroughReactNativeWeb(
+      <UsageShipped theme={theme} paint={paint} agents={[]} width={480} label="Shipped" testID="shipped" model={model} labels={labels} />);
+    const empty = draw({ mode: 'count', total: 0 });
+    const some = draw({ mode: 'count', total: 3 });
+    try {
+      expect(query(empty.container, 'shipped')!.textContent).toContain('0 merged pull requests');
+      expect(empty.container.querySelector('svg')).toBeNull();
+      expect(some.container.querySelector('svg')).not.toBeNull();
+    } finally {
+      empty.unmount();
+      some.unmount();
     }
   });
 });

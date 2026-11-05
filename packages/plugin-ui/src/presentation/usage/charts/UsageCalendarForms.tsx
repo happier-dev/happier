@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { Circle, Ellipse, G, Path, Rect, Svg } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
+import { ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
+import { formatHappierDataValue } from '../../data/dataModel.js';
 import {
   UsageChartCaption,
   UsageChartColumn,
@@ -116,6 +118,10 @@ function dayTable(model: UsageCalendarArtModel, labels: UsageCalendarLabels) {
       (day) => [labels.day(day.date), levelName(labels, day.level)] as const,
     ),
   };
+}
+
+function CalendarDayMark(props: Readonly<{ day: UsageCalendarArtModel['days'][number]; labels: UsageCalendarLabels; color: string; bounds: Readonly<{ x: number; y: number; width: number; height: number }> }>) {
+  return <ChartMark datum={{ label: props.labels.day(props.day.date), value: levelName(props.labels, props.day.level), color: props.color }} bounds={props.bounds} />;
 }
 
 /** Month labels at each month's first drawn position, never closer than `gap`. */
@@ -246,10 +252,8 @@ export function UsageNinetyPlanets(props: CalendarProps) {
   });
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height: gridHeight }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null ? (
@@ -327,9 +331,10 @@ export function UsageNinetyPlanets(props: CalendarProps) {
                 </View>
               );
             })}
+            {days.map((day, index) => { const { column, row } = place(index); return <CalendarDayMark key={`datum-${day.date}`} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: axis + column * cell, y: row * cell, width: cell, height: cell }} />; })}
           </>
         ) : null}
-      </View>
+      </ChartDrawing>
       <StreakWords
         theme={props.theme}
         model={props.model}
@@ -364,14 +369,12 @@ export function UsageStreakThread(props: CalendarProps) {
   const same = sameRun(streaks.current, streaks.best);
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null && count ? (
-          <Svg width={width} height={height}>
+          <><Svg width={width} height={height}>
             {streaks.runs.map((run) => {
               const current = sameRun(run, streaks.current),
                 best = sameRun(run, streaks.best);
@@ -446,8 +449,14 @@ export function UsageStreakThread(props: CalendarProps) {
               ),
             )}
           </Svg>
+          {days.map((day, index) => {
+            const left = index === 0 ? x(index) - 3 : (x(index - 1) + x(index)) / 2;
+            const right = index === count - 1 ? x(index) + 3 : (x(index) + x(index + 1)) / 2;
+            return <CalendarDayMark key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: y - 6, width: right - left, height: 12 }} />;
+          })}
+          </>
         ) : null}
-      </View>
+      </ChartDrawing>
       <StreakWords
         theme={props.theme}
         model={props.model}
@@ -493,10 +502,8 @@ export function UsageWeeksSkyline(props: CalendarProps) {
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null && weeks.length
@@ -504,8 +511,9 @@ export function UsageWeeksSkyline(props: CalendarProps) {
               const column = width / weeks.length,
                 bar = Math.min(column * 0.64, 30);
               let lastMonth = '';
+              const targets: ReactNode[] = [];
               return (
-                <Svg width={width} height={height}>
+                <><Svg width={width} height={height}>
                   <Path
                     d={`M0,${base + 0.5}H${width}`}
                     stroke={ink.base}
@@ -523,6 +531,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
                       );
                     for (const index of active) {
                       top -= brick + 2;
+                      targets.push(<CalendarDayMark key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
                       marks.push(
                         <Rect
                           key={index}
@@ -539,6 +548,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
                       (at) => days[at]!.level === null,
                     )) {
                       top -= brick + 2;
+                      targets.push(<CalendarDayMark key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
                       marks.push(
                         <Rect
                           key={index}
@@ -573,11 +583,11 @@ export function UsageWeeksSkyline(props: CalendarProps) {
                       </G>
                     );
                   })}
-                </Svg>
+                </Svg>{targets}</>
               );
             })()
           : null}
-      </View>
+      </ChartDrawing>
       <StreakWords
         theme={props.theme}
         model={props.model}
@@ -620,10 +630,8 @@ export function UsageAroundThePeriod(props: CalendarProps) {
   });
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null && count
@@ -731,11 +739,12 @@ export function UsageAroundThePeriod(props: CalendarProps) {
                       })}
                     </View>
                   ) : null}
+                  {days.map((day, index) => { const [x, y] = at(index); const radius = day.level === null ? 1.8 : day.level ? 1.3 + day.level * 0.8 : 1; return <CalendarDayMark key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: x - radius, y: y - Math.max(radius, 3), width: radius * 2, height: Math.max(radius * 2, 6) }} />; })}
                 </>
               );
             })()
           : null}
-      </View>
+      </ChartDrawing>
       <StreakWords
         theme={props.theme}
         model={props.model}
@@ -776,7 +785,7 @@ export function UsageDaysOnSurface(props: CalendarProps<UsageSurfaceLabels>) {
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{
           height,
           flexDirection: 'row',
@@ -784,12 +793,11 @@ export function UsageDaysOnSurface(props: CalendarProps<UsageSurfaceLabels>) {
           justifyContent: small ? 'flex-start' : 'center',
           gap: 16,
         }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null && count && props.renderPlanet ? (
-          <View pointerEvents="none" style={{ width: height, height }}>
+          <View style={{ width: height, height }}>
+            <View pointerEvents="none">
             {props.renderPlanet({
               size: height,
               radius,
@@ -800,6 +808,14 @@ export function UsageDaysOnSurface(props: CalendarProps<UsageSurfaceLabels>) {
               style: 'balanced',
               meridians,
             })}
+            </View>
+            {days.map((day, index) => {
+              const band = radius * 2 / count;
+              const x = height / 2 - radius + (index + 0.5) * band;
+              return <ChartPathMark key={day.date} datum={{ label: props.labels.day(day.date), value: levelName(props.labels, day.level), color: props.paint.accent }}
+                d={`M${height / 2 - radius},${height / 2}a${radius},${radius} 0 1 0 ${radius * 2},0a${radius},${radius} 0 1 0 ${-radius * 2},0`} hitMode="fill" strokeWidth={0}
+                bounds={{ x: x - band / 2, y: height / 2 - radius, width: band, height: radius * 2 }} focusBounds={{ x: x - band / 2, y: height / 2 - 4, width: band, height: 8 }} />;
+            })}
           </View>
         ) : null}
         {small || !props.renderPlanet ? (
@@ -807,7 +823,7 @@ export function UsageDaysOnSurface(props: CalendarProps<UsageSurfaceLabels>) {
             {props.labels.lit(active, count)}
           </HappierText>
         ) : null}
-      </View>
+      </ChartDrawing>
       {!small && props.renderPlanet && width !== null && count ? (
         <View
           style={{
@@ -871,10 +887,8 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
   );
   return (
     <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-      <View
+      <ChartDrawing
         style={{ height }}
-        accessible
-        accessibilityRole="image"
         accessibilityLabel={props.label}
       >
         {width !== null
@@ -974,11 +988,14 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                         )
                       : null}
                   </Svg>
+                  {rings.map(ring => <ChartPathMark key={ring.run.start} datum={{ label: `${props.labels.day(props.model.days[ring.run.start]!.date)} – ${props.labels.day(props.model.days[ring.run.end]!.date)}`, value: formatHappierDataValue(ring.run.days), subtitle: props.labels.values.activeDaysColumn, color: ring.stroke }}
+                    d={`M${r1(cx - ring.rx)},${r1(cy)}A${r1(ring.rx)},${r1(ring.ry)} 0 0 1 ${r1(cx + ring.rx)},${r1(cy)}A${r1(ring.rx)},${r1(ring.ry)} 0 0 1 ${r1(cx - ring.rx)},${r1(cy)}`}
+                    strokeWidth={ring.weight} bounds={{ x: cx - ring.rx - ring.weight, y: cy - ring.ry - ring.weight, width: 2 * (ring.rx + ring.weight), height: 2 * (ring.ry + ring.weight) }} focusBounds={{ x: cx + ring.rx - 4, y: cy - 4, width: 8, height: 8 }} />)}
                 </>
               );
             })()
           : null}
-      </View>
+      </ChartDrawing>
       {runs.length === 0 ? (
         <UsageChartCaption theme={props.theme}>
           {props.labels.noRuns}

@@ -1,7 +1,10 @@
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { Circle, G, Path, Rect, Svg } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
+import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
+import { formatHappierDataValue } from '../../data/dataModel.js';
 import {
   UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartMix, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartValuesLabels,
@@ -38,8 +41,9 @@ export function UsagePlanetPortrait(props: UsageChartBaseProps & Readonly<{ mode
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const text = useUsageChartSvgText(props.theme).styles;
   const { model, labels } = props;
-  const phone = width !== null && width < 460;
-  const size = phone ? 180 : 220;
+  // The figures sit beside the planet down to a half-width page cell (lab `ppalign`); only a phone column stacks them.
+  const phone = width !== null && width < 400;
+  const size = width !== null && width < 520 ? 180 : 220;
   const rise = model.activeDays ? 0.35 + 0.65 * (model.activeDays.active / Math.max(1, model.activeDays.of)) : 0.68;
   const halo = model.peakParallel !== undefined ? Math.min(1, model.peakParallel / PORTRAIT_HALO_FULL_AT) : 0;
   const tail = model.streak && model.streak.best ? (model.streak.current / model.streak.best) * 0.9 : 0;
@@ -49,10 +53,12 @@ export function UsagePlanetPortrait(props: UsageChartBaseProps & Readonly<{ mode
     { key: 'trail', name: labels.rows.trail, value: model.streak ? labels.streak(model.streak.current) : labels.notShared, note: model.streak ? labels.trailNote(model.streak.best) : labels.trailRest },
   ];
   return <View testID={props.testID} onLayout={onLayout} style={{ flexDirection: phone ? 'column' : 'row', alignItems: phone ? 'stretch' : 'center', gap: 20, minWidth: 0 }}>
-    <View accessible accessibilityRole="image" accessibilityLabel={props.label} style={{ width: size, height: size, alignSelf: 'center' }}>
+    <ChartDrawing accessibilityLabel={props.label} style={{ width: size, height: size, alignSelf: 'center' }}>
       {/* The night side keeps a soft shade: a few active days light a sliver of a whole planet, never a stray fragment. */}
       {props.renderPlanet?.({ size, radius: size * 0.3, halo, tail, rise, night: PORTRAIT_NIGHT_SHADE, rotate: -0.7, style: 'rich' })}
-    </View>
+      <ChartMark testID={props.testID ? `${props.testID}-portrait` : undefined} bounds={{ x: 0, y: 0, width: size, height: size }}
+        datum={{ label: props.label, value: rows.map(row => `${row.name}: ${row.value}`).join(' · '), color: props.paint.accent }} />
+    </ChartDrawing>
     <View style={{ flex: phone ? undefined : 1, minWidth: 0 }}>
       {rows.map((row, index) => <View key={row.key} style={{ flexDirection: 'row', gap: 16, paddingVertical: 10, borderTopWidth: index === 0 ? 0 : 1, borderColor: ink.grid }}>
         <HappierText style={{ ...text.body, color: props.theme.colors.mutedText, width: 48 }}>{row.name}</HappierText>
@@ -129,7 +135,7 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
   const maxRate = Math.max(1, ...rows.map((row) => row.perBusyHour ?? 0));
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <View style={{ flexDirection: 'row', gap: 24 }}>
-      <View style={{ height, width: chartWidth || undefined }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+      <ChartDrawing style={{ height, width: chartWidth || undefined }} accessibilityLabel={props.label}>
         {width !== null ? <Svg width={chartWidth} height={height}>
           {nightSpans.map(([from, to], index) => <Rect key={`n${index}`} x={r1(axis + (from! / 24) * plot)} y={0} width={r1(((to! - from!) / 24) * plot)} height={height - 18} rx={6} fill={wash} />)}
           {rows.map((row, index) => {
@@ -149,7 +155,15 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
           })}
           {[0, 6, 12, 18].map((hour) => svgText.draw({ x: axis + (hour / 24) * plot, y: height - 3, text: props.labels.clock(hour) }, `t${hour}`))}
         </Svg> : null}
-      </View>
+        {width !== null ? rows.flatMap((row, index) => row.steersByHour.map((steers, hour) => {
+          const answers = row.phoneAnswersByHour[hour] ?? null;
+          if (steers === null && answers === null) return null;
+          return <ChartMark key={`${row.agentId ?? 'unknown'}-${hour}`} testID={props.testID ? `${props.testID}-hour-${index}-${hour}` : undefined}
+            bounds={{ x: axis + hour / 24 * plot, y: index * rowHeight, width: plot / 24, height: rowHeight }}
+            datum={{ label: `${name(row.agentId)} · ${props.labels.clock(hour)}`, value: props.labels.count(steers),
+              subtitle: `${props.labels.fromPhoneHeader}: ${props.labels.count(answers)}`, color: colour(row.agentId) }} />;
+        })) : null}
+      </ChartDrawing>
       {!phone && width !== null ? <View style={{ width: figuresWidth }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
           <HappierText style={text.caption}>{props.labels.perBusyHourHeader}</HappierText>
@@ -222,13 +236,14 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
   const table = rows.map((row) => [agentOf(props.agents, row.agentId)?.name ?? name(row.agentId), props.labels.duration(row.medianMs), props.labels.duration(row.p90Ms),
     props.labels.values.formatCount(row.samples)] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-    <View style={{ height }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+    <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? (() => {
         const plot = width - label - right;
         const lo = Math.log(RUN_MIN_MS), hi = Math.log(RUN_MAX_MS);
         const x = (ms: number) => label + ((Math.log(Math.max(RUN_MIN_MS, Math.min(RUN_MAX_MS, ms))) - lo) / (hi - lo)) * plot;
         const ticks = [[60_000, props.labels.ticks.minute], [600_000, props.labels.ticks.tenMinutes], [3_600_000, props.labels.ticks.hour], [RUN_MAX_MS, props.labels.ticks.fourHours]] as const;
-        return <Svg width={width} height={height}>
+        const targets: ReactNode[] = [];
+        return <><Svg width={width} height={height}>
           {ticks.map(([ms, text]) => <G key={ms}>
             <Path d={`M${r1(x(ms))},4V${height - 20}`} stroke={ink.grid} strokeWidth={1} />
             {svgText.draw({ x: x(ms), y: height - 4, anchor: ms === RUN_MAX_MS ? 'end' : 'middle', text })}
@@ -245,8 +260,16 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
               const cx = r1(x(ms)), column = Math.round(cx / RUN_COLUMN_PX), depth = stacks.get(column) ?? 0;
               stacks.set(column, depth + 1);
               const offset = (depth % 2 ? 1 : -1) * Math.ceil(depth / 2) * Math.min(4.4, (rowHeight / 2 - 3) / Math.max(1, Math.ceil(depth / 2)));
+              targets.push(<ChartMark key={`dot-${index}-${dotIndex}`} testID={props.testID ? `${props.testID}-duration-${index}-${dotIndex}` : undefined}
+                bounds={{ x: cx - RUN_COLUMN_PX / 2, y: r1(cy + offset) - 2.2, width: RUN_COLUMN_PX, height: 4.4 }}
+                datum={{ label: name(row.agentId), value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
               return <Circle key={dotIndex} cx={cx} cy={r1(cy + offset)} r={1.9} fill={colour(row.agentId)} fillOpacity={0.78} />;
             });
+            for (const [kind, ms, title, h] of [['median', row.medianMs, props.labels.values.medianColumn, 20], ['p90', row.p90Ms, props.labels.values.p90Column, 14]] as const) {
+              targets.push(<ChartMark key={`${kind}-${index}`} testID={props.testID ? `${props.testID}-${kind}-${index}` : undefined}
+                bounds={{ x: r1(x(ms)) - 2, y: cy - h / 2, width: 4, height: h }}
+                datum={{ label: `${name(row.agentId)} · ${title}`, value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
+            }
             return <G key={row.agentId ?? 'unknown'}>
               {dots}
               <Path d={`M${r1(x(row.medianMs))},${cy - 10}V${cy + 10}`} stroke={ink.text} strokeWidth={2} />
@@ -256,9 +279,9 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
               {svgText.draw({ x: width, y: cy + 12, anchor: 'end', text: props.labels.detail(row.p90Ms, row.samples) }, 'd')}
             </G>;
           })}
-        </Svg>;
+        </Svg>{targets}</>;
       })() : null}
-    </View>
+    </ChartDrawing>
     <UsageChartCaption theme={props.theme}>{props.labels.caption}</UsageChartCaption>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.medianColumn }, { label: props.labels.values.p90Column }, { label: props.labels.values.samplesColumn }], rows: table }} />

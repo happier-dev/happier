@@ -1,5 +1,7 @@
 import { View } from 'react-native';
 import { Circle, G, Path, Rect, Svg } from 'react-native-svg';
+import { ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
+import { formatHappierDataExactShare, formatHappierDataValue } from '../../data/dataModel.js';
 
 import {
   UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartMix, usageChartRound as r1, usageSmoothPath,
@@ -35,20 +37,22 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
   let peak = { value: -1, row: 0, hour: 0 };
   grid.forEach((row, rowIndex) => row.forEach((value, hour) => { if (value !== null && value > peak.value) peak = { value, row: rowIndex, hour }; }));
   const axis = 34;
+  const plot = width === null ? 0 : width - axis - 4;
+  const rowHeight = (height - 26) / 8.4;
+  const drawing = grid.map((row, rowIndex) => {
+    const base = 8 + rowHeight * 2.2 + rowIndex * rowHeight;
+    const points = row.map((value, hour) => [axis + (hour / 23) * plot, base - Math.pow((value ?? 0) / max, 0.9) * rowHeight * 2.2] as const);
+    const curve = usageSmoothPath(points);
+    return { base, points, curve, area: `${curve}L${r1(axis + plot)},${r1(base)}L${axis},${r1(base)}Z` };
+  });
   const columns = Array.from({ length: 24 }, (_, hour) => props.labels.clock(hour));
   const rows = grid.map((row, index) => [props.labels.weekdays[index] ?? '', ...row.map((value) => value === null ? '—'
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : props.labels.values.formatValue(value))] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-    <View style={{ height }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+    <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? <Svg width={width} height={height}>
         {(() => {
-          const plot = width - axis - 4;
-          const rowHeight = (height - 26) / 8.4;
-          const shapes = grid.map((row, rowIndex) => {
-            const base = 8 + rowHeight * 2.2 + rowIndex * rowHeight;
-            const points = row.map((value, hour) => [axis + (hour / 23) * plot, base - Math.pow((value ?? 0) / max, 0.9) * rowHeight * 2.2] as const);
-            const curve = usageSmoothPath(points);
-            const area = `${curve}L${r1(axis + plot)},${r1(base)}L${axis},${r1(base)}Z`;
+          const shapes = drawing.map(({ base, curve, area }, rowIndex) => {
             return <G key={rowIndex}>
               <Path d={area} fill={props.paint.paper} />
               <Path d={area} fill={props.paint.accent} fillOpacity={0.05 + rowIndex * 0.012} />
@@ -69,7 +73,17 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
           ];
         })()}
       </Svg> : null}
-    </View>
+      {width !== null ? grid.flatMap((row, rowIndex) => row.map((value, hour) => {
+        const shape = drawing[rowIndex]!;
+        const [x, y] = shape.points[hour]!;
+        const datum = { label: `${props.labels.weekdays[rowIndex] ?? ''} · ${props.labels.clock(hour)}`, value: value === null ? '—' : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '—' : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? props.labels.values.formatValue(value) : undefined, color: props.paint.accent };
+        const left = Math.max(axis, x - plot / 46), right = Math.min(axis + plot, x + plot / 46);
+        return <View key={`${rowIndex}-${hour}`} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height }}>
+          <ChartPathMark datum={datum} d={shape.area} hitMode="fill" strokeWidth={1.2} bounds={{ x: left, y: 0, width: right - left, height }} focusBounds={{ x: x - 4, y: y - 4, width: 8, height: 8 }} />
+          <ChartMark datum={{ ...datum, keyboard: false }} bounds={{ x: x - Math.min(5, plot / 46), y: y - 5, width: Math.min(10, plot / 23), height: 10 }} />
+        </View>;
+      })) : null}
+    </ChartDrawing>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.weekdayColumn }, ...columns.map((label) => ({ label, priority: 'secondary' as const }))], rows }} />
   </UsageChartColumn>;
@@ -109,10 +123,17 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
   const height = small ? 120 : 150;
   const steps = small ? 5 : 7;
   const nightInk = usageChartMix(props.paint.accent, props.paint.paper, 0.56);
+  const nightLabel = width !== null && night ? (() => {
+    const text = props.labels.night(night.fromHour, night.toHour, night.share);
+    const half = text.length * (svgText.styles.body.fontSize ?? 13) * 0.7 / 2;
+    const column = width / 24;
+    const at = night.fromHour > night.toHour ? night.toHour / 2 * column : (night.fromHour + night.toHour) / 2 * column;
+    return { text, half, x: Math.min(width - half, Math.max(half, at)) };
+  })() : null;
   const rows = props.model.hours.map((value, hour) => [props.labels.clock(hour), value === null ? '—'
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : props.labels.values.formatValue(value)] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
-    <View style={{ height }} accessible accessibilityRole="image" accessibilityLabel={props.label}>
+    <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? <Svg width={width} height={height}>
         {(() => {
           const column = width / 24;
@@ -126,10 +147,7 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
             const spans = night.fromHour > night.toHour ? [[0, night.toHour], [night.fromHour, 24]] : [[night.fromHour, night.toHour]];
             spans.forEach(([from, to], index) => out.push(<Rect key={`n${index}`} x={r1(from! * column)} y={top - 6} width={r1((to! - from!) * column)} height={r1(band - top + 8)} rx={6} fill={wash} />));
             // The window's label sits over its wash, kept wholly inside the plot (it is wider than an early-morning wash).
-            const text = props.labels.night(night.fromHour, night.toHour, night.share);
-            const half = (text.length * (svgText.styles.body.fontSize ?? 13) * 0.7) / 2;
-            const labelAt = night.fromHour > night.toHour ? (night.toHour / 2) * column : ((night.fromHour + night.toHour) / 2) * column;
-            out.push(svgText.draw({ x: Math.min(width - half, Math.max(half, labelAt)), y: top - 10, anchor: 'middle', tone: 'secondary', size: 'body', text }, 'night'));
+            out.push(svgText.draw({ x: nightLabel!.x, y: top - 10, anchor: 'middle', tone: 'secondary', size: 'body', text: nightLabel!.text }, 'night'));
           }
           hours.forEach((value, hour) => {
             const lit = Math.round((value / max) * steps);
@@ -141,7 +159,11 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
           return out;
         })()}
       </Svg> : null}
-    </View>
+      {width !== null && night && nightLabel ? <ChartMark datum={{ label: nightLabel.text, value: night.share === null ? '—' : formatHappierDataExactShare(night.share), color: nightInk }}
+        bounds={{ x: Math.max(0, nightLabel.x - nightLabel.half), y: 0, width: Math.min(width, nightLabel.half * 2), height: 22 }} /> : null}
+      {width !== null ? props.model.hours.map((value, hour) => <ChartMark key={hour} datum={{ label: props.labels.clock(hour), value: value === null ? '—' : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '—' : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? `${props.labels.values.valueColumn} · ${props.labels.values.formatValue(value)}` : undefined, color: inNight(hour) ? nightInk : props.paint.accent }}
+        bounds={{ x: hour * width / 24, y: 22, width: width / 24, height: height - 40 }} />) : null}
+    </ChartDrawing>
     <UsageChartCaption theme={props.theme}>{props.labels.caption(peakHour, night?.share ?? null)}</UsageChartCaption>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.hourColumn }, { label: props.labels.values.valueColumn }], rows }} />
