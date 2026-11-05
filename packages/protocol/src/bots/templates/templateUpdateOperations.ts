@@ -267,7 +267,7 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
           }
           if (input.takeIdentity) {
             await invoke('session.title.set', 'update_title', { ...input.sessionRef, title: release.content.identity.name });
-            await invoke('session.bot.face.set', 'update_face', { ...input.sessionRef, face: release.content.identity.face ?? null });
+            await invoke('session.bot.face.set', 'update_face', { sessionId: input.sessionRef.sessionId, face: release.content.identity.face ?? null });
             applied.push('identity');
             remaining.splice(remaining.indexOf('identity'), 1);
           }

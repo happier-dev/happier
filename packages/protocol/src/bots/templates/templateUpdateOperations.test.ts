@@ -22,6 +22,7 @@ import { createSkillActionExecuteV1 } from '../../prompts/library/skills/skillAc
 import type { SkillRulesActionPortV1 } from '../../prompts/library/skillRulesActionsV1.js';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '../../prompts/library/skills/skillActionSchemasV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
+import type { SessionBotFaceV1 } from '../../sessions/identity/sessionBotFaceV1.js';
 
 const sourceId = '80f7dabe-1f05-44b7-8e44-d98f2127f523';
 const baseId = '70f7dabe-1f05-44b7-8e44-d98f2127f523';
@@ -67,6 +68,9 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
   let failSettlement = false;
   let refuseReport = false;
   let failCapability = false;
+  let failFace = false;
+  let title = 'My helper';
+  let face: SessionBotFaceV1 | null = { style: 'pixel', body: 'cat', seed: 'mine' };
   let capabilityMetadata: object = {};
   let catalog: McpServerCatalogV1 = { v: 1, servers: [], bindings: [] };
   let catalogRevision = 0;
@@ -127,6 +131,15 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
     prepareBotTemplateUpdate: request => execute.prepareUpdate(request),
     promptDocUpdate: input => updatePromptDocInLibrary({ store, request: input }),
     // These are the native transport boundaries; the Action preparation and child dispatcher stay real.
+    sessionStateFieldSet: async request => {
+      if (request.fieldId === 'display.title') title = request.value;
+      else if (request.fieldId === 'display.botFace') {
+        if (failFace) return { ok: false, errorCode: 'session_metadata_unavailable', error: 'session_metadata_unavailable' };
+        face = request.value;
+      } else throw new Error(`Unexpected Session field: ${request.fieldId}`);
+      revision++;
+      return { ok: true };
+    },
     sessionConnectedServicesAuthSet: async input => { accountWrites.push(input); return { ok: true }; },
     ...options,
   });
@@ -163,11 +176,44 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
     release: (release: BotTemplateReleaseV1) => { const row = boundary.rows.get(sourceId)!; const envelope = { v: 1 as const, state: 'released' as const, release };
       boundary.rows.set(sourceId, { ...row, body: JSON.stringify(envelope), header: projectBotTemplateArtifactHeaderV1(envelope),
         revision: { headerVersion: row.revision.headerVersion + 1, bodyVersion: row.revision.bodyVersion + 1 } }); },
-    state: () => ({ instance, instanceWrites, sourceReads }), failSettlement: (next = true) => { failSettlement = next; },
+    state: () => ({ instance, instanceWrites, sourceReads, title, face }), failSettlement: (next = true) => { failSettlement = next; },
+    failFace: (next = true) => { failFace = next; },
     refuseReport: () => { refuseReport = true; } };
 }
 
 describe('template update composition', () => {
+  it.each([null, { style: 'solid', body: 'crab', seed: 'theirs' }] as const)(
+    'takes the author identity through the canonical title and face Actions: %j', async face => {
+      const f = await fixture();
+      f.release({ ...upstream, content: { ...upstream.content, identity: { name: 'Author helper', description: '', ...(face ? { face } : {}) } } });
+      const result = await f.apply(await f.diff(), { takeIdentity: true });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0', applied: ['instructions', 'identity'] } });
+      expect(f.state()).toMatchObject({ title: 'Author helper', face, instance: { acceptedVersion: '1.1.0' } });
+      expect(f.reports).toEqual([{ artifactId: sourceId, acceptedVersion: '1.1.0', copyId: ref.sessionId }]);
+    });
+
+  it.each([false, true])('re-reviews a failed face write after instructions/title succeed and retries with takeIdentity=%s', async takeIdentity => {
+    const f = await fixture();
+    const original = f.state();
+    const authorFace = { style: 'solid', body: 'crab', seed: 'theirs' } as const;
+    f.release({ ...upstream, content: { ...upstream.content, identity: { name: 'Author helper', description: '', face: authorFace } } });
+    f.failFace();
+    const partial = await f.apply(await f.diff(), { takeIdentity: true });
+    expect(partial).toMatchObject({ ok: false, errorCode: 'session_metadata_unavailable',
+      details: { applied: ['instructions'], remaining: ['identity', 'settlement'] } });
+    expect(f.state()).toMatchObject({ title: 'Author helper', face: original.face, instance: original.instance, instanceWrites: 0 });
+    expect(f.reports).toEqual([]);
+    expect(await readPromptDocInLibrary({ store: f.store, artifactId: f.doc.artifactId }))
+      .toMatchObject({ markdown: 'mine\ntwo\nnew three\n' });
+    f.failFace(false);
+    const retry = await f.apply(await f.diff(), { takeIdentity });
+    expect(retry, JSON.stringify(retry)).toMatchObject({ ok: true, result: { acceptedVersion: '1.1.0', kept: ['instructions'] } });
+    expect(f.state()).toMatchObject({ title: 'Author helper', face: takeIdentity ? authorFace : original.face,
+      instance: { acceptedVersion: '1.1.0' }, instanceWrites: 1 });
+    expect(f.writes).toEqual([f.doc.artifactId]);
+    expect(f.reports).toEqual([{ artifactId: sourceId, acceptedVersion: '1.1.0', copyId: ref.sessionId }]);
+  });
+
   it('discovers the owned Session target and admits the original requester before any template content read', async () => {
     const admitted: unknown[] = [];
     let previousReads = 0;
