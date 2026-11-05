@@ -84,10 +84,10 @@ export async function requestAdmissionSample(root, request = { kind: 'sample' })
   }
 }
 
-function failure(reason, failureId) {
+function failure(reason, failureId, cause) {
   const label = { HSTACK_MEMORY_BUSY: 'BUSY', HSTACK_WORKSPACE_RESOURCE_BUSY: 'BUSY',
     HSTACK_MEMORY_CAPACITY: 'CAPACITY', HSTACK_DISK_UNAVAILABLE: 'DISK' }[reason] ?? 'UNAVAILABLE';
-  console.error(`[preferred-execution] heavyweight admission refused (${reason})`);
+  console.error(`[preferred-execution] heavyweight admission refused (${reason}${cause ? `: ${cause}` : ''})`);
   if (failureId) console.error(`HSTACK_ADMISSION_${label}:${failureId}`);
   return 75;
 }
@@ -190,7 +190,10 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
       cancellation.signal.addEventListener('abort', onAbort, { once: true });
       try {
         for await (const response of brokerResponses(control, request, cancellation.signal)) {
-          if (response.kind === 'refused') return failure(response.reason, failureId);
+          if (response.kind === 'refused') return failure(response.reason, failureId, response.cause);
+          if (response.kind === 'queued') {
+            console.error(`[preferred-execution] waiting for admission on ${machine} (class=${className}, waiting=${response.waitingCount})`);
+          }
           if (response.kind === 'capacity-wait') priorityScope?.suspend();
           if (response.kind === 'reserved') {
             selectedFloorKiB = response.floorKiB;

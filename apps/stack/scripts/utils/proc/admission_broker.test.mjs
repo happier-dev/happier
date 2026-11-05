@@ -83,7 +83,12 @@ async function request(root, value) {
   const iterator = lines[Symbol.asyncIterator]();
   await once(socket, 'connect');
   socket.write(JSON.stringify(value) + '\n');
-  return { socket, next: async () => JSON.parse((await iterator.next()).value) };
+  return { socket, next: async () => {
+    let response;
+    // Queue notices are diagnostic; these broker assertions consume decisions.
+    do { response = JSON.parse((await iterator.next()).value); } while (response.kind === 'queued');
+    return response;
+  } };
 }
 
 async function acquire(root, floorKiB, t, extra = {}) {

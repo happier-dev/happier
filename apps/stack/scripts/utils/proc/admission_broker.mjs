@@ -129,10 +129,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   const send = (socket, value) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...status(), ...value }) + '\n'); };
   function enqueue(run) {
-    serial = serial.then(async () => { if (!closing) await run(); }).catch(() => {
+    serial = serial.then(async () => { if (!closing) await run(); }).catch(error => {
       // A failed observation cannot authorize work from a stale capacity fact.
       sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
-      for (const item of [...waiting]) refuse(item, 'HSTACK_ADMISSION_UNAVAILABLE');
+      for (const item of [...waiting]) refuse(item, 'HSTACK_ADMISSION_UNAVAILABLE', error.code ?? error.name);
       for (const watcher of watchers.values()) watcher.close();
       watchers.clear();
       clearTimeout(resourceCatchUp);
@@ -148,14 +148,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     const index = waiting.indexOf(item);
     if (index !== -1) waiting.splice(index, 1);
   }
-  function refuse(item, reason) {
+  function refuse(item, reason, cause) {
     removeWaiting(item);
     if (item.slot && !item.settled) {
       slots.delete(item.slot.address);
       item.slot.peer?.destroy();
     }
     item.settled = true;
-    send(item.socket, { kind: 'refused', reason });
+    send(item.socket, { kind: 'refused', reason, ...(cause ? { cause } : {}) });
     item.socket.end();
   }
   function refreshWatchers() {
@@ -366,6 +366,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (!disk.admitted) { refuse(item, 'HSTACK_DISK_UNAVAILABLE'); refreshWatchers(); return; }
       await observe();
       await drain();
+      // The first attempt decides whether this arrival really has to wait.
+      // Later drains reuse the queue without repeating its enqueue notice.
+      if (!item.slot && !item.settled) send(socket, { kind: 'queued' });
     }));
     socket.on('error', () => {});
     socket.once('close', () => {

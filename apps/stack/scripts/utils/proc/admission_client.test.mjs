@@ -11,6 +11,8 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { brokerAddress } from './admission_socket.mjs';
+import { createAdmissionBroker } from './admission_broker.mjs';
+import { requestAdmissionSample } from './admission_client.mjs';
 
 // Finite cutover coverage consumes an explicitly selected pre-broker producer.
 // Remove with the old admitted cohort; never reinterpret the current checkout
@@ -68,6 +70,66 @@ peer.close()
   ready.close();
   return resetting;
 }
+
+test('admission reports one waiting line with enqueue facts only when capacity queues the command',
+  { skip: process.platform !== 'linux' }, async t => {
+    for (const queued of [true, false]) await t.test(queued ? 'queued' : 'immediate', async t => {
+      const fixture = await restartFixture(t);
+      let availableMemoryKiB = queued ? 0 : 100;
+      let observed;
+      const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+        oldLockPath: join(fixture.root, 'old-admission.lock'),
+        sampleResources: async () => {
+          observed?.();
+          return { availableMemoryKiB, totalMemoryKiB: 100 };
+        } });
+      await broker.start();
+      t.after(() => broker.close());
+      const arrival = new Promise(resolve => { observed = resolve; });
+      const client = fixture.start('process.stdout.write("entered");');
+      await arrival;
+      // A status request on the real broker serializes after the arrival's
+      // first admission attempt; no polling or diagnostic timer is needed.
+      const sample = await requestAdmissionSample(fixture.native.admissionRoot);
+      if (queued) {
+        assert.equal(sample.waitingCount, 1);
+        const busy = fixture.start('process.stdout.write("unexpected");', ['--no-wait']);
+        assert.deepEqual(await busy.closed, [75, null]);
+        assert.equal(busy.stdout(), '');
+        assert.equal(busy.stderr().split('\n').filter(line => line.includes('waiting for admission')).length, 0);
+        availableMemoryKiB = 100;
+        const next = fixture.start('process.stdout.write("next");', ['--no-wait']);
+        assert.deepEqual(await next.closed, [0, null], next.stderr());
+        assert.equal(next.stderr().split('\n').filter(line => line.includes('waiting for admission')).length, 0);
+      }
+      assert.deepEqual(await client.closed, [0, null], client.stderr());
+      assert.equal(client.stdout(), 'entered');
+      const waiting = client.stderr().split('\n').filter(line => line.includes('waiting for admission'));
+      assert.equal(waiting.length, queued ? 1 : 0);
+      if (queued) assert.match(waiting[0], /^\[preferred-execution\] waiting for admission on fixture \(class=validation, waiting=1\)$/);
+    });
+  });
+
+test('an admission observation failure retains its OS reason in the refusal line and never runs the payload',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    let failObservation = false;
+    const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+      oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => {
+        if (failObservation) throw Object.assign(new Error('OS memory observation failed'), { code: 'EIO' });
+        return { availableMemoryKiB: 100, totalMemoryKiB: 100 };
+      } });
+    await broker.start();
+    t.after(() => broker.close());
+    failObservation = true;
+    const client = fixture.start('process.stdout.write("unexpected");');
+    assert.deepEqual(await client.closed, [75, null]);
+    assert.match(client.stderr(), /^\[preferred-execution\] heavyweight admission refused \(HSTACK_ADMISSION_UNAVAILABLE: EIO\)$/m);
+    assert.match(client.stderr(), /^HSTACK_ADMISSION_UNAVAILABLE:restart-client$/m);
+    assert.equal(client.stdout(), '');
+    assert.equal(broker.status().waitingCount, 0);
+  });
 
 test('a pre-admission real socket reset reconnects through broker startup and launches the payload once',
   { skip: process.platform !== 'linux' }, async t => {
