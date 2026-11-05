@@ -132,6 +132,7 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
   // producers decide their shape; this public envelope only excludes extra
   // top-level transit metadata.
   details: z.optional(z.unknown()),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   goalControlFailure: z.optional(SessionGoalControlFailureV1Schema),
 }));
 
@@ -164,6 +165,37 @@ export const ActionExceptionFailureDetailsV1Schema: z.ZodMiniType<ActionExceptio
 export function projectActionExceptionFailureDetailsV1(error: unknown, phase: ActionId | 'dispatch' = 'dispatch'): ActionExceptionFailureDetailsV1 {
   const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
   return { kind: 'actionException', phase, errorClass, errorCode, httpStatus };
+}
+
+export type ActionFailureCauseV1 = Readonly<{
+  phase: string;
+  errorClass: ActionErrorClassV1;
+  errorCode: string | null;
+  httpStatus: number | null;
+}>;
+export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = lazyZodSchema(() => z.strictObject({
+  phase: z.union([z.literal('dispatch'), ActionIdSchema,
+    z.string().check(z.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u))]),
+  errorClass: ActionErrorClassV1Schema,
+  errorCode: z.nullable(z.string()),
+  httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
+}).check(z.refine(value => readUnexpectedActionErrorDiagnosticV1({
+  name: value.errorClass, code: value.errorCode,
+}).errorCode === value.errorCode || (value.errorCode !== null
+  && readUnexpectedActionErrorDiagnosticV1({ name: 'JsonRpcApplicationError', code: Number(value.errorCode) })
+    .errorCode === value.errorCode))));
+
+export function projectActionFailureCauseV1(error: unknown, phase: string = 'dispatch'): ActionFailureCauseV1 {
+  const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+  if (diagnostic.errorCode === null) {
+    try {
+      const immediate = error && typeof error === 'object' && 'cause' in error ? error.cause : undefined;
+      const child = readUnexpectedActionErrorDiagnosticV1(immediate);
+      return { phase, errorClass: diagnostic.errorClass, errorCode: child.errorCode,
+        httpStatus: diagnostic.httpStatus ?? child.httpStatus };
+    } catch { /* A hostile cause accessor cannot replace the original failure. */ }
+  }
+  return { phase, errorClass: diagnostic.errorClass, errorCode: diagnostic.errorCode, httpStatus: diagnostic.httpStatus };
 }
 
 export type ActionExecuteResult = Readonly<{
@@ -298,6 +330,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     error: result.error,
     ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}),
     ...(result.details === undefined ? {} : { details: result.details }),
+    ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
   });
   return projected.success ? projected.data : null;
