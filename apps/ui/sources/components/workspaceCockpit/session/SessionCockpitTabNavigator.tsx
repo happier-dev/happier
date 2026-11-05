@@ -373,7 +373,7 @@ function SessionCockpitSceneNavigationBoundary({ cockpit, navigation, commitSurf
     return <SessionCockpitSurfaceNavigationProvider value={value}>{children}</SessionCockpitSurfaceNavigationProvider>;
 }
 
-function SessionCockpitPanePresentationBoundary(props: React.PropsWithChildren<Readonly<{
+export function SessionCockpitPanePresentationBoundary(props: React.PropsWithChildren<Readonly<{
     cockpit: boolean;
     scopeId: string;
     sessionId: string;
@@ -386,6 +386,7 @@ function SessionCockpitPanePresentationBoundary(props: React.PropsWithChildren<R
     const router = useDestinationRouter();
     const presentPane = React.useCallback((intent: PanePresentationIntent) => {
         if (intent.scopeId !== props.scopeId) return;
+        if (intent.pane === 'details' && intent.start) return;
         if (intent.pane === 'details') {
             const query = buildActiveDetailsRouteParams([intent.tab], intent.tab.key);
             if (query.details) {
