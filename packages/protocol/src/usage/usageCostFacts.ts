@@ -3,6 +3,7 @@ import { reprojectUsageLeaders } from './usageLeaderProjection.js';
 import { aggregateUsageContributionCosts, resolveUsageContributionCosts, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { canonicalUsageModelPriceId } from './usageModelPriceSchemas.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
+import { addUsageMoney, readUsageMoney, transferUsageMoney, usageMoneyFromNumber, usageMoneyToNumber, withUsageMoney } from './usageMoney.js';
 
 export type UsageCostMode = NonNullable<UsageAnalyticsQueryRequest['costMode']> | 'auto';
 export interface UsageCostBasis {
@@ -19,18 +20,26 @@ export function isUsageCostCoveredByReportedTotal(cost: UsageObservationCost, mo
   return cost.reportedTotalId !== undefined && (mode === 'auto' || mode === 'reported');
 }
 
+/** Reported-total money is selectable only after the population owner resolves its scope. */
+export function hasUnresolvedUsageReportedTotalScope(cost: UsageObservationCost, mode: UsageCostMode): boolean {
+  return isUsageCostCoveredByReportedTotal(cost, mode)
+    || cost.reportedTotalContributionIds !== undefined && (mode === 'auto' || mode === 'reported');
+}
+
 export function resolveUsageCostMode(mode: UsageAnalyticsQueryRequest['costMode']): UsageCostMode {
   return mode ?? 'auto';
 }
 
+function usageCostFactPriority(mode: UsageCostMode): readonly UsageCostBasis['kind'][] {
+  return mode === 'auto' ? ['reported', 'api_equivalent', 'estimated', 'invoice'] : [mode];
+}
+
 export function resolveUsageCostFactForMode<Fact extends { kind: UsageAnalyticsCostFactKind }>(facts: readonly Fact[], mode: UsageCostMode): Fact | undefined {
-  if (mode === 'api_equivalent') return facts.find((fact) => fact.kind === 'api_equivalent');
-  if (mode === 'reported') return facts.find((fact) => fact.kind === 'reported');
-  if (mode === 'estimated') return facts.find((fact) => fact.kind === 'estimated');
-  return facts.find((fact) => fact.kind === 'reported')
-    ?? facts.find((fact) => fact.kind === 'api_equivalent')
-    ?? facts.find((fact) => fact.kind === 'estimated')
-    ?? facts.find((fact) => fact.kind === 'invoice');
+  for (const kind of usageCostFactPriority(mode)) {
+    const fact = facts.find(fact => fact.kind === kind);
+    if (fact) return fact;
+  }
+  return undefined;
 }
 
 /** Currency stays fixed; best available resolves witnessed kinds independently within each row. */
@@ -49,9 +58,27 @@ export type UsagePageCostProjectionBasis = {
   readonly mode: UsageCostMode;
   readonly catalog: UsageModelPriceCatalog;
   readonly overrides: UsageModelPriceOverridesV1;
+  readonly partitions?: import('./usageLeaderProjection.js').UsageAnalyticsPricingPartitions;
   pageInput?: UsageAnalyticsQueryResponse;
   pageProjection?: UsagePageCostProjection;
 };
+
+/** Only the validated query transport can witness the server's original prices.
+ * A serialized private projection has the same catalog revision, so arbitrary
+ * compact values must still replay their grouped operands when overrides clear.
+ */
+export function admitUsageAnalyticsServerPrices(value: UsageAnalyticsQueryResponse,
+  query: UsageAnalyticsQueryRequest): UsageAnalyticsQueryResponse {
+  const catalog = value.priceCatalog;
+  const mode = query.costMode ?? 'auto';
+  if (value.contributions || !value.summary || !catalog || value.summary.costMode !== mode
+    || value.summary.catalogRevision !== catalog.provenance.revision) return value;
+  // Each delivered shape owns its existing projection witness; sibling detail
+  // borrowers can share the source totals without replacing each other's proof.
+  const response = { ...value, totals: { ...value.totals, cost: { ...value.totals.cost } } };
+  Object.defineProperty(response.totals.cost, usagePageCostProjectionBasis, { value: { response, mode, catalog, overrides: {} } });
+  return response;
+}
 
 export function readUsagePageCostProjectionBasis(response: UsageAnalyticsQueryResponse): UsagePageCostProjectionBasis | undefined {
   const completed = (response.totals.cost as UsageObservationCost & {
@@ -132,17 +159,24 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
   }
   const costs = (rows ? resolveUsageContributionCosts(rows, mode) : [response.totals.cost])
     .filter(cost => !(cost as AggregatedUsageCost)[usageCostAggregationBasis]?.covered);
-  const selection = selected === undefined ? resolveUsagePageCostSelection(costs, mode) : selected;
-  const amounts = costs.map(cost => resolveUsageCostForSelection(cost, selection));
+  // Compact partial populations have no selectable total. Their witnessed facts
+  // still name the currency/mode for independently priced buckets and leaders;
+  // they cannot supply an amount for the incomplete whole population.
+  const availableFact = !rows ? response.costFacts?.find(fact => fact.kind !== 'unpriced'
+    && fact.amountUsd !== null && (mode === 'auto' || fact.kind === mode)) : undefined;
+  const selection = selected === undefined ? resolveUsagePageCostSelection(costs, mode)
+    ?? (availableFact ? { kind: mode === 'auto' ? 'mixed' as const : mode, currency: availableFact.currency, mode } : null) : selected;
+  const amounts = costs.map(cost => resolveUsageCostBasisForSelection(cost, selection));
   const amountUsd = selection && amounts.length > 0 && amounts.every(amount => amount !== null)
-    ? amounts.reduce<number>((sum, amount) => sum + amount!, 0) : null;
+    ? usageMoneyToNumber(amounts.reduce((sum, amount) => addUsageMoney(sum,
+      readUsageMoney(amount!, 'amountUsd', amount!.amountUsd)), usageMoneyFromNumber(0))) : null;
   if (!rows || !selection) return retain({ selection, amountUsd, accounting: response });
   const selectedMode = selectionMode(selection);
   const projectCost = (raw: UsageObservationCost, contributions: readonly UsageAnalyticsContribution[]): UsageObservationCost => {
     const selectedCosts = resolveUsageContributionCosts(contributions, selectedMode)
       .filter(cost => !(cost as AggregatedUsageCost)[usageCostAggregationBasis]?.covered);
     const amounts = selectedCosts.map(cost => resolveUsageCostForSelection(cost, selection));
-    const { effectiveUsd: _old, ...original } = raw;
+    const { effectiveUsd: _old, selectedBasis: _selectedBasis, ...original } = raw;
     if (selectedCosts.length === 0 || amounts.some(amount => amount === null)) {
       const unavailable: AggregatedUsageCost = { ...original, costSource: 'none',
         [usageCostAggregationBasis]: { mode: selectedMode, available: false } };
@@ -158,18 +192,34 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
 }
 
 /** All observed monetary kinds remain separate, including simultaneous facts. */
+function readUsageCostFact(cost: UsageObservationCost, kind: UsageCostBasis['kind']): UsageCostBasis | undefined {
+  let amountUsd: number;
+  let source: string;
+  let field: string;
+  if (kind === 'reported') {
+    amountUsd = cost.reportedUsd;
+    if (!(amountUsd > 0 || cost.costSource === 'provider_reported' || cost.costSource === 'provider_reported_api_equivalent')) return undefined;
+    source = cost.costSource === 'provider_reported_api_equivalent' ? 'provider_reported_api_equivalent' : 'provider_reported';
+    field = 'reportedUsd';
+  } else if (kind === 'estimated') {
+    amountUsd = cost.estimatedUsd;
+    if (!(amountUsd > 0 || cost.costSource === 'pricing_estimate')) return undefined;
+    source = 'pricing_estimate'; field = 'estimatedUsd';
+  } else if (kind === 'invoice') {
+    amountUsd = cost.invoiceUsd ?? 0;
+    if (!(amountUsd > 0 || cost.costSource === 'invoice')) return undefined;
+    source = 'invoice'; field = 'invoiceUsd';
+  } else {
+    if (cost.apiEquivalentUsd === undefined) return undefined;
+    amountUsd = cost.apiEquivalentUsd; source = cost.pricingSource ?? 'catalog'; field = 'apiEquivalentUsd';
+  }
+  const fact = { kind, amountUsd, currency: kind === 'api_equivalent' ? 'USD' : cost.currency, source };
+  return transferUsageMoney(cost, field, fact.amountUsd, fact, 'amountUsd');
+}
+
 export function resolveUsageCostFacts(cost: UsageObservationCost): UsageCostBasis[] {
-  const reportedSource = cost.costSource === 'provider_reported_api_equivalent' ? 'provider_reported_api_equivalent' : 'provider_reported';
-  const hasReported = cost.reportedUsd > 0 || cost.costSource === 'provider_reported' || cost.costSource === 'provider_reported_api_equivalent';
-  const hasEstimated = cost.estimatedUsd > 0 || cost.costSource === 'pricing_estimate';
-  const hasInvoice = (cost.invoiceUsd ?? 0) > 0 || cost.costSource === 'invoice';
-  const basis = (kind: UsageCostBasis['kind'], amountUsd: number, source: string): UsageCostBasis => ({ kind, amountUsd, currency: cost.currency, source });
-  const facts: UsageCostBasis[] = [];
-  if (hasReported) facts.push(basis('reported', cost.reportedUsd, reportedSource));
-  if (hasEstimated) facts.push(basis('estimated', cost.estimatedUsd, 'pricing_estimate'));
-  if (hasInvoice) facts.push(basis('invoice', cost.invoiceUsd ?? 0, 'invoice'));
-  if (cost.apiEquivalentUsd !== undefined) facts.push({ kind: 'api_equivalent', currency: 'USD', amountUsd: cost.apiEquivalentUsd, source: cost.pricingSource ?? 'catalog' });
-  return facts;
+  const kinds = ['reported', 'estimated', 'invoice', 'api_equivalent'] as const;
+  return kinds.flatMap(kind => { const fact = readUsageCostFact(cost, kind); return fact ? [fact] : []; });
 }
 
 /** A monetary value is available only when its selected basis is witnessed. */
@@ -178,12 +228,29 @@ export function resolveUsageCostBasis(cost: UsageObservationCost, mode: UsageCos
   if (aggregation?.mode === mode) {
     return aggregation.available ? aggregation.selected ?? null : null;
   }
-  if (isUsageCostCoveredByReportedTotal(cost, mode)) return null;
-  if (cost.reportedTotalContributionIds && (mode === 'auto' || mode === 'reported')) return null;
-  if (mode === 'api_equivalent') return cost.apiEquivalentUsd === undefined ? null
-    : { kind: 'api_equivalent', currency: 'USD', amountUsd: cost.apiEquivalentUsd, source: cost.pricingSource ?? 'catalog' };
+  if (cost.selectedBasis?.mode === mode) {
+    return cost.selectedBasis.value && cost.effectiveUsd !== undefined
+      ? withUsageMoney<UsageSelectedCostBasis>({ ...cost.selectedBasis.value, amountUsd: cost.effectiveUsd },
+        { amountUsd: readUsageMoney(cost, 'effectiveUsd', cost.effectiveUsd) }) : null;
+  }
+  if (hasUnresolvedUsageReportedTotalScope(cost, mode)) return null;
+  if (mode === 'api_equivalent') return readUsageCostFact(cost, mode) ?? null;
   if (cost.currency === 'MIXED' || cost.costSource === 'none' && cost.apiEquivalentUsd === undefined) return null;
-  return resolveUsageCostFactForMode(resolveUsageCostFacts(cost), mode) ?? null;
+  for (const kind of usageCostFactPriority(mode)) {
+    const fact = readUsageCostFact(cost, kind);
+    if (fact) return fact;
+  }
+  return null;
+}
+
+/** Compact delivery retains the resolved selection, not the private report-scope identifiers. */
+export function serializeUsageCostBasis(cost: UsageObservationCost, mode: UsageCostMode): UsageObservationCost {
+  const selected = resolveUsageCostBasis(cost, mode);
+  const { effectiveUsd: _effective, selectedBasis: _previous, ...observed } = cost;
+  return selected ? withUsageMoney<UsageObservationCost>({ ...observed, effectiveUsd: selected.amountUsd,
+    selectedBasis: { mode, value: { kind: selected.kind, currency: selected.currency, source: selected.source } } },
+    { effectiveUsd: readUsageMoney(selected, 'amountUsd', selected.amountUsd) })
+    : { ...observed, selectedBasis: { mode, value: null } };
 }
 
 /** Legacy numeric adapter; absence is represented by the result's omitted presentation. */

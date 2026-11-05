@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
-import { getUsageQueryKey, normalizeUsageQuery, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
+import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
 import { UsageAnalyticsQueryRequestSchema } from '../usage/usageAnalyticsContracts.js';
 import { InputFieldHintSchema } from './inputFields.js';
 import { resolveEffectiveInputFields } from './inputFieldRuntime.js';
@@ -9,6 +9,50 @@ import * as usageQuery from './usageQuery.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 describe('shared UsageQuery', () => {
+  it('reuses only owner-normalized immutable identities while mutable caller values remain live', () => {
+    const raw = { period: { startMs: 100, endMs: 200 }, agents: ['b', 'a'] };
+    const query = normalizeUsageQuery(raw);
+    const first = getUsageQueryKey(query);
+    expect(normalizeUsageQuery(query)).toBe(query);
+    expect(Object.isFrozen(query)).toBe(true);
+    expect(Object.isFrozen(query.period)).toBe(true);
+    expect(Object.isFrozen(query.agents)).toBe(true);
+    expect(getUsageQueryKey(query)).toBe(first);
+    raw.period.endMs = 300;
+    raw.agents.push('c');
+    expect(getUsageQueryKey(raw)).not.toBe(first);
+
+    const batch = normalizeUsageQueryBatchInput({ queries: [query, raw] });
+    const batchKey = getUsageQueryBatchKey(batch);
+    expect(normalizeUsageQueryBatchInput(batch)).toBe(batch);
+    expect(Object.isFrozen(batch.queries)).toBe(true);
+    expect(getUsageQueryBatchKey(batch)).toBe(batchKey);
+    raw.period.endMs = 400;
+    expect(getUsageQueryBatchKey({ queries: [query, raw] })).not.toBe(batchKey);
+  });
+  it('keeps comparison demand on the host while preserving default comparison reads', () => {
+    const full = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
+    const currentOnly = normalizeUsageQuery({ ...full, includeComparison: false });
+    expect(getUsageQueryKey(currentOnly)).not.toBe(getUsageQueryKey(full));
+    expect(usageQueryToAnalyticsRequest(currentOnly)).toEqual(usageQueryToAnalyticsRequest(full));
+    expect(usageQueryToAnalyticsRequest(currentOnly)).not.toHaveProperty('includeComparison');
+  });
+  it('demands explicit contribution delivery without changing the accounting wire query', () => {
+    const summary = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
+    const detail = normalizeUsageQuery({ ...summary, includeContributions: true });
+    expect(getUsageQueryKey(detail)).not.toBe(getUsageQueryKey(summary));
+    expect(usageQueryToAnalyticsRequest(detail)).toEqual(usageQueryToAnalyticsRequest(summary));
+    expect(usageQueryToAnalyticsRequest(detail)).not.toHaveProperty('includeContributions');
+  });
+  it('keeps summary Work demand distinct while using the same accounting request', () => {
+    const detail = normalizeUsageQuery({});
+    const summary = normalizeUsageQuery({ workProjection: 'summary' });
+    expect(detail.workProjection).toBe('detail');
+    expect(summary.workProjection).toBe('summary');
+    expect(getUsageQueryKey(summary)).not.toBe(getUsageQueryKey(detail));
+    expect(usageQueryToAnalyticsRequest(summary)).toEqual(usageQueryToAnalyticsRequest(detail));
+    expect(usageQueryToAnalyticsRequest(summary)).not.toHaveProperty('workProjection');
+  });
   it('preserves witnessed execution selection separately from producer sources', () => {
     const query = normalizeUsageQuery({ execution: 'happier', sources: ['native'] });
     const request = usageQueryToAnalyticsRequest(query);
@@ -102,7 +146,10 @@ describe('shared UsageQuery', () => {
     expect(UsageQuerySchema.safeParse({ period: { relative: '7days', startMs: 100 } }).success).toBe(false);
     expect(usageQueryToAnalyticsRequest(normalizeUsageQuery({ period: { relative: 'today' }, timeZoneOffsetMinutes: 120 }),
       Date.parse('2026-10-11T00:30:00Z')).dateRange).toEqual({ startMs: Date.parse('2026-10-10T22:00:00Z'), endMs: Date.parse('2026-10-11T00:30:00Z') });
-    expect(usageQueryToAnalyticsRequest(normalizeUsageQuery({ period: { relative: 'all' } }), now).dateRange).toEqual({ startMs: 0, endMs: now });
+    expect(usageQueryToAnalyticsRequest(normalizeUsageQuery({ period: { relative: 'all' } }), now).dateRange).toEqual({ endMs: now });
+    const epoch = normalizeUsageQuery({ period: { startMs: 0, endMs: now } });
+    expect(usageQueryToAnalyticsRequest(epoch, now).dateRange).toEqual({ startMs: 0, endMs: now });
+    expect(getUsageQueryKey(epoch)).not.toBe(getUsageQueryKey({ period: { relative: 'all' } }));
     const absolute = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     expect(usageQueryToAnalyticsRequest(absolute, now).dateRange).toEqual(absolute.period);
   });
@@ -129,9 +176,10 @@ describe('shared UsageQuery', () => {
   it('round-trips canonical range, bucket, multiple Session filters and all admitted output flags', () => {
     const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 }, granularity: 'hour', timeZoneOffsetMinutes: 60,
       filters: { sessionIds: ['two', 'one'], machineIds: ['machine'], modelIds: ['model'], workspaceIds: ['workspace'], backendModes: ['remote'] },
-      breakdowns: ['model'], includeSeries: false, includeInsights: true, includeActivity: true, activityResolution: 'weekdayHour', topLimit: 3 });
+      breakdowns: ['model'], includeSeries: false, includeInsights: true, includeActivity: true, activityResolution: 'weekdayHour', topLimit: 101 });
     const roundTrip = usageQueryToAnalyticsRequest(usageAnalyticsRequestToQuery(request));
     expect(roundTrip).toMatchObject({ ...request, filters: { ...request.filters, sessionIds: ['one', 'two'] } });
+    expect(roundTrip.topLimit).toBe(101);
     expect(UsageQuerySchema.safeParse({ accountId: 'other' }).success).toBe(false);
   });
   it('declares scope and cost basis independently followable, with own presentation paths', () => {

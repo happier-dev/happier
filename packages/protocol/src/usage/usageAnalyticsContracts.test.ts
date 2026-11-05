@@ -12,6 +12,12 @@ import {
 } from './usageAnalyticsContracts.js';
 
 describe('usageAnalyticsContracts', () => {
+  it('admits each current breakdown once and rejects repeated dimensions', () => {
+    const dimensions = Object.values(UsageAnalyticsBreakdownDimensionSchema._zod.def.entries);
+    expect(UsageAnalyticsQueryRequestSchema.parse({ breakdowns: dimensions }).breakdowns).toEqual(dimensions);
+    expect(UsageAnalyticsQueryRequestSchema.safeParse({ breakdowns: ['agent', 'agent'] }).success).toBe(false);
+  });
+
   it.each(['personal', 'workspace'] as const)('retains prospective native %s scope only on a matching runtime delta', (accountScope) => {
     const attribution = { v: 1, turnId: 'turn-1', source: {
       kind: 'native', connectedAccount: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'account-1' }, accountScope,
@@ -150,7 +156,7 @@ describe('usageAnalyticsContracts', () => {
       includeModelTimeline: true,
       includeMessageStats: true,
       activityResolution: 'both',
-      topLimit: 10,
+      topLimit: 101,
     });
 
     expect(request.breakdowns).toEqual([
@@ -158,6 +164,8 @@ describe('usageAnalyticsContracts', () => {
       UsageAnalyticsBreakdownDimensionSchema._zod.def.entries.model,
     ]);
     expect(request.filters?.machineIds).toEqual(['machine-1']);
+    expect(request.topLimit).toBe(101);
+    expect(UsageAnalyticsQueryRequestSchema.safeParse({ topLimit: 0 }).success).toBe(false);
     expect(UsageAnalyticsQueryRequestSchema.safeParse({ filters: { machineIds: [' '] } }).success).toBe(false);
     expect(UsageAnalyticsQueryRequestSchema.safeParse({ filters: { unknownFilter: ['machine-1'] } }).success).toBe(false);
 

@@ -1,12 +1,126 @@
 import { expect, it } from 'vitest';
 import { repriceUsageAnalyticsResponse, projectUsagePageCost, resolveUsageCostForSelection } from './usageCost.js';
-import { buildUsageBreakdownList } from './usageLeaderProjection.js';
+import { buildUsageBreakdownList, buildUsageLeaderList, compareUsageRankedLeaders, groupUsageLeaderSources, selectUsageLeaderTokenFrontier, selectUsageRankedLeaders } from './usageLeaderProjection.js';
 import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 
 const contribution = { id: 'row', observedAtMs: 1, sessionId: 'session', turnId: null, agentId: 'agent', modelId: 'model',
     machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
     tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
     cost: { reportedUsd: 0, estimatedUsd: 0, costSource: 'none', currency: 'USD' } };
+
+it('selects top-N with linear comparison work for a fixed one-entry demand, preserving monetary and key ties', () => {
+    let costReads = 0;
+    const entries = Array.from({ length: 2733 }, (_, index) => ({ key: String(index), eventCount: 1,
+        tokens: contribution.tokens,
+        get cost() { costReads++; return { ...contribution.cost, reportedUsd: (index * 997) % 2733,
+            costSource: 'provider_reported' as const }; },
+    }));
+    expect(selectUsageRankedLeaders(entries, 1, 'reported').map(entry => entry.key)).toEqual(['2108']);
+    expect(costReads, 'top-one admission must not sort the whole monetary population').toBeLessThan(entries.length * 4);
+    const tied = ['z', 'b', 'a'].map(key => ({ key, eventCount: 2, tokens: contribution.tokens, cost: contribution.cost }));
+    expect(selectUsageRankedLeaders(tied, 2, 'auto').map(entry => entry.key)).toEqual(['a', 'b']);
+    expect(selectUsageRankedLeaders(tied, 0, 'auto')).toEqual([]);
+    expect(selectUsageRankedLeaders(tied, 10, 'auto').map(entry => entry.key)).toEqual(['a', 'b', 'z']);
+});
+
+it('matches full ranking order across token, money, event and key boundaries for every existing cost mode', () => {
+    const entries = Array.from({ length: 257 }, (_, index) => ({ key: `key-${index}`, eventCount: index % 3,
+        tokens: { ...contribution.tokens, total: (index * 13) % 7 },
+        cost: { ...contribution.cost, reportedUsd: (index * 31) % 11, estimatedUsd: index % 5,
+            apiEquivalentUsd: index % 9, costSource: 'provider_reported' as const },
+    }));
+    for (const mode of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {
+        const ranked = [...entries].sort((left, right) => compareUsageRankedLeaders(left, right, mode));
+        for (const limit of [0, 1, 3, 20, 257, 300]) expect(selectUsageRankedLeaders(entries, limit, mode)).toEqual(ranked.slice(0, limit));
+    }
+});
+
+it('groups compact timeline source metadata without folding discarded monetary totals', () => {
+    for (const count of [1, 128]) {
+        let costReads = 0;
+        const rows = Array.from({ length: count }, (_, index) => ({ ...contribution, eventCount: 2,
+            source: index % 2 ? 'native' : 'runtime',
+            get cost() { costReads++; return contribution.cost; },
+        }));
+        const groups = groupUsageLeaderSources(rows);
+        expect(groups.flatMap(group => group.rows)).toHaveLength(count);
+        expect(groups.reduce((sum, group) => sum + group.value.eventCount, 0)).toBe(count * 2);
+        expect(groups.reduce((sum, group) => sum + group.value.tokens.total, 0)).toBe(count);
+        expect(costReads, 'metadata admission has no monetary output to calculate').toBe(0);
+        const rich = buildUsageLeaderList(rows, 'model', 1, 'auto', new Map(), true)![0]!.sources!;
+        expect(costReads, 'rich source money still folds its actual monetary population').toBeGreaterThan(0);
+        expect(groups.map(group => group.value).sort((a, b) => a.source.localeCompare(b.source)))
+            .toEqual(rich.map(({ cost: _cost, ...metadata }) => metadata));
+    }
+});
+
+it('admits compact ranking operands without pricing the selected population a second time', () => {
+    let costReads = 0;
+    const rows = [10, 9, 9, 9, 1].map((total, index) => ({ ...contribution,
+        sessionId: String(index), eventCount: 1, tokens: { ...contribution.tokens, total },
+        get cost() { costReads++; return contribution.cost; },
+    }));
+    const selected = selectUsageLeaderTokenFrontier(rows, 'session', 2);
+    expect(selected.map(group => group.value.key)).toEqual(['0', '1', '2', '3']);
+    expect(selected.map(group => group.rows[0])).toEqual(rows.slice(0, 4));
+    expect(costReads, 'a compact pricing population needs token admission, not another monetary projection').toBe(0);
+});
+
+it('prices only the token frontier while keeping monetary tie ordering and newly requested candidates', () => {
+    const priced = new Set<number>();
+    // The QA Account has 2,733 Sessions; price cannot promote a lower token count.
+    const rows = Array.from({ length: 2733 }, (_, index) => ({ ...contribution,
+        id: String(index), sessionId: String(index), eventCount: 1,
+        tokens: { ...contribution.tokens, input: index < 4 ? 100 : 1, total: index < 4 ? 100 : 1 },
+        get cost() {
+            priced.add(index);
+            return { reportedUsd: index / 10, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const };
+        },
+    }));
+    const leaders = buildUsageLeaderList(rows, 'session', 3, 'auto');
+    expect(leaders?.map(leader => leader.key)).toEqual(['3', '2', '1']);
+    expect([...priced].sort((a, b) => a - b), 'a lower token count cannot enter this ranking, regardless of its money').toEqual([0, 1, 2, 3]);
+    priced.clear();
+    const expanded = buildUsageLeaderList(rows, 'session', rows.length, 'auto');
+    expect(expanded).toHaveLength(rows.length);
+    expect(priced.size).toBe(rows.length);
+    expect(expanded?.slice(0, 3)).toEqual(leaders);
+});
+
+it('retains every token-frontier tie for compact private repricing', () => {
+    const rows = [10, 9, 9, 9, 1].map((total, index) => ({ ...contribution,
+        id: String(index), sessionId: String(index), eventCount: 1,
+        tokens: { ...contribution.tokens, input: total, total },
+        cost: { ...contribution.cost, reportedUsd: index / 10, costSource: 'provider_reported' as const },
+    }));
+    const result = selectUsageLeaderTokenFrontier(rows, 'session', 2);
+    expect(result.map(group => group.value.key)).toEqual(['0', '1', '2', '3']);
+    expect(buildUsageLeaderList(rows, 'session', 2, 'auto')?.map(leader => leader.key)).toEqual(['0', '3']);
+});
+
+it('preserves half-open, overlapping and empty chart ranges with exact monetary additions', () => {
+    const contributions = [4, 1, 2, 3].map((observedAtMs, index) => ({ ...contribution,
+        id: String(index), observedAtMs, eventCount: 1,
+        cost: { ...contribution.cost, reportedUsd: index === 0 ? 1e16 : 1, costSource: 'provider_reported' as const },
+    }));
+    const series = [[0, 10], [2, 5], [4, 4], [3, 4], [100, 101], [4, 5], [0, 10]].map(([bucketStartMs, bucketEndMs]) => ({
+        bucketStartMs: bucketStartMs!, bucketEndMs: bucketEndMs!, eventCount: 4,
+        tokens: contribution.tokens, cost: contribution.cost,
+    }));
+    const response = { v: 1 as const, totals: { eventCount: 4, tokens: contribution.tokens, cost: contribution.cost },
+        contributions, series };
+    const result = projectUsagePageCost(response, 'reported');
+    expect(result.accounting.contributions).toBe(contributions);
+    // Owner ruling 2026-10-31 L0 corrects IEEE-order boundaries in the shared exact baseline.
+    expect(result.accounting.series!.map(bucket => bucket.cost.effectiveUsd))
+        .toEqual([1e16 + 4, 1e16 + 2, undefined, 1, undefined, 1e16, 1e16 + 4]);
+    expect(result.amountUsd).toBe(1e16 + 4);
+    const changed = projectUsagePageCost({ ...response,
+        contributions: contributions.map((row, index) => index === 0 ? { ...row, observedAtMs: 1 } : row),
+    }, 'reported');
+    expect(changed.accounting.series!.map(bucket => bucket.cost.effectiveUsd))
+        .toEqual([1e16 + 4, 2, undefined, 1, undefined, undefined, 1e16 + 4]);
+});
 
 it('ranks counted contributions without copying their unrelated evidence fields', () => {
     const rows = Array.from({ length: 100 }, (_, index) => ({ ...contribution, id: String(index), eventCount: 1,
@@ -51,7 +165,7 @@ it('buckets the same selected Claude money as the breakdown across a midnight-sp
     expect(days.reduce<number>((sum, value) => sum + value!, 0)).toBeCloseTo(page.amountUsd!);
     expect(resolveUsageCostForSelection(page.accounting.breakdowns!.agent![0]!.cost, page.selection)).toBeCloseTo(page.amountUsd!);
     // Bucketing does not relabel the covered inference as a second charge.
-    expect(page.accounting.contributions).toEqual(repriced.contributions);
+    expect(page.accounting.contributions).toEqual(UsageAnalyticsQueryResponseSchema.parse(repriced).contributions);
     const dayQuery = projectUsagePageCost({ ...repriced,
         contributions: repriced.contributions!.filter(row => row.observedAtMs < midnight) }, 'auto');
     expect(dayQuery.amountUsd, 'a new day-scoped query cannot attribute the absent report').toBeNull();

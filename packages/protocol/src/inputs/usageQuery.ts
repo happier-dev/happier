@@ -33,10 +33,13 @@ export const UsageQuerySchema = lazyZodSchema(() => {
     metric: z._default(UsagePresentationMetricSchema, 'tokens'),
     // Host projection demand; accounting transport never receives this clause.
     includeAccounting: z._default(z.boolean(), true),
+    includeContributions: z._default(z.boolean(), false),
+    includeComparison: z._default(z.boolean(), true),
     includeQuotaHistory: z._default(z.boolean(), true),
     includeSessionEvidence: z._default(z.boolean(), true),
     includeTranscriptEvidence: z._default(z.boolean(), true),
     includeWorkEvidence: z._default(z.boolean(), true),
+    workProjection: z._default(z.enum(['summary', 'detail']), 'detail'),
     breakdown: z._default(clauses.breakdowns._zod.def.innerType, []),
     modelIds: z._default(filters.modelIds._zod.def.innerType, []),
     workspaceIds: z._default(filters.workspaceIds._zod.def.innerType, []),
@@ -46,6 +49,12 @@ export const UsageQuerySchema = lazyZodSchema(() => {
 });
 export type UsageQuery = z.infer<typeof UsageQuerySchema>;
 
+/** Private transcript evidence uses admitted turns; only allocation and export consume event rows. */
+export function usageQueryNeedsContributionRows(query: UsageQuery): boolean {
+  return query.includeContributions || query.population !== 'public_eligible_personal'
+    && query.includeWorkEvidence && query.workProjection !== 'summary';
+}
+
 /** Source inventory is metadata, independent of accounting period, metric and cost basis. */
 export const UsageSourceInventoryScopeSchema = lazyZodSchema(() => z.pick(UsageQuerySchema, { agents: true, machines: true, sources: true }));
 export type UsageSourceInventoryScope = z.infer<typeof UsageSourceInventoryScopeSchema>;
@@ -54,12 +63,16 @@ export const UsageQueryBatchInputSchema = lazyZodSchema(() => z.strictObject({ q
 export type UsageQueryBatchInput = z.infer<typeof UsageQueryBatchInputSchema>;
 
 const sortedSet = (values: readonly string[]) => [...new Set(values)].sort();
+// Only the owner inserts frozen copies. Unknown caller objects are always revalidated.
+const normalizedQueryKeys = new WeakMap<UsageQuery, string | null>();
+const normalizedBatchKeys = new WeakMap<UsageQueryBatchInput, string | null>();
 
 /** Canonical semantic identity includes every admitted filter and output clause. */
 export function normalizeUsageQuery(value: unknown): UsageQuery {
+  if (typeof value === 'object' && value !== null && normalizedQueryKeys.has(value as UsageQuery)) return value as UsageQuery;
   const query = UsageQuerySchema.parse(value);
   const sessions = query.session === null ? [] : typeof query.session === 'string' ? [query.session] : query.session;
-  return { ...query,
+  const normalized: UsageQuery = { ...query,
     population: query.population ?? 'all_personal_history',
     agents: sortedSet(query.agents), machines: sortedSet(query.machines), projects: sortedSet(query.projects),
     sources: sortedSet(query.sources), session: sessions.length ? sortedSet(sessions) : null,
@@ -70,24 +83,48 @@ export function normalizeUsageQuery(value: unknown): UsageQuery {
     includeMessageStats: query.includeMessageStats ?? false,
     ...(query.includeActivity ? { activityResolution: query.activityResolution ?? 'both' } : { activityResolution: undefined }),
   };
+  Object.freeze(normalized.period);
+  for (const values of [normalized.agents, normalized.machines, normalized.projects, normalized.sources,
+    normalized.modelIds, normalized.workspaceIds, normalized.backendModes, normalized.breakdown]) Object.freeze(values);
+  if (normalized.session !== null && Array.isArray(normalized.session)) Object.freeze(normalized.session);
+  Object.freeze(normalized);
+  normalizedQueryKeys.set(normalized, null);
+  return normalized;
 }
 
 export function getUsageQueryKey(value: unknown): string {
-  return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(normalizeUsageQuery(value)));
+  const query = normalizeUsageQuery(value);
+  let key = normalizedQueryKeys.get(query);
+  if (key == null) {
+    key = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(query));
+    normalizedQueryKeys.set(query, key);
+  }
+  return key;
 }
 
 /** A batch is a semantic set, not a source of result ordering or another query dialect. */
 export function normalizeUsageQueryBatchInput(value: unknown): UsageQueryBatchInput {
+  if (typeof value === 'object' && value !== null && normalizedBatchKeys.has(value as UsageQueryBatchInput)) return value as UsageQueryBatchInput;
   const input = UsageQueryBatchInputSchema.parse(value);
   const keyed = new Map(input.queries.map(candidate => {
     const query = normalizeUsageQuery(candidate);
     return [getUsageQueryKey(query), query] as const;
   }));
-  return { queries: [...keyed].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([, query]) => query) };
+  const normalized = { queries: [...keyed].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([, query]) => query) };
+  Object.freeze(normalized.queries);
+  Object.freeze(normalized);
+  normalizedBatchKeys.set(normalized, null);
+  return normalized;
 }
 
 export function getUsageQueryBatchKey(value: unknown): string {
-  return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(normalizeUsageQueryBatchInput(value)));
+  const batch = normalizeUsageQueryBatchInput(value);
+  let key = normalizedBatchKeys.get(batch);
+  if (key == null) {
+    key = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(batch));
+    normalizedBatchKeys.set(batch, key);
+  }
+  return key;
 }
 
 /** Resolve rolling intent only at the read boundary; persisted inputs and semantic keys stay relative. */
@@ -96,7 +133,7 @@ export function resolveUsageQueryPeriod(query: Pick<UsageQuery, 'period' | 'time
   const relative = query.period.relative;
   const today = resolveUsageBucketBounds('day', nowMs, query.timeZoneOffsetMinutes).bucketStartMs;
   if (relative === 'today') return { startMs: today, endMs: nowMs };
-  if (relative === 'all') return { startMs: 0, endMs: nowMs };
+  if (relative === 'all') return { endMs: nowMs };
   const days = { '7days': 7, '30days': 30, '90days': 90, year: 365 }[relative];
   return { startMs: today - (days - 1) * 86_400_000, endMs: nowMs };
 }
@@ -104,8 +141,9 @@ export function resolveUsageQueryPeriod(query: Pick<UsageQuery, 'period' | 'time
 export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now()): UsageAnalyticsQueryRequest {
   const query = normalizeUsageQuery(value);
   const { period: _period, agents, machines, projects, sources, execution, session, costBasis, metric: _metric,
-    includeAccounting: _accounting, includeQuotaHistory: _quotaHistory, includeSessionEvidence: _sessionEvidence, includeTranscriptEvidence: _transcriptEvidence,
-    includeWorkEvidence: _workEvidence, breakdown,
+    includeAccounting: _accounting, includeContributions: _contributions, includeComparison: _comparison,
+    includeQuotaHistory: _quotaHistory, includeSessionEvidence: _sessionEvidence, includeTranscriptEvidence: _transcriptEvidence,
+    includeWorkEvidence: _workEvidence, workProjection: _workProjection, breakdown,
     modelIds, workspaceIds, backendModes, population, ...clauses } = query;
   const selected = (values: string[]) => values.length ? values : undefined;
   return UsageAnalyticsQueryRequestSchema.parse({ ...clauses,
@@ -143,7 +181,8 @@ export function readUsageGroupByOptions(value: unknown): readonly InputOption[] 
   return options;
 }
 
-const relativePeriodLabels = {
+/** The Period presets' English names: the Period choice here and an anonymous profile's period title. */
+export const USAGE_RELATIVE_PERIOD_LABELS_EN = {
   today: 'Today', '7days': 'Last 7 days', '30days': 'Last 30 days', '90days': 'Last 90 days', year: 'Last year', all: 'All time',
 } satisfies Record<UsageRelativePeriod, string>;
 
@@ -158,7 +197,7 @@ export function readUsagePeriodOptions(value: unknown): readonly InputOption[] {
   const unbounded = range !== null && range.startMs === undefined && range.endMs === undefined;
   const options = UsageRelativePeriodSchema.options.map((relative): InputOption => {
     const value: InputOption['value'] = relative === 'all' && unbounded ? {} : { relative };
-    return { value, label: relativePeriodLabels[relative] };
+    return { value, label: USAGE_RELATIVE_PERIOD_LABELS_EN[relative] };
   });
   if (range !== null && !unbounded) options.push({ value: projectNativeJsonValueForTransport(range), label: 'Custom range' });
   return options;

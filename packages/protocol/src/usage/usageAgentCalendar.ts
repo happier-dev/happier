@@ -74,6 +74,8 @@ export interface UsageAgentCalendarInput {
     period: UsageWorkIntervalsInput['period'];
     timeZoneOffsetMinutes: number;
     accounting?: UsageAnalyticsQueryResponse;
+    /** Selected money admitted once for these ordered rows; calendar still owns every partition and merge. */
+    accountingSelectedCosts?: (rows: readonly UsageAnalyticsContribution[], mode: UsageCostMode) => readonly UsageSelectedCostAccumulator[];
     intervals?: UsageWorkIntervalsProjection | null;
     detailStatus?: 'available' | 'partial' | 'unknown';
     costMode?: UsageCostMode;
@@ -92,11 +94,45 @@ export interface UsageAgentAccountingCalendar {
     projection: UsageAgentCalendar;
 }
 
+/** Open accounting calendars begin on the selected population's first observed local day. */
+export function resolveUsageAccountingCalendarPeriod(input: {
+    period: Readonly<{ startMs?: number; endMs: number }>;
+    accounting?: UsageAnalyticsQueryResponse;
+    timeZoneOffsetMinutes: number;
+    observationStartMs?: number;
+    intervals?: UsageWorkIntervalsProjection | null;
+    steering?: UsageAgentCalendarInput['steering'];
+}): UsageWorkIntervalsInput['period'] {
+    const { endMs } = input.period;
+    if (input.period.startMs !== undefined) return { startMs: input.period.startMs, endMs };
+    const carried = input.accounting?.summary?.accountingCalendar?.value;
+    let firstObserved = input.observationStartMs ?? input.accounting?.summary?.observationRange?.startMs;
+    if (firstObserved === undefined && carried?.period.endMs === endMs && carried.timeZoneOffsetMinutes === input.timeZoneOffsetMinutes
+        && carried.period.startMs < endMs) firstObserved = carried.period.startMs;
+    if (firstObserved === undefined) for (const row of input.accounting?.contributions ?? []) {
+        const observedAtMs = row.observedAtMs;
+        firstObserved = firstObserved === undefined ? observedAtMs : Math.min(firstObserved, observedAtMs);
+    }
+    for (const lane of input.intervals?.lanes ?? []) for (const span of lane.busy) {
+        firstObserved = firstObserved === undefined ? span.startMs : Math.min(firstObserved, span.startMs);
+    }
+    for (const row of input.steering?.hourly ?? []) {
+        const instant = resolveUsageCalendarDateStart(row.date, input.timeZoneOffsetMinutes) + row.hour * 3_600_000;
+        firstObserved = firstObserved === undefined ? instant : Math.min(firstObserved, instant);
+    }
+    return { startMs: firstObserved === undefined ? endMs
+        : resolveUsageBucketBounds('day', firstObserved, input.timeZoneOffsetMinutes).bucketStartMs, endMs };
+}
+
 export function projectUsageAgentAccountingCalendar(input: Pick<UsageAgentCalendarInput,
-    'accounting' | 'period' | 'timeZoneOffsetMinutes' | 'costMode'>): UsageAgentAccountingCalendar {
+    'accounting' | 'period' | 'timeZoneOffsetMinutes' | 'costMode' | 'accountingSelectedCosts'>): UsageAgentAccountingCalendar {
+    const carried = input.accounting?.contributions === undefined ? input.accounting?.summary?.accountingCalendar?.value : undefined;
+    const projection = carried?.period.startMs === input.period.startMs && carried.period.endMs === input.period.endMs
+        && carried.timeZoneOffsetMinutes === input.timeZoneOffsetMinutes && carried.costMode === (input.costMode ?? 'auto') ? carried : undefined;
     return { accounting: input.accounting, period: { ...input.period }, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
-        costMode: input.costMode ?? 'auto', projection: projectUsageAgentCalendarPopulation({ accounting: input.accounting,
-            period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, costMode: input.costMode }) };
+        costMode: input.costMode ?? 'auto', projection: projection ?? projectUsageAgentCalendarPopulation({ accounting: input.accounting,
+            period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, costMode: input.costMode,
+            accountingSelectedCosts: input.accountingSelectedCosts }) };
 }
 
 type BucketPopulation = { rows: UsageAnalyticsContribution[];
@@ -104,6 +140,11 @@ type BucketPopulation = { rows: UsageAnalyticsContribution[];
     costs: Map<string | null, UsageSelectedCostAccumulator> };
 type BucketFacts = BucketPopulation & { startMs: number; endMs: number };
 const compareAgent = (left: string | null, right: string | null) => (left ?? '').localeCompare(right ?? '');
+
+/** Absent or zero measurements do not establish a measured share. */
+export function resolveUsageCalendarShare(value: number | null, total: number | null): number | null {
+    return value !== null && total !== null && value > 0 && total > 0 ? value / total : null;
+}
 
 function createBucketPopulation(): BucketPopulation {
     return { rows: [], busy: new Map(), steering: new Map(), costs: new Map() };
@@ -156,7 +197,7 @@ function accountingCoverage(rows: readonly UsageAnalyticsContribution[] | undefi
         ? 'complete_for_supplied_facts' : 'partial';
 }
 
-function leading(agents: CalendarBucket['agents'], metric: keyof CalendarMetrics, total: CalendarMetrics): z.infer<typeof Leader> {
+export function resolveUsageCalendarLeaders(agents: CalendarBucket['agents'], metric: keyof CalendarMetrics, total: CalendarMetrics): z.infer<typeof Leader> {
     const amount = (metrics: CalendarMetrics) => metric === 'cost' ? metrics.cost?.amountUsd ?? null : metrics[metric];
     const totalValue = amount(total);
     if (totalValue === null || agents.some(agent => amount(agent.metrics) === null)) return { status: 'unavailable', agentIds: [], includesUnknown: false };
@@ -195,14 +236,21 @@ function projectActiveDays(days: UsageAgentCalendar['days'], accounting: Readonl
     });
 }
 
+function projectWeeklyAgentMix(weeks: UsageAgentCalendar['weeks']): UsageAgentCalendar['weeklyAgentMix'] {
+    return weeks.filter(week => week.totals.tokens !== null).map(week => ({ startMs: week.startMs, endMs: week.endMs,
+        mix: week.totals.tokens! > 0 ? week.agents.filter(agent => (agent.metrics.tokens ?? 0) > 0).map(agent => ({ agentId: agent.agentId,
+            share: agent.metrics.tokens! / week.totals.tokens!, coverage: agent.coverage.accounting })) : [] }));
+}
+
 /** Compose private evidence onto a read-owned accounting reduction without folding its rows again. */
 export function projectUsageAgentCalendar(input: UsageAgentCalendarInput): UsageAgentCalendar {
-    const carried = input.accountingCalendar;
-    if (!carried || carried.accounting !== input.accounting || carried.period.startMs !== input.period.startMs
+    const carried = input.accountingCalendar ?? (input.accounting?.contributions === undefined && input.accounting?.summary?.accountingCalendar
+        ? projectUsageAgentAccountingCalendar(input) : undefined);
+    if (!carried || carried.accounting !== input.accounting || carried.period.startMs < input.period.startMs
         || carried.period.endMs !== input.period.endMs || carried.timeZoneOffsetMinutes !== input.timeZoneOffsetMinutes
         || carried.costMode !== (input.costMode ?? 'auto')) return projectUsageAgentCalendarPopulation(input);
     const accounting = carried.projection;
-    if (!input.intervals && !input.steering || input.detailStatus === 'unknown') return input.nightHours
+    if ((!input.intervals && !input.steering || input.detailStatus === 'unknown') && carried.period.startMs === input.period.startMs) return input.nightHours
         ? { ...accounting, dayNightActivity: projectDayNightActivity(input) } : accounting;
     const detail = projectUsageAgentCalendarPopulation({ ...input, accounting: undefined, accountingCalendar: undefined });
     const defaultAccounting = (): CalendarMetrics => ({ tokens: accounting.coverage.accounting === 'complete_for_supplied_facts' ? 0 : null,
@@ -224,13 +272,13 @@ export function projectUsageAgentCalendar(input: UsageAgentCalendarInput): Usage
             const aa = accountingAgents.get(agentId);
             const bb = privateAgents.get(agentId);
             return { agentId, metrics: combineMetrics(aa?.metrics ?? defaultAccounting(), bb?.metrics ?? defaultPrivate()),
-                coverage: { accounting: aa?.coverage.accounting ?? (input.accounting?.contributions === undefined ? 'unavailable' as const : 'unknown' as const),
+                coverage: { accounting: aa?.coverage.accounting ?? (input.accounting?.contributions === undefined && !input.accounting?.summary ? 'unavailable' as const : 'unknown' as const),
                     busy: detail.coverage.busy, steering: detail.coverage.steering } };
         });
         const totals = combineMetrics(a?.totals ?? defaultAccounting(), b?.totals ?? defaultPrivate());
-        return { totals, agents, leaders: { tokens: leading(agents, 'tokens', totals), eventCount: leading(agents, 'eventCount', totals),
-            sessions: leading(agents, 'sessions', totals), cost: leading(agents, 'cost', totals), busyMs: leading(agents, 'busyMs', totals),
-            steeringCount: leading(agents, 'steeringCount', totals), peakParallel: leading(agents, 'peakParallel', totals) } };
+        return { totals, agents, leaders: { tokens: resolveUsageCalendarLeaders(agents, 'tokens', totals), eventCount: resolveUsageCalendarLeaders(agents, 'eventCount', totals),
+            sessions: resolveUsageCalendarLeaders(agents, 'sessions', totals), cost: resolveUsageCalendarLeaders(agents, 'cost', totals), busyMs: resolveUsageCalendarLeaders(agents, 'busyMs', totals),
+            steeringCount: resolveUsageCalendarLeaders(agents, 'steeringCount', totals), peakParallel: resolveUsageCalendarLeaders(agents, 'peakParallel', totals) } };
     };
     const combineGroups = <T extends z.infer<typeof Figures>>(a: readonly T[], b: readonly T[], key: (row: T) => string): T[] => {
         const groups = new Map<string, { accounting?: T; detail?: T }>();
@@ -239,7 +287,13 @@ export function projectUsageAgentCalendar(input: UsageAgentCalendarInput): Usage
         return [...groups.values()].map(group => ({ ...(group.accounting ?? group.detail!), ...combineFigures(group.accounting, group.detail) }));
     };
     const days = combineGroups(accounting.days, detail.days, row => row.date).sort((a, b) => a.startMs - b.startMs);
-    const weeks = combineGroups(accounting.weeks, detail.weeks, row => String(row.startMs)).sort((a, b) => a.startMs - b.startMs);
+    const accountingWeeks = accounting.weeks.map(week => {
+        const startMs = Math.max(input.period.startMs, resolveUsageBucketBounds('week', week.startMs, input.timeZoneOffsetMinutes).bucketStartMs);
+        if (startMs === week.startMs) return week;
+        const { date, weekday } = resolveUsageCalendarInstant(startMs, input.timeZoneOffsetMinutes);
+        return { ...week, startMs, date, weekday };
+    });
+    const weeks = combineGroups(accountingWeeks, detail.weeks, row => String(row.startMs)).sort((a, b) => a.startMs - b.startMs);
     const hours = combineGroups(accounting.hours, detail.hours, row => String(row.startMs)).sort((a, b) => a.startMs - b.startMs);
     const weekdayHourBuckets = combineGroups(accounting.weekdayHourBuckets, detail.weekdayHourBuckets, row => `${row.weekday}:${row.hour}`)
         .sort((a, b) => a.weekday - b.weekday || a.hour - b.hour);
@@ -250,9 +304,9 @@ export function projectUsageAgentCalendar(input: UsageAgentCalendarInput): Usage
         shares: accountingAgents.get(agent.agentId)?.shares ?? { tokens: null, cost: null } })) };
     const agentActiveDays = projectActiveDays(days, new Map(accounting.periodSummary.agents.map(agent => [agent.agentId, agent.coverage.accounting])),
         new Set(detail.periodSummary.agents.filter(agent => (agent.metrics.busyMs ?? 0) > 0).map(agent => agent.agentId)), detail.coverage.busy);
-    return { ...accounting, coverage: { accounting: accounting.coverage.accounting, busy: detail.coverage.busy, steering: detail.coverage.steering },
+    return { ...accounting, period: input.period, coverage: { accounting: accounting.coverage.accounting, busy: detail.coverage.busy, steering: detail.coverage.steering },
         days, weeks, hours, weekdayHourBuckets, hourOfDayBuckets, periodSummary, agentActiveDays,
-        weeklyPeakParallel: detail.weeklyPeakParallel, dayNightActivity: projectDayNightActivity(input) };
+        weeklyAgentMix: projectWeeklyAgentMix(weeks), weeklyPeakParallel: detail.weeklyPeakParallel, dayNightActivity: projectDayNightActivity(input) };
 }
 
 /** Complete reconciled accounting and already-clipped witnessed lanes are the only populations. */
@@ -265,9 +319,11 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
     const rows = suppliedRows?.filter(row => row.observedAtMs >= period.startMs && row.observedAtMs < period.endMs);
     // Resolve overlap against the whole selected query before partitioning; the report's
     // covered earlier estimates cannot become another charge in an earlier calendar bucket.
-    const resolvedCosts = rows === undefined ? [] : resolveUsageContributionCosts(rows, costMode);
+    const selectedCosts = rows === undefined ? [] : input.accountingSelectedCosts
+        ? input.accountingSelectedCosts(rows, costMode)
+        : resolveUsageContributionCosts(rows, costMode).map(cost => selectResolvedUsageCost(cost, costMode));
     const selectedRows = rows;
-    const intervals = input.detailStatus !== 'unknown' && input.intervals?.period.startMs === period.startMs
+    const intervals = input.detailStatus !== 'unknown' && input.intervals && input.intervals.period.startMs <= period.startMs
         && input.intervals.period.endMs === period.endMs && input.intervals.timeZoneOffsetMinutes === timeZoneOffsetMinutes ? input.intervals : null;
     const busyCoverage: CalendarCoverage = intervals === null ? 'unavailable'
         : input.detailStatus === 'partial' || intervals.coverage === 'partial' ? 'partial' : 'complete_for_supplied_facts';
@@ -308,9 +364,9 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         const totalCost = [...population.costs.values()].reduce((total, cost) => mergeUsageSelectedCosts(total, cost, costMode), createEmptyUsageSelectedCost());
         const totals = metrics(population.rows, [...population.busy.values()].flat(), [...population.steering.values()].flat(), totalCost);
         return { totals, agents,
-            leaders: { tokens: leading(agents, 'tokens', totals), eventCount: leading(agents, 'eventCount', totals),
-                sessions: leading(agents, 'sessions', totals), cost: leading(agents, 'cost', totals), busyMs: leading(agents, 'busyMs', totals),
-                steeringCount: leading(agents, 'steeringCount', totals), peakParallel: leading(agents, 'peakParallel', totals) } };
+            leaders: { tokens: resolveUsageCalendarLeaders(agents, 'tokens', totals), eventCount: resolveUsageCalendarLeaders(agents, 'eventCount', totals),
+                sessions: resolveUsageCalendarLeaders(agents, 'sessions', totals), cost: resolveUsageCalendarLeaders(agents, 'cost', totals), busyMs: resolveUsageCalendarLeaders(agents, 'busyMs', totals),
+                steeringCount: resolveUsageCalendarLeaders(agents, 'steeringCount', totals), peakParallel: resolveUsageCalendarLeaders(agents, 'peakParallel', totals) } };
     };
     const projectBuckets = (granularity: 'day' | 'week' | 'hour', hours?: readonly BucketFacts[]): { facts: BucketFacts[]; buckets: CalendarBucket[] } => {
         const buckets = new Map<number, BucketFacts>();
@@ -336,7 +392,7 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
             const bucket = bucketAt(row.observedAtMs)!;
             bucket.rows.push(row);
             bucket.costs.set(row.agentId, mergeUsageSelectedCosts(bucket.costs.get(row.agentId) ?? createEmptyUsageSelectedCost(),
-                selectResolvedUsageCost(resolvedCosts[index]!, costMode), costMode));
+                selectedCosts[index]!, costMode));
         }
         for (const lane of intervals?.lanes ?? []) for (const span of lane.busy) {
             for (let cursor = Math.max(span.startMs, period.startMs); cursor < Math.min(span.endMs, period.endMs);) {
@@ -393,12 +449,10 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
     // Context-only runtime observations currently encode absent accounting as zero.
     // The query has no measurement-presence marker, so zero cannot establish a
     // measured share or a context-only classification. Preserve nullable shares.
-    const share = (value: number | null, total: number | null) => value !== null && total !== null && value > 0 && total > 0
-        ? value / total : null;
     const periodSummary: UsageAgentCalendar['periodSummary'] = { ...periodFigures, agents: periodFigures.agents.map(agent => ({ ...agent,
-        shares: { tokens: share(agent.metrics.tokens, periodFigures.totals.tokens),
+        shares: { tokens: resolveUsageCalendarShare(agent.metrics.tokens, periodFigures.totals.tokens),
             cost: agent.metrics.cost?.currency === periodFigures.totals.cost?.currency
-                ? share(agent.metrics.cost?.amountUsd ?? null, periodFigures.totals.cost?.amountUsd ?? null) : null } })) };
+                ? resolveUsageCalendarShare(agent.metrics.cost?.amountUsd ?? null, periodFigures.totals.cost?.amountUsd ?? null) : null } })) };
     // Dated spans stay on their real instants: the same sweep takes the maximum
     // across weeks, while Sessions are deduplicated from their witnessed Session ids.
     const weekdayHourBuckets = [...weekdayHours.values()].sort((left, right) => left.weekday - right.weekday || left.hour - right.hour)
@@ -411,9 +465,7 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
     const result: UsageAgentCalendar = { period, timeZoneOffsetMinutes, costMode, coverage, periodSummary, days, weeks, hours, weekdayHourBuckets, hourOfDayBuckets,
         agentActiveDays: projectActiveDays(days, new Map(periodFigures.agents.filter(agent => accountingAgents.has(agent.agentId))
             .map(agent => [agent.agentId, agent.coverage.accounting])), busyAgents, busyCoverage),
-        weeklyAgentMix: weeks.filter(week => week.totals.tokens !== null).map(week => ({ startMs: week.startMs, endMs: week.endMs,
-            mix: week.totals.tokens! > 0 ? week.agents.filter(agent => (agent.metrics.tokens ?? 0) > 0).map(agent => ({ agentId: agent.agentId,
-                share: agent.metrics.tokens! / week.totals.tokens!, coverage: agent.coverage.accounting })) : [] })),
+        weeklyAgentMix: projectWeeklyAgentMix(weeks),
         weeklyPeakParallel: weeks.flatMap(week => week.totals.peakParallel === null ? [] : [{ startMs: week.startMs, endMs: week.endMs, peak: week.totals.peakParallel, coverage: busyCoverage }]),
         dayNightActivity, machineKinds: { status: 'unavailable', reason: 'no_witnessed_kind' } };
     return result;

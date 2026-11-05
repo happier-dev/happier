@@ -5,6 +5,15 @@ import { readServerEnabledBit } from '../serverEnabledBit.js';
 import { FeaturesResponseSchema } from './featuresResponseSchema.js';
 
 describe('FeatureGatesSchema', () => {
+  it('negotiates compact Usage delivery only on an explicit valid Home bit', () => {
+    const parse = (features: unknown) => FeaturesResponseSchema.parse({ features, capabilities: {} });
+    expect(readServerEnabledBit(parse({ usage: { compactBatch: { enabled: true } } }), 'usage.compactBatch')).toBe(true);
+    for (const features of [{}, { usage: { compactBatch: { enabled: false } } },
+      { usage: { compactBatch: { enabled: 'yes' } } }, { usage: false }]) {
+      expect(readServerEnabledBit(parse(features), 'usage.compactBatch')).toBe(false);
+    }
+  });
+
   it('negotiates Artifact query hints only on an explicit valid support bit', () => {
     const parse = (features: unknown) => FeaturesResponseSchema.parse({ features, capabilities: {} });
     expect(readServerEnabledBit(parse({ artifacts: { queryHints: { enabled: true } } }), 'artifacts.queryHints')).toBe(true);

@@ -1,8 +1,264 @@
+import { withUsageMoney, readUsageMoney } from './usageMoney.js';
 import { expect, it } from 'vitest';
-import { projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
+import { admitUsageAnalyticsServerPrices, projectUsageAnalyticsSummary, projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageAnalyticsResponseSteps, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { addUsageCostForMode, createEmptyUsageCost } from './usageAggregation.js';
+import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
+
+it('suspends pricing only when its host checkpoint is due', () => {
+  const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
+  const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' };
+  const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 128, tokens, cost },
+    contributions: Array.from({ length: 128 }, (_, index) => ({ id: String(index), eventCount: 1,
+      observedAtMs: index, sessionId: null, turnId: null, agentId: null, modelId: 'gpt-4o',
+      machineId: null, projectKey: null, workspaceId: null, source: null, tokens, tokenCategories: tokens, cost })) };
+  const steps = repriceUsageAnalyticsResponseSteps(value, undefined, {}, 'auto', undefined, () => false);
+  const first = steps.next();
+  expect(first.done, 'an unexpired host slice must not suspend once per row or nested money operand').toBe(true);
+  if (!first.done) throw new Error('Expected pricing to finish in the admitted host slice');
+  expect(JSON.stringify(first.value)).toBe(JSON.stringify(repriceUsageAnalyticsResponse(value)));
+
+  // The checkpoint is a host clock boundary. Simulate one millisecond of work
+  // per first row admission without mocking any pricing or aggregation logic.
+  let elapsedMs = 0;
+  let sliceStartedAt = 0;
+  const admitted = new Set<number>();
+  const measured = { ...value, contributions: value.contributions!.map((row, index) => ({ ...row,
+    get cost() { if (!admitted.has(index)) { admitted.add(index); elapsedMs++; } return row.cost; },
+  })) };
+  const timed = repriceUsageAnalyticsResponseSteps(measured, undefined, {}, 'auto', undefined,
+    () => elapsedMs - sliceStartedAt >= 20);
+  let next = timed.next();
+  let suspensions = 0;
+  while (!next.done) {
+    suspensions++;
+    expect(admitted.size).toBe(suspensions * 20);
+    sliceStartedAt = elapsedMs;
+    next = timed.next();
+  }
+  expect(suspensions).toBe(6);
+  expect(JSON.stringify(next.value)).toBe(JSON.stringify(first.value));
+});
+
+it('builds requested rankings directly from the priced population without preliminary money rankings', () => {
+  const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
+  const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' };
+  const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 2, tokens, cost }, contributions: ['a', 'b'].map((modelId, index) => ({
+    id: String(index), eventCount: 1, observedAtMs: 100, sessionId: String(index), turnId: null, agentId: 'codex', modelId,
+    machineId: null, projectKey: null, workspaceId: null, source: null, tokens, tokenCategories: tokens, cost,
+  })) };
+  const catalog = { ...bundledUsageModelPriceCatalog, models: {
+    a: { inputUsdPerMillion: 3, outputUsdPerMillion: 0 }, b: { inputUsdPerMillion: 7, outputUsdPerMillion: 0 },
+  } };
+  const demand = UsageAnalyticsQueryRequestSchema.parse({ breakdowns: ['model'], includeLeaders: true, topLimit: 1 });
+  const projected = repriceUsageAnalyticsResponse(value, catalog, {}, 'auto', demand);
+  expect(projected.breakdowns?.model?.map(entry => [entry.key, entry.cost.apiEquivalentUsd])).toEqual([['b', 7]]);
+  expect(projected.leaders?.models?.map(entry => entry.key)).toEqual(['b']);
+  expect(projected.contributions).toHaveLength(2);
+  const changed = repriceUsageAnalyticsResponse(value, { ...catalog, models: { ...catalog.models, a: { inputUsdPerMillion: 9, outputUsdPerMillion: 0 } } }, {}, 'auto', demand);
+  expect(changed.breakdowns?.model?.map(entry => [entry.key, entry.cost.apiEquivalentUsd])).toEqual([['a', 9]]);
+});
+
+it('resolves repeated row and compact group tariffs in proportion to distinct models per projection', () => {
+  for (const count of [2, 128]) {
+    const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
+    const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' };
+    const rows = Array.from({ length: count }, (_, index) => ({ id: String(index), observedAtMs: index,
+      sessionId: null, turnId: null, agentId: null, modelId: `model-${index % 2}`, machineId: null, projectKey: null,
+      workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost }));
+    let lookups = 0;
+    let overrideScans = 0;
+    const catalog = { ...bundledUsageModelPriceCatalog, models: new Proxy({
+      'model-0': { inputUsdPerMillion: 7, outputUsdPerMillion: 0 },
+      'model-1': { inputUsdPerMillion: 9, outputUsdPerMillion: 0 },
+    }, { get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); } }) };
+    const overrides = new Proxy({ 'unrelated-alias': { kind: 'map' as const, modelId: 'model-0' } }, {
+      ownKeys(target) { overrideScans++; return Reflect.ownKeys(target); },
+    });
+    const value: UsageAnalyticsQueryResponse = { v: 1, contributions: rows, totals: { eventCount: count, tokens, cost } };
+    const rich = repriceUsageAnalyticsResponse(value, catalog, overrides);
+    expect(rich.totals.cost.apiEquivalentUsd).toBe(8 * count);
+    expect({ lookups, overrideScans }).toEqual({ lookups: 2, overrideScans: 2 });
+    // Separate admitted partitions can carry the same model tariff.
+    const population = { groups: rows.flatMap(row => buildUsagePricingPopulation([row]).groups) };
+    expect(population.groups).toHaveLength(count);
+    lookups = overrideScans = 0;
+    expect(priceUsagePricingPopulation(population, catalog, overrides, 'auto').apiEquivalentUsd).toBe(8 * count);
+    expect({ lookups, overrideScans }).toEqual({ lookups: 2, overrideScans: 2 });
+    // A later projection must observe a changed tariff, rather than retain a price by model globally.
+    expect(repriceUsageAnalyticsResponse(value, { ...catalog, models: {
+      'model-0': { inputUsdPerMillion: 11, outputUsdPerMillion: 0 },
+      'model-1': { inputUsdPerMillion: 9, outputUsdPerMillion: 0 },
+    } }, overrides).totals.cost.apiEquivalentUsd).toBe(10 * count);
+  }
+});
+
+it('lets native callbacks settle between pricing contributions and preserves the synchronous bytes', async () => {
+  const { setImmediate: nextTurn } = await import('node:timers/promises');
+  for (const count of [2, 128]) {
+    let settled = false;
+    const observed = new Map<number, boolean>();
+    let pending: Promise<void> | undefined;
+    const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
+    const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: count, tokens,
+      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: Array.from({ length: count }, (_, index) => ({
+        id: String(index), modelId: 'gpt-4o', observedAtMs: index, eventCount: 1, tokens, tokenCategories: tokens,
+        sessionId: null, turnId: null, agentId: null, machineId: null, projectKey: null, workspaceId: null, source: null,
+        get cost() {
+          if (!observed.has(index)) observed.set(index, settled);
+          pending ??= nextTurn().then(() => { settled = true; });
+          return { reportedUsd: 0, estimatedUsd: 0.1, currency: 'USD' };
+        },
+      })) };
+    try {
+      const steps = repriceUsageAnalyticsResponseSteps(value);
+      let next = steps.next();
+      while (!next.done) { await nextTurn(); next = steps.next(); }
+      expect(observed.get(0)).toBe(false);
+      expect(observed.get(1), 'the next pricing input must service an earlier native callback').toBe(true);
+      expect(JSON.stringify(next.value)).toBe(JSON.stringify(repriceUsageAnalyticsResponse(value)));
+    } finally { await pending; }
+  }
+});
+
+it('admits tariff-independent row metadata once across overlapping priced partitions in one projection', () => {
+  for (const count of [2, 128]) {
+    let categoryReads = 0;
+    const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
+    const rows = Array.from({ length: count }, (_, index) => ({ id: String(index), modelId: 'model', observedAtMs: index,
+      eventCount: 1, tokens, get tokenCategories() { categoryReads++; return tokens; },
+      cost: { reportedUsd: 0, estimatedUsd: 0.1, apiEquivalentUsd: 0.2, pricingSource: 'catalog', currency: 'USD' } }));
+    const build = createUsagePricedPartitionBuilder('auto').build;
+    const whole = build(rows);
+    const half = build(rows.slice(0, count / 2));
+    const repeated = build([...rows]);
+    expect(whole.cost).toEqual(repeated.cost);
+    expect(whole.population.groups[0]!.contributionCount).toBe(count);
+    expect(half.population.groups[0]!.contributionCount).toBe(count / 2);
+    expect(categoryReads, 'partition membership changes sums, not admission of the same row metadata').toBe(count);
+    const anotherRequest = createUsagePricedPartitionBuilder('auto').build;
+    anotherRequest(rows);
+    expect(categoryReads).toBe(count * 2);
+  }
+});
+
+it('calculates repeated exact tariff operands once per projection, without conflating hidden precision or later prices', () => {
+  for (const count of [2, 128]) {
+    let availabilityReads = 0;
+    const catalog = { ...bundledUsageModelPriceCatalog, models: { model: {
+      inputUsdPerMillion: 7, outputUsdPerMillion: 0,
+      get cacheReadUsdPerMillion() { availabilityReads++; return 2; },
+    } } };
+    const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 1_000_000, cacheWrite: 0, total: 2_000_000 };
+    const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' };
+    const value: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: count, tokens, cost },
+      contributions: Array.from({ length: count }, (_, index) => ({ id: String(index), eventCount: 1, observedAtMs: index,
+        sessionId: null, turnId: null, agentId: null, modelId: 'model', machineId: null, projectKey: null,
+        workspaceId: null, source: null, tokens, tokenCategories: { ...tokens }, cost })) };
+    expect(repriceUsageAnalyticsResponse(value, catalog).totals.cost.apiEquivalentUsd).toBe(count * 9);
+    // Tariff data is an external catalog boundary. Re-reading availability per
+    // equal operand witnesses a repeated estimate, rather than a metadata fold.
+    expect(availabilityReads, `${count} equal token operands need one estimate`).toBe(4);
+    const changed = { ...catalog, models: { model: { inputUsdPerMillion: 11, outputUsdPerMillion: 0, cacheReadUsdPerMillion: 2 } } };
+    expect(repriceUsageAnalyticsResponse(value, changed).totals.cost.apiEquivalentUsd).toBe(count * 13);
+    const precise = value.contributions!.slice(0, 2).map((row, index) => ({ ...row,
+      tokenCategories: withUsageMoney({ ...tokens, input: 1 }, { input: { units: 10_000_000_000_000_000n + BigInt(index), scale: 16 } }) }));
+    const priced = repriceUsageAnalyticsResponse({ ...value, contributions: precise }, catalog).contributions!;
+    const exact = priced.map(row => readUsageMoney(row.cost, 'apiEquivalentUsd', row.cost.apiEquivalentUsd!));
+    expect(exact[0]).not.toEqual(exact[1]);
+  }
+});
+
+it('prices each real contribution or compact tariff group once for both selected money and cache savings', () => {
+  for (const count of [1, 128]) {
+    const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 1_000_000, cacheWrite: 0, total: 2_000_000 };
+    const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const };
+    const rows = Array.from({ length: count }, (_, index) => ({ id: String(index), observedAtMs: 500,
+      sessionId: null, turnId: null, agentId: null, modelId: `model-${index}`, machineId: null, projectKey: null,
+      workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost }));
+    let lookups = 0;
+    const models = Object.fromEntries(rows.map(row => [row.modelId,
+      { inputUsdPerMillion: 7, outputUsdPerMillion: 0, cacheReadUsdPerMillion: 2 }]));
+    const catalog = { ...bundledUsageModelPriceCatalog, models: new Proxy(models, {
+      get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); },
+    }) };
+    const rich = repriceUsageAnalyticsResponse({ v: 1, contributions: rows,
+      totals: { eventCount: count, tokens, cost }, insights: { activeDays: 1, longestStreakDays: 1,
+        sessionsUsed: 0, messagesUsed: 0, modelsTried: count, favoriteModelChangeCount: 0, cacheSavingsUsd: 0 } }, catalog);
+    expect(rich.totals.cost.apiEquivalentUsd).toBe(9 * count);
+    expect(rich.insights?.cacheSavingsUsd).toBe(5 * count);
+    expect(lookups, `${count} contributions need one tariff estimate each`).toBe(count);
+    const population = buildUsagePricingPopulation(rows);
+    expect(population.groups).toHaveLength(count);
+    lookups = 0;
+    const compact = priceUsagePricingPopulation(population, catalog, {}, 'auto');
+    expect(compact.apiEquivalentUsd).toBe(9 * count);
+    expect(compact.cacheSavingsUsd).toBe(5 * count);
+    expect(lookups, `${count} compact groups need one tariff estimate each`).toBe(count);
+  }
+});
+
+it('reuses only network-admitted compact server prices; private, catalog, mode and rich projections remain live', () => {
+  const catalog = { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: 7, outputUsdPerMillion: 0 } } };
+  const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 1000 } });
+  for (const count of [1, 128]) {
+    const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
+    const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const };
+    const rich = repriceUsageAnalyticsResponse({ v: 1, priceCatalog: catalog,
+      totals: { eventCount: count, tokens: { ...tokens, input: count * tokens.input, total: count * tokens.total }, cost },
+      contributions: Array.from({ length: count }, (_, index) => ({ id: String(index), observedAtMs: 500,
+        sessionId: null, turnId: null, agentId: null, modelId: 'model', machineId: null, projectKey: null,
+        workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost })) });
+    const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(projectUsageAnalyticsSummary(rich, query))));
+    const admitted = admitUsageAnalyticsServerPrices(compact, query);
+    let lookups = 0;
+    const models = admitted.priceCatalog!.models;
+    admitted.priceCatalog!.models = new Proxy(models, { get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); } });
+    expect(repriceUsageAnalyticsResponse(admitted)).toBe(admitted);
+    expect(lookups, `${count} rows' grouped facts were already priced by the server`).toBe(0);
+    expect(JSON.stringify(admitted)).toBe(JSON.stringify(compact));
+    expect(projectUsagePageCost(admitted, 'auto').amountUsd).toBe(count * 7);
+    const overrides = { model: { kind: 'rates' as const, inputUsdPerMillion: 9, outputUsdPerMillion: 0 } };
+    const privatePrices = repriceUsageAnalyticsResponse(admitted, catalog, overrides);
+    expect(privatePrices.totals.cost.apiEquivalentUsd).toBe(count * 9);
+    const serializedPrivate = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(privatePrices)));
+    expect(repriceUsageAnalyticsResponse(serializedPrivate, catalog, {}).totals.cost.apiEquivalentUsd).toBe(count * 7);
+    expect(repriceUsageAnalyticsResponse(admitted, catalog, {}, 'estimated').totals.cost.effectiveUsd).toBe(count);
+    const updatedCatalog = { ...catalog, models: { model: { inputUsdPerMillion: 11, outputUsdPerMillion: 0 } } };
+    expect(repriceUsageAnalyticsResponse({ ...admitted, priceCatalog: updatedCatalog }).totals.cost.apiEquivalentUsd).toBe(count * 11);
+    // Neither a different producer revision/mode nor raw detail is proof of a
+    // completed local exact-money projection.
+    const mismatch = { ...compact, summary: { ...compact.summary!, catalogRevision: 'other' } };
+    expect(admitUsageAnalyticsServerPrices(mismatch, query)).toBe(mismatch);
+    expect(admitUsageAnalyticsServerPrices(compact, { ...query, costMode: 'estimated' })).toBe(compact);
+    expect(admitUsageAnalyticsServerPrices(rich, query)).toBe(rich);
+  }
+});
+
+it('admits raw decimal operands once before pricing partitions fan out and replaces changed numeric operands', () => {
+  const priced = repriceUsageObservationCost({ reportedUsd: 0.1, estimatedUsd: 0.2, invoiceUsd: 0.3,
+    breakdown: { credit: 0.4 }, currency: 'USD', costSource: 'provider_reported' }, null, null);
+  for (const field of ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const) {
+    const value = priced[field]!;
+    const admitted = readUsageMoney(priced, field, value);
+    for (let partition = 0; partition < 8; partition++) expect(readUsageMoney(priced, field, value)).toBe(admitted);
+    expect(readUsageMoney({ ...priced, [field]: 0.9 }, field, 0.9)).not.toBe(admitted);
+  }
+  const admittedBreakdown = readUsageMoney(priced.breakdown!, 'credit', 0.4);
+  expect(readUsageMoney(priced.breakdown!, 'credit', 0.4)).toBe(admittedBreakdown);
+});
+
+it('selects only the requested monetary fact without repricing discarded kinds in every ranking partition', () => {
+  const priced = repriceUsageObservationCost({ reportedUsd: 0.1, estimatedUsd: 0.2, currency: 'USD', costSource: 'provider_reported' }, null, null);
+  let estimatedReads = 0;
+  Object.defineProperty(priced, 'estimatedUsd', { enumerable: true, get() { estimatedReads++; return 0.2; } });
+  for (let partition = 0; partition < 8; partition++) expect(resolveUsageCostBasis(priced, 'auto')).toMatchObject({ kind: 'reported', amountUsd: 0.1 });
+  expect(estimatedReads, 'an available reported fact precedes estimated money').toBe(0);
+  expect(resolveUsageCostBasis(priced, 'estimated')).toMatchObject({ kind: 'estimated', amountUsd: 0.2 });
+  expect(estimatedReads).toBe(1);
+  expect(resolveUsageCostFacts(priced).map(fact => fact.kind)).toEqual(['reported', 'estimated']);
+});
 
 it('reuses the completed cost projection across refreshes with unchanged accounting rows', () => {
   const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };

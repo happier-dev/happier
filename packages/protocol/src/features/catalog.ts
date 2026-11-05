@@ -908,6 +908,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'usage.compactBatch': {
+    description: 'Compact Usage batch delivery and grouped client-side pricing operands.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   'usage.reporting': {
     description: 'Usage reporting surfaces and telemetry views.',
     defaultFailMode: 'fail_closed',

@@ -12,6 +12,9 @@ const VoiceGateSchema = lazyZodSchema(() => z.object({
 }));
 
 export const FeatureGatesSchema = lazyZodSchema(() => z.object({
+  usage: z.catch(z._default(z.optional(z.object({
+    compactBatch: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
+  })), { compactBatch: DEFAULT_GATE_DISABLED }), { compactBatch: DEFAULT_GATE_DISABLED }),
   artifacts: z.catch(z._default(z.optional(z.object({
     queryHints: z.catch(z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED), DEFAULT_GATE_DISABLED),
   })), { queryHints: DEFAULT_GATE_DISABLED }), { queryHints: DEFAULT_GATE_DISABLED }),

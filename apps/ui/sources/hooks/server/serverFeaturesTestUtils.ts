@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-import { DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES } from '@/dev/testkit/fixtures/featureFixtures';
+import { createRootLayoutFeaturesResponse, DEFAULT_AUTH_KEY_CHALLENGE_CAPABILITIES } from '@/dev/testkit/fixtures/featureFixtures';
 
 import { FeatureGatesSchema } from '@happier-dev/protocol/features/payload/featureGatesSchema';
 import { DEFAULT_BROWSER_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
@@ -64,6 +64,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
 
     return {
         features: {
+            usage: createRootLayoutFeaturesResponse().features.usage,
             artifacts: FeatureGatesSchema.shape.artifacts.parse(undefined),
             account: FeatureGatesSchema.shape.account.parse(undefined),
             deployments: FeatureGatesSchema.shape.deployments.parse(undefined),

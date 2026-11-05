@@ -3,7 +3,8 @@ import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { projectUsageWorkIntervals } from './usageWorkIntervals.js';
 import { aggregateUsageContributionCosts, resolveUsageContributionCosts } from './usageAggregation.js';
-import { resolveUsageCostBasis } from './usageCostFacts.js';
+import { resolveUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
+import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 
 const ms = (value: string) => Date.parse(value);
 const period = { startMs: ms('2026-10-18T21:30Z'), endMs: ms('2026-10-20T23:00Z') };
@@ -22,6 +23,36 @@ function accounting(contributions: UsageAnalyticsContribution[]): UsageAnalytics
 }
 
 describe('projectUsageAgentCalendar', () => {
+    it('keeps covered identity separate from unavailable money when admitted compact costs cross local hours', () => {
+        const selectedPeriod = { startMs: 0, endMs: 3_600_000 };
+        const covered = { ...row('covered', 'a', 2), observedAtMs: 600_000,
+            cost: { reportedUsd: 0, estimatedUsd: 0.2, currency: 'USD', costSource: 'pricing_estimate' as const,
+                reportedTotalId: 'report' } };
+        const report = { ...row('report', 'a', 0), observedAtMs: 2_400_000,
+            cost: { reportedUsd: 1.25, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const,
+                reportedTotalContributionIds: ['covered'] } };
+        const unknown = { ...row('unknown', 'a', 1), observedAtMs: 2_500_000,
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const } };
+        const catalog = { v: 1 as const, models: {}, provenance: { source: 'litellm' as const,
+            origin: 'bundled' as const, asOfMs: 1, revision: 'calendar-admitted', fetchStatus: 'ready' as const } };
+        for (const originals of [[covered, report], [covered, report, unknown]]) {
+            const states = resolveUsagePricingPopulationStates(originals);
+            const populations = new Map(originals.map(item => [item.id, buildUsagePricingPopulation([item], states)]));
+            const compact = originals.map(item => {
+                const { reportedTotalId: _id, reportedTotalContributionIds: _ids, ...cost } = item.cost;
+                return { ...item, cost };
+            });
+            const expected = projectUsageAgentAccountingCalendar({ period: selectedPeriod,
+                timeZoneOffsetMinutes: 30, accounting: accounting(originals) }).projection;
+            const input = { period: selectedPeriod, timeZoneOffsetMinutes: 30, accounting: accounting(compact),
+                accountingSelectedCosts: (selected: readonly UsageAnalyticsContribution[], mode: UsageCostMode) =>
+                    selected.map(item => priceUsagePricingPopulation(populations.get(item.id)!, catalog, {}, mode).selectedCost) };
+            const actual = projectUsageAgentAccountingCalendar(input).projection;
+            expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
+            expect(actual.hours[0]?.totals.cost).toBeNull();
+            expect(actual.periodSummary.totals.cost?.amountUsd ?? null).toBe(originals.length === 2 ? 1.25 : null);
+        }
+    });
     it('keeps carried and direct projections identical across source coverage, cost modes and refused private evidence', () => {
         const intervals = projectUsageWorkIntervals({ period, timeZoneOffsetMinutes: 120, facts: [
             { workId: 'shared', agentId: 'a', machineId: null, evidenceId: 'busy', kind: 'busy',
@@ -136,7 +167,7 @@ describe('projectUsageAgentCalendar', () => {
             [null, 10, 10 / 30], ['a', 12, 12 / 30], ['b', 8, 8 / 30],
         ]);
         expect(result.periodSummary.agents.map(agent => agent.shares.cost)).toEqual([1 / 3, 1.2 / 3, 0.8 / 3]);
-        expect(UsageAgentCalendarSchema.parse(result)).toEqual(result);
+        expect(UsageAgentCalendarSchema.parse(result)).toEqual(JSON.parse(JSON.stringify(result)));
     });
     it('keeps period shares unavailable for zero populations, unpriced rows and incompatible monetary currencies', () => {
         const zero = projectUsageAgentCalendar({ period, timeZoneOffsetMinutes: 0, accounting: accounting([row('zero', 'a', 0)]) });
@@ -185,7 +216,7 @@ describe('projectUsageAgentCalendar', () => {
         expect(cell.totals.cost?.amountUsd).toBeCloseTo(1.7);
         expect(cell.agents.map(agent => [agent.agentId, agent.metrics.sessions, agent.metrics.peakParallel])).toEqual([['a', 1, 1], ['b', 1, 1]]);
         expect(cell.leaders.steeringCount.status).toBe('unavailable');
-        expect(UsageAgentCalendarSchema.parse(result)).toEqual(result);
+        expect(UsageAgentCalendarSchema.parse(result)).toEqual(JSON.parse(JSON.stringify(result)));
     });
     it('reduces typical weekday hours from actual Session identities and dated concurrency rather than adding their counts', () => {
         const range = { startMs: ms('2026-10-19T00:30Z'), endMs: ms('2026-10-26T01:00Z') };
@@ -213,7 +244,7 @@ describe('projectUsageAgentCalendar', () => {
         expect(cell.agents.map(agent => [agent.agentId, agent.metrics.sessions, agent.metrics.peakParallel])).toEqual([['a', 1, 1], ['b', 1, 2]]);
         expect(cell.leaders.sessions).toEqual({ status: 'tied', agentIds: ['a', 'b'], includesUnknown: false });
         expect(cell.leaders.peakParallel).toEqual({ status: 'leading', agentIds: ['b'], includesUnknown: false });
-        expect(UsageAgentCalendarSchema.parse(result)).toEqual(result);
+        expect(UsageAgentCalendarSchema.parse(result)).toEqual(JSON.parse(JSON.stringify(result)));
     });
     it('keeps epoch-start all-history projections sparse rather than materializing empty hours', () => {
         const data = accounting([row('only', 'a', 3, '1970-01-02T01:00Z')]);
@@ -227,7 +258,7 @@ describe('projectUsageAgentCalendar', () => {
         rows[0]!.backendMode = 'one';
         rows[1]!.backendMode = 'two';
         const result = projectUsageAgentCalendar({ period, timeZoneOffsetMinutes: 120, accounting: accounting(rows) });
-        expect(UsageAgentCalendarSchema.parse(result)).toEqual(result);
+        expect(UsageAgentCalendarSchema.parse(result)).toEqual(JSON.parse(JSON.stringify(result)));
         const day = result.days.find(value => value.date === '2026-10-19')!;
         expect(day.agents.map(value => [value.agentId, value.metrics.tokens])).toEqual([[null, 12], ['a', 12], ['b', 10]]);
         expect(day.leaders.tokens).toEqual({ status: 'tied', agentIds: ['a'], includesUnknown: true });

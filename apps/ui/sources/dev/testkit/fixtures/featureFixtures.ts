@@ -81,6 +81,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
+        usage: { compactBatch: { enabled: true } },
         artifacts: FeatureGatesSchema.shape.artifacts.parse(undefined),
         account: FeatureGatesSchema.shape.account.parse(undefined),
         // Current Homes advertise deployments by default; schema omission models an older Home.

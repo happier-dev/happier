@@ -11,6 +11,7 @@ import type { UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import type { UsageHowYouWork } from './resolveUsageHowYouWork.js';
 import { resolveUsageBucketBounds, resolveUsageCalendarDateStart } from './usageCalendar.js';
 import { resolveUsageCostBasis, type UsageCostBasis } from './usageCostFacts.js';
+import { addUsageMoney, readUsageMoney, usageMoneyFromNumber, usageMoneyToNumber } from './usageMoney.js';
 
 const InsufficientSchema = lazyZodSchema(() => z.strictObject({ status: z.literal('insufficient_basis'), reason: z.string().check(z.minLength(1)) }));
 const NonNegative = lazyZodSchema(() => z.number().check(z.nonnegative()));
@@ -72,14 +73,19 @@ function accountValue(read: ConnectedServiceQuotaGetResultV1, input: Parameters<
   const contributions = input.accounting?.contributions ?? [];
   const matched = contributions.filter(row => row.providerAttribution === 'known' && row.connectedAccount
     && sameQualifiedConnectedAccountRef(row.connectedAccount, read.source.ref));
-  if (matched.length === 0) return { status: 'insufficient_basis', reason: 'account_attribution_unavailable' };
-  const unknownAccountContributionCount = contributions.filter(row => row.providerAttribution !== 'known'
+  const compact = input.accounting?.contributions === undefined ? input.accounting?.summary?.accounts : undefined;
+  const compactMatched = compact?.values.find(account => sameQualifiedConnectedAccountRef(account.ref, read.source.ref));
+  const matchedCount = compactMatched?.contributionCount ?? matched.length;
+  if (matchedCount === 0) return { status: 'insufficient_basis', reason: 'account_attribution_unavailable' };
+  const unknownAccountContributionCount = compact?.unknownContributionCount ?? contributions.filter(row => row.providerAttribution !== 'known'
     || !row.connectedAccount && row.providerSource !== 'provider'
       && !(row.providerSource === 'native' && row.connectedAccount === null)).length;
   const priced = matched.map(row => resolveUsageCostBasis(row.cost, 'api_equivalent'))
     .filter((basis): basis is UsageCostBasis => basis?.kind === 'api_equivalent');
-  if (priced.length === 0) return { status: 'insufficient_basis', reason: 'account_usage_unpriced' };
-  const amountUsd = priced.reduce((sum, basis) => sum + basis.amountUsd, 0);
+  const pricedCount = compactMatched?.pricedContributionCount ?? priced.length;
+  if (pricedCount === 0) return { status: 'insufficient_basis', reason: 'account_usage_unpriced' };
+  const amountUsd = compactMatched?.apiEquivalentUsd ?? usageMoneyToNumber(priced.reduce((sum, basis) =>
+    addUsageMoney(sum, readUsageMoney(basis, 'amountUsd', basis.amountUsd)), usageMoneyFromNumber(0)));
   const selectedPrice = price?.entered ?? price?.paid ?? price?.list;
   const { startMs, endMs } = 'relative' in input.query.period
     ? input.accounting?.coverage?.range ?? {} : input.query.period;
@@ -93,12 +99,12 @@ function accountValue(read: ConnectedServiceQuotaGetResultV1, input: Parameters<
             priceAmount: selectedPrice.amount, currency: 'USD', priceAsOfMs: selectedPrice.asOfMs,
             priceSource: `${selectedPrice.source.kind}:${selectedPrice.source.id}:${selectedPrice.source.version}`,
             period: selectedPrice.period, method: 'observed_api_equivalent_divided_by_period_price' };
-  const unpricedContributionCount = matched.length - priced.length;
+  const unpricedContributionCount = matchedCount - pricedCount;
   return { status: 'available', kind: 'api_equivalent', amountUsd, currency: 'USD', period: { startMs, endMs },
     coverage: input.accounting?.coverage?.status === 'complete' && input.accounting.coverage.range.complete
       && unknownAccountContributionCount === 0 && unpricedContributionCount === 0 ? 'complete' : 'partial',
-    pricedContributionCount: priced.length, unpricedContributionCount, unknownAccountContributionCount,
-    pricingSources: [...new Set(priced.map(basis => basis.source))].sort(), priceMultiple };
+    pricedContributionCount: pricedCount, unpricedContributionCount, unknownAccountContributionCount,
+    pricingSources: compactMatched?.pricingSources ?? [...new Set(priced.map(basis => basis.source))].sort(), priceMultiple };
 }
 
 function accountInsights(read: ConnectedServiceQuotaGetResultV1, input: Parameters<typeof projectUsagePlanInsights>[0]): UsagePlanInsights['accounts'][number] {

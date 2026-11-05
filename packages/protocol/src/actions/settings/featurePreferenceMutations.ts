@@ -562,6 +562,10 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.expZenSubtitle',
         },
     },
+    // Home wire representation only: never a person-controlled preference.
+    'usage.compactBatch': {
+        settingsToggle: undefined,
+    },
     'usage.reporting': {
         settingsToggle: {
             showInSettings: true,

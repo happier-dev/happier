@@ -8,6 +8,11 @@ import { ProviderConnectionIdSchema, ProviderContributionKeySchema } from '../pr
 import { UsageModelPriceCatalogSchema } from './usageModelPriceSchemas.js';
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
+import { UsageAgentCalendarSchema } from './usageAgentCalendar.js';
+import { PublicProfileAccountingProjectionSchema } from '../account/publicProfileAccountingContracts.js';
+import { UsageAccountingSessionMembershipSchema } from './usageAccountingMembership.js';
 
 const NonNegativeNumberSchema = lazyZodSchema(() => z.number().check(z.minimum(0)));
 const OptionalNonEmptyStringSchema = lazyZodSchema(() => z.nullable(z.optional(z.string().check(z.trim(), z.minLength(1)))));
@@ -28,6 +33,8 @@ export const UsageObservationTokensSchema = lazyZodSchema(() => z.strictObject({
   total: NonNegativeNumberSchema,
 }));
 export type UsageObservationTokens = z.infer<typeof UsageObservationTokensSchema>;
+
+export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(['auto', 'reported', 'estimated', 'api_equivalent']));
 
 export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
   reportedUsd: NonNegativeNumberSchema,
@@ -54,8 +61,13 @@ export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
     'none',
   ])),
   currency: z.string().check(z.trim(), z.minLength(1)),
-  breakdown: z.optional(z.record(z.string(), NonNegativeNumberSchema)),
+  // Exact-money Symbol provenance is internal; this public map contains only string keys.
+  breakdown: z.optional(z.catchall(z.object({}), NonNegativeNumberSchema)),
   effectiveUsd: z.optional(NonNegativeNumberSchema),
+  /** Compact query projection only: selected availability survives JSON without report member identities. */
+  selectedBasis: z.optional(z.strictObject({ mode: UsageAnalyticsCostModeSchema,
+    value: z.nullable(z.strictObject({ kind: z.enum(['reported', 'estimated', 'invoice', 'api_equivalent', 'mixed']),
+      currency: z.string().check(z.minLength(1)), source: z.string().check(z.minLength(1)) })) })),
 }));
 export type UsageObservationCost = z.infer<typeof UsageObservationCostSchema>;
 
@@ -124,7 +136,6 @@ export const UsagePromptCacheSchema = lazyZodSchema(() => z.strictObject({
 export type UsagePromptCache = z.infer<typeof UsagePromptCacheSchema>;
 
 export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject({
-  promptCache: z.optional(UsagePromptCacheSchema),
   sessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   subject: z.optional(UsageNativeAccountingSubjectSchema),
   accounting: z.optional(UsageNativeAccountingEvidenceSchema),
@@ -144,6 +155,7 @@ export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject(
   tokens: UsageObservationTokensSchema,
   cost: UsageObservationCostSchema,
   context: z.optional(UsageObservationContextSchema),
+  promptCache: z.optional(UsagePromptCacheSchema),
   metadata: z.optional(z.record(z.string(), z.unknown())),
 }).check(z.superRefine((request, ctx) => {
   if (request.attribution && (request.subject || request.scope !== 'turn_delta' || request.isCumulative || request.turnId !== request.attribution.turnId)) {
@@ -171,7 +183,6 @@ export const UsageAnalyticsGranularitySchema = lazyZodSchema(() => z.enum([
 export type UsageAnalyticsGranularity = z.infer<typeof UsageAnalyticsGranularitySchema>;
 
 /** The one cost-mode vocabulary of the usage query, its presentation and Team credential usage. */
-export const UsageAnalyticsCostModeSchema = lazyZodSchema(() => z.enum(['auto', 'reported', 'estimated', 'api_equivalent']));
 
 export const UsageAnalyticsBreakdownDimensionSchema = lazyZodSchema(() => z.enum([
   'agent',
@@ -210,7 +221,8 @@ export const UsageAnalyticsQueryRequestSchema = lazyZodSchema(() => z.strictObje
   granularity: z._default(UsageAnalyticsGranularitySchema, 'day'),
   timeZoneOffsetMinutes: z._default(z.number().check(z.int(), z.minimum(-840), z.maximum(840)), 0),
   costMode: z.optional(UsageAnalyticsCostModeSchema),
-  breakdowns: z.optional(z.array(UsageAnalyticsBreakdownDimensionSchema).check(z.maxLength(8))),
+  breakdowns: z.optional(z.array(UsageAnalyticsBreakdownDimensionSchema).check(z.refine(
+    dimensions => new Set(dimensions).size === dimensions.length, 'Breakdown dimensions must be unique'))),
   filters: z.optional(UsageAnalyticsQueryFiltersSchema),
   includeSeries: z._default(z.boolean(), true),
   includeInsights: z.optional(z.boolean()),
@@ -219,7 +231,7 @@ export const UsageAnalyticsQueryRequestSchema = lazyZodSchema(() => z.strictObje
   includeModelTimeline: z.optional(z.boolean()),
   includeMessageStats: z.optional(z.boolean()),
   activityResolution: z.optional(z.enum(['calendar', 'weekdayHour', 'both'])),
-  topLimit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(100)), 20),
+  topLimit: z._default(z.number().check(z.int(), z.minimum(1)), 20),
 }));
 export type UsageAnalyticsQueryRequest = z.infer<typeof UsageAnalyticsQueryRequestSchema>;
 
@@ -477,6 +489,46 @@ export const UsageAnalyticsContributionSchema = lazyZodSchema(() => z.strictObje
 }));
 export type UsageAnalyticsContribution = z.infer<typeof UsageAnalyticsContributionSchema>;
 
+const UsageExactDecimalSchema = lazyZodSchema(() => z.strictObject({ units: z.string().check(z.regex(/^-?\d+$/)),
+  scale: z.number().check(z.int(), z.nonnegative()) }));
+const UsagePricingSelectionStateSchema = lazyZodSchema(() => z.enum(['plain', 'covered', 'unavailable', 'total']));
+/** Tariff-linear sufficient statistics, never observation or Session identities. */
+export const UsagePricingPopulationSchema = lazyZodSchema(() => z.strictObject({ groups: z.array(z.strictObject({
+  modelId: z.nullable(z.string()), categories: z.nullable(UsageObservationTokensSchema),
+  categoryUnits: z.record(z.string(), UsageExactDecimalSchema), cost: UsageObservationCostSchema,
+  costUnits: z.record(z.string(), UsageExactDecimalSchema),
+  tokens: UsageObservationTokensSchema,
+  contributionCount: z.number().check(z.int(), z.nonnegative()), eventCount: z.number().check(z.int(), z.nonnegative()),
+  asOfMs: z.number(), complete: z.boolean(),
+  selection: z.strictObject({ auto: UsagePricingSelectionStateSchema, reported: UsagePricingSelectionStateSchema,
+    estimated: UsagePricingSelectionStateSchema }),
+})) }));
+export type UsagePricingPopulation = z.infer<typeof UsagePricingPopulationSchema>;
+
+/** Rendered facts and grouped tariff operands for local private repricing. */
+export const UsageAnalyticsSummarySchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), catalogRevision: z.string(), costMode: UsageAnalyticsCostModeSchema,
+  /** Actual observation bounds, retained without event rows for all-time presentation. */
+  observationRange: z.optional(z.strictObject({ startMs: z.number().check(z.int(), z.nonnegative()),
+    endMs: z.number().check(z.int(), z.nonnegative()) })),
+  pricing: z.optional(z.record(z.string(), UsagePricingPopulationSchema)),
+  countedPricing: z.optional(z.boolean()),
+  rankedPricing: z.optional(z.record(z.string(), z.array(z.strictObject({ value: z.omit(UsageAnalyticsBreakdownEntrySchema, { cost: true }),
+    population: UsagePricingPopulationSchema, sources: z.optional(z.array(z.strictObject({
+      value: z.omit(UsageAnalyticsTimelineSourceSchema, { cost: true }), population: UsagePricingPopulationSchema }))) })))),
+  accountingCalendar: z.optional(z.strictObject({ value: UsageAgentCalendarSchema,
+    pricing: z.optional(z.record(z.string(), UsagePricingPopulationSchema)) })),
+  publicProfileAccounting: z.optional(PublicProfileAccountingProjectionSchema),
+  accounts: z.strictObject({ unknownContributionCount: z.number().check(z.int(), z.nonnegative()),
+    values: z.array(z.strictObject({ ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
+      contributionCount: z.number().check(z.int(), z.nonnegative()), pricedContributionCount: z.number().check(z.int(), z.nonnegative()),
+      apiEquivalentUsd: NonNegativeNumberSchema, pricingSources: z.array(z.string().check(z.minLength(1))) })) }),
+  execution: z.strictObject({ coverage: z.enum(['complete', 'partial', 'unknown']), totalTokens: z.nullable(NonNegativeNumberSchema),
+    groups: z.array(z.strictObject({ execution: UsageAnalyticsExecutionSchema, tokens: NonNegativeNumberSchema,
+      share: z.nullable(NonNegativeNumberSchema) })) }),
+}));
+export type UsageAnalyticsSummary = z.infer<typeof UsageAnalyticsSummarySchema>;
+
 export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   totals: UsageAnalyticsTotalsSchema,
@@ -493,9 +545,128 @@ export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.strictObj
   priceCatalog: zMini.optional(UsageModelPriceCatalogSchema),
   coverage: z.optional(UsageAnalyticsCoverageSchema),
   contributions: z.optional(z.array(UsageAnalyticsContributionSchema)),
+  /** Contributing Session membership, supplied only to an active private-evidence reader. */
+  sessionIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  /** Historical turn membership for private projections, without per-event accounting or prices. */
+  sessionMembership: z.optional(UsageAccountingSessionMembershipSchema),
+  summary: z.optional(UsageAnalyticsSummarySchema),
   tokenCategories: z.optional(UsageObservationTokensSchema),
 }));
 export type UsageAnalyticsQueryResponse = z.infer<typeof UsageAnalyticsQueryResponseSchema>;
+
+/** One accounting acquisition for a page's distinct slices. Raw rows are opt-in. */
+export const UsageAnalyticsQueryBatchRequestSchema = lazyZodSchema(() => z.strictObject({
+  queries: z.array(UsageAnalyticsQueryRequestSchema).check(z.minLength(1)),
+  includeContributions: z._default(z.boolean(), false),
+  /** Presence selects summary delivery; only these visible detail consumers receive row pages. */
+  contributionQueries: z.optional(z.array(UsageAnalyticsQueryRequestSchema)),
+  sessionQueries: z.optional(z.array(UsageAnalyticsQueryRequestSchema)),
+  /** JSON callers can continue detail; NDJSON carries all pages from one captured read. */
+  contributionOffset: z.optional(z.number().check(z.int(), z.minimum(0))),
+}).check(z.refine(input => {
+  if (input.contributionQueries === undefined) return input.contributionOffset === undefined && input.sessionQueries === undefined;
+  if (input.includeContributions) return false;
+  const queries = new Set(input.queries.map(getUsageAnalyticsQueryRequestKey));
+  return [...input.contributionQueries, ...(input.sessionQueries ?? [])].every(query => queries.has(getUsageAnalyticsQueryRequestKey(query)));
+}, 'Contribution demand must select queries in this summary batch')));
+export type UsageAnalyticsQueryBatchRequest = z.infer<typeof UsageAnalyticsQueryBatchRequestSchema>;
+
+/** Page-local references only: no dictionary survives a line or changes row semantics. */
+const UsageContributionDictionarySchema = lazyZodSchema(() => z.strictObject({
+  fields: z.array(z.keyof(UsageAnalyticsContributionSchema)),
+  values: z.array(z.unknown()),
+  indices: z.array(z.array(z.nullable(z.number()))),
+}).check(z.refine(page => new Set(page.fields).size === page.fields.length
+  && page.indices.every(row => row.length === page.fields.length
+    && row.every(index => index === null || (Number.isSafeInteger(index) && index >= 0 && index < page.values.length))),
+  'Invalid contribution dictionary')));
+const UsageContributionPageRowsSchema = lazyZodSchema(() => z.union([
+  z.array(UsageAnalyticsContributionSchema),
+  z.pipe(z.pipe(UsageContributionDictionarySchema, z.transform(page => page.indices.map(row => {
+    const contribution: Record<string, unknown> = {};
+    for (let column = 0; column < page.fields.length; column++) {
+      const index = row[column];
+      if (index !== null) contribution[page.fields[column]!] = page.values[index!];
+    }
+    return contribution;
+  }))),
+  z.array(UsageAnalyticsContributionSchema)),
+]));
+export const UsageAnalyticsQueryBatchResponseSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  // A tariff belongs to the acquisition, never copied into every slice.
+  priceCatalog: z.optional(UsageModelPriceCatalogSchema),
+  results: z.array(z.union([
+    z.strictObject({ query: UsageAnalyticsQueryRequestSchema, value: z.omit(UsageAnalyticsQueryResponseSchema, { priceCatalog: true }) }),
+    z.strictObject({ query: UsageAnalyticsQueryRequestSchema, error: z.enum(['not_found', 'usage_query_failed']) }),
+  ])),
+  contributionPages: z.optional(z.array(z.strictObject({
+    query: UsageAnalyticsQueryRequestSchema,
+    offset: z.number().check(z.int(), z.minimum(0)),
+    totalCount: z.number().check(z.int(), z.minimum(0)),
+    nextOffset: z.nullable(z.number().check(z.int(), z.minimum(0))),
+    rows: UsageContributionPageRowsSchema,
+  }))),
+}));
+export type UsageAnalyticsQueryBatchResponse = z.infer<typeof UsageAnalyticsQueryBatchResponseSchema>;
+export type UsageAnalyticsQueryBatchWireResponse = z.input<typeof UsageAnalyticsQueryBatchResponseSchema>;
+
+type UsageValidationIssue = Readonly<{ code: string; path: readonly PropertyKey[];
+  errors?: readonly (readonly UsageValidationIssue[])[] }>;
+export type UsageQueryResultIssue = { code: string; path: Array<string | number> };
+
+function usageIssuePathSchemas(schema: z.core.$ZodType): z.core.$ZodTypes[] {
+  // Zod Core's discriminated definitions supply the admitted schema structure.
+  const typed = schema as z.core.$ZodTypes;
+  const definition = typed._zod.def;
+  if (definition.type === 'lazy') return usageIssuePathSchemas(definition.getter());
+  if ('innerType' in definition) return usageIssuePathSchemas(definition.innerType);
+  if (definition.type === 'union') return definition.options.flatMap(usageIssuePathSchemas);
+  if (definition.type === 'intersection') return [definition.left, definition.right].flatMap(usageIssuePathSchemas);
+  if (definition.type === 'pipe') return [definition.in, definition.out].flatMap(usageIssuePathSchemas);
+  return [typed];
+}
+
+/** Keep declared field names/array indexes, never dictionary keys from response content. */
+function publicUsageIssuePath(schema: z.core.$ZodType, path: readonly PropertyKey[]): Array<string | number> {
+  let schemas = usageIssuePathSchemas(schema);
+  return path.map(part => {
+    const children = schemas.flatMap((candidate): Array<{ schema: z.core.$ZodType; declared: boolean }> => {
+      const definition = candidate._zod.def;
+      if (definition.type === 'object' && typeof part === 'string') {
+        const child = Object.prototype.hasOwnProperty.call(definition.shape, part) ? definition.shape[part] : undefined;
+        if (child) return [{ schema: child, declared: true }];
+        if (definition.catchall) return [{ schema: definition.catchall, declared: false }];
+      }
+      if (definition.type === 'array' && typeof part === 'number') return [{ schema: definition.element, declared: true }];
+      if (definition.type === 'tuple' && typeof part === 'number') {
+        const child = definition.items[part] ?? definition.rest;
+        if (child) return [{ schema: child, declared: true }];
+      }
+      if (definition.type === 'record') return [{ schema: definition.valueType, declared: false }];
+      return [];
+    });
+    schemas = children.flatMap(child => usageIssuePathSchemas(child.schema));
+    return children.some(child => child.declared) && typeof part !== 'symbol' ? part : '*';
+  });
+}
+
+/** Content-free validation evidence: codes and schema paths, never rejected data or prose. */
+export function projectUsageQueryResultIssues(issues: readonly UsageValidationIssue[], schema: z.core.$ZodType): UsageQueryResultIssue[] {
+  const flatten = (selected: readonly UsageValidationIssue[], prefix: readonly PropertyKey[]): UsageQueryResultIssue[] =>
+    selected.flatMap(issue => {
+      const path = [...prefix, ...issue.path];
+      return issue.code === 'invalid_union' && issue.errors
+        ? issue.errors.flatMap(branch => flatten(branch, path))
+        : [{ code: issue.code, path: publicUsageIssuePath(schema, path) }];
+    });
+  return flatten(issues, []);
+}
+
+/** Inputs have been admitted by the request schema; identity adds no second parser. */
+export function getUsageAnalyticsQueryRequestKey(query: UsageAnalyticsQueryRequest): string {
+  return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(query));
+}
 
 /** Opened machine labels belong to authorized client reads, never the server accounting response. */
 export const UsageQueryAccountingSchema = lazyZodSchema(() => z.extend(UsageAnalyticsQueryResponseSchema, {
@@ -504,15 +675,15 @@ export const UsageQueryAccountingSchema = lazyZodSchema(() => z.extend(UsageAnal
   }))) }))),
 }));
 
-export const ServerUsageAnalyticsCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
+export const ServerUsageAnalyticsCapabilitiesSchema = lazyZodSchema(() => z.object({
   version: z.literal(1),
-  eventsIngest: z.strictObject({
+  eventsIngest: z.object({
     path: z.string().check(z.trim(), z.minLength(1)),
   }),
-  query: z.strictObject({
+  query: z.object({
     path: z.string().check(z.trim(), z.minLength(1)),
   }),
-  legacy: z.strictObject({
+  legacy: z.object({
     usageReportsPath: z.string().check(z.trim(), z.minLength(1)),
     usageQueryPath: z.string().check(z.trim(), z.minLength(1)),
   }),
