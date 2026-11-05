@@ -577,6 +577,7 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
     if (checked.fresh.length || checked.unowned.length) return outcome();
     const head = git.gitText(['rev-parse', 'HEAD']).trim();
     if (head !== checked.base) {
+      const replayStarted = Date.now();
       git.git(['merge-base', '--is-ancestor', checked.base, head]);
       const tree = replayPacket(git, original.base, original.tree, head);
       if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
@@ -624,6 +625,8 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
         const previous = checked.candidates.find(group => group.id === id);
         if (!previous || files.some(file => !previous.roots.includes(file))) affected.add(id);
       }
+      const replayLog = `[commit-coherence] replay head=${head} reused=${checked.groups.map(group => group.id).filter(id => !affected.has(id)).sort().join(',') || 'none'} rechecked=${[...affected].sort().join(',') || 'none'}`;
+      console.error(`${replayLog} phase=start`);
       let groups = checked.groups;
       if (affected.size) {
         const refreshed = checkCommitTypeCoherence({ repo, base: head, tree, onlyGroups: affected });
@@ -637,6 +640,7 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
         unowned: discovered.unowned,
         fresh: groups.flatMap(group => group.fresh),
       };
+      console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
       continue;
     }
     const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';

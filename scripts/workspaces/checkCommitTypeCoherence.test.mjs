@@ -623,6 +623,18 @@ test('direct CLI and imported coherence checks queue together before starting co
     await write('producer.ts', 'export const original = 2;\n');
     git('add', '--', 'producer.ts');
     const tree = git('write-tree').trim();
+    // Two dependency changes arrive during successive compiler phases. Keep the
+    // packet and compiler real, and advance only this fixture's Git ref.
+    git('read-tree', base);
+    const parents = [];
+    for (const version of [1, 2]) {
+      await write('consumer.ts', `import { original } from './producer';\nexport const value: number = original;\n// concurrent ${version}\n`);
+      git('add', '--', 'consumer.ts');
+      parents.push(execFileSync('git', ['commit-tree', git('write-tree').trim(), '-p', parents.at(-1) ?? base], {
+        cwd: repo, input: 'fix: concurrent dependency\n', encoding: 'utf8',
+      }).trim());
+    }
+    git('read-tree', base);
     const native = await installNativeAdmissionControllerFixture(t, repo);
     const floor = resolveHeavyweightMemoryFloorKiB('compilation');
     const holder = await holdNativeAdmissionFixtureMemory(t, native,
@@ -643,6 +655,18 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const cp = createRequire(import.meta.url)('node:child_process');
 const net = createRequire(import.meta.url)('node:net');
+const spawn = cp.spawn;
+const parents = ${JSON.stringify(parents)};
+let compilerPhases = 0;
+cp.spawn = (command, args, options) => {
+  if (process.argv.some(arg => arg.startsWith('--message-file='))
+    && command.endsWith('/runCommitTypeCoherenceApi.mjs')) {
+    record('compiler-phase');
+    const parent = parents[compilerPhases++];
+    if (parent) cp.execFileSync('git', ['update-ref', 'HEAD', parent, compilerPhases === 1 ? ${JSON.stringify(base)} : parents[compilerPhases - 2]]);
+  }
+  return spawn(command, args, options);
+};
 const write = net.Socket.prototype.write;
 net.Socket.prototype.write = function(data, ...args) {
   if (typeof data === 'string' && data.startsWith('{')) {
@@ -701,6 +725,16 @@ syncBuiltinESMExports();
     assert.match(jobs[0].output(), /^committed [0-9a-f]+:/mu, 'the admitted TS packet reaches finalization');
     const completed = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.equal(completed.filter(event => event.kind === 'admission').length, 2, 'the admitted API never reserves a second slot');
+    assert.equal(completed.filter(event => event.kind === 'compiler-phase').length, 3,
+      'the CLI checks once and rechecks both overlapping HEAD moves');
+    assert.equal(git('rev-parse', 'HEAD^').trim(), parents[1], 'CAS preserves both concurrent commits');
+    assert.match(git('show', 'HEAD:consumer.ts'), /concurrent 2/u);
+    assert.match(git('show', 'HEAD:producer.ts'), /original = 2/u);
+    const replayStarts = jobs[0].output().match(/^\[commit-coherence\] replay .* reused=none rechecked=\. phase=start$/gmu) ?? [];
+    const replayEnds = jobs[0].output().match(/^\[commit-coherence\] replay .* phase=complete ms=\d+$/gmu) ?? [];
+    assert.equal(replayStarts.length, 2, 'each replay reports the reused and rechecked groups before compiler work');
+    assert.equal(replayEnds.length, 2, 'each completed replay reports its wall duration');
+    t.diagnostic(jobs[0].output().split('\n').filter(line => line.startsWith('[commit-coherence]')).join('\n'));
     assert.ok(completed.some(event => event.kind === 'compiler'), 'admitted work loads the compiler');
     assert.ok(completed.some(event => event.kind === 'blob'), 'admitted work reads the Git tree');
   });
