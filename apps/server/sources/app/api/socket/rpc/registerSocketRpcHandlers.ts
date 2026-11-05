@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { cancelRpcTarget } from './cancelRpcTarget';
+import { createProtectedRawSessionTargetGuard } from './protectedRawSessionTargetGuard';
 import { createLiveApprovalOriginTargetGuard, isOrdinaryLiveApprovalOriginSocket, isPresentUserLiveApprovalOriginCaller } from './liveApprovalOrigin';
 import { isLiveCliApprovalOriginMethod } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
@@ -2054,8 +2055,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         });
             const finiteWakeCurrent = finiteWake && (finiteWake.kind === 'ready' || finiteWake.kind === 'not-needed')
                 ? finiteWake.isCurrent : undefined;
+            const protectedRawSession = createProtectedRawSessionTargetGuard({ method, actorAccountId, targetUserId,
+                callerSocket: params.socket, callerAuthority: requestAuthentication.authority,
+                knownSessionSource: sessionActionOrigin !== undefined,
+                ...(viewer && transferRouting ? { sessionTransferViewer: viewer } : {}) });
             const targetGuard = composeRpcForwardTargetGuards([
                 targetSpecificGuard,
+                protectedRawSession?.targetGuard ?? null,
                 sessionAccessTargetGuard,
                 sessionActionSourceGuard,
                 machineAdmissionGuard,
@@ -2129,6 +2135,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ? { callerLifetime: { signal: cancellation.controller.signal, isCurrent: finiteWake.isCurrent } } : {}),
                 authorization,
                 ...(machineAdmission ? { machineAdmission } : {}),
+                ...(protectedRawSession ? { createMachineAdmission: protectedRawSession.createMachineAdmission } : {}),
                 ...(transferRouting ? { transferRouting } : {}),
                 ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),
                 ...(workspaceSyncTargetRouting ? { workspaceSyncTargetRouting } : {}),

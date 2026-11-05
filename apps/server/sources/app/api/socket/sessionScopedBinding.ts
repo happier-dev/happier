@@ -7,6 +7,25 @@ import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { buildMachineAdmissionFactsSelect } from '@/app/machines/machineAccess';
+
+/** One current exact tuple, with the facts its binding and Machine admission owners reuse. */
+export async function readCurrentSessionScopedMachineAccessFactsInTx(params: Readonly<{
+    tx: Tx; accountId: string; machineId: string; sessionId: string;
+}>) {
+    return params.tx.accessKey.findUnique({
+        where: { accountId_machineId_sessionId: {
+            accountId: params.accountId, machineId: params.machineId, sessionId: params.sessionId,
+        } },
+        select: {
+            machine: { select: buildMachineAdmissionFactsSelect(params.accountId) },
+            session: { select: { accountId: true, originKind: true, originRunId: true } },
+        },
+    });
+}
+
+type CurrentSessionScopedMachineAccessFacts = Awaited<ReturnType<typeof readCurrentSessionScopedMachineAccessFactsInTx>>;
+
 
 export type SessionScopedBindingProof = "owner-session" | "machine-access-key";
 
@@ -71,6 +90,7 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
     sessionId: string;
     /** Prepared append already holds its Account/Session/resource parents. */
     lockAuthority?: boolean;
+    currentFacts?: CurrentSessionScopedMachineAccessFacts;
 }>): Promise<boolean> {
     if (params.lockAuthority && getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
         const machines = await params.tx.$queryRawUnsafe<Array<{ id: string }>>('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR SHARE', params.machineId);
@@ -83,23 +103,13 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
         // created after this authority read from the unlocked ordinary reread.
         if (keys.length === 0) return false;
     }
-    const accessKey = await params.tx.accessKey.findUnique({
-        where: {
-            accountId_machineId_sessionId: {
-                accountId: params.accountId,
-                machineId: params.machineId,
-                sessionId: params.sessionId,
-            },
-        },
-        select: {
-            machine: { select: { revokedAt: true, replacedByMachineId: true } },
-            session: { select: { accountId: true } },
-        },
-    });
+    const accessKey = !params.lockAuthority && params.currentFacts !== undefined
+        ? params.currentFacts
+        : await readCurrentSessionScopedMachineAccessFactsInTx(params);
     return accessKey !== null
         && accessKey.session.accountId === params.accountId
         && classifyMachineAvailabilityState(accessKey.machine) === "available"
-        && await readSessionMachineBindingStateInTx(params.tx, params) === "available";
+        && await readSessionMachineBindingStateInTx(params.tx, params, accessKey) === "available";
 }
 
 type SessionActionRpcSourceBinding = Readonly<{
@@ -258,7 +268,7 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
     };
 }
 
-export function readSessionScopedSocketBinding(socket: Socket): SessionScopedSocketBinding | null {
+export function readSessionScopedSocketBinding(socket: Pick<Socket, 'data'>): SessionScopedSocketBinding | null {
     const binding = (socket.data as { sessionScopedBinding?: unknown } | undefined)?.sessionScopedBinding;
     if (!binding || typeof binding !== "object") return null;
     const candidate = binding as Record<string, unknown>;

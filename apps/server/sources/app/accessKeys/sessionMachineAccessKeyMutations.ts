@@ -1,5 +1,5 @@
-import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
-import { resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx, type MachineAdmissionFacts } from "@/app/machines/machineAccess";
 import { isPrismaErrorCode } from "@/storage/db";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
@@ -52,28 +52,46 @@ export type UpdateSessionMachineAccessKeyResult =
         currentData: string;
     }>;
 
+export interface SessionMachineBindingFacts {
+    readonly session: Readonly<{ accountId: string; originKind: string; originRunId: string | null }> | null;
+    readonly machine: MachineAdmissionFacts | null;
+}
+
 /** The Session must belong to the Account and the Machine must be available. */
 export async function readSessionMachineBindingStateInTx(
     tx: Tx,
     binding: SessionMachineAccessKeyBinding,
+    currentFacts?: SessionMachineBindingFacts,
 ): Promise<SessionMachineBindingState> {
-    const [session, machine] = await Promise.all([
-        tx.session.findFirst({
-            where: { id: binding.sessionId, accountId: binding.accountId },
-            select: { id: true },
-        }),
-        readRequesterMachineAvailabilityInTx(tx, binding),
-    ]);
-    return session !== null && machine === "available" ? "available" : "missing";
+    const facts = currentFacts ?? await (async () => {
+        const [session, machine] = await Promise.all([
+            tx.session.findFirst({
+                where: { id: binding.sessionId, accountId: binding.accountId },
+                select: { accountId: true, originKind: true, originRunId: true },
+            }),
+            tx.machine.findUnique({
+                where: { id: binding.machineId },
+                select: buildMachineAdmissionFactsSelect(binding.accountId),
+            }),
+        ]);
+        return { session, machine };
+    })();
+    if (facts.session?.accountId !== binding.accountId) return "missing";
+    return readRequesterMachineAvailabilityInTx(tx, binding, facts.machine);
 }
 
 /** Only the uninstalled owned predecessor tuple predates C41 installation admission. */
-async function readRequesterMachineAvailabilityInTx(tx: Tx, binding: SessionMachineAccessKeyBinding): Promise<SessionMachineBindingState> {
-    const machine = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { accountId: true, installationId: true } });
+async function readRequesterMachineAvailabilityInTx(
+    tx: Tx,
+    binding: SessionMachineAccessKeyBinding,
+    machine: MachineAdmissionFacts | null,
+): Promise<SessionMachineBindingState> {
     if (machine?.accountId === binding.accountId && machine.installationId === null) {
-        return await readMachineAvailabilityStateInTx({ tx, accountId: binding.accountId, machineId: binding.machineId }) === "available" ? "available" : "missing";
+        return classifyMachineAvailabilityState(machine) === "available" ? "available" : "missing";
     }
-    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId, machineId: binding.machineId });
+    const admission = await resolveMachineAdmissionFromFactsInTx(tx, machine, {
+        actorAccountId: binding.accountId, machineId: binding.machineId,
+    });
     return admission.kind === "admitted" ? "available" : "missing";
 }
 

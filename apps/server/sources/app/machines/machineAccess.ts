@@ -109,6 +109,7 @@ async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string)
         select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
 }
 type MachineFacts = NonNullable<Awaited<ReturnType<typeof readFactsInTx>>>;
+export type MachineAdmissionFacts = MachineFacts;
 type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin'; displayName: string | null; accountIds: readonly string[] }>;
 
 function contributions(row: MachineFacts | MachinePermissionFacts): Contribution[] {

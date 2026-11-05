@@ -13,7 +13,7 @@ import { buildRpcMethodRoom } from "./rpcMethodRoom";
 import { readSocketRegisteredRpcMethods } from './rpcRegisteredMethods';
 import { selectRpcTarget } from './rpcTargetSelection';
 
-function classifySocketClusterFetchFailureReason(error: unknown): "timeout" | "transport" | "unknown" {
+export function classifySocketClusterFetchFailureReason(error: unknown): "timeout" | "transport" | "unknown" {
     if (!(error instanceof Error)) {
         return "unknown";
     }

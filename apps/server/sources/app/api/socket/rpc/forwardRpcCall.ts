@@ -2,6 +2,7 @@ import type { Server, Socket } from "socket.io";
 import { createHash, randomUUID } from "node:crypto";
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -49,7 +50,7 @@ import {
     resolveRpcMethodAvailabilityGraceMs,
     resolveRpcMethodAvailabilityPollMs,
 } from "./rpcMethodAvailability";
-import { discoverRpcTargets, readMachineRpcTargetPresence } from "./rpcTargetDiscovery";
+import { classifySocketClusterFetchFailureReason, discoverRpcTargets, readMachineRpcTargetPresence } from "./rpcTargetDiscovery";
 import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
 import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./_types";
 
@@ -66,6 +67,7 @@ export type RpcForwardResult =
         error: string;
         errorCode?: string;
         answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[];
+        failureCause?: ActionFailureCauseV1;
       }>
     | Readonly<{ ok: false } & AnyClientUpgradeRequiredV1>;
 
@@ -103,13 +105,17 @@ async function readLatestRpcTargetBySocketId(params: Readonly<{
         });
         const targets = snapshot.sockets as RpcAckResponseEmitter[];
         const exactTargets = targets.filter((target) => target.id === params.targetSocketId);
+        // An incomplete census cannot prove that the selected target vanished.
+        if (exactTargets.length === 0 && !snapshot.complete) {
+            throw snapshot.error ?? new Error('Incomplete RPC target revalidation');
+        }
         return exactTargets.length === 1 ? exactTargets[0] : null;
     } catch (error) {
         log(
             { module: "websocket-rpc", level: "warn", targetSocketId: params.targetSocketId },
             `RPC target revalidation failed for ${params.targetSocketId}: ${error instanceof Error ? error.message : String(error)}`,
         );
-        return null;
+        throw error;
     }
 }
 
@@ -124,6 +130,8 @@ export async function forwardRpcCall(params: Readonly<{
     authorization?: SocketRpcAuthorizationContext;
     /** Home-owned current Machine routing facts; never copied from inbound fields. */
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
+    /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
+    createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
     callerSocketId?: string;
     /** Home-minted observation only, independent of cancellation/signed request identity. */
@@ -327,6 +335,7 @@ export async function forwardRpcCall(params: Readonly<{
     }
 
     let requestSubmitted = false;
+    let targetRevalidationFailure: ActionFailureCauseV1 | undefined;
     try {
         if (params.cancellation?.signal.aborted) {
             throw new Error("RPC request cancelled by caller");
@@ -372,6 +381,7 @@ export async function forwardRpcCall(params: Readonly<{
             const callerInputAuthorization = params.createCallerInputAuthorization && targetRequestId
                 ? await params.createCallerInputAuthorization({ target: selection.target, requestId: targetRequestId })
                 : null;
+            const machineAdmission = await params.createMachineAdmission?.({ target: selection.target });
             if (params.cancellation?.signal.aborted) throw new Error("RPC request cancelled by caller");
             // Socket.IO's local Socket stores emit flags on the socket itself,
             // so configure the ACK immediately before dispatch, after async auth.
@@ -384,10 +394,11 @@ export async function forwardRpcCall(params: Readonly<{
             requestSubmitted = true;
             const response = targetEmitter.emitWithAck(
                 SOCKET_RPC_EVENTS.REQUEST,
-                callerInputAuthorization ? {
+                callerInputAuthorization || machineAdmission ? {
                     ...request,
-                    callerInputAuthorization,
-                    ...('grant' in callerInputAuthorization.binding ? { callerInputConstraints: {
+                    ...(machineAdmission ? { machineAdmission } : {}),
+                    ...(callerInputAuthorization ? { callerInputAuthorization } : {}),
+                    ...(callerInputAuthorization && 'grant' in callerInputAuthorization.binding ? { callerInputConstraints: {
                         models: callerInputAuthorization.binding.grant.models,
                         permissionModes: callerInputAuthorization.binding.grant.permissionModes,
                     } } : {}),
@@ -418,11 +429,20 @@ export async function forwardRpcCall(params: Readonly<{
             ? await params.targetGuard.runOperation({
                 target: selection.target,
                 operation,
-                readLatestTarget: async () => await readLatestRpcTargetBySocketId({
-                    io: params.io,
-                    targetSocketId: selection.target.id,
-                    fetchTimeoutMs: resolveRpcClusterFetchTimeoutMs(params.method),
-                }),
+                readLatestTarget: async () => {
+                    try {
+                        return await readLatestRpcTargetBySocketId({
+                            io: params.io,
+                            targetSocketId: selection.target.id,
+                            fetchTimeoutMs: resolveRpcClusterFetchTimeoutMs(params.method),
+                        });
+                    } catch (error) {
+                        targetRevalidationFailure = projectActionFailureCauseV1(classifySocketClusterFetchFailureReason(error) === 'timeout'
+                            ? Object.assign(new Error('RPC target revalidation timeout'), { code: 'ETIMEDOUT' }) : error,
+                        'rpc.target.revalidation');
+                        throw error;
+                    }
+                },
             })
             : { status: "current" as const, value: await operation() };
         if (guarded.status === "refused") {
@@ -481,6 +501,9 @@ export async function forwardRpcCall(params: Readonly<{
             ok: false,
             ...(requestSubmitted && params.cancellation?.signal.aborted
                 ? { error: 'RPC request cancelled after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN }
+                : !requestSubmitted && targetRevalidationFailure
+                ? { error: 'RPC target revalidation unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+                    failureCause: targetRevalidationFailure }
                 : error instanceof Error && 'code' in error && error.code === 'SOCKET_DISCONNECTED'
                 ? { error: 'RPC target disconnected after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN }
                 : params.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`)

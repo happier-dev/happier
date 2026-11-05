@@ -764,6 +764,12 @@ its room remains `RPC_METHOD_NOT_AVAILABLE`;
 an absent daemon retains `target_unavailable`. Session-owned routes keep their
 own current-publisher availability decision.
 
+The selected socket's final lookup uses the same distinction: failed or incomplete
+revalidation returns `RPC_TRANSPORT_UNAVAILABLE` with phase
+`rpc.target.revalidation` (and `ETIMEDOUT` for an adapter timeout). It never
+supplies an absent target to an authorization guard. A completed lookup still
+allows the guard to return a genuine `RPC_FORBIDDEN` refusal.
+
 Current cluster peers also answer room discovery through the server-only
 `happier:socket-room:query:v1` event. This supplements the existing adapter
 census because its timeout discards partial replies. One authenticated room

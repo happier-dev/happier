@@ -2,6 +2,7 @@ import http from "node:http";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { Server } from "socket.io";
 import { vi } from "vitest";
+import { ClusterAdapter, MessageType, type ClusterMessage } from 'socket.io-adapter';
 import { readRedisStreamsAdapterOptionsFromEnv } from "@/config/socketAdapter";
 import { startSilentPartitionProxy } from "@/testkit/redisSilentPartitionProxy";
 import { resolveRedisAdapterValidationRedisUrl } from "../../scripts/resolveRedisAdapterValidationRedisUrl";
@@ -14,6 +15,32 @@ type RecoveryNode = {
     port: number;
     owner: ProductRedisOwner;
 };
+
+/** Hold a counted peer at the real native discovery transport, without stopping its Redis subscription. */
+export function holdRedisAdapterDiscoveryRequests(io: Server) {
+    const adapter = io.sockets.adapter;
+    if (!(adapter instanceof ClusterAdapter)) throw new Error('Expected the real ClusterAdapter');
+    // Protected upstream transport hook is the genuine external-system boundary.
+    const receiver = adapter as unknown as { onMessage(message: ClusterMessage, offset?: string): void };
+    const receive = receiver.onMessage.bind(receiver);
+    const held: Array<readonly [ClusterMessage, string | undefined]> = [];
+    let received!: () => void;
+    const firstRequest = new Promise<void>(resolve => { received = resolve; });
+    const spy = vi.spyOn(receiver, 'onMessage').mockImplementation((message, offset) => {
+        if (message.type === MessageType.FETCH_SOCKETS || message.type === MessageType.SERVER_SIDE_EMIT) {
+            held.push([message, offset]);
+            received();
+        } else receive(message, offset);
+    });
+    return {
+        received: firstRequest,
+        get count() { return held.length; },
+        release() {
+            spy.mockRestore();
+            for (const [message, offset] of held.splice(0)) receive(message, offset);
+        },
+    };
+}
 
 export async function startRedisAdapterRecoveryCluster(options: { redisUrl?: string; nodeCount?: 2 | 3 } = {}) {
     // Recovery tests must never stop an ambient operator Redis instance.
