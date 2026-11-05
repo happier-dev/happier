@@ -5,20 +5,10 @@ import type {
 import { synthesizeLocatorNameExpression } from '../../automation/locators';
 
 /**
- * BA-2 combined-snapshot evaluators + parsers. The injected expressions are bounded + try/guarded so
- * a hostile or huge DOM can never throw out of the evaluator or return an unbounded dump; the parsers
- * defensively coerce the raw CDP result into the bounded protocol shapes. Context capture and
- * automation semantic snapshots share this bounded extraction owner. Full query Action results
- * use the automation bridge's query expression instead of these context budgets.
+ * Combined-snapshot extraction shared by context capture and automation semantic snapshots.
+ * Preserve complete valid page content rather than clipping it to a second local budget.
+ * Secret values still require affirmative DOM evidence; missing evidence marks values incomplete.
  */
-
-export const SNAPSHOT_MAX_VISIBLE_TEXT_CHARS = 16_384;
-export const SNAPSHOT_MAX_AX_NODES = 512;
-export const SNAPSHOT_MAX_INTERACTIVE_ELEMENTS = 512;
-
-const MAX_ROLE_CHARS = 128;
-export const SNAPSHOT_MAX_NAME_CHARS = 256;
-const MAX_SELECTOR_CHARS = 1024;
 
 function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -26,29 +16,29 @@ function record(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
-function clampString(value: unknown, max: number): string | undefined {
+function nonEmptyString(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
     if (trimmed.length === 0) return undefined;
-    return trimmed.slice(0, max);
+    return trimmed;
 }
 
 /**
- * Interactive-element evaluator: a bounded, structural list of actionable/landmark elements as
+ * Interactive-element evaluator: a structural list of actionable/landmark elements as
  * `{ role, name, selector, rect }`. The synthesized selector prefers a unique `#id`, then a
  * `[data-testid]`, else a short `:nth-of-type` ancestor path — a resilient locator an agent can act
  * on without coordinates. `name` is the visible accessible label (metadata), never field values;
- * `rect` is layout geometry only. Count + selector length are capped in-page.
+ * `rect` is layout geometry only. Executable selectors are always returned whole.
  */
-export function interactiveElementsExpression(maxElements: number): string {
+export function interactiveElementsExpression(): string {
     return `(() => {
     const cssEsc = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : String(s);
     const isUnique = (s) => { try { return document.querySelectorAll(s).length === 1; } catch { return false; } };
     const synth = (el) => {
       try {
-        if (el.id) { const s = '#' + cssEsc(el.id); if (s.length <= ${MAX_SELECTOR_CHARS} && isUnique(s)) return s; }
+        if (el.id) { const s = '#' + cssEsc(el.id); if (isUnique(s)) return s; }
         const tid = el.getAttribute && el.getAttribute('data-testid');
-        if (tid) { const s = '[data-testid="' + tid.replace(/"/g, '\\\\"') + '"]'; if (s.length <= ${MAX_SELECTOR_CHARS} && isUnique(s)) return s; }
+        if (tid) { const s = '[data-testid="' + tid.replace(/"/g, '\\\\"') + '"]'; if (isUnique(s)) return s; }
         const parts = [];
         let node = el;
         while (node && node.nodeType === 1) {
@@ -61,7 +51,6 @@ export function interactiveElementsExpression(maxElements: number): string {
           parts.unshift(part);
           node = parent;
           const candidate = parts.join(' > ');
-          if (candidate.length > ${MAX_SELECTOR_CHARS}) return '';
           if (isUnique(candidate)) return candidate;
         }
         return '';
@@ -70,11 +59,10 @@ export function interactiveElementsExpression(maxElements: number): string {
     const out = [];
     const sel = 'a,button,input,select,textarea,[role],h1,h2,h3,[aria-label]';
     const nodes = document.querySelectorAll(sel);
-    // One extra raw element is the overflow sentinel; the parser returns at most the wire cap.
-    for (let i = 0; i < nodes.length && out.length < ${maxElements + 1}; i++) {
+    for (let i = 0; i < nodes.length; i++) {
       const el = nodes[i];
       const role = el.getAttribute('role') || el.tagName.toLowerCase();
-      const name = ${synthesizeLocatorNameExpression('el')}.slice(0, ${SNAPSHOT_MAX_NAME_CHARS + 1});
+      const name = ${synthesizeLocatorNameExpression('el')};
       let rect = { x: 0, y: 0, width: 0, height: 0 };
       try {
         const r = el.getBoundingClientRect();
@@ -93,23 +81,17 @@ function numberOr(value: unknown, fallback: number): number {
 
 export function parseInteractiveElements(
     value: unknown,
-    cap: number,
 ): Readonly<{ elements: readonly BrowserContextSnapshotInteractiveElementV1[]; truncated: boolean }> {
     if (!Array.isArray(value)) return { elements: [], truncated: false };
     const elements: BrowserContextSnapshotInteractiveElementV1[] = [];
-    let metadataTruncated = false;
     for (const raw of value) {
-        if (elements.length >= cap) break;
         const r = record(raw);
         if (!r) continue;
-        const role = clampString(r.role, MAX_ROLE_CHARS);
+        const role = nonEmptyString(r.role);
         // Selectors are executable code, not display text: never return a sliced selector.
-        const selector = typeof r.selector === 'string' && r.selector.trim().length <= MAX_SELECTOR_CHARS
-            ? r.selector.trim()
-            : undefined;
+        const selector = nonEmptyString(r.selector);
         if (!role || !selector) continue;
-        const name = clampString(r.name, SNAPSHOT_MAX_NAME_CHARS);
-        if (typeof r.name === 'string' && r.name.trim().length > SNAPSHOT_MAX_NAME_CHARS) metadataTruncated = true;
+        const name = nonEmptyString(r.name);
         const rectRecord = record(r.rect);
         const rect = {
             x: numberOr(rectRecord?.x, 0),
@@ -119,12 +101,12 @@ export function parseInteractiveElements(
         };
         elements.push({ role, selector, rect, ...(name ? { name } : {}) });
     }
-    return { elements, truncated: metadataTruncated || value.length > elements.length };
+    return { elements, truncated: value.length > elements.length };
 }
 
 function axValue(node: Record<string, unknown>, field: string): string | undefined {
     const wrapped = record(node[field]);
-    return clampString(wrapped?.value, field === 'role' ? MAX_ROLE_CHARS : SNAPSHOT_MAX_NAME_CHARS);
+    return nonEmptyString(wrapped?.value);
 }
 
 function editableDomNodes(document: unknown): ReadonlyMap<number, boolean> {
@@ -168,19 +150,16 @@ function editableDomNodes(document: unknown): ReadonlyMap<number, boolean> {
 
 /**
  * AX supplies current values; DOM metadata establishes which editable fields may disclose them.
- * Unknown metadata fails closed for values while preserving the structural snapshot. Names and
- * values share the existing per-node text budget; the node count remains bounded.
+ * Unknown metadata fails closed for values while preserving the structural snapshot.
  */
 export function parseAxNodes(
     value: unknown,
-    cap: number,
     document?: unknown,
 ): Readonly<{ nodes: readonly BrowserContextSnapshotAxNodeV1[]; truncated: boolean }> {
     const raw = record(value)?.nodes;
     if (!Array.isArray(raw)) return { nodes: [], truncated: false };
     const nodes: BrowserContextSnapshotAxNodeV1[] = [];
     const editable = editableDomNodes(document);
-    let considered = 0;
     let valuesTruncated = false;
     for (const entry of raw) {
         const node = record(entry);
@@ -188,8 +167,6 @@ export function parseAxNodes(
         if (node.ignored === true) continue;
         const role = axValue(node, 'role');
         if (!role) continue;
-        considered += 1;
-        if (nodes.length >= cap) continue;
         const name = axValue(node, 'name');
         const rawValue = record(node.value)?.value;
         const isEditable = Array.isArray(node.properties) && node.properties.some((property) => {
@@ -199,10 +176,9 @@ export function parseAxNodes(
         });
         const allowed = typeof node.backendDOMNodeId === 'number' ? editable.get(node.backendDOMNodeId) : undefined;
         const fieldValue = isEditable && allowed === true && typeof rawValue === 'string'
-            ? rawValue.slice(0, SNAPSHOT_MAX_NAME_CHARS) : undefined;
-        if (isEditable && typeof rawValue === 'string'
-            && (allowed === undefined || (allowed && rawValue.length > SNAPSHOT_MAX_NAME_CHARS))) valuesTruncated = true;
+            ? rawValue : undefined;
+        if (isEditable && typeof rawValue === 'string' && allowed === undefined) valuesTruncated = true;
         nodes.push({ role, ...(name ? { name } : {}), ...(fieldValue !== undefined ? { value: fieldValue } : {}) });
     }
-    return { nodes, truncated: valuesTruncated || considered > nodes.length };
+    return { nodes, truncated: valuesTruncated };
 }

@@ -15,6 +15,7 @@ type SidecarContextBaseInput = Readonly<{
 
 export type SidecarScreenshotContextInput = SidecarContextBaseInput & Readonly<{
     media: BrowserScreenshotMediaReferenceV1;
+    viewport?: Readonly<{ width: number; height: number }>;
 }>;
 
 export function buildSidecarScreenshotContextItem(input: SidecarScreenshotContextInput): BrowserContextItemV1 {
@@ -30,6 +31,7 @@ export function buildSidecarScreenshotContextItem(input: SidecarScreenshotContex
         lifecycleState: 'available',
         redactionLevel: 'metadataOnly',
         media: input.media,
+        ...(input.viewport ? { viewport: input.viewport } : {}),
     });
 }
 

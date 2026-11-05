@@ -5,9 +5,10 @@ import type { BrowserContextPrivacyState, BrowserContextItemV1, BrowserContextSn
 import {
   buildSidecarContextUnavailableItem,
   buildSidecarSummaryContextItem,
+  buildSidecarPageReferenceContextItem,
+  buildSidecarScreenshotContextItem,
   type SidecarSummaryContextKind,
 } from '../sidecar/context/capture';
-import { createSidecarContextPublisher, resolveSidecarContextGateDenial } from '../sidecar/context/publish';
 import type { BrowserSidecarCdpCommandScope } from '../sidecar/controlAdapter';
 import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
@@ -51,7 +52,7 @@ export type BrowserContextSourcePageResult =
   | BrowserContextSourceFailure;
 
 export type BrowserContextSourceScreenshotResult =
-  | Readonly<{ ok: true; media: BrowserScreenshotMediaReferenceV1 }>
+  | Readonly<{ ok: true; media: BrowserScreenshotMediaReferenceV1; viewport?: Readonly<{ width: number; height: number }> }>
   | BrowserContextSourceFailure;
 
 export type BrowserContextSourceSummaryResult =
@@ -65,30 +66,6 @@ export type BrowserContextSourceSelectedElementResult =
       accessibleName?: string;
       rect?: Readonly<{ x: number; y: number; width: number; height: number }>;
     }>
-  | BrowserContextSourceFailure;
-
-export type BrowserContextRegionSurfaceBounds = Readonly<{ width: number; height: number }>;
-
-/**
- * A normalized capture rectangle in CSS pixels. `viewport` coordinates add scrollX/scrollY before
- * CDP capture; `page` coordinates are already absolute CSS page coordinates. DPR is threaded so
- * CDP can pass `clip.scale` and Wry can consume the device-pixel sibling from the same geometry
- * helper.
- */
-export type BrowserContextRegionRect = Readonly<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  coordinateSpace?: 'viewport' | 'page';
-  scrollX?: number;
-  scrollY?: number;
-  devicePixelRatio?: number;
-  surface?: BrowserContextRegionSurfaceBounds;
-}>;
-
-export type BrowserContextSourceRegionCaptureResult =
-  | Readonly<{ ok: true; media: BrowserScreenshotMediaReferenceV1; rect: BrowserContextRegionRect }>
   | BrowserContextSourceFailure;
 
 /**
@@ -129,27 +106,11 @@ export type BrowserContextSource = Readonly<{
     target: BrowserContextSourceTargetRef,
   ): Promise<BrowserContextSourceSelectedElementResult>;
   /**
-   * Annotation region pixel capture (MCH-5). Crops a rectangle of the page via CDP
-   * `Page.captureScreenshot({clip})`. Optional so a source without a live CDP transport (the
-   * unavailable source / in-memory QA) leaves region capture fail-closed.
-   */
-  captureRegion?(
-    target: BrowserContextSourceTargetRef & Readonly<{ rect: BrowserContextRegionRect }>,
-  ): Promise<BrowserContextSourceRegionCaptureResult>;
-  /**
-   * Annotation element pixel capture (MCH-5). Resolves a selector's box model and captures that
-   * clip via CDP `Page.captureScreenshot({clip})`. Optional for the same fail-closed reason.
-   */
-  captureElement?(
-    target: BrowserContextSourceTargetRef & Readonly<{ selector: string }>,
-  ): Promise<BrowserContextSourceRegionCaptureResult>;
-  /**
    * BA-2 combined rich snapshot. Optional so a source without a live CDP transport (the unavailable
    * source / in-memory QA) leaves the combined op fail-closed (`adapter_unavailable`).
    */
   captureSnapshot?(
     target: BrowserContextSourceTargetRef,
-    options?: Readonly<{ focusedCredentialTargetOnly: true }>,
   ): Promise<BrowserContextSourceSnapshotResult>;
 }>;
 
@@ -170,14 +131,6 @@ export type BrowserContextCaptureResult =
   | Readonly<{ status: 'unavailable'; item: BrowserContextItemV1 }>
   | Readonly<{ status: 'denied' }>;
 
-export type BrowserContextRegionCaptureRequest = BrowserContextCaptureRequest & Readonly<{
-  rect: BrowserContextRegionRect;
-}>;
-
-export type BrowserContextElementCaptureRequest = BrowserContextCaptureRequest & Readonly<{
-  selector: string;
-}>;
-
 /** BA-2 combined-snapshot service result. The success payload is the standalone protocol snapshot. */
 export type BrowserContextSnapshotCaptureResult =
   | Readonly<{ status: 'captured'; snapshot: BrowserContextSnapshotV1 }>
@@ -189,10 +142,6 @@ export type BrowserContextCaptureService = Readonly<{
   captureScreenshot(request: BrowserContextCaptureRequest): Promise<BrowserContextCaptureResult>;
   captureSummary(request: BrowserContextSummaryCaptureRequest): Promise<BrowserContextCaptureResult>;
   captureSelectedElement(request: BrowserContextCaptureRequest): Promise<BrowserContextCaptureResult>;
-  /** MCH-5: daemon annotation region pixel capture (managed-Chromium engine). */
-  captureAnnotationRegion(request: BrowserContextRegionCaptureRequest): Promise<BrowserContextCaptureResult>;
-  /** MCH-5: daemon annotation element pixel capture (managed-Chromium engine). */
-  captureAnnotationElement(request: BrowserContextElementCaptureRequest): Promise<BrowserContextCaptureResult>;
   /** BA-2: combined rich agent snapshot (AX tree + interactive elements + text + console + screenshot). */
   captureSnapshot(request: BrowserContextCaptureRequest): Promise<BrowserContextSnapshotCaptureResult>;
 }>;
@@ -201,7 +150,8 @@ export type BrowserContextCaptureService = Readonly<{
  * The capture/egress gate state threaded from the single-owner daemon feature-gate. The route
  * owner is constructed only when `browser.context` is enabled, but the server can flip the
  * feature off afterwards; checking before any read/persistence keeps disabled capture closed
- * instead of trusting construction-time admission. Page/screenshot publishers also recheck egress.
+ * instead of trusting construction-time admission. Each finite capture admits once,
+ * then probes source privacy before disclosing its captured content.
  */
 export type BrowserContextCaptureGateState = Readonly<{
   featureEnabled: boolean;
@@ -266,56 +216,6 @@ function buildSelectedElementItem(input: Readonly<{
   });
 }
 
-function buildAnnotationItem(input: Readonly<{
-  contextId: string;
-  annotationId: string;
-  browserSessionId: string;
-  sourceViewId: string;
-  capturedAtMs: number;
-  navigationGeneration: number;
-  media: BrowserScreenshotMediaReferenceV1;
-  target: { kind: 'region'; rect: BrowserContextRegionRect }
-    | { kind: 'element'; selectorPath: string; rect?: BrowserContextRegionRect };
-}>): BrowserContextItemV1 {
-  const target = input.target.kind === 'region'
-    ? { kind: 'region' as const, rect: publicRegionRect(input.target.rect) }
-    : {
-        kind: 'element' as const,
-        selectorPath: input.target.selectorPath,
-        ...(input.target.rect ? { rect: publicRegionRect(input.target.rect) } : {}),
-      };
-  return BrowserContextItemV1Schema.parse({
-    v: 1,
-    contextId: input.contextId,
-    kind: 'browserAnnotation',
-    sourceViewId: input.sourceViewId,
-    sourceAdapterKind: 'chromiumSidecar',
-    fidelity: 'cdp',
-    capturedAtMs: input.capturedAtMs,
-    navigationGeneration: input.navigationGeneration,
-    lifecycleState: 'available',
-    redactionLevel: 'metadataOnly',
-    annotationId: input.annotationId,
-    browserSessionId: input.browserSessionId,
-    media: input.media,
-    target,
-  });
-}
-
-function publicRegionRect(rect: BrowserContextRegionRect): Readonly<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}> {
-  return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
-  };
-}
-
 export function createBrowserContextCaptureService(input: Readonly<{
   ownerAccountId: string;
   source: BrowserContextSource;
@@ -325,19 +225,40 @@ export function createBrowserContextCaptureService(input: Readonly<{
 }>): BrowserContextCaptureService {
   const now = input.now ?? (() => Date.now());
   const resolveOwnerGate = input.resolveGate ?? (() => DEFAULT_GATE_STATE);
-  async function resolveGate(request: BrowserContextCaptureRequest, ownerGate?: BrowserContextCaptureGateState): Promise<BrowserContextCaptureGateState> {
-    const gate = ownerGate ?? await resolveOwnerGate(targetRef(request));
-    if (resolveSidecarContextGateDenial(gate) || !input.source.readPrivacyState) return gate;
-    const facts = await input.source.readPrivacyState(targetRef(request));
-    return { ...gate, policyAllowed: facts.ok && resolveBrowserContextPrivacyDenial(facts.privacyState) === null,
-      ...(facts.ok ? { privacyState: facts.privacyState } : {}) };
+  function normalizePrivacy(state: BrowserContextPrivacyState | null | undefined, maskedSnapshot: boolean) {
+    return maskedSnapshot && state === 'sensitiveFieldsPresent' ? null : state;
   }
-  const publisher = createSidecarContextPublisher({
-    ownerAccountId: input.ownerAccountId,
-    // Publishing is the egress shape today; the daemon route owner returns the item
-    // directly to the caller, so the publish sink is a no-op pass-through.
-    publish: () => undefined,
-  });
+
+  async function sourcePrivacyDenial(request: BrowserContextCaptureRequest, maskedSnapshot = false) {
+    if (!input.source.readPrivacyState) return null;
+    const facts = await input.source.readPrivacyState(targetRef(request));
+    const privacy = facts.ok ? resolveBrowserContextPrivacyDenial(normalizePrivacy(facts.privacyState, maskedSnapshot)) : null;
+    if (facts.ok && !privacy) return null;
+    return {
+      lifecycleState: privacy?.lifecycleState ?? 'policyDenied' as const,
+      disabledReason: facts.ok ? 'browser context blocked by source privacy' : 'browser context privacy unavailable',
+    };
+  }
+
+  async function admissionDenial(request: BrowserContextCaptureRequest, maskedSnapshot = false) {
+    const gate = await resolveOwnerGate(targetRef(request));
+    const privacy = resolveBrowserContextPrivacyDenial(normalizePrivacy(gate.privacyState, maskedSnapshot));
+    if (privacy) return { lifecycleState: privacy.lifecycleState, disabledReason: 'browser context blocked by source privacy' };
+    if (!gate.featureEnabled || !gate.policyAllowed) return {
+      lifecycleState: 'policyDenied' as const,
+      disabledReason: !gate.featureEnabled ? 'browser.context feature disabled' : 'browser context denied by policy',
+    };
+    if (!gate.runtimeAvailable) return { lifecycleState: 'adapterUnavailable' as const, disabledReason: 'browser sidecar runtime unavailable' };
+    return sourcePrivacyDenial(request, maskedSnapshot);
+  }
+
+  function pageResult(request: BrowserContextCaptureRequest, denial: NonNullable<Awaited<ReturnType<typeof admissionDenial>>>): BrowserContextCaptureResult {
+    return { status: 'captured', item: BrowserContextItemV1Schema.parse({
+      v: 1, kind: 'browserPageReference', contextId: request.contextId, sourceViewId: request.viewId,
+      sourceAdapterKind: 'chromiumSidecar', fidelity: 'unavailable', capturedAtMs: now(),
+      navigationGeneration: request.navigationGeneration, redactionLevel: 'blocked', ...denial,
+    }) };
+  }
 
   function targetRef(request: BrowserContextCaptureRequest): BrowserContextSourceTargetRef {
     return {
@@ -375,28 +296,16 @@ export function createBrowserContextCaptureService(input: Readonly<{
   const service: BrowserContextCaptureService = {
     async capturePage(request) {
       if (!isOwner(request)) return { status: 'denied' };
-      const gate = await resolveGate(request);
-      if (resolveSidecarContextGateDenial(gate)) {
-        const published = publisher.publishPageReference({
-          requesterAccountId: request.requesterAccountId,
-          ...gate,
-          contextId: request.contextId,
-          sourceViewId: request.viewId,
-          capturedAtMs: now(),
-          navigationGeneration: request.navigationGeneration,
-        });
-        return published.status === 'published'
-          ? { status: 'captured', item: published.item }
-          : { status: 'denied' };
-      }
+      const denial = await admissionDenial(request);
+      if (denial) return pageResult(request, denial);
       const capture = await input.source.capturePage(targetRef(request));
       if (!capture.ok) {
         return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
       }
 
-      const published = publisher.publishPageReference({
-        requesterAccountId: request.requesterAccountId,
-        ...await resolveGate(request),
+      const privacy = await sourcePrivacyDenial(request);
+      if (privacy) return pageResult(request, privacy);
+      const item = buildSidecarPageReferenceContextItem({
         contextId: request.contextId,
         sourceViewId: request.viewId,
         capturedAtMs: now(),
@@ -408,13 +317,12 @@ export function createBrowserContextCaptureService(input: Readonly<{
         ...(capture.targetKind ? { targetKind: capture.targetKind } : {}),
         ...(capture.display ? { display: capture.display } : {}),
       });
-      if (published.status !== 'published') return { status: 'denied' };
-      return { status: 'captured', item: published.item };
+      return { status: 'captured', item };
     },
 
     async captureScreenshot(request) {
       if (!isOwner(request)) return { status: 'denied' };
-      const denial = resolveSidecarContextGateDenial(await resolveGate(request));
+      const denial = await admissionDenial(request);
       if (denial) {
         return { status: 'unavailable', item: buildSidecarContextUnavailableItem({
           contextId: request.contextId, sourceViewId: request.viewId, capturedAtMs: now(),
@@ -427,34 +335,31 @@ export function createBrowserContextCaptureService(input: Readonly<{
         return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
       }
 
-      const published = publisher.publishScreenshotReference({
-        requesterAccountId: request.requesterAccountId,
-        ...await resolveGate(request),
+      const privacy = await sourcePrivacyDenial(request);
+      if (privacy) return { status: 'unavailable', item: buildSidecarContextUnavailableItem({
+        contextId: request.contextId, sourceViewId: request.viewId, capturedAtMs: now(),
+        navigationGeneration: request.navigationGeneration, kind: 'browserDomSnapshotSummary', ...privacy,
+      }) };
+      const item = buildSidecarScreenshotContextItem({
         contextId: request.contextId,
         sourceViewId: request.viewId,
         capturedAtMs: now(),
         navigationGeneration: request.navigationGeneration,
         media: capture.media,
+        ...(capture.viewport ? { viewport: capture.viewport } : {}),
       });
-      if (published.status === 'denied') return { status: 'denied' };
-      if (published.status === 'blocked') {
-        return { status: 'unavailable', item: buildSidecarContextUnavailableItem({
-          contextId: request.contextId, sourceViewId: request.viewId, capturedAtMs: now(),
-          navigationGeneration: request.navigationGeneration, kind: 'browserDomSnapshotSummary',
-          lifecycleState: published.lifecycleState, disabledReason: published.disabledReason,
-        }) };
-      }
-      return { status: 'captured', item: published.item };
+      return { status: 'captured', item };
     },
 
     async captureSummary(request) {
       if (!isOwner(request)) return { status: 'denied' };
-      if (resolveSidecarContextGateDenial(await resolveGate(request))) return { status: 'denied' };
+      if (await admissionDenial(request)) return { status: 'denied' };
       const capture = await input.source.captureSummary({ ...targetRef(request), kind: request.kind });
       if (!capture.ok) {
         return unavailableSummary(request, request.kind, capture);
       }
 
+      if (await sourcePrivacyDenial(request)) return { status: 'denied' };
       return {
         status: 'captured',
         item: buildSidecarSummaryContextItem({
@@ -471,12 +376,13 @@ export function createBrowserContextCaptureService(input: Readonly<{
 
     async captureSelectedElement(request) {
       if (!isOwner(request)) return { status: 'denied' };
-      if (resolveSidecarContextGateDenial(await resolveGate(request))) return { status: 'denied' };
+      if (await admissionDenial(request)) return { status: 'denied' };
       const capture = await input.source.captureSelectedElement(targetRef(request));
       if (!capture.ok) {
         return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
       }
 
+      if (await sourcePrivacyDenial(request)) return { status: 'denied' };
       return {
         status: 'captured',
         item: buildSelectedElementItem({
@@ -491,104 +397,23 @@ export function createBrowserContextCaptureService(input: Readonly<{
       };
     },
 
-    async captureAnnotationRegion(request) {
-      if (!isOwner(request)) return { status: 'denied' };
-      const gate = await resolveGate(request);
-      if (resolveSidecarContextGateDenial(gate)) {
-        return { status: 'denied' };
-      }
-      if (!input.source.captureRegion) {
-        return unavailableSummary(request, 'browserDomSnapshotSummary', {
-          ok: false,
-          reason: 'adapter_unavailable',
-          disabledReason: 'browser annotation region capture producer unavailable',
-        });
-      }
-      const capture = await input.source.captureRegion({ ...targetRef(request), rect: request.rect });
-      if (!capture.ok) {
-        return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
-      }
-      return {
-        status: 'captured',
-        item: buildAnnotationItem({
-          contextId: request.contextId,
-          annotationId: request.contextId,
-          browserSessionId: request.browserSessionId,
-          sourceViewId: request.viewId,
-          capturedAtMs: now(),
-          navigationGeneration: request.navigationGeneration,
-          media: capture.media,
-          target: { kind: 'region', rect: capture.rect },
-        }),
-      };
-    },
-
-    async captureAnnotationElement(request) {
-      if (!isOwner(request)) return { status: 'denied' };
-      const gate = await resolveGate(request);
-      if (resolveSidecarContextGateDenial(gate)) {
-        return { status: 'denied' };
-      }
-      if (!input.source.captureElement) {
-        return unavailableSummary(request, 'browserDomSnapshotSummary', {
-          ok: false,
-          reason: 'adapter_unavailable',
-          disabledReason: 'browser annotation element capture producer unavailable',
-        });
-      }
-      const capture = await input.source.captureElement({ ...targetRef(request), selector: request.selector });
-      if (!capture.ok) {
-        return unavailableSummary(request, 'browserDomSnapshotSummary', capture);
-      }
-      return {
-        status: 'captured',
-        item: buildAnnotationItem({
-          contextId: request.contextId,
-          annotationId: request.contextId,
-          browserSessionId: request.browserSessionId,
-          sourceViewId: request.viewId,
-          capturedAtMs: now(),
-          navigationGeneration: request.navigationGeneration,
-          media: capture.media,
-          target: { kind: 'element', selectorPath: request.selector, rect: capture.rect },
-        }),
-      };
-    },
-
     async captureSnapshot(request) {
       if (!isOwner(request)) return { status: 'denied' };
-      const ownerGate = await resolveOwnerGate(targetRef(request));
-      if (resolveSidecarContextGateDenial(ownerGate)) return { status: 'denied' };
-      const gate = await resolveGate(request, ownerGate);
-      // Password presence blocks content, not the value-free proof needed to request
-      // confidential input. Owner policy and every other privacy denial still apply.
-      const focusedCredentialTargetOnly = gate.privacyState === 'sensitiveFieldsPresent';
-      // The combined snapshot bundles a screenshot, so it is gated like the other sensitive
-      // pixel-bearing captures (screenshot/annotation): fail-closed unless the feature is enabled,
-      // policy-allowed, and the runtime is available.
-      if (resolveSidecarContextGateDenial(gate) && !focusedCredentialTargetOnly) {
+      // The source masks field values for every rich snapshot and omits sensitive pixels.
+      // Field presence therefore no longer blocks useful structure or credential proof.
+      if (await admissionDenial(request, true)) {
         return { status: 'denied' };
       }
       if (!input.source.captureSnapshot) {
         return { status: 'unavailable', disabledReason: 'browser snapshot producer unavailable' };
       }
-      const captured = focusedCredentialTargetOnly
-        ? await input.source.captureSnapshot(targetRef(request), { focusedCredentialTargetOnly: true })
-        : await input.source.captureSnapshot(targetRef(request));
-      if (!captured.ok) {
-        return { status: 'unavailable', disabledReason: disabledReasonFor(captured) };
+      const capture = await input.source.captureSnapshot(targetRef(request));
+      if (!capture.ok) {
+        return { status: 'unavailable', disabledReason: disabledReasonFor(capture) };
       }
-      if (focusedCredentialTargetOnly && !captured.focusedCredentialTarget) {
-        return { status: 'unavailable', disabledReason: 'browser focused credential target unavailable' };
-      }
-      // Enforce the restricted projection here as well as at the producer: no source
-      // content, URL/title, screenshot, or accessibility name can accompany this proof.
-      const capture: Extract<BrowserContextSourceSnapshotResult, { ok: true }> = focusedCredentialTargetOnly
-        ? { ok: true, visibleText: '', axNodes: [], interactiveElements: [], focusedCredentialTarget: captured.focusedCredentialTarget }
-        : captured;
-      // LANE-B egress model: the daemon route owner returns FULL fidelity to the local owner; the
-      // agent/cloud egress chokepoint redacts before the payload leaves the device. `none` records
-      // that no redaction was applied to the owner-facing payload.
+      if (await sourcePrivacyDenial(request, true)) return { status: 'denied' };
+      // Field masking is already enforced by the capture owner. `none` describes
+      // the separate egress-policy projection; it does not disable secret masking.
       const snapshot = BrowserContextSnapshotV1Schema.parse({
         v: 1,
         contextId: request.contextId,
@@ -624,8 +449,6 @@ export function createBrowserContextCaptureService(input: Readonly<{
     captureScreenshot: request => observe(request, () => service.captureScreenshot(request)),
     captureSummary: request => observe(request, () => service.captureSummary(request)),
     captureSelectedElement: request => observe(request, () => service.captureSelectedElement(request)),
-    captureAnnotationRegion: request => observe(request, () => service.captureAnnotationRegion(request)),
-    captureAnnotationElement: request => observe(request, () => service.captureAnnotationElement(request)),
     captureSnapshot: request => observe(request, () => service.captureSnapshot(request)),
   };
 }

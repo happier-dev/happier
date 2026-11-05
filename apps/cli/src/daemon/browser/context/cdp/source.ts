@@ -1,9 +1,8 @@
-import { resolveAnnotationCropClip } from '@happier-dev/protocol/browser/context/annotationCropGeometry';
+import { BROWSER_CONTEXT_SUMMARY_MAX_CHARS } from '@happier-dev/protocol/browser/context/v1';
 import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 
 import type { BrowserContextCaptureScope, BrowserContextSource, BrowserContextSourceTargetRef } from '../capture';
 import type { SurfaceInputControl } from '../../../surfaces/inputControl';
-import type { BrowserContextRegionRect } from '../capture';
 import type { SidecarSummaryContextKind } from '../../sidecar/context/capture';
 import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type {
@@ -12,10 +11,8 @@ import type {
     BrowserContextCdpViewResolver,
 } from './transport';
 import type { BrowserContextScreenshotMediaWriter } from './screenshotMedia';
+import { readSnapshotMasking, snapshotTextMasker } from './snapshotMasking';
 import {
-    SNAPSHOT_MAX_AX_NODES,
-    SNAPSHOT_MAX_INTERACTIVE_ELEMENTS,
-    SNAPSHOT_MAX_VISIBLE_TEXT_CHARS,
     interactiveElementsExpression,
     parseAxNodes,
     parseInteractiveElements,
@@ -41,11 +38,7 @@ export type CdpBrowserContextSourceInput = Readonly<{
     prepareObservation?: (view: BrowserContextSourceTargetRef) => Promise<void>;
     screenshotMediaWriter: BrowserContextScreenshotMediaWriter;
     summarizeDiagnostics?: BrowserContextDiagnosticsSummarizer;
-    /** Cap for DOM text summaries before the protocol cap; keeps captures bounded. */
-    maxSummaryChars?: number;
 }>;
-
-const DEFAULT_MAX_SUMMARY_CHARS = 4_096;
 
 const ADAPTER_UNAVAILABLE = {
     ok: false as const,
@@ -114,83 +107,6 @@ function readBoxModelRect(model: unknown): Readonly<{ x: number; y: number; widt
     return { x: x0, y: y0, width, height };
 }
 
-function finiteNumber(value: unknown, fallback: number): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-function publicRect(rect: BrowserContextRegionRect): Readonly<{ x: number; y: number; width: number; height: number }> {
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-}
-
-type PageViewportMetrics = Readonly<{
-    scrollX: number;
-    scrollY: number;
-    devicePixelRatio: number;
-}>;
-
-const PAGE_VIEWPORT_METRICS_EXPRESSION = `(() => ({
-  scrollX: Number.isFinite(window.scrollX) ? window.scrollX : (Number.isFinite(window.pageXOffset) ? window.pageXOffset : 0),
-  scrollY: Number.isFinite(window.scrollY) ? window.scrollY : (Number.isFinite(window.pageYOffset) ? window.pageYOffset : 0),
-  devicePixelRatio: Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1,
-}))()`;
-
-function parsePageViewportMetrics(value: unknown): PageViewportMetrics {
-    const r = record(value);
-    return {
-        scrollX: finiteNumber(r?.scrollX, 0),
-        scrollY: finiteNumber(r?.scrollY, 0),
-        devicePixelRatio: finiteNumber(r?.devicePixelRatio, 1) > 0 ? finiteNumber(r?.devicePixelRatio, 1) : 1,
-    };
-}
-
-function resolveCdpScreenshotClip(rect: BrowserContextRegionRect): Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    scale: number;
-}> | null;
-function resolveCdpScreenshotClip(
-    rect: BrowserContextRegionRect,
-    pageMetrics: PageViewportMetrics | null | undefined,
-): Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    scale: number;
-}> | null;
-function resolveCdpScreenshotClip(
-    rect: BrowserContextRegionRect,
-    pageMetrics?: PageViewportMetrics | null,
-): Readonly<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    scale: number;
-}> | null {
-    if (!(rect.width > 0) || !(rect.height > 0)) return null;
-    const coordinateSpace = rect.coordinateSpace ?? 'viewport';
-    const resolved = resolveAnnotationCropClip({
-        targets: [publicRect(rect)],
-        viewport: {
-            scrollX: coordinateSpace === 'page' ? 0 : finiteNumber(rect.scrollX, pageMetrics?.scrollX ?? 0),
-            scrollY: coordinateSpace === 'page' ? 0 : finiteNumber(rect.scrollY, pageMetrics?.scrollY ?? 0),
-            devicePixelRatio: finiteNumber(rect.devicePixelRatio, pageMetrics?.devicePixelRatio ?? 1),
-            surface: rect.surface ?? {
-                width: Number.MAX_SAFE_INTEGER,
-                height: Number.MAX_SAFE_INTEGER,
-            },
-        },
-    });
-    if (resolved.status !== 'clip') return null;
-    return {
-        ...resolved.cssPageRect,
-        scale: resolved.scale,
-    };
-}
-
 function readAccessibleName(describe: unknown): string | undefined {
     const node = record(record(describe)?.node);
     const attributes = node?.attributes;
@@ -214,14 +130,11 @@ const SELECTED_ELEMENT_SELECTOR_EXPRESSION =
 const FAVICON_EXPRESSION =
     "(() => { const l = document.querySelector(\"link[rel~='icon']\"); return l && l.href ? l.href : undefined; })()";
 
-// Reads visible body text. capture.ts treats the summary as `summaryOnly` redaction; we additionally
-// collapse whitespace and cap length so an unbounded DOM dump can never be surfaced.
+// Reads visible body text. Full snapshots preserve it; summary capture applies its summary budget.
 const DOM_TEXT_EXPRESSION =
     "(() => { const b = document.body; return b && b.innerText ? b.innerText : ''; })()";
 
 export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInput): BrowserContextSource {
-    const maxSummaryChars = Math.max(1, Math.trunc(input.maxSummaryChars ?? DEFAULT_MAX_SUMMARY_CHARS));
-
     function resolve(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserContextCdpPageHandle | null {
         return input.resolveView({ browserSessionId: view.browserSessionId, viewId: view.viewId });
     }
@@ -248,10 +161,6 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             returnByValue: true,
             awaitPromise: false,
         }, scope);
-    }
-
-    async function readPageViewportMetrics(handle: BrowserContextCdpPageHandle): Promise<PageViewportMetrics> {
-        return parsePageViewportMetrics(evaluateValue(await evaluate(handle, PAGE_VIEWPORT_METRICS_EXPRESSION)));
     }
 
     const source: BrowserContextSource = {
@@ -296,12 +205,20 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             if (!handle) return ADAPTER_UNAVAILABLE;
 
             let pngBase64: string | undefined;
+            let viewport: Readonly<{ width: number; height: number }> | undefined;
             try {
                 const captured = await dispatch(handle, 'Page.captureScreenshot', {
                     format: 'png',
                     captureBeyondViewport: false,
                 });
                 pngBase64 = stringField(captured, 'data');
+                // inner dimensions include scrollbars; CDP clientWidth/clientHeight exclude them.
+                const dimensions = record(evaluateValue(await evaluate(handle,
+                    '({ width: window.innerWidth, height: window.innerHeight })')));
+                if (typeof dimensions?.width === 'number' && Number.isFinite(dimensions.width) && dimensions.width > 0
+                    && typeof dimensions.height === 'number' && Number.isFinite(dimensions.height) && dimensions.height > 0) {
+                    viewport = { width: dimensions.width, height: dimensions.height };
+                }
             } catch {
                 return CAPTURE_FAILED;
             }
@@ -321,7 +238,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     ...(written.disabledReason ? { disabledReason: written.disabledReason } : {}),
                 };
             }
-            return { ok: true, media: written.media };
+            return { ok: true, media: written.media, ...(viewport ? { viewport } : {}) };
         },
 
         async captureSummary(view) {
@@ -343,114 +260,12 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             try {
                 const evaluated = evaluateString(await evaluate(handle, DOM_TEXT_EXPRESSION)) ?? '';
                 const collapsed = collapseWhitespace(evaluated);
-                const truncated = collapsed.length > maxSummaryChars;
-                const summary = truncated ? `${collapsed.slice(0, maxSummaryChars)}...` : collapsed;
+                const truncated = collapsed.length > BROWSER_CONTEXT_SUMMARY_MAX_CHARS;
+                const summary = collapsed.slice(0, BROWSER_CONTEXT_SUMMARY_MAX_CHARS);
                 return { ok: true, summary, ...(truncated ? { truncated: true } : {}) };
             } catch {
                 return CAPTURE_FAILED;
             }
-        },
-
-        async captureRegion(view) {
-            const handle = resolve(view);
-            if (!handle) return ADAPTER_UNAVAILABLE;
-
-            const rect = view.rect;
-            let clip: ReturnType<typeof resolveCdpScreenshotClip>;
-            try {
-                const coordinateSpace = rect.coordinateSpace ?? 'viewport';
-                const needsLiveMetrics = coordinateSpace === 'viewport'
-                    && (rect.scrollX === undefined || rect.scrollY === undefined || rect.devicePixelRatio === undefined);
-                clip = resolveCdpScreenshotClip(rect, needsLiveMetrics ? await readPageViewportMetrics(handle) : null);
-            } catch {
-                return CAPTURE_FAILED;
-            }
-            if (!clip) return CAPTURE_FAILED;
-
-            let pngBase64: string | undefined;
-            try {
-                const captured = await dispatch(handle, 'Page.captureScreenshot', {
-                    format: 'png',
-                    captureBeyondViewport: false,
-                    clip,
-                });
-                pngBase64 = stringField(captured, 'data');
-            } catch {
-                return CAPTURE_FAILED;
-            }
-            if (!pngBase64) return CAPTURE_FAILED;
-
-            if (input.resolveInputControl?.(view)?.isObservationHeld()) return CAPTURE_FAILED;
-            const written = await input.screenshotMediaWriter.write({
-                browserSessionId: view.browserSessionId,
-                viewId: view.viewId,
-                navigationGeneration: view.navigationGeneration,
-                pngBase64,
-            });
-            if (!written.ok) {
-                return {
-                    ok: false,
-                    reason: 'capture_failed',
-                    ...(written.disabledReason ? { disabledReason: written.disabledReason } : {}),
-                };
-            }
-            return { ok: true, media: written.media, rect: publicRect(rect) };
-        },
-
-        async captureElement(view) {
-            const handle = resolve(view);
-            if (!handle) return ADAPTER_UNAVAILABLE;
-
-            let rect: Readonly<{ x: number; y: number; width: number; height: number }> | null = null;
-            try {
-                const document = await dispatch(handle, 'DOM.getDocument', { depth: 0 });
-                const rootNodeId = record(record(document)?.root)?.nodeId;
-                if (typeof rootNodeId !== 'number') return CAPTURE_FAILED;
-
-                const queried = await dispatch(handle, 'DOM.querySelector', {
-                    nodeId: rootNodeId,
-                    selector: view.selector,
-                });
-                const nodeId = record(queried)?.nodeId;
-                if (typeof nodeId !== 'number' || nodeId === 0) return CAPTURE_FAILED;
-
-                const boxModel = await dispatch(handle, 'DOM.getBoxModel', { nodeId });
-                rect = readBoxModelRect(boxModel);
-            } catch {
-                return CAPTURE_FAILED;
-            }
-            if (!rect || !(rect.width > 0) || !(rect.height > 0)) return CAPTURE_FAILED;
-            const clip = resolveCdpScreenshotClip({ ...rect, coordinateSpace: 'page' });
-            if (!clip) return CAPTURE_FAILED;
-
-            let pngBase64: string | undefined;
-            try {
-                const captured = await dispatch(handle, 'Page.captureScreenshot', {
-                    format: 'png',
-                    captureBeyondViewport: false,
-                    clip,
-                });
-                pngBase64 = stringField(captured, 'data');
-            } catch {
-                return CAPTURE_FAILED;
-            }
-            if (!pngBase64) return CAPTURE_FAILED;
-
-            if (input.resolveInputControl?.(view)?.isObservationHeld()) return CAPTURE_FAILED;
-            const written = await input.screenshotMediaWriter.write({
-                browserSessionId: view.browserSessionId,
-                viewId: view.viewId,
-                navigationGeneration: view.navigationGeneration,
-                pngBase64,
-            });
-            if (!written.ok) {
-                return {
-                    ok: false,
-                    reason: 'capture_failed',
-                    ...(written.disabledReason ? { disabledReason: written.disabledReason } : {}),
-                };
-            }
-            return { ok: true, media: written.media, rect };
         },
 
         async captureSelectedElement(view) {
@@ -489,35 +304,28 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
             }
         },
 
-        async captureSnapshot(view, options) {
+        async captureSnapshot(view) {
             const handle = resolve(view);
             if (!handle) return ADAPTER_UNAVAILABLE;
 
             try {
-                if (options?.focusedCredentialTargetOnly) {
-                    const focusedCredentialTarget = await input.readFocusedCredentialTarget?.(view);
-                    return focusedCredentialTarget
-                        ? { ok: true, visibleText: '', axNodes: [], interactiveElements: [], focusedCredentialTarget }
-                        : CAPTURE_FAILED;
-                }
+                const readMasking = async () => readSnapshotMasking(await dispatch(handle,
+                    'DOMSnapshot.captureSnapshot', { computedStyles: ['-webkit-text-security'] }, view));
+                const masking = await readMasking();
+                const mask = snapshotTextMasker(masking);
                 // URL/title from navigation history (metadata).
                 const entry = readCurrentHistoryEntry(await dispatch(handle, 'Page.getNavigationHistory', undefined, view));
                 const url = stringField(entry, 'url');
                 const title = stringField(entry, 'title');
                 const focusedCredentialTarget = await input.readFocusedCredentialTarget?.(view);
 
-                // Visible text (whitespace-collapsed + capped — never an unbounded DOM dump).
+                // Preserve the full page text after whitespace normalization.
                 const rawText = evaluateString(await evaluate(handle, DOM_TEXT_EXPRESSION, view)) ?? '';
-                const collapsedText = collapseWhitespace(rawText);
-                const visibleTextTruncated = collapsedText.length > SNAPSHOT_MAX_VISIBLE_TEXT_CHARS;
-                const visibleText = visibleTextTruncated
-                    ? collapsedText.slice(0, SNAPSHOT_MAX_VISIBLE_TEXT_CHARS)
-                    : collapsedText;
+                const visibleText = collapseWhitespace(mask(rawText));
 
-                // Interactive elements with synthesized selectors + layout rects (bounded).
+                // Interactive elements with complete synthesized selectors + layout rects.
                 const interactive = parseInteractiveElements(
-                    evaluateValue(await evaluate(handle, interactiveElementsExpression(SNAPSHOT_MAX_INTERACTIVE_ELEMENTS), view)),
-                    SNAPSHOT_MAX_INTERACTIVE_ELEMENTS,
+                    evaluateValue(await evaluate(handle, interactiveElementsExpression(), view)),
                 );
 
                 // AX owns current text values. One DOM metadata read classifies all fields;
@@ -525,7 +333,6 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                 await dispatch(handle, 'Accessibility.enable', undefined, view);
                 const ax = parseAxNodes(
                     await dispatch(handle, 'Accessibility.getFullAXTree', undefined, view),
-                    SNAPSHOT_MAX_AX_NODES,
                     await dispatch(handle, 'DOM.getDocument', { depth: -1, pierce: true }, view).catch((error: unknown) => {
                         if (view.signal?.aborted) throw error;
                         return null;
@@ -540,39 +347,48 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     kind: 'browserConsoleSummary',
                 }) ?? null;
 
-                // Screenshot reference (best-effort: a failed pixel capture still yields a snapshot).
-                let media;
+                // Keep raw pixels in memory until the late privacy census settles. A page
+                // with masked fields has a useful structural snapshot but no pixel artifact.
+                let pngBase64: string | undefined;
                 try {
-                    const captured = await dispatch(handle, 'Page.captureScreenshot', {
+                    const captured = masking.hasSensitiveFields ? null : await dispatch(handle, 'Page.captureScreenshot', {
                         format: 'png',
                         captureBeyondViewport: false,
                     }, view);
-                    const pngBase64 = stringField(captured, 'data');
-                    if (pngBase64 && !input.resolveInputControl?.(view)?.isObservationHeld()) {
-                        const written = await input.screenshotMediaWriter.write({
-                            browserSessionId: view.browserSessionId,
-                            viewId: view.viewId,
-                            navigationGeneration: view.navigationGeneration,
-                            pngBase64,
-                        });
-                        if (written.ok) media = written.media;
-                    }
+                    pngBase64 = stringField(captured, 'data');
                 } catch {
                     // Screenshot is best-effort; the structural snapshot still resolves without it.
                 }
 
+                const after = await readMasking();
+                if (masking.hasSensitiveFields !== after.hasSensitiveFields
+                    || masking.values.length !== after.values.length
+                    || masking.values.some((value, index) => value !== after.values[index])) return CAPTURE_FAILED;
+                let media;
+                if (pngBase64 && !input.resolveInputControl?.(view)?.isObservationHeld()) {
+                    const written = await input.screenshotMediaWriter.write({
+                        browserSessionId: view.browserSessionId, viewId: view.viewId,
+                        navigationGeneration: view.navigationGeneration, pngBase64,
+                    });
+                    if (written.ok) media = written.media;
+                }
+                // A selector containing a secret cannot be redacted into different executable
+                // code. Omit that control and report incompleteness instead.
+                const elements = interactive.elements.filter(element => mask(element.selector) === element.selector)
+                    .map(element => ({ ...element, ...(element.name ? { name: mask(element.name) } : {}) }));
+
                 return {
                     ok: true,
-                    ...(url ? { url } : {}),
-                    ...(title ? { title } : {}),
+                    ...(url ? { url: mask(url) } : {}),
+                    ...(title ? { title: mask(title) } : {}),
                     visibleText,
                     ...(focusedCredentialTarget ? { focusedCredentialTarget } : {}),
-                    ...(visibleTextTruncated ? { visibleTextTruncated: true } : {}),
-                    axNodes: ax.nodes,
+                    axNodes: ax.nodes.map(node => ({ ...node, ...(node.name ? { name: mask(node.name) } : {}),
+                        ...(node.value !== undefined ? { value: mask(node.value) } : {}) })),
                     ...(ax.truncated ? { axNodesTruncated: true } : {}),
-                    interactiveElements: interactive.elements,
-                    ...(interactive.truncated ? { interactiveElementsTruncated: true } : {}),
-                    ...(consoleSummary ? { consoleSummary: consoleSummary.summary } : {}),
+                    interactiveElements: elements,
+                    ...(interactive.truncated || elements.length !== interactive.elements.length ? { interactiveElementsTruncated: true } : {}),
+                    ...(consoleSummary ? { consoleSummary: mask(consoleSummary.summary) } : {}),
                     ...(consoleSummary?.truncated ? { consoleTruncated: true } : {}),
                     ...(media ? { media } : {}),
                 };
@@ -592,8 +408,6 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
         captureScreenshot: view => observe(view, () => source.captureScreenshot(view)),
         captureSummary: view => observe(view, () => source.captureSummary(view)),
         captureSelectedElement: view => observe(view, () => source.captureSelectedElement(view)),
-        captureSnapshot: (view, options) => observe(view, () => source.captureSnapshot!(view, options)),
-        captureRegion: view => observe(view, () => source.captureRegion!(view)),
-        captureElement: view => observe(view, () => source.captureElement!(view)),
+        captureSnapshot: view => observe(view, () => source.captureSnapshot!(view)),
     };
 }

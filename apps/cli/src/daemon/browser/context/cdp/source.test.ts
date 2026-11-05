@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCdpBrowserContextSource } from './source';
 import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 import { createBrowserContextRoutes } from '../routes';
-import { createBrowserContextCaptureService, type BrowserContextRegionRect } from '../capture';
+import { createBrowserContextCaptureService } from '../capture';
 import type { BrowserSidecarCdpCommandScope } from '../../sidecar/controlAdapter';
 import type { BrowserContextCdpPageHandle } from './transport';
 import type { BrowserContextScreenshotMediaWriter } from './screenshotMedia';
 import { BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
-import { SNAPSHOT_MAX_NAME_CHARS } from './snapshotEvaluators';
+import { createSnapshotMaskingFixture as maskingSnapshot } from './snapshotMasking.testkit';
 
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 3 } as const;
 const HANDLE: BrowserContextCdpPageHandle = { targetId: 'target_1', sessionId: 'cdp_session_1' };
@@ -27,7 +27,10 @@ function fakeTransport(responder: DispatchResponder) {
         transport: {
             dispatchPageCommand: vi.fn(async (input: BrowserSidecarCdpCommandScope & { method: string; params?: Record<string, unknown> }) => {
                 calls.push({ method: input.method, ...(input.params ? { params: input.params } : {}) });
-                return responder(input.method, input.params, input);
+                const result = await responder(input.method, input.params, input);
+                // Existing non-masking cases have an empty page census by default.
+                return input.method === 'DOMSnapshot.captureSnapshot' && result && typeof result === 'object'
+                    && Object.keys(result).length === 0 ? maskingSnapshot() : result;
             }),
         },
     };
@@ -54,11 +57,28 @@ function fakeMediaWriter(): BrowserContextScreenshotMediaWriter & { writes: unkn
 }
 
 describe('cdp browser context source', () => {
+    it.each([8192, 8193])('preserves the Protocol summary budget through capture for %i characters', async length => {
+        const text = 'x'.repeat(length);
+        const { transport } = fakeTransport((method, params) => method === 'Runtime.evaluate'
+            ? params?.expression === browserContextSensitiveFieldsExpression
+                ? { result: { type: 'boolean', value: false } }
+                : { result: { type: 'string', value: text } }
+            : {});
+        const service = createBrowserContextCaptureService({ ownerAccountId: 'owner',
+            source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: fakeMediaWriter() }),
+            resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+        });
+        const result = await service.captureSummary({ ...VIEW, requesterAccountId: 'owner', contextId: 'summary', kind: 'browserPageTextSummary' });
+        expect(result).toMatchObject({ status: 'captured', item: { summary: text.slice(0, 8192), truncated: length > 8192 } });
+    });
+
     it('drains a queued screenshot without persisting it and suppresses every held context read', async () => {
         const control = createSurfaceInputControl();
         const writer = fakeMediaWriter();
         let finish: (result: unknown) => void = () => undefined;
-        const { transport, calls } = fakeTransport(() => new Promise(resolve => { finish = resolve; }));
+        const { transport, calls } = fakeTransport(method => method === 'Page.captureScreenshot'
+            ? new Promise(resolve => { finish = resolve; })
+            : {});
         const source = createCdpBrowserContextSource({ transport, resolveView: () => HANDLE,
             screenshotMediaWriter: writer, resolveInputControl: () => control });
         const screenshot = source.captureScreenshot(VIEW);
@@ -75,8 +95,6 @@ describe('cdp browser context source', () => {
             source.capturePage(VIEW), source.captureScreenshot(VIEW),
             source.captureSummary({ ...VIEW, kind: 'browserDomSnapshotSummary' }),
             source.captureSelectedElement(VIEW), source.captureSnapshot?.(VIEW),
-            source.captureRegion?.({ ...VIEW, rect: { x: 0, y: 0, width: 10, height: 10 } }),
-            source.captureElement?.({ ...VIEW, selector: 'input' }),
         ]);
         expect(results.every(result => result?.ok === false)).toBe(true);
         expect(calls).toHaveLength(count);
@@ -191,8 +209,6 @@ describe('cdp browser context source', () => {
             service.captureScreenshot(request),
             service.captureSummary({ ...request, kind: 'browserDomSnapshotSummary' }),
             service.captureSelectedElement(request),
-            service.captureAnnotationRegion({ ...request, rect: { x: 0, y: 0, width: 20, height: 20 } }),
-            service.captureAnnotationElement({ ...request, selector: 'button' }),
             service.captureSnapshot(request),
         ]);
 
@@ -200,7 +216,7 @@ describe('cdp browser context source', () => {
             status: 'captured', item: { lifecycleState: 'policyDenied', redactionLevel: 'blocked' },
         });
         expect(results[1]).toMatchObject({ status: 'unavailable' });
-        expect(results.slice(2)).toEqual(Array.from({ length: 5 }, () => ({ status: 'denied' })));
+        expect(results.slice(2)).toEqual(Array.from({ length: 3 }, () => ({ status: 'denied' })));
         expect(calls).toEqual([]);
         expect(writer.writes).toEqual([]);
     });
@@ -274,6 +290,25 @@ describe('cdp browser context source', () => {
     });
 
     describe('captureScreenshot', () => {
+        it('publishes the captured CSS viewport with raster pixels through the screenshot owner', async () => {
+            const { transport } = fakeTransport((method, params) => {
+                if (method === 'Page.captureScreenshot') return { data: 'QkFTRTY0UE5H' };
+                if (method === 'Runtime.evaluate' && String(params?.expression).includes('innerWidth')) return {
+                    // A 15 CSS px scrollbar leaves a 497 px client area, but the raster spans 512.
+                    result: { type: 'object', value: { width: 512, height: 384, clientWidth: 497 } },
+                };
+                // The real capture owner's privacy boundary must settle before pixels are read.
+                if (method === 'Runtime.evaluate') return { result: { type: 'boolean', value: false } };
+                return {};
+            });
+            const service = createBrowserContextCaptureService({ ownerAccountId: 'owner',
+                source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: fakeMediaWriter() }),
+                resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+            });
+            const captured = await service.captureScreenshot({ ...VIEW, requesterAccountId: 'owner', contextId: 'scaled' });
+            expect(captured).toMatchObject({ status: 'captured', item: { kind: 'browserScreenshot',
+                media: { width: 1024, height: 768 }, viewport: { width: 512, height: 384 } } });
+        });
         it('captures a PNG and persists it through the media writer', async () => {
             const writer = fakeMediaWriter();
             const { transport } = fakeTransport((method) => {
@@ -418,210 +453,107 @@ describe('cdp browser context source', () => {
     });
 
     // MCH-5: annotation region/element pixel capture over CDP Page.captureScreenshot({clip}).
-    describe('captureRegion', () => {
-        it('captures a clipped PNG for a region rect via CDP and persists it', async () => {
-            const writer = fakeMediaWriter();
-            const { transport, calls } = fakeTransport((method) => {
-                if (method === 'Runtime.evaluate') {
-                    return {
-                        result: {
-                            type: 'object',
-                            value: { scrollX: 0, scrollY: 0, devicePixelRatio: 1 },
-                        },
-                    };
-                }
-                if (method === 'Page.captureScreenshot') return { data: 'UkVHSU9OUE5H' };
-                return {};
-            });
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: writer,
-            });
-
-            const rect = { x: 10, y: 20, width: 100, height: 40 } as const;
-            const result = await source.captureRegion?.({ ...VIEW, rect });
-            expect(result?.ok).toBe(true);
-            if (!result?.ok) return;
-            expect(result.rect).toEqual(rect);
-            expect(result.media.mediaId).toBe('media_1');
-            // The clip rect is dispatched to CDP, not the whole viewport.
-            const shot = calls.find((c) => c.method === 'Page.captureScreenshot');
-            expect(shot?.params?.clip).toMatchObject({ x: 10, y: 20, width: 100, height: 40 });
-        });
-
-        it('translates viewport crop coordinates through scroll offset and DPR for CDP clips', async () => {
-            const { transport, calls } = fakeTransport((method) => {
-                if (method === 'Page.captureScreenshot') return { data: 'UkVUSU5BUE5H' };
-                return {};
-            });
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: fakeMediaWriter(),
-            });
-
-            // RED fixture for the widened capture-coordinate contract; implementation adds these
-            // optional fields to BrowserContextRegionRect.
-            const rect = {
-                x: 40,
-                y: 60,
-                width: 100,
-                height: 80,
-                scrollX: 25,
-                scrollY: 500,
-                devicePixelRatio: 2,
-                surface: { width: 2_000, height: 2_000 },
-            } as unknown as BrowserContextRegionRect;
-            const result = await source.captureRegion?.({ ...VIEW, rect });
-
-            expect(result?.ok).toBe(true);
-            const shot = calls.find((c) => c.method === 'Page.captureScreenshot');
-            expect(shot?.params?.clip).toEqual({
-                x: 65,
-                y: 560,
-                width: 100,
-                height: 80,
-                scale: 2,
-            });
-        });
-
-        it('reads live page metrics when a viewport crop omits scroll and DPR', async () => {
-            const { transport, calls } = fakeTransport((method) => {
-                if (method === 'Runtime.evaluate') {
-                    return {
-                        result: {
-                            type: 'object',
-                            value: { scrollX: 12, scrollY: 345, devicePixelRatio: 2 },
-                        },
-                    };
-                }
-                if (method === 'Page.captureScreenshot') return { data: 'U0NST0xMRURQTkc=' };
-                return {};
-            });
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: fakeMediaWriter(),
-            });
-
-            const rect = {
-                x: 40,
-                y: 60,
-                width: 100,
-                height: 80,
-                coordinateSpace: 'viewport',
-            } as const satisfies BrowserContextRegionRect;
-            const result = await source.captureRegion?.({ ...VIEW, rect });
-
-            expect(result?.ok).toBe(true);
-            const shot = calls.find((c) => c.method === 'Page.captureScreenshot');
-            expect(shot?.params?.clip).toEqual({
-                x: 52,
-                y: 405,
-                width: 100,
-                height: 80,
-                scale: 2,
-            });
-        });
-
-        it('fails closed with capture_failed for a zero-area region', async () => {
-            const { transport } = fakeTransport(() => ({ data: 'UE5H' }));
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: fakeMediaWriter(),
-            });
-
-            const result = await source.captureRegion?.({ ...VIEW, rect: { x: 0, y: 0, width: 0, height: 10 } });
-            expect(result?.ok).toBe(false);
-            if (result?.ok) return;
-            expect(result?.reason).toBe('capture_failed');
-        });
-
-        it('fails closed with adapter_unavailable when the view is not bound', async () => {
-            const { transport } = fakeTransport(() => ({ data: 'UE5H' }));
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => null,
-                screenshotMediaWriter: fakeMediaWriter(),
-            });
-
-            const result = await source.captureRegion?.({ ...VIEW, rect: { x: 1, y: 1, width: 5, height: 5 } });
-            expect(result?.ok).toBe(false);
-            if (result?.ok) return;
-            expect(result?.reason).toBe('adapter_unavailable');
-        });
-    });
-
-    describe('captureElement', () => {
-        it('resolves a selector box model then captures that clip via CDP', async () => {
+    describe('captureSnapshot', () => {
+        it('returns useful masked owner snapshots without pixels or secret text from password and CSS-masked fields', async () => {
+            const password = 'fixture-password';
+            const cssSecret = 'fixture\u200b css\nsecret';
+            const normalizedSecret = 'fixture css secret';
+            const census = maskingSnapshot([{ type: 'password', value: password }, { security: 'disc', value: cssSecret, text: true }]);
             const writer = fakeMediaWriter();
             const { transport, calls } = fakeTransport((method, params) => {
-                if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
-                if (method === 'DOM.querySelector') {
-                    expect(params?.selector).toBe('#hero');
-                    return { nodeId: 7 };
+                if (method === 'DOMSnapshot.captureSnapshot') return census;
+                if (method === 'Runtime.evaluate') {
+                    if (params?.expression === browserContextSensitiveFieldsExpression) return { result: { type: 'boolean', value: true } };
+                    if (String(params?.expression).includes('querySelectorAll(sel)')) return { result: { value: [
+                        { role: 'button', name: `Submit ${password}`, selector: '#submit', rect: { x: 0, y: 0, width: 10, height: 10 } },
+                        { role: 'button', name: 'Secret identifier', selector: `#${password}`, rect: { x: 0, y: 0, width: 10, height: 10 } },
+                    ] } };
+                    return { result: { type: 'string', value: `Login ${password} ${cssSecret} Welcome` } };
                 }
-                if (method === 'DOM.getBoxModel') {
-                    return { model: { content: [5, 6, 105, 6, 105, 46, 5, 46], width: 100, height: 40 } };
-                }
-                if (method === 'Page.captureScreenshot') return { data: 'RUxFTUVOVA==' };
+                if (method === 'Accessibility.getFullAXTree') return { nodes: [
+                    { role: { value: 'textbox' }, name: { value: 'Password' }, value: { value: password } },
+                    { role: { value: 'StaticText' }, name: { value: `${password} ${normalizedSecret}` } },
+                    { backendDOMNodeId: 7, role: { value: 'textbox' }, name: { value: 'Masked field' },
+                        properties: [{ name: 'editable', value: { value: 'plaintext' } }], value: { value: normalizedSecret } },
+                    { role: { value: 'button' }, name: { value: 'Submit' } },
+                ] };
+                if (method === 'DOM.getDocument') return { root: { nodeName: '#document', children: [
+                    { backendNodeId: 7, nodeName: 'INPUT', attributes: ['type', 'text'] },
+                ] } };
+                if (method === 'Page.captureScreenshot') return { data: 'must-not-persist' };
                 return {};
             });
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: writer,
+            const routes = createBrowserContextRoutes({ ownerAccountId: 'owner',
+                source: createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: writer }),
+                resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
             });
-
-            const result = await source.captureElement?.({ ...VIEW, selector: '#hero' });
-            expect(result?.ok).toBe(true);
-            if (!result?.ok) return;
-            expect(result.rect).toEqual({ x: 5, y: 6, width: 100, height: 40 });
-            const shot = calls.find((c) => c.method === 'Page.captureScreenshot');
-            expect(shot?.params?.clip).toMatchObject({ x: 5, y: 6, width: 100, height: 40 });
+            const result = await routes.captureSnapshot?.({ ...VIEW, contextId: 'masked' });
+            expect(result).toMatchObject({ visibleText: 'Login [MASKED] [MASKED] Welcome',
+                axNodes: expect.arrayContaining([{ role: 'button', name: 'Submit' }, { role: 'textbox', name: 'Masked field', value: '[MASKED]' }]),
+                interactiveElements: [{ role: 'button', name: 'Submit [MASKED]', selector: '#submit', rect: { x: 0, y: 0, width: 10, height: 10 } }],
+                interactiveElementsTruncated: true,
+            });
+            expect(JSON.stringify(result)).not.toContain(password);
+            expect(JSON.stringify(result)).not.toContain(cssSecret);
+            expect(JSON.stringify(result)).not.toContain(normalizedSecret);
+            expect(writer.writes).toEqual([]);
+            expect(calls.filter(call => call.method === 'Page.captureScreenshot')).toHaveLength(0);
+            expect(calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(2);
         });
 
-        it('fails closed with capture_failed when the selector resolves to no node', async () => {
-            const { transport } = fakeTransport((method) => {
-                if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
-                if (method === 'DOM.querySelector') return { nodeId: 0 };
+        it.each(['late field', 'late value', 'unreadable census', 'invalid field index', 'missing element style'] as const)('fails closed before media persistence on %s', async phase => {
+            let reads = 0;
+            const writer = fakeMediaWriter();
+            const { transport } = fakeTransport(method => {
+                if (method === 'DOMSnapshot.captureSnapshot') {
+                    reads++;
+                    if (phase === 'unreadable census') return null;
+                    if (phase === 'missing element style') {
+                        const census = maskingSnapshot([{ security: 'disc', value: 'secret' }]);
+                        census.documents[0].layout.styles[1] = [];
+                        return census;
+                    }
+                    if (phase === 'invalid field index') {
+                        const census = maskingSnapshot([{ security: 'disc', value: 'secret' }]);
+                        census.documents[0].layout.nodeIndex[0] = 100;
+                        return census;
+                    }
+                    if (phase === 'late value') return maskingSnapshot([{ type: 'password', value: reads === 1 ? 'before' : 'after' }]);
+                    return reads === 1 ? maskingSnapshot() : maskingSnapshot([{ type: 'password', value: 'late' }]);
+                }
+                if (method === 'Runtime.evaluate') return { result: { type: 'string', value: 'before after late' } };
+                if (method === 'Page.captureScreenshot') return { data: 'must-not-persist' };
                 return {};
             });
-            const source = createCdpBrowserContextSource({
-                transport,
-                resolveView: () => HANDLE,
-                screenshotMediaWriter: fakeMediaWriter(),
-            });
-
-            const result = await source.captureElement?.({ ...VIEW, selector: '#missing' });
-            expect(result?.ok).toBe(false);
-            if (result?.ok) return;
-            expect(result?.reason).toBe('capture_failed');
+            const source = createCdpBrowserContextSource({ transport, resolveView: () => HANDLE, screenshotMediaWriter: writer });
+            expect(await source.captureSnapshot?.(VIEW)).toMatchObject({ ok: false, reason: 'capture_failed' });
+            expect(writer.writes).toEqual([]);
         });
-    });
 
-    // BA-2: the combined rich snapshot bundles AX tree + interactive elements + visible text + console
-    // + screenshot in ONE op.
-    describe('captureSnapshot', () => {
         it('preserves non-secret editable AX values through capture and the strict snapshot consumer', async () => {
+            const name = 'Accessible control '.repeat(18).trim();
+            const visibleText = 'Visible page content '.repeat(1_000).trim();
             const fields = [
                 { id: 1, nodeName: 'INPUT', attributes: ['type', 'text'], value: 'QA58 input' },
                 { id: 2, nodeName: 'TEXTAREA', attributes: [], value: 'QA58 textarea' },
                 { id: 3, nodeName: 'DIV', attributes: ['contenteditable', 'true'], value: 'QA58 editable' },
                 { id: 5, nodeName: 'INPUT', attributes: ['type', 'text', 'autocomplete', 'section-login ONE-TIME-CODE'], value: 'fixture-otp' },
-                { id: 6, nodeName: 'INPUT', attributes: ['type', 'text'], value: 'x'.repeat(SNAPSHOT_MAX_NAME_CHARS + 1) },
+                { id: 6, nodeName: 'INPUT', attributes: ['type', 'text'], value: 'x'.repeat(300) },
                 { id: 7, nodeName: 'INPUT', attributes: ['type', 'text', 'readonly', ''], value: 'read only' },
                 { id: 8, nodeName: 'SELECT', attributes: [], value: 'not text' },
                 { id: 9, nodeName: 'TEXTAREA', attributes: [], value: '' },
+                ...Array.from({ length: 505 }, (_, index) => ({ id: index + 10, nodeName: 'INPUT', attributes: ['type', 'text'], value: `value-${index}` })),
             ];
-            const { transport } = fakeTransport((method, params) => {
-                if (method === 'Runtime.evaluate') return params?.expression === browserContextSensitiveFieldsExpression
-                    ? { result: { type: 'boolean', value: false } }
-                    : { result: { type: 'string', value: 'Page title' } };
+            const elements = fields.map(field => ({ role: 'textbox', name, selector: `#field-${field.id}`, rect: { x: 0, y: 0, width: 10, height: 10 } }));
+            const { transport, calls } = fakeTransport((method, params) => {
+                if (method === 'Runtime.evaluate') {
+                    const expression = String(params?.expression);
+                    if (expression === browserContextSensitiveFieldsExpression) return { result: { type: 'boolean', value: false } };
+                    if (expression.includes('querySelectorAll(sel)')) return { result: { type: 'object', value: elements } };
+                    return { result: { type: 'string', value: expression.includes('innerText') ? visibleText : 'Page title' } };
+                }
                 if (method === 'Accessibility.getFullAXTree') return { nodes: fields.map(field => ({
-                    backendDOMNodeId: field.id, role: { value: 'textbox' }, name: { value: `Field ${field.id}` },
+                    backendDOMNodeId: field.id, role: { value: 'textbox' }, name: { value: name },
                     properties: [{ name: 'editable', value: { value: 'plaintext' } }], value: { value: field.value },
                 })) };
                 if (method === 'DOM.getDocument') return { root: { nodeName: '#document', children: fields.map(field => ({
@@ -638,10 +570,15 @@ describe('cdp browser context source', () => {
             expect(captured.status).toBe('captured');
             if (captured.status !== 'captured') return;
             const snapshot = BrowserContextSnapshotV1Schema.parse(captured.snapshot);
-            expect(snapshot.axNodes).toEqual(fields.map(field => ({ role: 'textbox', name: `Field ${field.id}`,
-                ...([1, 2, 3, 6, 9].includes(field.id) ? { value: field.value.slice(0, SNAPSHOT_MAX_NAME_CHARS) } : {}),
+            expect(snapshot.visibleText).toBe(visibleText);
+            expect(snapshot.interactiveElements).toEqual(elements);
+            expect(snapshot.axNodes).toEqual(fields.map(field => ({ role: 'textbox', name,
+                ...([1, 2, 3, 6, 9].includes(field.id) || field.id >= 10 ? { value: field.value } : {}),
             })));
-            expect(snapshot.axNodesTruncated).toBe(true);
+            expect(snapshot.axNodesTruncated).toBe(false);
+            expect(snapshot.interactiveElementsTruncated).toBe(false);
+            expect(snapshot.visibleTextTruncated).toBe(false);
+            expect(calls.filter(call => call.method === 'DOM.getDocument')).toHaveLength(1);
             expect(JSON.stringify(snapshot)).not.toContain('fixture-otp');
         });
 

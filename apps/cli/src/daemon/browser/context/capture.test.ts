@@ -54,6 +54,70 @@ const baseRequest = {
 const allowGate = () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true });
 
 describe('browser context capture service', () => {
+  it.each(['capturePage', 'captureScreenshot', 'captureSummary', 'captureSelectedElement', 'captureSnapshot'] as const)(
+    'checks Account ownership once for %s and refuses a different Account before source access', async operation => {
+      const source = fakeSource({ captureSnapshot: vi.fn(async () => ({ ok: true as const, visibleText: 'safe', axNodes: [], interactiveElements: [] })) });
+      const service = createBrowserContextCaptureService({ ownerAccountId: 'account_owner', source, resolveGate: allowGate });
+      let accountReads = 0;
+      const request = { ...baseRequest, kind: 'browserPageTextSummary' as const,
+        get requesterAccountId() { accountReads += 1; return 'account_owner'; } };
+      expect(await service[operation](request)).toMatchObject({ status: 'captured' });
+      expect(accountReads).toBe(1);
+      vi.mocked(source[operation]!).mockClear();
+      expect(await service[operation]({ ...request, requesterAccountId: 'another-account' })).toEqual({ status: 'denied' });
+      expect(source[operation]).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['captureSummary', 'captureSelectedElement'] as const)(
+    'suppresses %s when the source becomes sensitive during capture', async operation => {
+      let sensitive = false;
+      const source = fakeSource({
+        readPrivacyState: async () => ({ ok: true, privacyState: sensitive ? 'sensitiveFieldsPresent' : null }),
+        captureSummary: vi.fn(async () => { sensitive = true; return { ok: true as const, summary: 'secret' }; }),
+        captureSelectedElement: vi.fn(async () => { sensitive = true; return { ok: true as const, selectorPath: '#secret' }; }),
+      });
+      const service = createBrowserContextCaptureService({ ownerAccountId: 'account_owner', source, resolveGate: allowGate });
+      expect(await service[operation]({ ...baseRequest, kind: 'browserPageTextSummary' })).toEqual({ status: 'denied' });
+    },
+  );
+
+  it.each(['capturePage', 'captureScreenshot'] as const)(
+    'admits %s once while retaining the post-capture privacy check', async operation => {
+      let policyReads = 0;
+      let privatePage = false;
+      let makePrivateDuringCapture = false;
+      const boundary = fakeSource();
+      const service = createBrowserContextCaptureService({
+        ownerAccountId: baseRequest.requesterAccountId,
+        resolveGate: () => { policyReads += 1; return allowGate(); },
+        source: {
+          ...boundary,
+          readPrivacyState: async () => ({ ok: true, privacyState: privatePage ? 'sensitiveOrigin' : null }),
+          capturePage: async target => {
+            const result = await boundary.capturePage(target);
+            privatePage = makePrivateDuringCapture;
+            return result;
+          },
+          captureScreenshot: async target => {
+            const result = await boundary.captureScreenshot(target);
+            privatePage = makePrivateDuringCapture;
+            return result;
+          },
+        },
+      });
+      expect(await service[operation](baseRequest)).toMatchObject({ status: 'captured', item: { lifecycleState: 'available' } });
+      expect(policyReads).toBe(1);
+      policyReads = 0;
+      makePrivateDuringCapture = true;
+      const result = await service[operation]({ ...baseRequest, contextId: 'private_capture' });
+      expect(result).toMatchObject({ item: { lifecycleState: 'sensitiveOrigin', redactionLevel: 'blocked' } });
+      expect('item' in result && result.item).not.toHaveProperty('media');
+      expect('item' in result && result.item).not.toHaveProperty('url');
+      expect(policyReads).toBe(1);
+    },
+  );
+
   it('holds injected capture sources and drains their queued observations before confidential input', async () => {
     const control = createSurfaceInputControl();
     let finish: (value: Awaited<ReturnType<BrowserContextSource['captureSummary']>>) => void = () => undefined;
@@ -86,6 +150,23 @@ describe('browser context capture service', () => {
       expect(source.captureScreenshot).not.toHaveBeenCalled();
     },
   );
+  it.each(['sensitiveOrigin', 'ephemeralOnly'] as const)('keeps %s and late privacy denials for masked snapshots', async privacyState => {
+    let privatePage = false;
+    const source = fakeSource({
+      readPrivacyState: async () => ({ ok: true, privacyState: privatePage ? privacyState : null }),
+      captureSnapshot: vi.fn(async () => {
+        privatePage = true;
+        return { ok: true as const, visibleText: 'private text', axNodes: [], interactiveElements: [] };
+      }),
+    });
+    const service = createBrowserContextCaptureService({ ownerAccountId: 'account_owner', source, resolveGate: allowGate });
+    expect(await service.captureSnapshot({ ...baseRequest, requesterAccountId: 'another-account' })).toEqual({ status: 'denied' });
+    expect(source.captureSnapshot).not.toHaveBeenCalled();
+    expect(await service.captureSnapshot(baseRequest)).toEqual({ status: 'denied' });
+    expect(source.captureSnapshot).toHaveBeenCalledTimes(1);
+    expect(await service.captureSnapshot(baseRequest)).toEqual({ status: 'denied' });
+    expect(source.captureSnapshot).toHaveBeenCalledTimes(1);
+  });
   it('captures a page reference item with the URL redacted by the sidecar owner', async () => {
     const source = fakeSource();
     const service = createBrowserContextCaptureService({

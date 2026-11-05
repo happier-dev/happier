@@ -21,7 +21,8 @@ import { BrowserSidecarCdpTransportError, createBrowserSidecarCdpTransport } fro
 import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
 import { createBrowserContextRoutes } from '../../context/routes';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
-import { SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_NAME_CHARS } from '../../context/cdp/snapshotEvaluators';
+import { createSnapshotMaskingFixture, createSnapshotCaptureTestRoutes as contextRoutes } from '../../context/cdp/snapshotMasking.testkit';
+import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
 import { BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 import { dispatchRuntimeAction } from '@happier-dev/protocol';
@@ -81,7 +82,9 @@ async function inputSettlementBoundary(
       if (command.method === 'Page.handleJavaScriptDialog' && state.holdDialogAck) return;
       const result = command.method === 'Target.createTarget' ? { targetId: HANDLE.targetId }
         : command.method === 'Target.attachToTarget' ? { sessionId: HANDLE.sessionId }
-        : command.method === 'Runtime.evaluate' ? cdpEvaluateValue(evaluatePage ? evaluatePage(String(command.params?.expression)) : 'safe page') : {};
+        : command.method === 'DOMSnapshot.captureSnapshot' ? createSnapshotMaskingFixture()
+        : command.method === 'Runtime.evaluate' ? cdpEvaluateValue(command.params?.expression === browserContextSensitiveFieldsExpression
+          ? false : evaluatePage ? evaluatePage(String(command.params?.expression)) : 'safe page') : {};
       if (command.method === 'Runtime.evaluate' && state.failedRead) throw new Error('read unavailable');
       if (command.method === 'Runtime.evaluate' && state.dialogOnRead && !state.dialogRaised) {
         state.dialogRaised = true;
@@ -109,7 +112,7 @@ async function inputSettlementBoundary(
     getNavigationState: adapter.getNavigationState,
     subscribeCdpEvents: transport.subscribeCdpEvents,
   };
-  const bridge = createControlAdapterAutomationTransport({ adapter, contextCapture });
+  const bridge = createControlAdapterAutomationTransport({ adapter, contextCapture, browserContext: contextRoutes(contextCapture) });
   const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
   const broker = createBrowserDaemonControlBroker();
   broker.registerAdapter(adapter);
@@ -141,6 +144,8 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
     get ownerDocument(): object { return documentValue; }
     getAttribute(name: string) { return name === 'id' ? this.id : null; }
     id = '';
+    tagName = 'INPUT';
+    textContent = '';
   }
   class NativeHTMLElement extends NativeElement {
     click() { state.submitted = true; }
@@ -151,21 +156,24 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
     type = 'password';
   }
   class NativeTextarea extends NativeInput {}
-  class NativeButton extends NativeHTMLElement { disabled = false; }
+  class NativeButton extends NativeHTMLElement { disabled = false; tagName = 'BUTTON'; }
   const field = new NativeInput(); field.id = 'password';
   const control = new NativeButton(); control.id = 'submit';
-  const other = new NativeInput();
+  const other = new NativeInput(); other.id = 'other';
+  const body = new NativeHTMLElement(); body.tagName = 'BODY';
   const documentValue = {
-    get activeElement() { return state.focused ? field : other; },
+    get activeElement() { return state.focused ? field : body; },
     hasFocus: () => true,
-    querySelector: (selector: string) => selector === '#password' ? field : selector === '#submit' ? control : null,
-    querySelectorAll: (selector: string) => selector === state.stableLocator ? [field] : selector === '#submit' ? [control] : [],
+    querySelector: (selector: string) => selector === '#password' || selector === 'input[type="password"]'
+      ? field : selector === '#submit' ? control : selector === '#other' ? other : null,
+    querySelectorAll: (selector: string) => selector === state.stableLocator ? [field]
+      : selector === '#submit' ? [control] : selector === '#other' ? [other] : [],
   };
   Object.defineProperty(field, 'value', { get() { throw new Error('Page value getter must not run'); },
     set() { throw new Error('Page value setter must not run'); } });
   Object.defineProperty(field, 'dispatchEvent', { value: () => { throw new Error('Page dispatch hook must not run'); } });
   Object.defineProperty(control, 'click', { value: () => { throw new Error('Page click hook must not run'); } });
-  const nodes: Record<string, NativeElement> = { field, control, active: field };
+  const nodes: Record<string, NativeElement> = { field, control, other, active: field };
   function executeFunction(params: Record<string, unknown> | undefined): unknown {
     const args = Array.isArray(params?.arguments) ? params.arguments.map(argument => {
       const entry = argument as { objectId?: string; value?: unknown };
@@ -179,13 +187,25 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
   }
   const { surface, calls } = fakeContextCapture((method, params) => {
     state.beforeCommand(method, params);
+    if (method === 'DOMSnapshot.captureSnapshot') return createSnapshotMaskingFixture([{ type: 'password', value: state.empty ? '' : 'fixture-password' }]);
     if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'frame', loaderId: state.documentId, securityOrigin: state.origin } } };
     if (method === 'Page.createIsolatedWorld') return { executionContextId: 7 };
     if (method === 'Runtime.evaluate') {
-      if (String(params?.expression).includes('input[type="password"]')) return cdpEvaluateValue(true);
-      return { result: { type: 'object', subtype: 'node', objectId: String(params?.expression).includes('#submit') ? 'control' : String(params?.expression).includes('document.activeElement') ? 'active' : 'field' } };
+      if (params?.returnByValue === true) {
+        return cdpEvaluateValue(Function('document', `return ${String(params.expression)};`)(documentValue));
+      }
+      const expression = String(params?.expression);
+      const element: unknown = Function('document', `return ${expression};`)(documentValue);
+      nodes.active = documentValue.activeElement;
+      const objectId = expression === 'document.activeElement' ? 'active'
+        : element === field ? 'field' : element === control ? 'control' : element === other ? 'other' : undefined;
+      return { result: objectId ? { type: 'object', subtype: 'node', objectId } : { type: 'object', subtype: 'null', value: null } };
     }
-    if (method === 'DOM.describeNode') return { node: { backendNodeId: params?.objectId === 'control' ? state.controlId : state.fieldId, nodeName: 'INPUT', nodeType: 1 } };
+    if (method === 'DOM.describeNode') {
+      const element = nodes[String(params?.objectId)];
+      return { node: { backendNodeId: element === control ? state.controlId : element === field ? state.fieldId : element === other ? 42 : 43,
+        nodeName: element?.tagName, nodeType: 1 } };
+    }
     if (method === 'Runtime.callFunctionOn') {
       try { return cdpEvaluateValue(executeFunction(params)); }
       catch (error) {
@@ -249,7 +269,9 @@ function fakeContextCapture(
       transport: {
         dispatchPageCommand: vi.fn(async (input: { method: string; params?: Record<string, unknown> }) => {
           calls.push({ method: input.method, ...(input.params ? { params: structuredClone(input.params) } : {}) });
-          return responder(input.method, input.params);
+          const result = await responder(input.method, input.params);
+          return input.method === 'DOMSnapshot.captureSnapshot' && result && typeof result === 'object'
+            && Object.keys(result).length === 0 ? createSnapshotMaskingFixture() : result;
         }),
       },
       resolvePageHandle: resolveHandle,
@@ -403,8 +425,9 @@ describe('control adapter automation transport bridge', () => {
     } finally { boundary.dispose(); }
   });
 
-  it('observes only the verified credential descriptor on a password page through the real context routes', async () => {
+  it.each([true, false])('retains credential proof in the masked snapshot through the real context routes (focused=%s)', async focused => {
     const boundary = confidentialBoundary();
+    boundary.state.focused = focused;
     const control = createSurfaceInputControl();
     let policyAllowed = true;
     const routes = createBrowserContextRoutes({
@@ -425,20 +448,19 @@ describe('control adapter automation transport bridge', () => {
     const query = () => bridge.dispatchPageQuery({ ...view, actionKind: 'semanticSnapshot', navigationGeneration: 3, payload: {},
       signal: controller.signal, deadlineMs: Date.now() + 60_000 });
     const observed = await query();
-    expect(observed).toMatchObject({ ok: true, data: {
-      focusedCredentialTarget: { ...view, tabId: HANDLE.targetId, frameId: 'frame', documentId: 'document',
-        navigationGeneration: 3, origin: 'https://example.test', field: { fieldId: '41', focusId: '41', locator: '#password' } },
-      visibleText: '', axNodes: [], interactiveElements: [], elements: [],
-    } });
+    expect(observed).toMatchObject({ ok: true, data: { visibleText: '', axNodes: [], interactiveElements: [], elements: [] } });
     if (!observed.ok) throw new Error('Missing credential observation');
+    if (focused) expect(observed.data?.focusedCredentialTarget).toEqual({ ...view, tabId: HANDLE.targetId,
+      frameId: 'frame', documentId: 'document', navigationGeneration: 3, origin: 'https://example.test', field: confidentialRequest.field });
+    else expect(observed.data).not.toHaveProperty('focusedCredentialTarget');
     const { elements: _elements, ...snapshot } = observed.data ?? {};
     expect(BrowserContextSnapshotV1Schema.safeParse(snapshot).success).toBe(true);
     expect(snapshot).not.toHaveProperty('media');
     expect(snapshot).not.toHaveProperty('title');
     expect(snapshot).not.toHaveProperty('url');
-    expect(boundary.calls.some(call => call.method === 'Page.captureScreenshot' || call.method.startsWith('Accessibility.'))).toBe(false);
-    expect(boundary.calls.filter(call => call.method === 'Runtime.evaluate' &&
-      /innerText|\.value\b|getBoundingClientRect/u.test(String(call.params?.expression)))).toEqual([]);
+    expect(boundary.calls.some(call => call.method === 'Page.captureScreenshot')).toBe(false);
+    expect(boundary.calls.filter(call => call.method === 'DOMSnapshot.captureSnapshot')).toHaveLength(2);
+    expect(JSON.stringify(observed)).not.toContain('fixture-password');
     policyAllowed = false;
     const count = boundary.calls.length;
     expect(await query()).toMatchObject({ ok: false });
@@ -448,9 +470,33 @@ describe('control adapter automation transport bridge', () => {
     expect(await query()).toMatchObject({ ok: false });
     expect(boundary.calls).toHaveLength(count);
   });
-  it('returns complete daemon query Action results while context snapshots and timelines stay bounded', async () => {
+  it.each(['snapshot', 'semanticSnapshot'] as const)('settles unfocused sensitive %s through the real automation service', async actionKind => {
+    const boundary = confidentialBoundary();
+    boundary.state.focused = false;
+    const control = createSurfaceInputControl();
+    const context = createBrowserContextRoutes({ ownerAccountId: 'owner',
+      resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }),
+      resolveInputControl: () => control,
+      source: createCdpBrowserContextSource({ transport: boundary.contextCapture.transport,
+        resolveView: boundary.contextCapture.resolvePageHandle, resolveInputControl: () => control,
+        readFocusedCredentialTarget: view => boundary.bridge.readFocusedCredentialTarget!(view),
+        screenshotMediaWriter: { write: async () => { throw new Error('Sensitive pixels must not be persisted'); } },
+      }),
+    });
+    const bridge = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: boundary.contextCapture, browserContext: context });
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
+    try {
+      const result = await service.execute({ v: 1, ...view, automationRequestId: 'unfocused-observation', requestedBy: 'agent',
+        requesterRef: { kind: 'agent', id: 'agent' }, navigationGeneration: 3, actionKind, payload: {}, timeoutMs: 10_000 });
+      expect(result).toMatchObject({ status: 'succeeded', resultSummary: { visibleText: '', axNodes: [], interactiveElements: [] } });
+      expect(result.resultSummary).not.toHaveProperty('focusedCredentialTarget');
+      expect(boundary.calls.filter(call => call.method === 'Page.captureScreenshot')).toHaveLength(0);
+    } finally { service.dispose(); }
+  });
+
+  it('returns complete daemon query and context Action results while timelines stay compact', async () => {
     const name = 'Accessible label '.repeat(30).trim();
-    const nodes = Array.from({ length: SNAPSHOT_MAX_INTERACTIVE_ELEMENTS + 1 }, (_, index) => ({
+    const nodes = Array.from({ length: 513 }, (_, index) => ({
       ...bridgeElement({ tagName: 'button', textContent: name, attributes: { 'aria-label': name },
         rect: { left: 0, top: 0, width: 40, height: 20 } }),
       id: `button-${index}`, nodeType: 1, parentElement: null,
@@ -473,15 +519,18 @@ describe('control adapter automation transport bridge', () => {
       expect(semantic).toMatchObject({ status: 'succeeded', resultSummary: { count: nodes.length, truncated: false } });
       expect('resultSummary' in semantic && semantic.resultSummary?.elements).toEqual(nodes.map(() => ({ tag: 'button', name })));
       const snapshot = await boundary.execute('semanticSnapshot');
-      expect(snapshot).toMatchObject({ status: 'succeeded', resultSummary: { truncated: true } });
-      expect(snapshot.resultSummary?.elements).toHaveLength(SNAPSHOT_MAX_INTERACTIVE_ELEMENTS);
-      expect(snapshot.resultSummary?.elements).toEqual(expect.arrayContaining([expect.objectContaining({ name: name.slice(0, SNAPSHOT_MAX_NAME_CHARS) })]));
+      expect(snapshot).toMatchObject({ status: 'succeeded', resultSummary: { interactiveElementsTruncated: false } });
+      expect(snapshot.resultSummary?.elements).toHaveLength(nodes.length);
+      expect(snapshot.resultSummary?.elements).toEqual(expect.arrayContaining([expect.objectContaining({ name })]));
       const timeline = boundary.service.getTimeline(view).entries.find(entry => entry.automationRequestId === 'full-query');
       expect(timeline).toMatchObject({ status: 'succeeded', resultSummary: { truncated: true } });
       const timelineElements = timeline?.resultSummary?.elements;
       expect(Array.isArray(timelineElements)).toBe(true);
       if (Array.isArray(timelineElements)) expect(timelineElements.length).toBeLessThan(nodes.length);
-      expect(timelineElements).toEqual(expect.arrayContaining([expect.objectContaining({ name: name.slice(0, SNAPSHOT_MAX_NAME_CHARS) })]));
+      if (Array.isArray(timelineElements)) {
+        expect(timelineElements.every(element => typeof element === 'object' && element !== null
+          && typeof element.name === 'string' && element.name.length < name.length)).toBe(true);
+      }
     } finally { boundary.dispose(); }
   });
   it.each([
@@ -1181,9 +1230,10 @@ describe('control adapter automation transport bridge', () => {
     }, { signal: controller.signal })).toMatchObject({ status: 'canceled', interruptionCompletion: 'uncertain' });
   });
   it('requires explicit hand back and a fresh observation before agent input resumes', async () => {
-    const { surface } = fakeContextCapture((method) => method === 'Runtime.evaluate' ? cdpEvaluateValue({ x: 10, y: 10 }) : {});
+    const { surface } = fakeContextCapture((method, params) => method === 'Runtime.evaluate'
+      ? cdpEvaluateValue(params?.expression === browserContextSensitiveFieldsExpression ? false : { x: 10, y: 10 }) : {});
     const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
-      transport: createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface }),
+      transport: createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface, browserContext: contextRoutes(surface) }),
     }) });
     const action = { v: 1 as const, ...view, automationRequestId: 'held', actionKind: 'click' as const,
       navigationGeneration: 0, timeoutMs: 5000, requestedBy: 'agent' as const,
@@ -1191,7 +1241,7 @@ describe('control adapter automation transport bridge', () => {
     await service.cancelActive({ ...view, authority: 'present_user' });
     expect(service.getStatus(view).controller).toBe('human');
     expect(await service.execute(action)).toMatchObject({ errorCode: 'human_interrupted' });
-    service.handBack({ ...view, authority: 'present_user' });
+    await service.handBack({ ...view, authority: 'present_user' });
     expect(await service.execute(action)).toMatchObject({ errorCode: 'stale_navigation' });
     expect(await service.execute({ ...action, actionKind: 'snapshot', payload: {} })).toMatchObject({ status: 'succeeded' });
     expect(await service.execute(action)).toMatchObject({ status: 'succeeded' });
@@ -1219,10 +1269,11 @@ describe('control adapter automation transport bridge', () => {
   });
 
   // MCH-3: read-only page queries ride the live CDP transport the control adapter opened.
-  it('runs a snapshot query over the live CDP transport when a context-capture surface is present', async () => {
+  it.each(['snapshot', 'semanticSnapshot'] as const)('refuses %s without the canonical context owner rather than exposing raw page text', async actionKind => {
+    const text = `Hello ${'page '.repeat(4_000)}`.trim();
     const { surface, calls } = fakeContextCapture((method) => {
       if (method === 'Runtime.evaluate') {
-        return { result: { type: 'string', value: '  Hello   page  ' } };
+        return { result: { type: 'string', value: `  ${text}  ` } };
       }
       return {};
     });
@@ -1230,15 +1281,13 @@ describe('control adapter automation transport bridge', () => {
 
     const result = await transport.dispatchPageQuery({
       ...view,
-      actionKind: 'snapshot',
+      actionKind,
       navigationGeneration: 1,
       payload: {},
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect((result.data as { text?: string })?.text).toContain('Hello page');
-    expect(calls.some((c) => c.method === 'Runtime.evaluate')).toBe(true);
+    expect(result).toMatchObject({ ok: false, errorCode: 'runtime_unavailable' });
+    expect(calls).toEqual([]);
   });
 
   it('routes the production snapshot verb through the rich browser-context snapshot producer', async () => {
@@ -1306,14 +1355,13 @@ describe('control adapter automation transport bridge', () => {
     const { surface, calls } = fakeContextCapture((method, params) => {
       if (method === 'Runtime.evaluate') {
         const expression = typeof params?.expression === 'string' ? params.expression : '';
-        // The evaluator must synthesize selectors + rects in-page, not just role/name/tag.
-        expect(expression).toContain('getBoundingClientRect');
-        expect(expression).toContain('data-testid');
+        if (expression === browserContextSensitiveFieldsExpression) return cdpEvaluateValue(false);
+        if (expression.includes('innerText')) return cdpEvaluateValue('');
         return { result: { type: 'object', value: elements } };
       }
       return {};
     });
-    const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });
+    const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface, browserContext: contextRoutes(surface) });
 
     const result = await transport.dispatchPageQuery({
       ...view,

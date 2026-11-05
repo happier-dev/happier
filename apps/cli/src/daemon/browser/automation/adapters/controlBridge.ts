@@ -12,7 +12,6 @@ import type {
   BrowserSidecarContextCaptureSurface,
 } from '../../sidecar/controlAdapter';
 import type { BrowserContextRoutes } from '../../context/routes';
-import { interactiveElementsExpression, parseInteractiveElements, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_VISIBLE_TEXT_CHARS } from '../../context/cdp/snapshotEvaluators';
 import type { BrowserDaemonControlAdapter } from '../../control/types';
 import { BrowserSidecarCdpTransportError, isBrowserSidecarCdpCommandNotDispatched } from '../../sidecar/cdpTransport';
 import type { BrowserAutomationAdapterExecuteResult, BrowserAutomationAdapterExecutionContext } from './types';
@@ -58,8 +57,6 @@ function cdpModifiers(value: unknown): number | null {
  * fail closed honestly (`runtime_unavailable`) — the navigation bit stays real either way.
  */
 
-const MAX_SNAPSHOT_CHARS = SNAPSHOT_MAX_VISIBLE_TEXT_CHARS;
-
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -88,11 +85,6 @@ function readCurrentHistoryEntry(history: unknown): Record<string, unknown> | nu
   }
   return record(entries[currentIndex]);
 }
-
-// Visible body text snapshot, whitespace-collapsed + length-capped so an unbounded DOM dump can
-// never be returned. Read-only; never carries field input.
-const DOM_TEXT_EXPRESSION =
-  "(() => { const b = document.body; return b && b.innerText ? b.innerText : ''; })()";
 
 function queryLocatorExpression(selector: string | ParsedLocator): string {
   const locator = parseLocator(selector);
@@ -444,8 +436,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
 
   async function dispatchRichSnapshot(
     query: BrowserAutomationCdpPageQueryInput,
-  ): Promise<BrowserAutomationCdpPageQueryResult | null> {
-    if (!input.browserContext?.captureSnapshot) return null;
+  ): Promise<BrowserAutomationCdpPageQueryResult> {
+    if (!input.browserContext?.captureSnapshot) return { ok: false, errorCode: 'runtime_unavailable' };
     const snapshot = await input.browserContext.captureSnapshot({
       browserSessionId: query.browserSessionId,
       viewId: query.viewId,
@@ -561,22 +553,15 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       return contextCapture?.interactions?.execute(query) ?? { ok: false, errorCode: 'runtime_unavailable' };
     }
     if (query.actionKind === 'snapshot') {
-      const richSnapshot = await dispatchRichSnapshot(query);
-      if (richSnapshot) return richSnapshot;
+      return dispatchRichSnapshot(query);
     }
     if (query.actionKind === 'semanticSnapshot') {
       const richSnapshot = await dispatchRichSnapshot(query);
-      if (richSnapshot) {
-        if (!richSnapshot.ok) return richSnapshot;
-        const snapshot = record(richSnapshot.data) ?? {};
-        return {
-          ok: true,
-          data: {
-            ...snapshot,
-            elements: Array.isArray(snapshot?.interactiveElements) ? snapshot.interactiveElements : [],
-          },
-        };
-      }
+      if (!richSnapshot.ok) return richSnapshot;
+      const snapshot = record(richSnapshot.data) ?? {};
+      return { ok: true, data: { ...snapshot,
+        elements: Array.isArray(snapshot.interactiveElements) ? snapshot.interactiveElements : [],
+      } };
     }
 
     if (!contextCapture) {
@@ -603,39 +588,6 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
               navigationGeneration: query.navigationGeneration,
             },
           };
-        }
-        case 'snapshot': {
-          const richSnapshot = await dispatchRichSnapshot(query);
-          if (richSnapshot) return richSnapshot;
-
-          const text = evaluateValue(await evaluate(handle, DOM_TEXT_EXPRESSION, query));
-          const collapsed = (typeof text === 'string' ? text : '').replace(/\s+/gu, ' ').trim();
-          const truncated = collapsed.length > MAX_SNAPSHOT_CHARS;
-          return {
-            ok: true,
-            data: {
-              text: truncated ? `${collapsed.slice(0, MAX_SNAPSHOT_CHARS)}...` : collapsed,
-              ...(truncated ? { truncated: true } : {}),
-            },
-          };
-        }
-        case 'semanticSnapshot': {
-          const richSnapshot = await dispatchRichSnapshot(query);
-          if (richSnapshot) {
-            if (!richSnapshot.ok) return richSnapshot;
-            const snapshot = record(richSnapshot.data) ?? {};
-            return {
-              ok: true,
-              data: {
-                ...snapshot,
-                elements: Array.isArray(snapshot?.interactiveElements) ? snapshot.interactiveElements : [],
-              },
-            };
-          }
-
-          const raw = evaluateValue(await evaluate(handle, interactiveElementsExpression(SNAPSHOT_MAX_INTERACTIVE_ELEMENTS), query));
-          const parsed = parseInteractiveElements(raw, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS);
-          return { ok: true, data: { elements: parsed.elements, truncated: parsed.truncated } };
         }
         case 'queryElements': {
           const selector = normalizeBrowserAutomationLocator(query.payload);
