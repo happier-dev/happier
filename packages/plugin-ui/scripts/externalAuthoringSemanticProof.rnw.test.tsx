@@ -79,6 +79,82 @@ describe('external author semantic proof', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('edits and saves the actual external page filter in its device location, then reopens, withdraws and restores without Resource demand', async () => {
+    let location = '';
+    let resourceDemand = 0;
+    let actions = 0;
+    const mount = () => createPluginUiTestkit({
+      identity: { instanceId: 'external-release-editor', mountNonce: 'external-release-editor' },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      surface: externalAuthoringSemanticSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      subPath: location,
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        replacePageLocation: ({ subPath }) => { location = subPath; return subPath; },
+        executeAction: async () => { actions += 1; return null; },
+        readResource: async () => { resourceDemand += 1; throw new Error('Filter must not read a Resource'); },
+        watchResource: async () => { resourceDemand += 1; throw new Error('Filter must not watch a Resource'); },
+      },
+    });
+    let fixture = await mount();
+    const click = async (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      expect(element).not.toBeNull();
+      await act(async () => { element!.click(); });
+    };
+    const choices = async () => (await fixture.getAllByRole('radio')).filter(row => row.name?.startsWith('Choose ')).map(row => row.name);
+    try {
+      expect(await choices()).toEqual([expect.stringContaining('Choose Current review'), 'Choose Terminal review', 'Choose Release review']);
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit release filter' }));
+      await click('[data-testid="collection-filter-add"]');
+      await click('[data-testid^="collection-filter-field:"]');
+      await click('[data-testid^="collection-filter-value:"][data-testid$=":ready"]');
+      await click('[data-testid="collection-filter-back"]');
+      expect(await choices()).toEqual(['Choose Release review']);
+      expect(location).toBe('');
+      await fixture.press(await fixture.getByRole('button', { name: 'Save release filter' }));
+      expect(location).not.toBe('');
+      const savedLocation = location;
+      await fixture.dispose();
+      fixture = await mount();
+      expect(await choices()).toEqual(['Choose Release review']);
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit release filter' }));
+      await expect(fixture.getByText('Release stage')).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Withdraw release field' }));
+      await expect(fixture.getByText('Release stage unavailable')).resolves.toBeDefined();
+      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+      expect(location).toBe(savedLocation);
+      await fixture.press(await fixture.getByRole('button', { name: 'Restore release field' }));
+      expect(await choices()).toEqual(['Choose Release review']);
+      expect({ resourceDemand, actions }).toEqual({ resourceDemand: 0, actions: 0 });
+    } finally { await fixture.dispose(); }
+  });
+
+  it('reconciles host release-field currentness on an already mounted external page', async () => {
+    let fieldCurrent = false;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'external-release-currentness', mountNonce: 'external-release-currentness' },
+      authorPlugin: { id: externalAuthoringPlugin.manifest.id, version: externalAuthoringPlugin.manifest.version },
+      // The host supplies launch input; the actual author entry and filter owners remain real.
+      surface: context => externalAuthoringSemanticSurface({ ...context,
+        launchInput: { releaseStage: 'ready', releaseFieldCurrent: fieldCurrent } }),
+      surfaceContext: createSurfaceContextFixture(),
+      subPath: '',
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async () => null },
+    });
+    try {
+      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+      fieldCurrent = true;
+      await fixture.updateSurface(createSurfaceContextFixture({ locale: 'en-GB' }));
+      await expect(fixture.getByRole('radio', { name: 'Choose Release review' })).resolves.toBeDefined();
+      fieldCurrent = false;
+      await fixture.updateSurface(createSurfaceContextFixture({ locale: 'en-US' }));
+      expect(document.querySelector('[data-testid="external-review-choose:release"]')).toBeNull();
+    } finally { await fixture.dispose(); }
+  });
+
   it('requires the semantic surface to be declared by the loaded author contribution', () => {
     const ui = externalAuthoringPlugin.manifest.contributes.ui;
     expect(() => selectExternalAuthoringSemanticRendererArtifact({

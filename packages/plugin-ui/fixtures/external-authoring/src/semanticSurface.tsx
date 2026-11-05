@@ -33,15 +33,23 @@ import {
 import { useHappierUiAccessibility, useHappierUiLocalization } from '@happier-dev/plugin-ui/environment';
 import {
   CountedDisclosureItem, ItemAddRow, FloatingFrame as AuthorFloatingFrame, TechnicalDetailsDisclosure, HAPPIER_BALANCED_TEXT_WRAP,
-  type TechnicalDetailsLine,
+  CollectionConditionEditor, conditionModelFromFilter, applyCollectionConditionEdit, compileEntityListFilterV1,
+  type TechnicalDetailsLine, type CollectionConditionEditorProps,
 } from '@happier-dev/plugin-ui/components';
 import {
   HappierFloatingFrame as FloatingFrame, HappierStack, HappierText, resolveFloatingFrameRect, resolveHappierTreeFocusKey,
   useHappierCollection, type FrameRect, type HappierTreeNode,
 } from '@happier-dev/plugin-ui/components';
-import { compileExternalReleaseStageFilter, externalReleaseReviews, externalReleaseStageSelection } from './releaseStage.js';
+import { externalReleaseReviews, externalReleaseStageSelection, externalReleaseStageField,
+  externalReleaseStageRegistry, readExternalReleaseFilterLocation } from './releaseStage.js';
 
 const externalReviews = externalReleaseReviews;
+const releaseFilterLabels: CollectionConditionEditorProps['labels'] = {
+  title: 'Release filter', clear: 'Clear', add: 'Add filter', addSearch: 'Choose field', back: 'Back', or: 'or',
+  operators: { is: 'is', is_not: 'is not', before: 'before', after: 'after', between: 'between', unavailable: 'unavailable' },
+  remove: field => `Remove ${field}`, count: count => `${count} reviews`, countPartial: count => `${count} loaded`,
+  saveAsSpace: 'Save release filter', done: 'Done', noFields: 'No fields', noValues: 'No values',
+};
 const externalReviewReferences: readonly TechnicalDetailsLine[] = externalReviews.map((review) => ({
   key: review.id,
   label: review.title,
@@ -138,7 +146,7 @@ function ExternalAuthoringAdvancedPanel() {
  * semantic proof. Its local state belongs to the author; mounting, semantics,
  * querying, and actions remain owned by the SDK Testkit and RNW environment.
  */
-function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInput'>) {
+function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInput' | 'subPath'>) {
   const { locale } = useSurfaceContext();
   const composers = useComposer();
   const [composerHandle, setComposerHandle] = useState<ComposerHandle | null>(null);
@@ -158,9 +166,22 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
   const [openedReviewKey, setOpenedReviewKey] = useState<string | null>(null);
   const releaseStage = isRecord(props.launchInput) && typeof props.launchInput.releaseStage === 'string'
     ? props.launchInput.releaseStage : undefined;
-  const releaseFieldCurrent = !isRecord(props.launchInput) || props.launchInput.releaseFieldCurrent !== false;
-  const matchReleaseStage = useMemo(() => compileExternalReleaseStageFilter(externalReleaseStageSelection(releaseStage), releaseFieldCurrent),
-    [releaseFieldCurrent, releaseStage]);
+  const initialReleaseFilter = useMemo(() => readExternalReleaseFilterLocation(props.subPath) ?? externalReleaseStageSelection(releaseStage),
+    [props.subPath, releaseStage]);
+  const [releaseFilter, setReleaseFilter] = useState(initialReleaseFilter);
+  useEffect(() => setReleaseFilter(initialReleaseFilter), [initialReleaseFilter]);
+  const externalReleaseFieldCurrent = !isRecord(props.launchInput) || props.launchInput.releaseFieldCurrent !== false;
+  const [releaseFieldWithdrawn, setReleaseFieldWithdrawn] = useState(false);
+  const releaseFieldCurrent = externalReleaseFieldCurrent && !releaseFieldWithdrawn;
+  const [releaseFilterOpen, setReleaseFilterOpen] = useState(false);
+  const [releaseSaveError, setReleaseSaveError] = useState(false);
+  const releaseRegistry = useMemo(() => externalReleaseStageRegistry(releaseFieldCurrent), [releaseFieldCurrent]);
+  const releaseConditions = useMemo(() => conditionModelFromFilter(releaseRegistry, releaseFilter, { fields: {
+    [externalReleaseStageField.id]: { label: 'Release stage', valueOptions: [
+      { value: 'ready', label: 'Ready' }, { value: 'blocked', label: 'Blocked' }, { value: 'reviewing', label: 'Reviewing' },
+    ] },
+  } }), [releaseRegistry, releaseFilter]);
+  const matchReleaseStage = useMemo(() => compileEntityListFilterV1(releaseRegistry, releaseFilter), [releaseRegistry, releaseFilter]);
   const filterReview = useCallback((review: (typeof externalReviews)[number]) => matchReleaseStage(review) === 'match', [matchReleaseStage]);
   const reviewModel = useHappierCollection({
     items: externalReviews, keyOf: (review) => review.id,
@@ -300,6 +321,28 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
         disclosure={{ collapsed: !widgetExpanded, onCollapsedChange: (collapsed) => setWidgetExpanded(!collapsed),
           expandLabel: 'Expand review choices', collapseLabel: 'Collapse review choices' }}
       >
+        {props.subPath === undefined ? null : <ItemGroup title="Release filter"
+          description="Filter the held reviews and keep this selection on this device.">
+          <Item title="Review selection" accessory={<Button title="Edit release filter" variant="plain"
+            onPress={() => setReleaseFilterOpen(true)} />} />
+          {releaseFilterOpen ? <CollectionConditionEditor model={releaseConditions} labels={releaseFilterLabels}
+            onChange={edit => setReleaseFilter(current => applyCollectionConditionEdit(releaseRegistry, current, edit))}
+            onDone={() => setReleaseFilterOpen(false)}
+            onSaveAsSpace={async () => {
+              setReleaseSaveError(false);
+              try {
+                const settled = await hostApi.replacePageLocation(`release-filter/${encodeURIComponent(JSON.stringify(releaseFilter))}`);
+                setReleaseFilter(readExternalReleaseFilterLocation(settled.subPath) ?? {});
+                setReleaseFilterOpen(false);
+              } catch { setReleaseSaveError(true); }
+            }} /> : null}
+          <Item title="Release stage field" accessory={<Button variant="plain"
+            title={releaseFieldWithdrawn ? 'Restore release field' : 'Withdraw release field'}
+            disabled={!externalReleaseFieldCurrent}
+            onPress={() => setReleaseFieldWithdrawn(current => !current)} />} />
+          {releaseConditions.rows.some(row => !row.available) ? <Status tone="warning" label="Release stage unavailable" /> : null}
+          {releaseSaveError ? <Status tone="warning" label="Couldn’t save the release filter. Try again." /> : null}
+        </ItemGroup>}
         <Collection
           model={reviewModel}
           accessibilityLabel="External review choice"
@@ -426,7 +469,7 @@ function ExternalAuthoringSurface(context: RenderContext) {
   return target.kind === 'project' || (target.kind === 'app'
     && isRecord(context.launchInput) && isRecord(context.launchInput.checkout))
     ? <ExternalProjectSurface {...context} />
-    : <ExternalAuthoringSemanticSurface launchInput={context.launchInput} />;
+    : <ExternalAuthoringSemanticSurface launchInput={context.launchInput} subPath={context.subPath} />;
 }
 
 export const renderExternalAuthoringSemanticSurface = defineUiSurface(

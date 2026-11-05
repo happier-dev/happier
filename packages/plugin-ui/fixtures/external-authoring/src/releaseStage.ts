@@ -5,7 +5,9 @@ import {
   createPluginListFilterFieldRegistryV1,
   type PluginListFilterFactsV1,
   type PluginListFilterSelectionV1,
+  validatePluginListFilterSelectionsV1,
 } from '@happier-dev/plugin-ui/components';
+import { isRecord } from '@happier-dev/plugin-sdk';
 
 const declaration = { id: 'release-stage', title: 'Release stage', source: { factKey: 'releaseStage' },
   value: { kind: 'set' } } as const;
@@ -25,8 +27,23 @@ export function admitExternalReleaseStage(stage: unknown): PluginListFilterFacts
 }
 
 export function compileExternalReleaseStageFilter(selection: PluginListFilterSelectionV1, current = true) {
-  return compileEntityListFilterV1(createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>(
-    current ? [externalReleaseStageField] : []), selection);
+  return compileEntityListFilterV1(externalReleaseStageRegistry(current), selection);
+}
+
+export function externalReleaseStageRegistry(current = true) {
+  return createPluginListFilterFieldRegistryV1<PluginListFilterSelectionV1, PluginListFilterFactsV1>(
+    current ? [externalReleaseStageField] : []);
+}
+
+/** A deliberate saved lens uses the host's existing device-local page location. */
+export function readExternalReleaseFilterLocation(subPath: string | undefined): PluginListFilterSelectionV1 | null {
+  if (!subPath?.startsWith('release-filter/')) return null;
+  try {
+    const value: unknown = JSON.parse(decodeURIComponent(subPath.slice('release-filter/'.length)));
+    if (!isRecord(value) || !validatePluginListFilterSelectionsV1([externalReleaseStageField], value.extensions)) return null;
+    // The public selection validator admits this plugin-owned route ingress.
+    return value as PluginListFilterSelectionV1;
+  } catch { return null; }
 }
 
 export const externalReleaseReviews = Object.freeze([

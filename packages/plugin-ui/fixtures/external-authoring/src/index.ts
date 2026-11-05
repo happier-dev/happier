@@ -200,6 +200,7 @@ export const externalAuthoringPlugin = definePlugin({
       artifact: 'semantic-surface',
       requiredHostMethods: [
         'context',
+        'replacePageLocation',
         'executeAction',
         'readComposer',
         'watchComposer',
