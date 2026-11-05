@@ -1,6 +1,7 @@
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from './definition.js';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentActionIdV1 } from '../../deployments/deploymentActionsV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
+import { isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
   id: TId;
@@ -11,6 +12,8 @@ type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjecti
 }>;
 
 function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string, path: string | undefined, read = false): DeploymentActionSpec<TId> {
+  const preparedContentRequired = id !== 'deployments.environments.create' && id !== 'deployments.targets.link'
+    && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !isDeploymentPromoteActionIdV1(id);
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     ...(id === 'deployments.templates.instantiate' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
@@ -108,10 +111,13 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === 'deployments.environments.create'
         ? [{ path: 'firstTargetLink', title: 'First own-server target and prepared content', widget: 'json' as const }] : []),
       ...(id === 'deployments.deploy' ? [{ path: 'targetLinkId', title: 'Deployment target', widget: 'text' as const, required: true }] : []),
+      ...(id === 'deployments.domains.add' ? [
+        { path: 'content', title: 'Authored Domain routing', widget: 'json' as const },
+      ] : []),
       ...(read || id === 'deployments.deploy' || id === 'deployments.cancel' || id === 'deployments.environments.controller.set' ? [] : [
-        { path: 'contentArtifactId', title: 'Prepared content', widget: 'text' as const, required: true },
-        { path: 'contentHeaderVersion', title: 'Content header revision', widget: 'number' as const, required: true },
-        { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: true },
+        { path: 'contentArtifactId', title: 'Prepared content', widget: 'text' as const, required: preparedContentRequired },
+        { path: 'contentHeaderVersion', title: 'Content header revision', widget: 'number' as const, required: preparedContentRequired },
+        { path: 'contentBodyVersion', title: 'Content body revision', widget: 'number' as const, required: preparedContentRequired },
       ]),
     ] },
     ...(id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.publish' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.promote' || id === 'deployments.teardown' ? {

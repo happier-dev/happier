@@ -10,8 +10,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentTransitionInputV1Schema, computeDeploymentTransitionRequestDigestV1, signMachineInstallationProof, type ActionExecutorContext, type ActionExecutorDeps, DeploymentDeployInputV1Schema, DeploymentTeardownInputV1Schema, type DeploymentDeployInputV1, DeploymentPendingCancelInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTransitionInputV1, type DeploymentTeardownInputV1, DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, DeploymentDomainMutationResultV1Schema, isDeploymentDomainChildActionIdV1, DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1,
+    isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, readDeploymentReceiptArtifactV1, createDeploymentReceiptArtifactHeaderV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentContentV1, type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1, DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentDataTeardownContentV1Schema, DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentMemberVersionProjectionV1 } from '@happier-dev/deployments';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -627,6 +629,20 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const storage = storageDeps.deploymentAction!;
     const domainActions = createOwnServerDomainActions({ ...host,
         storage, headers, dispatch: sendChild, open, readEnvironment: targetHostReaders.readEnvironment, readInstallation: readBuildInstallation,
+        async createContent(content, owner, context) {
+            const binding = context.externalActionExecutionAuthorization?.binding;
+            const native = binding?.deploymentNativeAdmission;
+            if (!binding || !isDeploymentDomainNativeAdmissionV1(native) || !native.authoredMetadataDigest)
+                throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });
+            const created = await atHome(() => createDeploymentArtifactForHost({ artifacts, owner, publication: 'create',
+                assertCurrent: async () => { context.signal?.throwIfAborted(); },
+                content: { artifactId: createDeploymentDomainContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native }),
+                    header: { kind: DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, title: content.hostname }, body: JSON.stringify(content),
+                    signal: context.signal, beforeWrite: async () => { context.signal?.throwIfAborted(); },
+                    authorizationHeaders: artifactAuthorization(context) } }));
+            return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
+                contentBodyVersion: created.revision.bodyVersion };
+        },
         persistPreparedContent: createOwnServerDomainContentWriter({ serverId: host.serverId,
             serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts, headers }) });
     const templates = createDeploymentTemplateInstantiationForHost({ ...host, storage, headers, assertCurrent,

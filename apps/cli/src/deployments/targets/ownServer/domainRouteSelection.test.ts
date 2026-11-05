@@ -299,6 +299,7 @@ it.skipIf(process.platform === 'win32').each(['shared', 'misdirected discovery',
         environmentId: environment.environment.id, domainId: 'domain', expectedRevision: environment.environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'domain-add',
         contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 });
+    if (!('contentArtifactId' in input)) throw new Error('Expected prepared Domain input');
     const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
     const documents = new Map<string, Record<string, unknown>>();
     for (const [id, kind, content] of [[environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content],

@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import type { ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
+import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RPC_METHODS } from '../rpc/methods.js';
@@ -7,10 +7,12 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentPublishInputV1Schema } from './deploymentActionsV1.js';
 import { isDeploymentChildRootActionIdV1, deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
-import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
+import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema } from './deploymentTemplateInstantiationV1.js';
+import { computeDeploymentDomainAuthoredMetadataDigestV1, createDeploymentDomainContentArtifactIdV1,
+    isDeploymentDomainNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 export { isDeploymentChildRootActionIdV1, deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1,
     isDeploymentDomainChildActionIdV1, type DeploymentRootOperationV1, type DeploymentDomainChildActionIdV1 } from './deploymentActionIdsV1.js';
 
@@ -33,7 +35,7 @@ export const DeploymentDomainChildRpcV1Schema = lazyZodSchema(() => z.safeExtend
 }));
 export type DeploymentDomainChildRpcV1 = z.infer<typeof DeploymentDomainChildRpcV1Schema>;
 export const DeploymentDomainDiscoverChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
-    ...placement, kind: z.literal('domainDiscover'), actionId: z.literal('deployments.domains.add'), input: DeploymentDomainAddInputV1Schema,
+    ...placement, kind: z.literal('domainDiscover'), actionId: z.literal('deployments.domains.add'), input: DeploymentDomainAddPreparedInputV1Schema,
 }));
 export type DeploymentDomainDiscoverChildRpcV1 = z.infer<typeof DeploymentDomainDiscoverChildRpcV1Schema>;
 const job = lazyZodSchema(() => z.union([
@@ -62,6 +64,7 @@ export type DeploymentChildRpcV1 = z.infer<typeof DeploymentChildRpcV1Schema>;
 /** Input derivation is separate from admission: Home and the receiver must still
  * prove the current parent receipt, operation, candidate and installed role. */
 export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
+    rootBinding?: ExternalActionExecutionAuthorizationBindingV1;
     rootInput: unknown; child: DeploymentChildRpcV1; rootActionId?: string;
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
@@ -76,6 +79,20 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         return child.kind === 'domain';
     }
     if (child.kind === 'domainDiscover') {
+        const binding = input.rootBinding;
+        const native = binding?.deploymentNativeAdmission;
+        if (binding && isDeploymentDomainNativeAdmissionV1(native)) {
+            if (input.rootActionId !== child.actionId || binding.actionId !== child.actionId || native.actionId !== child.actionId
+                || child.input.serverId !== binding.serverIdentityId || child.input.environmentId !== native.environmentId
+                || child.input.domainId !== native.domainId) return false;
+            if (native.authoredMetadataDigest !== undefined) {
+                return child.input.contentArtifactId === createDeploymentDomainContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native })
+                    && child.input.contentHeaderVersion === 1 && child.input.contentBodyVersion === 1
+                    && computeDeploymentDomainAuthoredMetadataDigestV1(child.input) === native.authoredMetadataDigest;
+            }
+            const projected = projectDeploymentNativeAdmissionV1(child.actionId, child.input);
+            return isDeploymentDomainNativeAdmissionV1(projected) && projected.inputDigest === native.inputDigest;
+        }
         const original = DeploymentDomainAddInputV1Schema.safeParse(input.rootInput);
         return input.rootActionId === child.actionId && original.success && sameStrictJsonValue(original.data, child.input);
     }

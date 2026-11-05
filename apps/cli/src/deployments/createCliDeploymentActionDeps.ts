@@ -213,7 +213,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const actionOperationId = context.operationAcceptance?.operationId;
         const requestId = context.externalActionExecutionAuthorization?.binding.requestId ?? context.actionRequestId;
         if (!actionOperationId || !requestId) return failure('operation_unavailable');
-        body = { ...transportInput, actionOperationId, requestId };
+        const native = context.externalActionExecutionAuthorization?.binding.deploymentNativeAdmission;
+        body = { ...transportInput, actionOperationId, requestId,
+          ...(actionId === 'deployments.domains.add' && native && 'kind' in native && native.kind === 'domain'
+            && native.authoredMetadataDigest ? { authoredInputDigest: native.inputDigest } : {}) };
       }
       if (actionId === 'deployments.bindings.set') {
         if (!params.prepareBindings) return failure('client_required');

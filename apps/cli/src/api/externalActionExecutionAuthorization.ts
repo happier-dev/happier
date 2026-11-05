@@ -1742,6 +1742,7 @@ export async function readReviewedDeploymentChildRoot(input: Readonly<{
   const rootInput = await readReviewedExternalActionInput(input);
   if (rootInput === null || rootInput === undefined) return null;
   const matches = doesDeploymentChildInputMatchRootV1({ rootActionId: input.authorization.binding.actionId, rootInput, child,
+    rootBinding: input.authorization.binding,
     rootPreparationAdmission: input.authorization.binding.deploymentPreparationAdmission, reviewedChild: input.reviewedChild });
   if (!matches) { input.onRefused?.('child_input_mismatch'); return null; }
   const parentInput = projectNativeJsonValueForTransport(rootInput);

@@ -8,12 +8,14 @@ export async function createDeploymentArtifactForHost(input: Readonly<{
     artifacts: Pick<ArtifactStore, 'create' | 'accessGrants' | 'readForUpdate' | 'update'>;
     owner: DeploymentEnvironmentDetailV1['environment']['owner'];
     content: Parameters<ArtifactStore['create']>[0];
+    /** Link jobs publish an immutable identity; native candidates may replace a head before receipt. */
+    publication?: 'create';
     assertCurrent(): Promise<void>;
 }>): Promise<Awaited<ReturnType<ArtifactStore['create']>>> {
     // A signed native root retains its issued candidate through pending wake.
     // It may already have an unadmitted head: preserve its real CAS rather than
     // treating idempotent create's old response as freshly prepared content.
-    const resource = input.content.artifactId ? await input.artifacts.readForUpdate(input.content.artifactId, {
+    const resource = input.content.artifactId && input.publication !== 'create' ? await input.artifacts.readForUpdate(input.content.artifactId, {
         signal: input.content.signal, prepareRecipients: false, includeSharedAudience: false,
         authorizationHeaders: input.content.authorizationHeaders,
     }) : null;

@@ -27,24 +27,30 @@ export async function prepareOwnServerDomainReviewedChildren(
     const actionId = request.actionId;
     if (actionId !== 'deployments.domains.add' && actionId !== 'deployments.domains.remove') return null;
     const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
-    let reference: { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
-    if (actionId === 'deployments.domains.add') reference = DeploymentActionInputSchemasV1[actionId].parse(input);
+    let content: DeploymentDomainContentV1;
+    const add = actionId === 'deployments.domains.add' ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
+    if (add && 'content' in add) content = add.content;
     else {
-        const loaded = await host.storage('deployments.domains.get', { serverId: input.serverId,
-            environmentId: input.environmentId, domainId: input.domainId }, request.context);
-        if ('errorCode' in loaded) return loaded;
-        const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(loaded);
-        if (!parsed.ok) return failure(parsed.error);
-        reference = parsed.domain;
+        let reference: { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
+        if (add && 'contentArtifactId' in add) reference = add;
+        else {
+            const loaded = await host.storage('deployments.domains.get', { serverId: input.serverId,
+                environmentId: input.environmentId, domainId: input.domainId }, request.context);
+            if ('errorCode' in loaded) return loaded;
+            const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(loaded);
+            if (!parsed.ok) return failure(parsed.error);
+            reference = parsed.domain;
+        }
+        const opened = readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, request.context));
+        if (!opened.ok) return failure(opened.error);
+        content = opened.content;
     }
-    const opened = readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, request.context));
-    if (!opened.ok) return failure(opened.error);
-    const selected = readCloudflareNamedControllerSelection(opened.content.ingress);
+    const selected = readCloudflareNamedControllerSelection(content.ingress);
     if (!selected) return null;
     const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
     if (purpose?.credentialRef.kind !== 'connectedAccount') return failure('connected_account_required');
     const { accountId, zoneId, tunnel } = selected.controller;
-    const prepared = opened.content.cloudflarePreparation;
+    const prepared = content.cloudflarePreparation;
     if (actionId === 'deployments.domains.remove' && !prepared) return failure('required_fact_unavailable');
     const role = actionId === 'deployments.domains.add' ? 'configure' : 'disable';
     return { children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: `cloudflare-named/${role}` }, role,
@@ -115,6 +121,9 @@ export function createOwnServerDomainActions(host: Readonly<{
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
+    createContent(content: DeploymentDomainContentV1,
+        owner: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>['environment']['owner'],
+        context: ActionExecutorContext): Promise<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>;
     persistPreparedContent: ReturnType<typeof createOwnServerDomainContentWriter>;
     headers(context: ActionExecutorContext, actionId: string,
         request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
@@ -131,6 +140,10 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
                 const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
                 if (!link) return failure('target_mismatch');
+                const preparedInput = 'content' in original ? await (async () => {
+                    const { content, ...metadata } = original;
+                    return { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
+                })() : original;
                 const ingress = environment.content.ingress;
                 const destinations = link.members.filter(member => member.state === 'active').map(member => ({
                     machineId: member.machineId, installationId: member.installationId }));
@@ -140,7 +153,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 }
                 const machines: DeploymentDomainTopologyV1['machines'] = [];
                 for (const destination of destinations) {
-                    const observed = await host.dispatch({ v: 1, kind: 'domainDiscover', actionId, input: original, ...destination }, context);
+                    const observed = await host.dispatch({ v: 1, kind: 'domainDiscover', actionId, input: preparedInput, ...destination }, context);
                     if (observed && typeof observed === 'object' && 'errorCode' in observed && typeof observed.errorCode === 'string')
                         return failure(observed.errorCode, 'details' in observed ? observed.details : undefined);
                     const parsed = DeploymentDomainMachineTopologyV1Schema.safeParse(observed);
@@ -157,7 +170,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const selected = selectDomainCaddyPlacements({ ingress, members, ...(edge ? { edge } : {}) });
                 if (selected.status !== 'ready') return failure(selected.reason);
                 if (original.placements && !isDeepStrictEqual(original.placements, selected.placements)) return failure('target_mismatch');
-                input = { ...original, placements: [...selected.placements] };
+                input = { ...preparedInput, placements: [...selected.placements] };
                 topology = { members: link.members.filter(member => member.state === 'active').map(member => ({
                     machineId: member.machineId, installationId: member.installationId })), machines,
                     ...(selected.tunnelOrigin ? { tunnelOrigin: selected.tunnelOrigin } : {}) };

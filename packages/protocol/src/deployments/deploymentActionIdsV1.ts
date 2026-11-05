@@ -28,6 +28,9 @@ const ids: ReadonlySet<string> = new Set(DEPLOYMENT_ACTION_IDS_V1);
 export function isDeploymentActionIdV1(value: string): value is DeploymentActionIdV1 { return ids.has(value); }
 
 export type DeploymentRootOperationV1 = 'deploy' | 'rollback' | 'promote' | 'teardown';
+export function isDeploymentPromoteActionIdV1(value: string): value is 'deployments.promote' {
+  return value === 'deployments.promote';
+}
 export type DeploymentDomainChildActionIdV1 = 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
 export function isDeploymentDomainChildActionIdV1(value: string): value is DeploymentDomainChildActionIdV1 {
   return value === 'deployments.domains.add' || value === 'deployments.domains.remove' || value === 'deployments.domains.verify';

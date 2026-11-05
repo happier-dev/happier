@@ -17,6 +17,7 @@ import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 export const DeploymentDomainNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
   environmentId: id, domainId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  authoredMetadataDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
 }));
 export type DeploymentDomainNativeAdmissionV1 = z.infer<typeof DeploymentDomainNativeAdmissionV1Schema>;
 export const DeploymentRestartNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -60,7 +61,8 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
       : actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainVerifyInputV1Schema;
     const value = schema.parse(input);
     return DeploymentDomainNativeAdmissionV1Schema.parse({ kind: 'domain', actionId, environmentId: value.environmentId,
-      domainId: value.domainId, inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-domain-input-v1',
+      domainId: value.domainId, ...('content' in value ? { authoredMetadataDigest: computeDeploymentDomainAuthoredMetadataDigestV1(value) } : {}),
+      inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-domain-input-v1',
         [createCanonicalJsonSigningInput(value)]) });
   }
   if (actionId === 'action.operations.get') return readRecord(input).environmentId === undefined
@@ -75,6 +77,29 @@ export const DeploymentCandidatePublicationV1Schema = lazyZodSchema(() => z.stri
   environmentId: id, source: z.strictObject({ id, revision }), contentArtifactId: id, environmentContentArtifactId: z.optional(id),
 }));
 
+function publicationArtifactId(digest: string): string {
+  // Variant b avoids the reserved version-8/variant-a Account-scoped namespace.
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-b${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+/** Preserve the admitted routing metadata when private content becomes an Artifact reference. */
+export function computeDeploymentDomainAuthoredMetadataDigestV1(input: Readonly<Record<string, unknown>>): string {
+  const { content: _content, contentArtifactId: _artifact, contentHeaderVersion: _header,
+    contentBodyVersion: _body, authoredInputDigest: _digest, ...metadata } = input;
+  return computeCanonicalDomainSeparatedDigest('happier-deployment-domain-authored-metadata-v1',
+    [createCanonicalJsonSigningInput(metadata)]);
+}
+
+/** One create-only private Domain candidate belongs to the admitted invocation. */
+export function createDeploymentDomainContentArtifactIdV1(input: Readonly<{
+  accountId: string; serverIdentityId: string; actionId: string; requestId: string;
+  requestEnvelopeDigest: string; deploymentNativeAdmission: DeploymentDomainNativeAdmissionV1;
+}>): string {
+  return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-domain-publication-v1',
+    [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
+      input.deploymentNativeAdmission.inputDigest]));
+}
+
 /** Reminting the same invocation retains its pre-receipt candidate, including pending wake. */
 export function createDeploymentCandidatePublicationV1(input: Readonly<{
   accountId: string; serverIdentityId: string; actionId: string; requestId: string;
@@ -85,9 +110,7 @@ export function createDeploymentCandidatePublicationV1(input: Readonly<{
     const digest = computeCanonicalDomainSeparatedHexDigest(
     'happier-deployment-candidate-v1', [input.serverIdentityId, input.accountId, input.actionId,
       input.requestId, input.requestEnvelopeDigest, input.environmentId, input.source.id, String(input.source.revision), purpose]);
-    // Artifact transport requires UUIDs. Variant b deliberately avoids the
-    // incumbent version-8/variant-a Account-scoped create namespace.
-    return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-b${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+    return publicationArtifactId(digest);
   };
   return DeploymentCandidatePublicationV1Schema.parse({ environmentId: input.environmentId, source: input.source,
     contentArtifactId: artifactId('receipt'),

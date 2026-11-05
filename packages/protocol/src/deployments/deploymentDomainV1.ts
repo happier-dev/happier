@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { DeploymentDomainContentV1Schema } from './deploymentDomainContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
 export { DeploymentDomainHealthCheckV1Schema, type DeploymentDomainHealthCheckV1 } from './deploymentDomainHealthCheckV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -120,16 +121,23 @@ export type DeploymentDomainHeaderV1 = z.infer<typeof DeploymentDomainHeaderV1Sc
 const environment = { serverId: id, environmentId: id };
 const domain = { ...environment, domainId: id };
 const mutation = { ...domain, expectedRevision: revision, requestKey: id };
-export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.strictObject({
+const addMetadata = () => ({
     ...mutation, expectedDomainRevision: z.optional(revision), targetLinkId: id, expectedTargetLinkRevision: revision,
-    ...DeploymentArtifactContentReferenceV1Schema.shape,
     placements: z.optional(z.array(z.strictObject({ machineId: id, installationId: id, nativeServer: id, dockerEngineId: id,
         listener: z.enum(['privateOrigin', 'public']) })).check(z.minLength(1),
         z.refine(items => new Set(items.map(item => `${item.machineId}:${item.installationId}:${item.nativeServer}`)).size === items.length,
             { message: 'Native placements must be unique.' }))),
+});
+export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...addMetadata(), ...DeploymentArtifactContentReferenceV1Schema.shape,
 }));
-export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainAddInputV1Schema, {
-    actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddInputV1Schema.shape.placements),
+export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
+    DeploymentDomainAddPreparedInputV1Schema,
+    z.strictObject({ ...addMetadata(), content: DeploymentDomainContentV1Schema }),
+]));
+export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainAddPreparedInputV1Schema, {
+    actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddPreparedInputV1Schema.shape.placements),
+    authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
 }));
 export const DeploymentDomainRemoveInputV1Schema = lazyZodSchema(() => z.strictObject({ ...mutation, expectedDomainRevision: revision }));
 export const DeploymentDomainRemoveAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainRemoveInputV1Schema, {
