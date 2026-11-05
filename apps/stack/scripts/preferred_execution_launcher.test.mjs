@@ -2051,6 +2051,34 @@ for (const dispatcher of ['native', 'javascript']) {
     ? spawnSync('/bin/sh', [launcher, '--', ...args], invocation)
     : spawnSync(process.execPath, [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--stack=repo-memory', '--', ...args], invocation);
 
+  test(`physical phase capacity ${dispatcher}: sequential preparation cannot hide a physically impossible compiler leaf`, async t => {
+    const fixture = await memoryRoutingFixture(t, { roomyLoad: 80 });
+    const belowLeaf = resolveHeavyweightMemoryFloorKiB('compilation-cli') - 1;
+    // Earlier publication fits, but the final compiler leaf cannot fit in the
+    // worker's physical RAM. Temporary achievable headroom is not a refusal.
+    await writeFile(fixture.samplePath, `8 0.1 1 22000000 20 0 ${belowLeaf} ${belowLeaf} 0 0 0 0 0 0 0 linux ${belowLeaf} 0 ${belowLeaf} 0\n`);
+    const result = dispatch(fixture.invocation, ['sh', '-c', 'corepack yarn --cwd packages/cli-common -s build && node scripts/workspaces/runTypeScriptCli.mjs -p apps/cli/tsconfig.source.json']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'remote:roomy\n');
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy']);
+  });
+
+  test(`nested package capacity ${dispatcher}: login shell chains rank queued demand behind idle capacity`, async t => {
+    const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 80 });
+    const queuedKiB = 85 * resolveHeavyweightMemoryFloorKiB('runtime-build');
+    await writeFile(fixture.samplePath, `8 0.1 0.99 22000000 20 0 28000000 33554432 0 0 0 0 0 0 0 linux 28000000 0 16777216 ${queuedKiB}\n`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = dispatch(fixture.invocation, ['/bin/sh', '-lc', 'corepack yarn --cwd packages/cli-common -s build && node --test example.test.mjs']);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, 'remote:roomy\n', 'fresh and cached placement must see nested package demand');
+    }
+    const payloads = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n')
+      .filter(line => line.startsWith('ssh:') && line.includes('remote_execution_custody.sh'))
+      .map(line => line.includes('starved-host') ? 'starved' : 'roomy');
+    assert.deepEqual(payloads, ['roomy', 'roomy'],
+      'the queue-heavy worker receives zero preparation or payload dispatches');
+  });
+
   test(`queue policy ${dispatcher}: all memory-busy targets remain remotely eligible`, async (t) => {
     const { invocation } = await memoryRoutingFixture(t, { availableKiB: 0, roomyAvailableKiB: 5242880, fallback: 'local' });
     const result = dispatch(invocation, ['vitest', 'run', 'fixture.test.ts']);
@@ -2095,7 +2123,7 @@ for (const dispatcher of ['native', 'javascript']) {
     await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
   });
 
-  test(`workload admission ${dispatcher}: source package builds fit a small worker while strict compilers and full runtime builds need a larger worker`, async (t) => {
+  test(`workload admission ${dispatcher}: strict prerequisites determine placement while publishers retain their payload envelope`, async (t) => {
     const { invocation } = await memoryRoutingFixture(t, { availableKiB: 15728640, totalKiB: 16777216, roomyLoad: 80, roomyAvailableKiB: 41943040, roomyTotalKiB: 50331648 });
     invocation.env.HAPPIER_WORKSPACE_BUILD_MODE = 'strict';
     for (const args of [
@@ -2109,13 +2137,18 @@ for (const dispatcher of ['native', 'javascript']) {
       await writeFile(invocation.env.FIXTURE_TRACE, '');
       const result = dispatch(invocation, args);
       assert.equal(result.status, 0, result.stderr);
-      const runtime = args.some(arg => arg.startsWith('--worker-request='));
-      const small = args.join(' ').includes('packages/cli-common');
-      const selfAdmitting = small || args.join(' ').includes('packages/protocol');
-      assert.equal(result.stdout, small ? 'remote:starved\n' : 'remote:roomy\n', args.join(' '));
+      const packagePublisher = args.join(' ').includes('packages/cli-common');
+      const policy = await resolvePackageCommandPolicy(args, { repoRoot, cwd: repoRoot, env: invocation.env });
+      // Placement includes the strict prerequisite graph; preparation leaves
+      // and the publisher still retain their own admission (docs/testing.md).
+      assert.equal(result.stdout, 'remote:roomy\n', args.join(' '));
+      if (packagePublisher) {
+        assert.equal(policy.heavyClass, 'package-dist');
+        assert.equal(policy.placementHeavyClass, 'runtime-build');
+      }
       const trace = await readFile(invocation.env.FIXTURE_TRACE, 'utf8');
-      if (selfAdmitting) assert.doesNotMatch(trace, /--heavyweight-admission/, 'publication and compiler leaves own capacity after workspace preparation');
-      else assert.match(trace, runtime ? /--class=runtime-build/ : /--class=compilation/);
+      if (policy.selfPublisher === '1') assert.doesNotMatch(trace, /--heavyweight-admission/, 'publishers own capacity after workspace preparation');
+      else assert.match(trace, new RegExp(`--heavyweight-admission.*--class=${policy.heavyClass}`));
     }
   });
 
