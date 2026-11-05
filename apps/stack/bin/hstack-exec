@@ -148,15 +148,9 @@ score_load_sample() {
       available_memory = ($17 != "" ? $17 : $7)
       if (ratio < 0) ratio = 0
       if (ratio > 1) ratio = 1
-      # Remote host queues include demand from every controller. Charge each
-      # waiting class its own envelope, not a CPU-sized job count. Preserve
-      # zero-headroom ordering; physical RAM scales the demand penalty when
-      # no current headroom exists. The broker owns head-floor reservation.
-      queued_memory = ($20 ~ /^[0-9]+$/ ? $20 : 0)
-      drained_demand = $8 > 0 ? queued_memory / $8 : 0
       # Zero headroom is ordered separately below. A huge sentinel erases
       # per-core load and active-dispatch increments in floating-point math.
-      pressure = heavy ? (available_memory > 0 ? (minimum_capacity + queued_memory) / available_memory : drained_demand) : (ratio < 0.1 ? 1 : 0)
+      pressure = heavy ? (available_memory > 0 ? minimum_capacity / available_memory : 0) : (ratio < 0.1 ? 1 : 0)
       printf "%.6f", ($2 / $1) + pressure
     }'
 }
@@ -1730,6 +1724,8 @@ fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
+  candidate_queue_pressure=0
+  candidate_empty_memory=0
   case "$candidate_available:$candidate_cache" in
     0:prerequisite|0:capability|0:bun-pin|0:go-toolchain|0:dispatch-sync)
       case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
@@ -1777,7 +1773,12 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v queued="$candidate_queued" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + ((active + queued) / capacity)}')
     if [ "$heavyweight_admission_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
       candidate_memory=$(awk '{print ($17 != "" ? $17 : $7)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
-      candidate_queued_memory=$(awk '{print $20+0}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || printf 0)
+      # A backlog is queued memory divided by admission's achievable capacity:
+      # the memory waves ahead of a new job. Compare it before CPU load rather
+      # than inventing a weight between those independent resources.
+      candidate_queue_sample=$(awk '{capacity=($19 ~ /^[0-9]+$/ && $19 > 0 ? $19 : $8); queued=$20+0; printf "%.0f %.9f", queued, (capacity > 0 ? queued/capacity : 0)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || printf '0 0')
+      candidate_queued_memory=${candidate_queue_sample%% *}
+      if [ "$heavyweight_admission_required" -eq 1 ]; then candidate_queue_pressure=${candidate_queue_sample#* }; fi
       if [ "$candidate_name" = local ]; then candidate_memory=${local_unreserved_memory:-$local_mem_available}; fi
       case "$candidate_memory" in ''|*[!0-9]*) candidate_memory=0 ;; esac
     fi
@@ -1786,15 +1787,13 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ]; then candidate_native_preference=-2; fi
     if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ]; then
       # Fitting workers precede busy workers using the existing preference
-      # order (native=0, cross-target=1). Keep load ordering when all are busy.
+      # order (native=0, cross-target=1), then compare backlog and load.
       candidate_native_preference=$(( ${candidate_native_preference:-0} + 2 ))
     fi
-    # Preserve the existing affinity/native/fit order, then put zero headroom
-    # behind positive headroom within each priority. Scores remain finite
-    # enough for every in-flight placement to change the per-core ranking.
-    candidate_native_preference=$(( ${candidate_native_preference:-0} * 2 ))
+    # Preserve affinity/native/fit priority. Within it, backlog precedes the
+    # zero-headroom distinction and the finite CPU/active-dispatch score.
     if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -eq 0 ]; then
-      candidate_native_preference=$((candidate_native_preference + 1))
+      candidate_empty_memory=1
     fi
   else
     candidate_active=0
@@ -1802,22 +1801,30 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_heavyweight_active=0
     candidate_effective=$candidate_score
   fi
-  printf '%s %s %s %s %s %s %s %s %s %s\n' \
+  printf '%s %s %s %s %s %s %s %s %s %s %s %s\n' \
     "$candidate_number" "$candidate_name" "$candidate_available" "$candidate_effective" \
     "$candidate_cache" "$candidate_score" "$candidate_active" "$candidate_capacity" \
-    "$candidate_class_active" "${candidate_native_preference:-0}" >> "$candidates"
+    "$candidate_class_active" "${candidate_native_preference:-0}" "$candidate_queue_pressure" "$candidate_empty_memory" >> "$candidates"
 done
 
 selected=$(awk '
+  function precedes() {
+    if ($10 != preference) return $10 < preference
+    if ($11 != backlog) return $11 < backlog
+    if ($12 != empty_memory) return $12 < empty_memory
+    return $4 < minimum
+  }
   $3 == 1 || $3 == "busy" {
     count += 1
     lines[count] = $0
     scores[count] = $4
     preferences[count] = $10
+    backlogs[count] = $11
+    empty_memories[count] = $12
     availability[count] = $3
     if (!found || ($3 == 1 && available == "busy") ||
-        ($3 == available && ($10 < preference || ($10 == preference && $4 < minimum)))) {
-      found = 1; minimum = $4; preference = $10; available = $3
+        ($3 == available && precedes())) {
+      found = 1; minimum = $4; preference = $10; available = $3; backlog = $11; empty_memory = $12
     }
   }
   END {
@@ -1825,7 +1832,7 @@ selected=$(awk '
     srand()
     peer_count = 0
     for (i = 1; i <= count; i += 1) {
-      if (availability[i] == available && preferences[i] == preference && scores[i] <= minimum + 0.1) peers[++peer_count] = lines[i]
+      if (availability[i] == available && preferences[i] == preference && backlogs[i] == backlog && empty_memories[i] == empty_memory && scores[i] <= minimum + 0.1) peers[++peer_count] = lines[i]
     }
     print peers[1 + int(rand() * peer_count)]
   }
@@ -1859,7 +1866,7 @@ if [ -z "$selected" ]; then
   printf '%s\n' '[preferred-execution] no remote execution target is reachable; configured fallback=local, running locally' >&2
   run_local "$@"
 fi
-IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity selected_class_active _selected_native_preference <<EOF
+IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity selected_class_active _selected_native_preference _selected_queue_pressure _selected_empty_memory <<EOF
 $selected
 EOF
 if [ "$_selected_available" = busy ]; then
