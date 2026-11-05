@@ -6,6 +6,7 @@ import {
   describeHappierDataChart,
   formatHappierDataBytes,
   formatHappierDataBytesParts,
+  formatHappierDataExactShare,
   formatHappierDataShare,
   formatHappierDataValue,
   resolveHappierDataShares,
@@ -31,6 +32,13 @@ describe('shared data presentation rules', () => {
     expect(resolveHappierDataShares([1284, 812, 0, -3])).toEqual([1, 812 / 1284, 0, 0]);
     expect(resolveHappierDataShares([0, 0])).toEqual([0, 0]);
     expect(formatHappierDataShare(812 / 1284, 'en-US')).toBe('63%');
+    // A popover's exact share is the share's precision, never the ratio's float noise.
+    expect(formatHappierDataExactShare(321_623_614 / 321_690_778, 'en-US')).toBe('99.98%');
+    expect(formatHappierDataExactShare(1 / 3, 'fr-FR')).toBe('33,33%');
+    expect(formatHappierDataExactShare(0.5, 'en-US')).toBe('50%');
+    expect(formatHappierDataExactShare(0.000213, 'en-US')).toBe('0.0213%');
+    // A partial share never reads as all of it.
+    expect(formatHappierDataExactShare(0.9999996, 'en-US')).toBe('99.99996%');
   });
 
   it.each([

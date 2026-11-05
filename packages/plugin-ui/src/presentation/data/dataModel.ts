@@ -37,6 +37,22 @@ export function formatHappierDataValue(value: HappierDataValue, locale?: string)
 
 export { formatHappierDataBytes, formatHappierDataBytesParts, type HappierDataBytesKind } from './formatBytes.js';
 
+/**
+ * A share at the precision its value popover owes ("99.98%", "0.0213%", "50%"): four significant digits,
+ * more only where four would round a partial share up to 100%. The counts a share comes from are its
+ * exact data; digits past the fourth of a ratio are float noise, not information.
+ */
+export function formatHappierDataExactShare(share: number, locale?: string): string {
+  const percent = share * 100;
+  let digits = 4;
+  while (digits < 15 && percent < 100 && Number(percent.toPrecision(digits)) >= 100) digits += 1;
+  try {
+    return `${new Intl.NumberFormat(locale === undefined ? undefined : [locale], { maximumSignificantDigits: digits }).format(percent)}%`;
+  } catch {
+    return `${Number(percent.toPrecision(digits))}%`;
+  }
+}
+
 /** A whole-number percentage in the reader's locale ("63%"). */
 export function formatHappierDataShare(share: number, locale?: string): string {
   try {
@@ -233,7 +249,19 @@ export function resolveHappierSeriesGeometry(series: readonly HappierSeries[], o
     return [point.index, { left, width: Math.max(0, right - left) }];
   }));
   const hitRangeAt = (index: number) => hitRanges.get(index) ?? { left: 0, width: 0 };
-  return { buckets, min, max, yAt, xAt, hitRangeAt };
+  const indexAt = (x: number) => {
+    if (!orderedX.length || !Number.isFinite(x)) return null;
+    let left = 0;
+    let right = orderedX.length - 1;
+    while (left < right) {
+      const middle = Math.floor((left + right) / 2);
+      const boundary = (orderedX[middle]!.x + orderedX[middle + 1]!.x) / 2;
+      if (x <= boundary) right = middle;
+      else left = middle + 1;
+    }
+    return orderedX[left]!.index;
+  };
+  return { buckets, min, max, yAt, xAt, hitRangeAt, indexAt };
 }
 
 /**

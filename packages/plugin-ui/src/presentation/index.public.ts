@@ -1,3 +1,4 @@
+export { ChartDatum, ChartMark, ChartInteractionProvider, type HappierChartDatum, type HappierChartDatumRenderer, type HappierChartDatumInteraction, type HappierChartDatumTrigger } from './data/ChartDatum.js';
 /**
  * The shared presentation layer (§3.10).
  *
@@ -656,6 +657,7 @@ export {
 } from './layout/WidgetGlanceRow.js';
 export {
   describeHappierDataChart,
+  formatHappierDataExactShare,
   formatHappierDataShare,
   formatHappierDataValue,
   resolveHappierDataShares,

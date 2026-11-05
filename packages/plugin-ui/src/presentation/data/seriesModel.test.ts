@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import * as model from './dataModel.js';
 
 describe('neutral stacked series geometry', () => {
+  it('selects the nearest drawn coordinate for uneven samples supplied out of order', () => {
+    const geometry = model.resolveHappierSeriesGeometry([{ id: 'used', label: 'Used', points: [
+      { id: 'last', x: 100, y: 1 }, { id: 'first', x: 0, y: 2 }, { id: 'middle', x: 2, y: 3 },
+    ] }], { width: 100, height: 50, variant: 'line' });
+    expect(geometry.buckets[geometry.indexAt(1.9)!]!.id).toBe('middle');
+    expect(geometry.buckets[geometry.indexAt(-1)!]!.id).toBe('first');
+    expect(geometry.buckets[geometry.indexAt(99)!]!.id).toBe('last');
+  });
   it('draws finite extreme stack shares without overflowing or altering exact values', () => {
     const input = ['a', 'b'].map((id) => ({ id, label: id, points: [{ id: 'm', x: 'Mon', y: Number.MAX_VALUE }] }));
     for (const normalized of [false, true]) {
