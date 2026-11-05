@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createCodexSharedAppServer } from './sharedServer';
-import { createCodexControlSocketFixture } from './client.test-support';
+import { admitTestExecSpawn, createCodexControlSocketFixture } from './client.test-support';
 import { connectManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 
 type NativeLaunch = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
@@ -33,6 +33,7 @@ it.skipIf(process.platform !== 'linux').each([994, 996])('uses the admitted UID 
   let proxyConnections = 0;
   let serverDisposed = false;
   const exec = {
+    withSpawnAdmission: admitTestExecSpawn,
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
     run: async (request: Parameters<ExecService['run']>[0]) => result(request.args.includes('--version') ? 'codex-cli 0.162.1' : ''),
     prepareNativeSocketDirectory: async (options: { nativeLaunch?: NativeLaunch }) => {
@@ -87,6 +88,7 @@ it.skipIf(process.platform !== 'linux')('cancels unpublished native socket readi
   let disposed = false;
   let proxyStarted = false;
   const exec = {
+    withSpawnAdmission: admitTestExecSpawn,
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
     run: async (request: Parameters<ExecService['run']>[0]) => result(request.args.includes('--version') ? 'codex-cli 0.162.1' : ''),
     prepareNativeSocketDirectory: async () => ({ path: root, nativeProxy: true,

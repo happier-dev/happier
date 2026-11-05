@@ -533,6 +533,24 @@ No Settings secret writer or separate CLI secret store is introduced. See
 ### Connected Agent homes (0.3 development)
 
 Codex native startup admission is owned by the plugin's `nativeStartupLock.ts`.
+Executable resolution, feature discovery and host launch preparation finish
+before taking admission in both stdio and shared-socket starts. The required
+`exec.withSpawnAdmission` operation acquires it immediately before OS spawn,
+after Project setup review, trust/consent, secret acquisition, native toolchain
+preparation and final input checks. A pending person-facing card or feature
+probe cannot hold another app-server's initialization behind the OS-user lock.
+The containing Exec cancellation signal also cancels pending acquisition.
+Admission ends at
+successful initialization while the native process stays alive; failed startup
+retains exclusion through native shutdown, then releases it.
+The completion boundary is the `initialize` response followed by the
+`initialized` notification, not the first turn. Config, auth-file and model
+catalog verification runs after admission is released and still fails closed
+before a restricted client is returned. Shared-process exit cancels a pending
+first connection/initialize handshake even when a descendant keeps its socket
+open; Exec also settles pending notification writes on transport exit/disposal.
+Caller or host cancellation also ends the wait for pre-spawn Exec preparation;
+late preparation releases its resources and cannot spawn a native process.
 For an explicit, resolvable SQLite root it pins launch `sqlite_home` to that
 canonical root. A fresh database or a different Codex version takes the existing
 OS-user startup lock through native readiness; a successful start records the

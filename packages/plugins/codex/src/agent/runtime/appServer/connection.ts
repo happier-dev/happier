@@ -1,3 +1,11 @@
+import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+
+export function codexProcessExitedSuccessfully(result: PluginProcessResult): boolean {
+  return result.termination.requestedBy.kind === 'none'
+    && result.termination.observed.kind === 'exit'
+    && result.termination.observed.exitCode === 0;
+}
+
 export const CODEX_APP_SERVER_ARGS = Object.freeze([
   'app-server',
   '--listen',

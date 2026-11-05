@@ -12,7 +12,7 @@ import { openCodexNativeAppServerExecutionRunConversation, openCodexNativeAppSer
 import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
 import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
-import { prepareTestNativeSocketDirectory, CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
+import { admitTestExecSpawn, prepareTestNativeSocketDirectory, CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
 
 // The network fixture models pinned Codex 0.159.2's empty paginated rollout:
 // name/set supplies metadata; a full read persists it; native resume then works.
@@ -252,6 +252,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   });
   // Substitute the native executable with a byte relay; host framing and RPC remain real.
   const exec = {
+    withSpawnAdmission: admitTestExecSpawn,
     clients: { spawn: connectClient, connectJsonRpc: (request: { endpoint: { socketPath: string }; maxFrameBytes?: number; requestTimeoutMs?: number }, options?: { signal?: AbortSignal }) => connectManagedJsonRpcTestClient({ cwd: root, socketPath: request.endpoint.socketPath, maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs, signal: options?.signal }) },
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: '/fixture/codex' }) },
     run: async () => ({ stdout: new TextEncoder().encode(JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] })), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false, termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } } }),

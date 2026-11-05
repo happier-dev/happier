@@ -1,3 +1,4 @@
+import { admitTestExecSpawn } from './client.test-support';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -76,6 +77,7 @@ describe.skipIf(!nativeBinary || process.platform === 'win32')('real native Code
     // SDK Exec is the external process adapter. The real native executable,
     // transport/client, factory, startup and Goal projection remain intact.
     const exec = {
+      withSpawnAdmission: admitTestExecSpawn,
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: nativeBinary }) },
       run: async (request: { args: readonly string[] }) => await launch(request.args).wait(),
       spawn: async (request: { args: readonly string[]; env: Record<string, string> }) => launch(request.args, request.env),

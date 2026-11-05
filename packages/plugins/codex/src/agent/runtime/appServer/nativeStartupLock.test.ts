@@ -32,6 +32,66 @@ describe.skipIf(process.platform !== 'linux')('native SQLite startup admission',
     await writeFile(join(osBoundary.home, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"\n');
     await mkdir(join(osBoundary.home, 'project'));
   });
+  it('defers exclusion until the prepared native spawn and retains it through readiness', async () => {
+    const root = join(osBoundary.home, 'deferred-sqlite');
+    const lockPath = join(osBoundary.home, '.happier-codex-native-startup.lock');
+    let enter!: () => void;
+    let resume!: () => void;
+    const preparing = new Promise<void>(resolve => { enter = resolve; });
+    const consent = new Promise<void>(resolve => { resume = resolve; });
+    const first = withCodexNativeStartupLock(async (_overrides, admit) => {
+      enter();
+      await consent;
+      await admit();
+      expect(JSON.parse(await readFile(lockPath, 'utf8')).pid).toBe(process.pid);
+      await completeDatabase(root);
+    }, undefined, undefined, { ...startup(root), deferUntilSpawn: true });
+    try {
+      await preparing;
+      await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await withCodexNativeStartupLock(async () => undefined);
+    } finally {
+      resume();
+      await first;
+    }
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(root, '.happier-codex-native-startup.version'), 'utf8')).toBe('0.162.1\n');
+  });
+  it('cancels deferred lock contention with the containing Exec lifecycle while preserving its live holder', async () => {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const first = withCodexNativeStartupLock(async () => { enter(); await held; });
+    await entered;
+    const cancellation = new AbortController();
+    let waiting!: () => void;
+    const queued = new Promise<void>(resolve => { waiting = resolve; });
+    let settled = false;
+    const second = withCodexNativeStartupLock(async (_overrides, admit) => await admit(cancellation.signal),
+      undefined, undefined, { processEnv: {}, deferUntilSpawn: true }, active => { if (active) waiting(); })
+      .then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await queued;
+      cancellation.abort();
+      await vi.waitFor(() => expect(settled).toBe(true));
+      expect(JSON.parse(await readFile(join(osBoundary.home, '.happier-codex-native-startup.lock'), 'utf8')).pid).toBe(process.pid);
+    } finally {
+      release();
+      await Promise.all([first, second]);
+    }
+  });
+  it.each(['before', 'after'] as const)('releases deferred admission when preparation fails %s acquisition', async phase => {
+    const root = join(osBoundary.home, 'failed-deferred-sqlite');
+    const failure = new Error('Native startup refused');
+    await expect(withCodexNativeStartupLock(async (_overrides, admit) => {
+      if (phase === 'after') await admit();
+      throw failure;
+    }, undefined, undefined, { ...startup(root), deferUntilSpawn: true })).rejects.toBe(failure);
+    await expect(readFile(join(osBoundary.home, '.happier-codex-native-startup.lock'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(root, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    await withCodexNativeStartupLock(async () => undefined);
+  });
   it('preserves a live startup holder and recovers its abandoned lock after actual process exit', async () => {
     const lockPath = join(osBoundary.home, '.happier-codex-native-startup.lock');
     // Only the native holder is a subprocess. Both its publication and the

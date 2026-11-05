@@ -74,7 +74,14 @@ export interface ExecService {
         nativeLaunch?: AgentNativeLaunchQualifier;
         dispose(): Promise<void>;
     }>>;
-
+    /** Run admission under the launch's cancellation signal after preparation
+     * and immediately before each scoped process is spawned. Existing protocol
+     * connections keep their lifecycle.
+     */
+    withSpawnAdmission<TResult>(
+        admit: (signal: AbortSignal) => Promise<void>,
+        effect: (exec: ExecService) => Promise<TResult>,
+    ): Promise<TResult>;
     run(
         request: PluginExecSpawnRequest & { timeoutMs?: number },
         options?: {

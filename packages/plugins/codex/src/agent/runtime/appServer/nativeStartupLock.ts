@@ -12,6 +12,8 @@ type StartupConfiguration = Readonly<{
   readVersion?: () => Promise<string>;
   configOverrides?: readonly string[];
   cwd?: string;
+  /** Exec calls admission after preparation, immediately before native spawn. */
+  deferUntilSpawn?: boolean;
 }>;
 
 async function mayExist(path: string): Promise<boolean> {
@@ -80,7 +82,7 @@ async function isWarm(root: string, markerPath: string, version: string): Promis
 
 /** Exclude first initialization/migration, leaving warm starts independent. */
 export async function withCodexNativeStartupLock<TResult>(
-  initialize: (configOverrides: readonly string[]) => Promise<TResult>,
+  initialize: (configOverrides: readonly string[], admit: (signal?: AbortSignal) => Promise<void>) => Promise<TResult>,
   signal?: AbortSignal,
   logger?: Pick<LoggerService, 'debug'>,
   configuration?: StartupConfiguration,
@@ -107,32 +109,55 @@ export async function withCodexNativeStartupLock<TResult>(
   const markerPath = join(root ?? userInfo().homedir, '.happier-codex-native-startup.version');
   if (root && version && await isWarm(root, markerPath, version)) {
     signal?.throwIfAborted();
-    return await initialize(overrides);
+    return await initialize(overrides, async () => {});
   }
-  try {
-    return await withExclusiveFileLock({
+  let settle!: () => void;
+  const settled = new Promise<void>(resolve => { settle = resolve; });
+  let admitted!: () => void;
+  let refuse!: (error: unknown) => void;
+  const admission = new Promise<void>((resolve, reject) => { admitted = resolve; refuse = reject; });
+  // Observe acquisition failure even if preparation fails before awaiting it.
+  void admission.catch(() => undefined);
+  let holding: Promise<void> | undefined;
+  let completed = false;
+  const admit = (spawnSignal?: AbortSignal) => {
+    const acquisitionSignal = signal && spawnSignal ? AbortSignal.any([signal, spawnSignal]) : signal ?? spawnSignal;
+    holding ??= withExclusiveFileLock({
       lockPath,
       timeoutMs: Number.POSITIVE_INFINITY,
-      ...(signal ? { signal } : {}),
+      ...(acquisitionSignal ? { signal: acquisitionSignal } : {}),
       onWait: info => {
         onWaiting?.(true);
         logger?.debug('Codex native startup is waiting for another start', info);
       },
     }, async () => {
       onWaiting?.(false);
-      const result = await initialize(overrides);
-      if (root && version) {
-        // Readiness is the native completion boundary. A failed start never
-        // publishes; marker IO failure merely makes the next start lock again.
+      admitted();
+      await settled;
+      if (completed && root && version) {
+        // Publish readiness while still excluding another cold migrator.
         await writeAtomicTextFile({ path: markerPath, contents: `${version}\n`, mode: 0o600 })
           .catch(() => {
             try { logger?.debug('Codex native startup version could not be recorded'); }
-            catch { /* Diagnostics must not turn a ready native client into a failed start. */ }
+            catch { /* Diagnostics must not fail a ready native client. */ }
           });
       }
-      return result;
     });
+    void holding.catch(refuse);
+    return admission;
+  };
+  try {
+    if (!configuration?.deferUntilSpawn) await admit();
+    const result = await initialize(overrides, admit);
+    completed = true;
+    return result;
   } finally {
-    onWaiting?.(false);
+    settle();
+    try {
+      // Acquisition failure already flowed through Exec's typed startup result.
+      // Joining its task must not replace that result with a raw lock error.
+      await holding?.catch(error => { if (completed) throw error; });
+    }
+    finally { onWaiting?.(false); }
   }
 }

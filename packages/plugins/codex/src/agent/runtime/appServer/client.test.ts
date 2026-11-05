@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { admitTestExecSpawn } from './client.test-support';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -111,6 +112,7 @@ function createCapturingExec(
             settleExit?.(result);
         },
         exec: {
+            withSpawnAdmission: admitTestExecSpawn,
             run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
                 if (featureListResult instanceof Error) throw featureListResult;
                 return featureListResult;
@@ -155,6 +157,44 @@ describe('createCodexAppServerClient', () => {
         expect(capture.specs).toEqual([]);
     });
 
+
+    it('leaves cold stdio admission available during a pending feature probe and after native readiness', async () => {
+        const capture = createCapturingExec();
+        let releaseProbe!: () => void;
+        let probeEntered!: () => void;
+        const held = new Promise<void>(resolve => { releaseProbe = resolve; });
+        const entered = new Promise<void>(resolve => { probeEntered = resolve; });
+        let probes = 0;
+        capture.exec.run = async request => {
+            if (request.args?.includes('--version')) return processResult('codex-cli 0.162.1');
+            if (++probes === 1) { probeEntered(); await held; }
+            return processResult('realtime_conversation under development false');
+        };
+        const clients: Awaited<ReturnType<typeof createCodexNativeAppServerClient>>[] = [];
+        const start = async () => {
+            const client = await createCodexNativeAppServerClient({ exec: capture.exec, processEnv: {} });
+            clients.push(client);
+            return client;
+        };
+        const first = start();
+        try {
+            await entered;
+            await expect(access(join(osBoundary.home, '.happier-codex-native-startup.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
+            const second = await start();
+            await expect(second.request('test/ping')).resolves.toEqual({ ok: true });
+            releaseProbe();
+            await first;
+            // Both initialized native handles remain alive: readiness, not exit,
+            // must allow another cold start through the same physical lock.
+            const third = await start();
+            await expect(third.request('test/ping')).resolves.toEqual({ ok: true });
+            expect(probes).toBe(3);
+        } finally {
+            releaseProbe();
+            await first;
+            await Promise.all(clients.map(client => client.dispose()));
+        }
+    });
 
     it.skipIf(process.platform !== 'linux')('pins projected SQLite in the real stdio launch and admits both warm clients before either initializes', async () => {
         await mkdir(join(osBoundary.home, '.codex'));
@@ -432,6 +472,7 @@ describe('createCodexAppServerClient', () => {
             dispose: async () => undefined,
         };
         const exec = {
+            withSpawnAdmission: admitTestExecSpawn,
             run: vi.fn(async (_request: Parameters<ExecService['run']>[0]) => (
                 processResult('realtime_conversation                under development  false\n')
             )),
@@ -787,6 +828,7 @@ describe('createCodexAppServerClient', () => {
         });
         await expect(createCodexNativeAppServerClient({
             exec: {
+            withSpawnAdmission: admitTestExecSpawn,
                 ...capture.exec,
                 clients: {
                     spawn: vi.fn().mockRejectedValueOnce(

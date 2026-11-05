@@ -1,3 +1,4 @@
+import { awaitExecLaunchPreparation } from './execLaunchPreparation';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -67,6 +68,11 @@ import { admitAgentIsolationLaunchForHost } from '@/daemon/agentIsolation/agentI
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
+
+type HostExecOptions = NonNullable<Parameters<ExecService['run']>[1]> & {
+    beforeSpawn?: (signal: AbortSignal) => Promise<void>;
+};
 
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
@@ -1733,7 +1739,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function launchProcess(
         request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
-        options?: Parameters<ExecService['run']>[1],
+        options?: HostExecOptions,
         openAccess = false,
     ): Promise<SupervisedPluginProcess> {
         const launchStartedAt = performance.now();
@@ -1744,33 +1750,57 @@ export function createStablePluginExecService(params: Readonly<{
             throw withExecLaunchNotStarted(new PluginError({ code: 'plugin_exec_managed_handoff_forbidden', message: 'Managed process custody cannot be handed to a native tool' }));
         }
         const lifetime = managedCustody?.lifetime;
-        const launch = await authorizeLaunch(request, options, undefined, undefined, undefined, undefined, lifetime);
-        const authorizedAt = performance.now();
-        try { guard(options?.signal, lifetime); }
-        catch (error) { await launch.release(); throw withExecLaunchNotStarted(error); }
-        let environment: Readonly<Record<string, string>>;
-        let linuxProcessLaunchScope: LinuxProcessLaunchScope | null;
-        try {
+        const preparationSignal = AbortSignal.any([lifetime?.signal ?? params.signal,
+            ...(options?.signal ? [options.signal] : []),
+            ...(!lifetime && params.retirementSignal ? [params.retirementSignal] : [])]);
+        const preparation = (async () => {
+            const launch = await authorizeLaunch(request, options, undefined, undefined, undefined, undefined, lifetime);
+            const authorizedAt = performance.now();
+            try { guard(options?.signal, lifetime); }
+            catch (error) { await launch.release(); throw withExecLaunchNotStarted(error); }
+            let environment: Readonly<Record<string, string>>;
+            let linuxProcessLaunchScope: LinuxProcessLaunchScope | null;
             try {
-                environment = openAccess
-                    && params.transformAgentChildLaunchEnvironment
-                    ? params.transformAgentChildLaunchEnvironment(launch.env)
-                    : launch.env;
+                try {
+                    environment = openAccess
+                        && params.transformAgentChildLaunchEnvironment
+                        ? params.transformAgentChildLaunchEnvironment(launch.env)
+                        : launch.env;
+                } catch (error) {
+                    fail('plugin_exec_spawn_failed', 'Process could not be started', error);
+                }
+                linuxProcessLaunchScope = process.platform === 'linux'
+                    && (managedCustody || options?.descendantDisposition === 'preserve-on-success')
+                    ? await prepareCgroupProcessLaunchScope() : null;
+                if (params.assertLaunchCurrent) {
+                    await params.assertLaunchCurrent(options?.signal
+                        ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal])
+                        : lifetime?.signal ?? params.signal);
+                }
+                await launch.recheckInputs?.();
+                await options?.beforeSpawn?.(preparationSignal);
             } catch (error) {
-                fail('plugin_exec_spawn_failed', 'Process could not be started', error);
+                await launch.release();
+                throw withExecLaunchNotStarted(error);
             }
-            linuxProcessLaunchScope = process.platform === 'linux'
-                && (managedCustody || options?.descendantDisposition === 'preserve-on-success')
-                ? await prepareCgroupProcessLaunchScope() : null;
-            if (params.assertLaunchCurrent) {
-                await params.assertLaunchCurrent(options?.signal
-                    ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal])
-                    : lifetime?.signal ?? params.signal);
-            }
-            await launch.recheckInputs?.();
+            return { launch, environment, linuxProcessLaunchScope, authorizedAt };
+        })();
+        let prepared: Awaited<typeof preparation>;
+        try {
+            prepared = await awaitExecLaunchPreparation({ preparation, signal: preparationSignal,
+                release: value => value.launch.release() });
+        } catch (error) {
+            try { guard(options?.signal, lifetime); }
+            catch (cancelled) { throw withExecLaunchNotStarted(cancelled); }
+            throw withExecLaunchNotStarted(error);
+        }
+        const { launch, environment, linuxProcessLaunchScope, authorizedAt } = prepared;
+        try {
             guard(options?.signal, lifetime);
         } catch (error) {
-            await launch.release();
+            void Promise.resolve().then(() => launch.release()).catch(() => {
+                logger.infoFile('[PluginExec] Cancelled launch preparation cleanup failed');
+            });
             throw withExecLaunchNotStarted(error);
         }
         const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch, env: environment,
@@ -1812,7 +1842,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnProcess(
         request: Parameters<ExecService['spawn']>[0],
-        options?: Parameters<ExecService['spawn']>[1],
+        options?: HostExecOptions,
     ): Promise<PluginProcessHandle> {
         return (await launchProcess(request, options, true)).handle;
     }
@@ -1892,7 +1922,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnJsonRpcClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonRpc' }>,
-        options?: { signal?: AbortSignal },
+        options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'jsonRpc'>> {
         const supervised = await launchProcess(spec.launch, options, true);
         const protocol = createJsonRpcProcessClient({
@@ -1940,7 +1970,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnJsonStreamClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'jsonStream' }>,
-        options?: { signal?: AbortSignal },
+        options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'jsonStream'>> {
         const supervised = await launchProcess(spec.launch, options, true);
         const readStderrPreview = () => sanitizeExecDiagnosticText(
@@ -2005,7 +2035,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnFramedBytesClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'framedBytes' }>,
-        options?: { signal?: AbortSignal },
+        options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'framedBytes'>> {
         const supervised = await launchProcess(spec.launch, options, true);
         const protocol = createFramedBytesProcessClient({
@@ -2039,7 +2069,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnLoopbackWebSocketClient(
         spec: Extract<Parameters<ExecService['clients']['spawn']>[0], { kind: 'loopbackWebSocketJson' }>,
-        options?: { signal?: AbortSignal },
+        options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle<'loopbackWebSocketJson'>> {
         const supervised = await launchProcess(spec.launch, options, true);
         const process = {
@@ -2177,7 +2207,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function spawnProtocolClient(
         spec: PluginProtocolClientSpec,
-        options?: { signal?: AbortSignal },
+        options?: HostExecOptions,
     ): Promise<PluginProtocolClientHandle> {
         try {
             if (spec.kind === 'jsonRpc') assertJsonRpcLimits(spec);
@@ -2216,6 +2246,50 @@ export function createStablePluginExecService(params: Readonly<{
         },
     });
 
+    async function runProcess(
+        request: Parameters<ExecService['run']>[0],
+        options?: HostExecOptions,
+    ) {
+        const selectedRequest = options?.outputDelivery === 'invocation' && params.invocationTimeoutMs !== undefined
+            ? { ...request, timeoutMs: params.invocationTimeoutMs ?? undefined }
+            : request;
+        const handle = (await launchProcess(
+            selectedRequest.stdin === undefined
+                ? { ...selectedRequest, stdin: new Uint8Array() }
+                : selectedRequest,
+            options,
+        )).handle;
+        try {
+            return await handle.wait();
+        } finally {
+            await handle.dispose();
+        }
+    }
+
+    function withSpawnAdmission<TResult>(
+        source: ExecService,
+        admit: (signal: AbortSignal) => Promise<void>,
+        effect: (exec: ExecService) => Promise<TResult>,
+    ): Promise<TResult> {
+        const scoped: ExecService = Object.freeze({
+            ...source,
+            run: (request: Parameters<ExecService['run']>[0], options?: Parameters<ExecService['run']>[1]) =>
+                runProcess(request, { ...options, beforeSpawn: admit }),
+            spawn: (request: Parameters<ExecService['spawn']>[0], options?: Parameters<ExecService['spawn']>[1]) =>
+                spawnProcess(request, { ...options, beforeSpawn: admit }),
+            clients: Object.freeze({
+                ...source.clients,
+                async spawn<K extends ProtocolClientKind>(spec: PluginProtocolClientSpecByKind<K>, options?: { signal?: AbortSignal }) {
+                    return await spawnProtocolClient(spec, { ...options, beforeSpawn: admit }) as PluginProtocolClientHandle<K>;
+                },
+            }),
+            withSpawnAdmission<TResult>(next: (signal: AbortSignal) => Promise<void>, nextEffect: (exec: ExecService) => Promise<TResult>): Promise<TResult> {
+                return withSpawnAdmission(this, async signal => { await admit(signal); await next(signal); }, nextEffect);
+            },
+        });
+        return effect(scoped);
+    }
+
     const service: ExecService = Object.freeze({
         agentCli,
         systemTools,
@@ -2241,25 +2315,10 @@ export function createStablePluginExecService(params: Readonly<{
                 return Object.freeze({ ...directory, nativeProxy, nativeLaunch: bound });
             } catch (error) { await directory.dispose(); throw error; }
         },
-        async run(
-            request: Parameters<ExecService['run']>[0],
-            options?: Parameters<ExecService['run']>[1],
-        ) {
-            const selectedRequest = options?.outputDelivery === 'invocation' && params.invocationTimeoutMs !== undefined
-                ? { ...request, timeoutMs: params.invocationTimeoutMs ?? undefined }
-                : request;
-            const handle = (await launchProcess(
-                selectedRequest.stdin === undefined
-                    ? { ...selectedRequest, stdin: new Uint8Array() }
-                    : selectedRequest,
-                options,
-            )).handle;
-            try {
-                return await handle.wait();
-            } finally {
-                await handle.dispose();
-            }
+        withSpawnAdmission<TResult>(admit: (signal: AbortSignal) => Promise<void>, effect: (exec: ExecService) => Promise<TResult>): Promise<TResult> {
+            return withSpawnAdmission(this, admit, effect);
         },
+        run: runProcess,
         spawn: spawnProcess,
         clients,
     });

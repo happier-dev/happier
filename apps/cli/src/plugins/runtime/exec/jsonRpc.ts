@@ -179,6 +179,7 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
     const notificationHandlers = new Map<string, JsonRpcNotificationHandlerV1>();
     const notificationSubscribers = new Set<(message: Readonly<{ method: string; params?: unknown }>) => void | Promise<void>>();
     const notificationReceiptSubscribers = new Set<(message: JsonRpcNotificationReceipt) => void>();
+    const pendingWrites = new Set<(error: Error) => void>();
     const maxFrameBytes = params.maxFrameBytes;
     let nextId = 1;
     let disposedError: Error | null = null;
@@ -201,7 +202,23 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         if (disposedError) {
             throw disposedError;
         }
+        let rejectWrite!: (error: Error) => void;
+        const stopped = new Promise<never>((_resolve, reject) => { rejectWrite = reject; });
+        pendingWrites.add(rejectWrite);
+        try {
+            // Notifications have no request correlator. Their writes must also
+            // settle when the owning transport ends before an OS callback.
+            return await Promise.race([writeJsonToTransport(message), stopped]);
+        } finally {
+            pendingWrites.delete(rejectWrite);
+        }
+    }
+
+    async function writeJsonToTransport(message: JsonRpcObject): Promise<boolean> {
         const nextMessage = await applyJsonRpcMessageHook(message, 'outgoing');
+        if (disposedError) {
+            throw disposedError;
+        }
         if (!nextMessage) {
             return false;
         }
@@ -224,6 +241,8 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             return;
         }
         disposedError = error;
+        for (const rejectWrite of pendingWrites) rejectWrite(error);
+        pendingWrites.clear();
         notificationReceiptSubscribers.clear();
         detachLineReader();
         correlator.close(error);
