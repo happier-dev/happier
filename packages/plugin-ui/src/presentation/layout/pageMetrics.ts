@@ -206,6 +206,7 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
  * a facts line of their own. Host-internal: no plugin draws a settings collection's rail.
  */
 export const HAPPIER_COLLECTION_RAIL_WIDTH_PX = Object.freeze({
+  compact: 232,
   standard: 272,
   detailed: 320,
 } as const);

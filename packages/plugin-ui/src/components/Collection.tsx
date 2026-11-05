@@ -469,9 +469,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
     tokens?: readonly ListCollectionSearchToken[];
     /**
      * Placed by a `header` render: `fill` takes the whole width the render gives it (a dialog's tools row, where
-     * the search is the row's last, growing field) instead of the toolbar's bounded width.
+     * the search is the row's last, growing field) instead of the toolbar's bounded width. `fixed` holds the narrowest
+     * readable width on a wide row, so the controls after it stay put when a page swaps lenses whose narrowing
+     * controls differ (Actions: Runs and Workflows).
      */
-    width?: 'bounded' | 'fill';
+    width?: 'bounded' | 'fill' | 'fixed';
     testID?: string;
   }>;
   empty?: ReactNode;
@@ -2108,6 +2110,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
           // trailing controls keep the one row (lab a2) instead of wrapping under it and folding the toolbar. A
           // wrapping row breaks its line on each control's own width before anything narrows, so the field's own
           // width is that narrowest: counted at its input's content width, a 1440 Tasks row wrapped with room to spare.
+          : props.search?.width === 'fixed' ? { width: HEADER_SEARCH_MIN_WIDTH * accessibility.textScale }
           : { flexGrow: 1, flexBasis: HEADER_SEARCH_MIN_WIDTH * accessibility.textScale,
             width: HEADER_SEARCH_MIN_WIDTH * accessibility.textScale, maxWidth: HEADER_SEARCH_WIDTH * accessibility.textScale }]}>{search.control}</View>
     ),

@@ -97,7 +97,11 @@ export type CollectionToolbarProps = Readonly<{
    * The page's one primary action ("New task"). On a wide page it is the primary button that ends the row, after the
    * page's own controls and Run on; on a phone it is a round "+" beside Filters and ⋯, named by `label`.
    */
-  primary?: Readonly<{ label: string; onPress: () => unknown; testID?: string }>;
+  primary?: Readonly<{ label: string; testID?: string } & (
+    | { onPress: () => unknown; menu?: undefined }
+    /** The action needs one choice first (Run workflow: which workflow): the primary opens it as a menu. */
+    | { menu: Readonly<{ items: readonly MenuItem[]; onSelect: (id: string) => void }>; onPress?: undefined }
+  )>;
   freshness?: CollectionToolbarFreshness | null;
   refresh?: Readonly<{
     label: string;
@@ -172,10 +176,7 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
     read('trail', trail);
   };
   // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
-  const primary = props.primary === undefined ? null : (
-    <Button title={props.primary.label} variant="primary" icon={<Icon name="add" size="small" />} onPress={props.primary.onPress}
-      {...(props.primary.testID === undefined ? {} : { testID: props.primary.testID })} />
-  );
+  const primary = props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded={false} />;
   return (
     <View
       ref={rowRef}
@@ -297,10 +298,7 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
     <>
       {filters}
       <MoreMenu {...props} folded />
-      {props.primary === undefined ? null : (
-        <IconButton icon={<Icon name="add" />} appearance="well" accessibilityLabel={props.primary.label} onPress={props.primary.onPress}
-          {...(props.primary.testID === undefined ? {} : { testID: props.primary.testID })} />
-      )}
+      {props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded />}
     </>
   );
   // Healthy is quiet here: the words stay one tap away, under Refresh in ⋯.
@@ -347,6 +345,22 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
       </Row>
     </Stack>
   );
+}
+
+function PrimaryControl(props: Readonly<{ primary: NonNullable<CollectionToolbarProps['primary']>; folded: boolean }>): ReactElement {
+  const { primary, folded } = props;
+  const [open, setOpen] = useState(false);
+  const testID = primary.testID === undefined ? {} : { testID: primary.testID };
+  if (primary.menu !== undefined) {
+    return (
+      <Menu open={open} onOpenChange={setOpen} placement="bottom" trigger={primary.label} triggerIcon="add"
+        triggerAppearance={folded ? 'well' : 'primary'} triggerAccessibilityLabel={primary.label}
+        items={primary.menu.items} onSelect={primary.menu.onSelect} {...testID} />
+    );
+  }
+  return folded
+    ? <IconButton icon={<Icon name="add" />} appearance="well" accessibilityLabel={primary.label} onPress={primary.onPress} {...testID} />
+    : <Button title={primary.label} variant="primary" icon={<Icon name="add" size="small" />} onPress={primary.onPress} {...testID} />;
 }
 
 function MoreMenu(
