@@ -4,7 +4,9 @@ import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
+    HappierPageHeaderMetaId,
     happierPageTextMetrics,
+    type HappierPageHeaderMetaIdHost,
     type HappierPageHeaderProps,
     type HappierPageHeaderTextRender,
 } from '@happier-dev/plugin-ui/presentation';
@@ -14,6 +16,10 @@ import { Typography } from '@/constants/Typography';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { Text } from '@/components/ui/text/Text';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { t } from '@/text';
 import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/InlineTextField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -75,8 +81,12 @@ export type PageHeaderProps = Readonly<{
     actions?: React.ReactNode;
     /** Keep an entity's frequent operations in its page instead of the phone navigation overflow. */
     actionsPlacement?: 'navigation' | 'page';
-    /** Prefer the title row, wrapping controls beneath when the title needs its readable width. */
-    actionsLayout?: 'wrap' | 'inline';
+    /**
+     * Prefer the title row, wrapping controls beneath when the title needs its readable width
+     * (`wrap`); keep them on it (`inline`); or hang the mark and controls from the title's line with
+     * the description and facts beneath at full width (`hang`).
+     */
+    actionsLayout?: 'wrap' | 'inline' | 'hang';
     /**
      * A status line under the actions (a save state and validity readout). It is the actions' own
      * row, as wide as they are, so its changing words never reflow the title.
@@ -265,18 +275,32 @@ function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryActio
 const PAGE_TITLE_MAX_LINES = 2;
 
 /** Core's text owner for the shared header (font families and text scaling), for hosts drawing it directly. */
-export const renderPageHeaderText: HappierPageHeaderTextRender = (input) => (
+export const renderPageHeaderText: HappierPageHeaderTextRender = (input) => input.role === 'meta' && input.mono ? (
+    <MetaIdFact value={input.text} />
+) : (
     <Text
         accessibilityRole={input.header ? 'header' : undefined}
         // An entity named by data (a Session titled by its first prompt) can be any length: the title
         // stops at two lines, and the DOM text and screen readers still carry all of it.
         numberOfLines={input.role === 'pageTitle' || input.role === 'heroTitle' ? PAGE_TITLE_MAX_LINES : undefined}
         style={input.role === 'heroTitle' ? stylesheet.heroTitle : input.role === 'pageTitle' ? stylesheet.title
-            : input.role === 'meta' ? (input.mono ? [stylesheet.metaText, stylesheet.metaMono] : stylesheet.metaText) : stylesheet.description}
+            : input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
     >
         {input.text}
     </Text>
 );
+
+/** Plugin-ui's meta id fact, in core's text owner and its hover tooltip. */
+function MetaIdFact(props: Readonly<{ value: string }>) {
+    const writeClipboard = useClipboardWrite();
+    return <HappierPageHeaderMetaId value={props.value} write={writeClipboard} copiedLabel={t('common.copied')} host={META_ID_HOST} />;
+}
+
+const META_ID_HOST: HappierPageHeaderMetaIdHost = {
+    renderValue: (value) => <MiddleEllipsisText value={value} style={[stylesheet.metaText, stylesheet.metaMono]} />,
+    renderCopied: (label) => <Text style={stylesheet.metaText}>{label}</Text>,
+    renderAnchor: ({ value, onPress, children }) => <Tooltip label={value} style={stylesheet.metaId} onPress={onPress}>{children}</Tooltip>,
+};
 
 const stylesheet = StyleSheet.create((theme) => ({
     title: {
@@ -323,5 +347,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     metaMono: {
         ...Typography.mono(),
         ...happierPageTextMetrics('meta'),
+    },
+    // Its hover anchor shrinks with the line, so the id gives up its middle rather than the line's width.
+    metaId: {
+        flexShrink: 1,
+        minWidth: 0,
     },
 }));

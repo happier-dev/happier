@@ -3,7 +3,7 @@ import { Platform, Pressable, type StyleProp, type View, type ViewStyle } from '
 
 import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
 
-/** Focusable help text with no action. Action controls keep their own interaction owner. */
+/** Focusable help text, with no action unless the text itself is the control. */
 export function Tooltip(props: Readonly<{
     label: string;
     /** What assistive tech reads when the help text alone would drop the visible text it explains. */
@@ -11,6 +11,8 @@ export function Tooltip(props: Readonly<{
     children: React.ReactNode;
     testID?: string;
     style?: StyleProp<ViewStyle>;
+    /** The text is also a control (an id that copies on tap): the tooltip's own press target takes it, so it never swallows the tap. */
+    onPress?: () => void;
     /** Off when this wraps a control: that control is the tab stop, and its focus still shows the tooltip. */
     focusable?: boolean;
 }>) {
@@ -21,7 +23,8 @@ export function Tooltip(props: Readonly<{
         <Pressable
             ref={anchorRef}
             testID={props.testID}
-            accessibilityRole="text"
+            accessibilityRole={props.onPress ? 'button' : 'text'}
+            onPress={props.onPress}
             focusable={props.focusable}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
             onHoverIn={() => setHovered(true)}
