@@ -6514,7 +6514,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             const rawSession = await fetchSessionByIdCompat({ token: credentials.token, sessionId: intent.sessionId });
             if (!rawSession) throw new Error('usage_limit_recovery_session_unavailable');
             const storedMetadata = tryDecryptSessionMetadata({ credentials, rawSession });
-            const project = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent });
+            const project = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent, issue: rawSession.lastRuntimeIssue });
             if (!storedMetadata || !project) return { status: 'recovery_superseded', reason: 'usage_limit_recovery_source_unavailable' };
             const metadata = project(storedMetadata);
             const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata.sessionUsageLimitRecoveryV1);

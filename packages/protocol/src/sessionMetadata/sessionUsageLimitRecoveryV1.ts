@@ -77,13 +77,34 @@ export function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1, fa
 
 export function isSessionUsageLimitRecoveryForIssue(
   issue: SessionRuntimeIssueV1,
-  recovery: Pick<SessionUsageLimitRecoveryV1, 'issueFingerprint'>,
+  recovery: Pick<SessionUsageLimitRecoveryV1, 'issueFingerprint'> & Partial<Pick<
+    SessionUsageLimitRecoveryV1, 'armedAtMs' | 'runtimeAuthRecoveryAttemptId' | 'status' | 'selectedAuth'
+  >>,
   fallbackProviderId?: string,
 ): boolean {
-  return recovery.issueFingerprint === buildUsageLimitIssueFingerprint(issue, fallbackProviderId);
+  if (recovery.issueFingerprint === buildUsageLimitIssueFingerprint(issue, fallbackProviderId)) return true;
+  // A daemon-owned report can predate an enriched projection of the same failed
+  // turn. Arming fences later failures; an attempt id alone is never evidence.
+  if (!recovery.runtimeAuthRecoveryAttemptId
+    || recovery.status === 'cancelled'
+    || recovery.armedAtMs === undefined || issue.occurredAt > recovery.armedAtMs
+    || issue.source !== 'usage_limit' || !issue.usageLimit) return false;
+  // Turn ids may contain colons. Only the occurrence/reset suffix is numeric.
+  const original = /^usage-limit:([^:]+):(.+):(\d+):(no-reset|\d+)$/.exec(recovery.issueFingerprint);
+  if (!original || original[1] !== (issue.provider ?? fallbackProviderId ?? 'unknown-provider')
+    || Number(original[3]) > recovery.armedAtMs
+    || (original[2] !== 'unknown-turn' && original[2] !== issue.providerTurnId)) return false;
+  const auth = recovery.selectedAuth;
+  const source = issue.usageLimit.connectedService;
+  if (!auth) return false;
+  if (auth.kind === 'native') return !source;
+  if (!source || auth.serviceId !== source.serviceId) return false;
+  return auth.kind === 'profile'
+    ? !source.groupId && auth.profileId === source.profileId
+    : auth.groupId === source.groupId && (auth.profileId === null || auth.profileId === source.profileId);
 }
 
-/** A different observed failure cannot inherit an earlier recovery's authority. */
+/** Read one recovery using the shared failed-turn association, including report enrichment. */
 export function readSessionUsageLimitRecoveryForIssue(
   value: unknown,
   issue?: SessionRuntimeIssueV1 | null,

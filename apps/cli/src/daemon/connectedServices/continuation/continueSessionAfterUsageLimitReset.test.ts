@@ -104,6 +104,37 @@ describe('continueSessionAfterUsageLimitReset', () => {
     expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
   });
 
+  it('continues a provider-ready owned failed turn enriched before the first read', async () => {
+    const first = { ...issue, occurredAt: 1793871333659, providerTurnId: undefined,
+      usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
+    const enriched = { ...first, occurredAt: 1793871333704,
+      usageLimit: { ...first.usageLimit, resetAtMs: 1794283200000 } };
+    const acceptedRecovery = { ...recovery, issueFingerprint: buildUsageLimitIssueFingerprint(first),
+      armedAtMs: 1793871335690, resetAtMs: null, nextCheckAtMs: null };
+    const input = fixture({ latestTurnId: 'accepted-turn', lastRuntimeIssue: enriched });
+    const metadata = { ...input.metadata, sessionUsageLimitRecoveryV1: acceptedRecovery };
+    transport.fetchSessionById.mockResolvedValue({ ...input.rawSession, metadata: JSON.stringify(metadata) });
+    expect(await continueSessionAfterUsageLimitReset({ ...input, recovery: acceptedRecovery, metadata,
+      readiness: 'provider_ready' })).toEqual({ status: 'continued' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
+  });
+
+  it('revalidates the same failed turn when its issue is enriched between session reads', async () => {
+    const first = { ...issue, occurredAt: 1793871333659, providerTurnId: undefined,
+      usageLimit: { ...issue.usageLimit!, resetAtMs: null } };
+    const acceptedRecovery = { ...recovery, issueFingerprint: buildUsageLimitIssueFingerprint(first),
+      armedAtMs: 1793871335690, resetAtMs: 1794283200000, nextCheckAtMs: 1794283200000 };
+    const input = fixture({ latestTurnId: 'accepted-turn', lastRuntimeIssue: first });
+    const metadata = { ...input.metadata, sessionUsageLimitRecoveryV1: acceptedRecovery };
+    const freshIssue = { ...first, occurredAt: 1793871333704,
+      usageLimit: { ...first.usageLimit, resetAtMs: 1794283200000 } };
+    transport.fetchSessionById.mockResolvedValue({ ...input.rawSession, lastRuntimeIssue: freshIssue,
+      metadata: JSON.stringify(metadata) });
+    expect(await continueSessionAfterUsageLimitReset({ ...input, recovery: acceptedRecovery, metadata,
+      nowMs: 1794283200000 })).toEqual({ status: 'continued' });
+    expect(transport.enqueuePendingQueueV2MessageViaHttp).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['independent_recoveries', 'recipient_bridge'], ['replacement', 'recipient_bridge'],
     ['independent_recoveries', 'recovery_owner'], ['replacement', 'recovery_owner'],

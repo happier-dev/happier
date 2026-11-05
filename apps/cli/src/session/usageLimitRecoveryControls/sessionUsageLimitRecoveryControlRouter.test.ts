@@ -989,6 +989,35 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     } finally { scheduler.dispose(); }
   });
 
+  it('routes historical 45ms enrichment to the owning attempt and excludes a newer failed turn', async () => {
+    const first = { ...createUsageLimitIssue({ resetAtMs: null }), provider: 'claude', providerTurnId: undefined,
+      occurredAt: 1793871333659 };
+    const issue = { ...first, occurredAt: 1793871333704,
+      usageLimit: { ...first.usageLimit, resetAtMs: 1794283200000 } };
+    const metadata = createMetadata({ sessionUsageLimitRecoveryV1: {
+      v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(first),
+      runtimeAuthRecoveryAttemptId: 'same-failed-turn', armedAtMs: 1793871335690,
+      resetAtMs: null, nextCheckAtMs: null, attemptCount: 0, maxAttempts: 5,
+      lastProbeError: null, selectedAuth: { kind: 'native' },
+    } });
+    const params = { token: 'token', credentials: createCredentials(), sessionId: 'historical-owner',
+      rawSession: createRawSession({ id: 'historical-owner', latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata, currentMachineId: 'machine-local', ctx, mode: 'plain' as const,
+      callLiveSessionRpc: async () => undefined };
+    // This callback is the daemon transport boundary, not a stub of recovery policy.
+    const checkOwner = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+    expect(parseOperationResult(await routeSessionUsageLimitRecoveryCheckNow({ ...params,
+      checkRuntimeAuthUsageLimitRecovery: checkOwner,
+    }))).toMatchObject({ ok: true, status: 'waiting' });
+    expect(checkOwner).toHaveBeenCalledWith({ sessionId: 'historical-owner', attemptId: 'same-failed-turn' });
+    checkOwner.mockClear();
+    await routeSessionUsageLimitRecoveryCheckNow({ ...params,
+      rawSession: { ...params.rawSession, lastRuntimeIssue: { ...issue, occurredAt: 1793871335691, providerTurnId: 'new-turn' } },
+      checkRuntimeAuthUsageLimitRecovery: checkOwner,
+    });
+    expect(checkOwner).not.toHaveBeenCalled();
+  });
+
   it('keeps unowned native off mode passive when its backoff adapter becomes ready', async () => {
     const resumeInactiveSessionWhenReady = vi.fn(async () => true);
     const result = await routeSessionUsageLimitRecoveryCheckNow({

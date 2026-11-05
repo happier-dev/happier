@@ -69,6 +69,27 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         expect(presentation?.banner.primaryAction.kind).toBe('cancel');
     });
 
+    it('keeps waiting controls and badge on the historical 45ms failure enrichment', () => {
+        const first = { ...usageIssue('claude', null), occurredAt: 1793871333659 };
+        const issue = { ...usageIssue('claude', 1794283200000), occurredAt: 1793871333704 };
+        const recovery: SessionUsageLimitRecoveryV1 = {
+            v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(first),
+            runtimeAuthRecoveryAttemptId: 'same-failed-turn', armedAtMs: 1793871335690,
+            resetAtMs: null, nextCheckAtMs: null, attemptCount: 1, maxAttempts: 3,
+            lastProbeError: null, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+        };
+        const input = { featureEnabled: true, latestTurnStatus: 'failed', issue, recovery,
+            rememberedMode: 'ask', checkNowSupported: true, translate: (key: string) => key, formatTime: String } as const;
+        const presentation = buildSessionUsageLimitRecoveryPresentation(input);
+        expect(presentation?.runtimeAuthRecoveryAttemptId).toBe('same-failed-turn');
+        expect(presentation?.issueFingerprint).toBe(recovery.issueFingerprint);
+        expect(presentation?.banner.primaryAction.kind).toBe('cancel');
+        expect(buildSessionUsageLimitStatusBadgePresentation(input)?.label).toBe('session.usageLimitRecovery.statusWaitingResetUntil');
+        expect(buildSessionUsageLimitRecoveryPresentation({ ...input,
+            issue: { ...issue, providerTurnId: 'new-turn', occurredAt: recovery.armedAtMs + 1 },
+        })?.banner.primaryAction.kind).toBe('enable');
+    });
+
     it('does not bind an opaque legacy runtime attempt to a current issue', () => {
         const issue = usageIssue('claude', 5_000);
         const recovery: SessionUsageLimitRecoveryV1 = {

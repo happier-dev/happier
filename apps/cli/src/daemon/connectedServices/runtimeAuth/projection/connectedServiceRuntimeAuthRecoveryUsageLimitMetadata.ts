@@ -1,9 +1,18 @@
-import { ConnectedServiceIdSchema, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import {
+  buildUsageLimitIssueFingerprint,
+  isSessionUsageLimitRecoveryForIssue,
+  ConnectedServiceIdSchema,
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionUsageLimitRecoveryV1Schema,
+  type SessionRuntimeIssueV1,
+  type SessionUsageLimitRecoveryV1,
+} from '@happier-dev/protocol';
 import type { RuntimeAuthRecoveryIntent } from '../RuntimeAuthRecoveryScheduler';
 
 /** Presentation of the daemon's recovery intent, never a second recovery decision. */
 export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonly<{
   intent: RuntimeAuthRecoveryIntent;
+  issue?: SessionRuntimeIssueV1 | null;
 }>): ((metadata: Record<string, unknown>) => Record<string, unknown>) | null {
   const intent = input.intent;
   const attemptId = intent.attemptId;
@@ -24,21 +33,22 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       && current.status === 'cancelled' && status !== 'cancelled'
     ))) return metadata;
     const sameAttempt = current?.runtimeAuthRecoveryAttemptId === intent.attemptId;
-    return {
-      ...metadata,
-      [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
-        v: 1, status,
-        issueFingerprint: intent.classification.runtimeIssueFingerprint
-          ?? (sameAttempt && current ? current.issueFingerprint : attemptId),
-        runtimeAuthRecoveryAttemptId: attemptId,
-        armedAtMs: intent.armedAtMs,
-        resetAtMs: intent.classification.resetsAtMs ?? null,
-        nextCheckAtMs: status === 'cancelled' || status === 'exhausted' || status === 'paused' ? null : intent.nextRetryAtMs,
-        attemptCount: intent.attemptCount, maxAttempts: intent.maxAttempts,
-        lastProbeError: intent.lastError,
-        resumePromptMode: intent.resumePromptMode ?? 'standard', selectedAuth,
-        ...(sameAttempt && current?.recoveryCredits ? { recoveryCredits: current.recoveryCredits } : {}),
-      } satisfies SessionUsageLimitRecoveryV1,
-    };
+    const recovery = {
+      v: 1, status,
+      issueFingerprint: intent.classification.runtimeIssueFingerprint
+        ?? (sameAttempt && current ? current.issueFingerprint : attemptId),
+      runtimeAuthRecoveryAttemptId: attemptId,
+      armedAtMs: intent.armedAtMs,
+      resetAtMs: intent.classification.resetsAtMs ?? null,
+      nextCheckAtMs: status === 'cancelled' || status === 'exhausted' || status === 'paused' ? null : intent.nextRetryAtMs,
+      attemptCount: intent.attemptCount, maxAttempts: intent.maxAttempts,
+      lastProbeError: intent.lastError,
+      resumePromptMode: intent.resumePromptMode ?? 'standard', selectedAuth,
+      ...(sameAttempt && current?.recoveryCredits ? { recoveryCredits: current.recoveryCredits } : {}),
+    } satisfies SessionUsageLimitRecoveryV1;
+    if (input.issue && isSessionUsageLimitRecoveryForIssue(input.issue, recovery)) {
+      recovery.issueFingerprint = buildUsageLimitIssueFingerprint(input.issue);
+    }
+    return { ...metadata, [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery };
   };
 }

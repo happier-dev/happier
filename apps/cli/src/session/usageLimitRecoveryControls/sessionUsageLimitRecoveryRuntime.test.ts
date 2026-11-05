@@ -182,6 +182,28 @@ describe('generic usage-limit continuation through the session control boundary'
     } finally { fixture.runtime.dispose(); scheduler.dispose(); await app.close(); await removeTempDir(root); }
   });
 
+  it('preserves the daemon-owned attempt when the live observer receives the historical enrichment', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1793871335691);
+    const first: SessionRuntimeIssueV1 = { ...issue, provider: 'claude', providerTurnId: undefined,
+      occurredAt: 1793871333659, usageLimit: { ...issue.usageLimit!, resetAtMs: null,
+        connectedService: { serviceId: 'claude-subscription', groupId: 'pool', profileId: 'primary' } } };
+    const enriched = { ...first, occurredAt: 1793871333704,
+      usageLimit: { ...first.usageLimit!, resetAtMs: 1794283200000 } };
+    const recovery: SessionUsageLimitRecoveryV1 = { v: 1, status: 'waiting',
+      issueFingerprint: buildUsageLimitIssueFingerprint(first), armedAtMs: 1793871335690,
+      runtimeAuthRecoveryAttemptId: 'historical-daemon-attempt', resetAtMs: null, nextCheckAtMs: 1794283200000,
+      attemptCount: 1, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+      selectedAuth: { kind: 'group', serviceId: 'claude-subscription', groupId: 'pool', profileId: 'primary' } };
+    const fixture = createLiveFixture({ issue: enriched,
+      metadata: { flavor: 'claude', sessionUsageLimitRecoveryV1: recovery },
+      settings: accountSettingsParse({ usageLimitRecoverySettingsV1: { v: 1, mode: 'auto_wait' } }) });
+    try {
+      await fixture.runtime.observeFailure(enriched);
+      expect(fixture.readRecovery()).toEqual(recovery);
+    } finally { fixture.runtime.dispose(); }
+  });
+
   it('continues a native-login Grok usage limit through the Session owner without a Connected Account', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(300);

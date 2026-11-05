@@ -1,3 +1,7 @@
+import {
+  buildUsageLimitIssueFingerprint,
+  type SessionRuntimeIssueV1,
+} from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import type { RuntimeAuthRecoveryIntent } from '../RuntimeAuthRecoveryScheduler';
 import { buildRuntimeAuthUsageLimitRecoveryMetadataUpdater } from './connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
@@ -60,6 +64,23 @@ describe('daemon recovery intent metadata projection', () => {
     expect(project(newer)).toBe(newer);
     const cancelled = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent: { ...intent, status: 'cancelled' } })!({});
     expect(project(cancelled)).toBe(cancelled);
+  });
+  it('projects accepted issue enrichment only for the same failed turn and auth source', () => {
+    const first = { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+      provider: 'codex', occurredAt: 1793871333659, usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null,
+        quotaScope: 'account', recoverability: 'wait', connectedService: { serviceId: 'openai-codex', groupId: 'pool', profileId: 'primary' } } } as const;
+    const issue = { ...first, occurredAt: 1793871333704, usageLimit: { ...first.usageLimit, resetAtMs: 1794283200000 } };
+    const source = { ...intent, armedAtMs: 1793871335690,
+      classification: { ...intent.classification, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(first) } };
+    const project = (projectedIssue: SessionRuntimeIssueV1) => buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent: source, issue: projectedIssue })!({});
+    expect(project(issue)).toMatchObject({ sessionUsageLimitRecoveryV1: {
+      issueFingerprint: buildUsageLimitIssueFingerprint(issue), runtimeAuthRecoveryAttemptId: 'attempt-1', armedAtMs: source.armedAtMs,
+    } });
+    expect(project({ ...issue, occurredAt: source.armedAtMs + 1 })).toMatchObject({ sessionUsageLimitRecoveryV1: {
+      issueFingerprint: buildUsageLimitIssueFingerprint(first),
+    } });
+    expect(project({ ...issue, usageLimit: { ...issue.usageLimit, connectedService: { ...issue.usageLimit.connectedService, profileId: 'other' } } }))
+      .toMatchObject({ sessionUsageLimitRecoveryV1: { issueFingerprint: buildUsageLimitIssueFingerprint(first) } });
   });
   it('does not turn an authentication failure into a usage-limit wait', () => {
     expect(buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({

@@ -2017,7 +2017,16 @@ occurred at or before recovery arming is eligible; a failure after arming is
 superseded. When the issue is absent, the turn-status observation supplies that
 boundary. Provider observers can describe one rejection with different timestamps
 and reset details, so report and projection fingerprints are diagnostic evidence,
-not a byte-equality admission requirement. The arming-time check cannot establish
+not a byte-equality admission requirement. The protocol session recovery owner also
+associates daemon-owned usage-limit presentation, controls and reset revalidation
+with an enriched issue when its structured fingerprint identifies the same provider
+and does not contradict a known turn, both observations are at or before arming, and its selected auth source
+still matches. Opaque attempt ids do not associate presentation or controls with
+another issue. Daemon projection may rebase its visible fingerprint through that
+same rule without changing the attempt or arming boundary. The live Session observer
+uses that association too, so an enriched report does not rearm a daemon-owned wait.
+Local unowned recovery
+continues to require the exact captured issue. The arming-time check cannot establish
 the original failure across a restart or re-arming. A superseded live turn or
 archived session settles the old recovery
 terminally instead of waiting for provider proof after suppressing admission.

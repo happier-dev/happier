@@ -1,4 +1,4 @@
-import { accountSettingsParse, buildUsageLimitIssueFingerprint, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema,
+import { accountSettingsParse, buildUsageLimitIssueFingerprint, isSessionUsageLimitRecoveryForIssue, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema,
   resolveSessionUsageLimitRecoveryResumePromptModeV1, type AccountSettings, type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
@@ -225,7 +225,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         || issue.usageLimit.recoverability !== 'wait' || deps.getAccountSettings()?.usageLimitRecoverySettingsV1?.mode !== 'auto_wait') return;
       if (!await resolveUsageLimitRecoveryFeatureEnabled() || disposed || acceptedFailure !== issue) return;
       const existing = read();
-      if (existing?.issueFingerprint === buildUsageLimitIssueFingerprint(issue)) return;
+      if (existing && isSessionUsageLimitRecoveryForIssue(issue, existing)) return;
       const resumePromptMode = resolveSessionUsageLimitRecoveryResumePromptModeV1({ existingIntent: existing,
         accountSettings: deps.getAccountSettings() });
       const intent = buildRecoveryIntentFromUsageLimitIssue({ issue, resumePromptMode,

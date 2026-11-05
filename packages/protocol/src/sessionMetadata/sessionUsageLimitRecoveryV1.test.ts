@@ -43,6 +43,31 @@ describe('SessionUsageLimitRecoveryV1', () => {
     expect(buildUsageLimitIssueFingerprint(providerless, 'claude')).toBe('usage-limit:claude:unknown-turn:2000:no-reset');
   });
 
+  it('associates the historical two-producer failure without inheriting another turn or auth source', () => {
+    const first: SessionRuntimeIssueV1 = {
+      v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit', code: 'usage_limit',
+      provider: 'claude', occurredAt: 1793871333659,
+      usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait',
+        connectedService: { serviceId: 'claude-subscription', groupId: 'pool', profileId: 'primary' } },
+    };
+    const enriched = { ...first, occurredAt: 1793871333704, usageLimit: { ...first.usageLimit!, resetAtMs: 1794283200000 } };
+    const recovery = { ...baseIntent, issueFingerprint: buildUsageLimitIssueFingerprint(first),
+      armedAtMs: 1793871335690, runtimeAuthRecoveryAttemptId: 'attempt-1',
+      selectedAuth: { kind: 'group', serviceId: 'claude-subscription', groupId: 'pool', profileId: 'primary' } } as const;
+    expect(isSessionUsageLimitRecoveryForIssue(enriched, recovery)).toBe(true);
+    expect(readSessionUsageLimitRecoveryForIssue(recovery, enriched)?.runtimeAuthRecoveryAttemptId).toBe('attempt-1');
+    expect(isSessionUsageLimitRecoveryForIssue({ ...enriched, occurredAt: recovery.armedAtMs + 1 }, recovery)).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue({ ...enriched, provider: 'codex' }, recovery)).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue(enriched, { ...recovery, status: 'cancelled' })).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue(enriched, { ...recovery, runtimeAuthRecoveryAttemptId: undefined })).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue(enriched, { ...recovery, issueFingerprint: 'attempt-1' })).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue({ ...enriched, usageLimit: { ...enriched.usageLimit,
+      connectedService: { serviceId: 'claude-subscription', groupId: 'pool', profileId: 'other' } } }, recovery)).toBe(false);
+    expect(isSessionUsageLimitRecoveryForIssue({ ...enriched, providerTurnId: 'new-turn' }, {
+      ...recovery, issueFingerprint: buildUsageLimitIssueFingerprint({ ...first, providerTurnId: 'failed-turn' }),
+    })).toBe(false);
+  });
+
   it('defaults and persists resumePromptMode on stored recovery intents', () => {
     expect(SessionUsageLimitRecoveryV1Schema.parse(baseIntent)).toMatchObject({
       resumePromptMode: 'standard',
