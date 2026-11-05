@@ -1,4 +1,4 @@
-import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
+import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createInteractiveExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { appendMountedComposerDraft } from '@/sync/ops/actions/appendMountedComposerDraft';
@@ -17,7 +17,7 @@ export type AskSelectionSessionTarget = Readonly<{ sessionId: string; revealSess
 export type AskSelectionTargetContext = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     withoutSessionTarget?: FilesAskWithoutSessionTarget;
-    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
+    openDetailsTab: AppPaneScopeApi['openDetailsTab'];
     navigateToNewSession: Parameters<typeof seedAndOpenNewSession>[0]['navigateToNewSession'];
     onDetachedUnavailable?: (reason: string) => void;
 }>;
@@ -54,7 +54,7 @@ export async function askSelectionQuote(input: Readonly<{
         target, detachedSupported, sideRun: input.sideRun });
     if (destination === 'side_run') {
         context.openDetailsTab(createInteractiveExecutionRunDraftDetailsTab({ initialText: input.quote,
-            ...(!sessionTarget ? { detachedWorkspace: { machineId: workspaceScope.machineId, cwd: workspaceScope.rootPath } } : {}) }), { intent: 'pinned' });
+            ...(!sessionTarget ? { detachedWorkspace: { machineId: workspaceScope.machineId, cwd: workspaceScope.rootPath } } : {}) }), { intent: 'pinned', start: true });
         return true;
     }
     const result = seedAndOpenNewSession({ seed: { prompt: input.quote,

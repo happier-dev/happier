@@ -18,6 +18,7 @@ import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/de
 import { createWorkspaceFileDetailsTab } from '../details/fileDetailsTab';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { askSelectionQuote } from '@/components/ui/code/selection/askSelectionTarget';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -76,6 +77,32 @@ async function renderOpeners(presentation: PanePresentation | null) {
 }
 
 describe('a page opened from a Details page', () => {
+  it('presents a selection side run as phone Start instead of an ordinary Details page', async () => {
+    const presented: PanePresentationIntent[] = [];
+    const { screen, act, session } = await renderOpeners(intent => {
+      presented.push(intent);
+      return intent.pane === 'details' && intent.start ? 'startSheet' : 'ownTab';
+    });
+    try {
+      await act(async () => {
+        expect(await askSelectionQuote({
+          workspaceScope: { serverId: 'selection-home', machineId: 'machine', rootPath: '/repo' },
+          sessionTarget: { sessionId: 'incumbent-session' },
+          quote: 'Explain this selected code', sideRun: true,
+          context: {
+            accountLifetime: { scope: { serverId: 'selection-home', accountId: 'account' },
+              isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            withoutSessionTarget: 'detached_run',
+            openDetailsTab: session().openDetailsTab,
+            navigateToNewSession: () => { throw new Error('Side runs stay in Start'); },
+          },
+        })).toBe(true);
+      });
+      expect(presented).toEqual([expect.objectContaining({ pane: 'details', start: true })]);
+      expect(session().scopeState?.details.tabs).toEqual([expect.objectContaining({ kind: 'executionRunLauncher' })]);
+    } finally { await screen.unmount(); }
+  });
+
   it('leaves the Session pane unchanged when its layout opens the walkthrough in its own tab', async () => {
     const { screen, act, session } = await renderOpeners(intent => intent.pane === 'details' ? 'ownTab' : undefined);
     try {

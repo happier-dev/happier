@@ -5,7 +5,6 @@ import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/rev
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { t } from '@/text';
@@ -38,7 +37,7 @@ export type UseAskSelectionInput = Readonly<{
     sessionTarget: AskSelectionSessionTarget | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     withoutSessionTarget?: FilesAskWithoutSessionTarget;
-    openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
+    openDetailsTab: AskSelectionTargetContext['openDetailsTab'];
     onComment?: (drafts: readonly ReviewCommentDraft[]) => void;
     onDetachedUnavailable?: (reason: string) => void;
     active?: boolean;
