@@ -60,6 +60,7 @@ import type {
 } from '../../../sdk/types.js';
 import { createClaudeTaskNotificationToolResultProjector, readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { readClaudeNativePeerMessage } from '../../../transcripts/nativeSemanticProjection.js';
+import { readClaudeToolResultMediaRequests } from '../../../transcripts/toolResultMedia.js';
 import { buildClaudeJsonlProviderFactLocalIdFromParts } from '../../../transcripts/providerFactIdentity.js';
 import { readClaudeJsonlRowTimestampMs } from '../../../transcripts/jsonlReplaySuppression.js';
 import { recordClaudeRuntimeProviderAccountUsageSnapshot } from '../../accountUsage.js';
@@ -1991,6 +1992,21 @@ export function createClaudeAgentSdkTurnOperations(
                             ? { requestStartedAtMs: sdkRequestClocks.get(message) } : {}),
                         usage: usage ?? {},
                     }));
+                }
+                if (params.publishSdkMessages === true || params.publishTranscriptMessages === true) {
+                    for (const { request: media } of readClaudeToolResultMediaRequests(message)) {
+                        const publisher = params.ctx.sessions?.current.media;
+                        if (!publisher?.publishToolResultMedia) {
+                            params.ctx.logger.warn('[ClaudeAgentSdk] Session tool-result media capability is unavailable');
+                            continue;
+                        }
+                        try {
+                            await publisher.publishToolResultMedia(media);
+                        } catch {
+                            // The media owner records diagnostics; preserve the tool's text and lifecycle.
+                            params.ctx.logger.warn('[ClaudeAgentSdk] Tool-result media publication failed');
+                        }
+                    }
                 }
                 for (const runtimeEvent of toolRuntimeEvents?.events ?? []) {
                     publishRuntimeEvent(runtimeEvent);

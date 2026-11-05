@@ -11,8 +11,10 @@ import type { SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
+import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
+import { getSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { createBoundedAgentExternalSessionsContribution } from './agentExternalSessionsInvocation';
+import { createBoundedAgentExternalSessionsContribution, EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 
 import { mapPluginExternalTranscriptItem, mapPluginExternalTerminalSourceItem } from './pluginExternalSessionsAdapter';
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
@@ -151,6 +153,68 @@ describe('Claude terminal follow projection', () => {
             enqueueUserTextMessageCommitted,
         };
     }
+
+    it('retries real native media after semantic custody without rewriting the tool or acknowledging the failed publication', async () => {
+        const seeded = await seedClaudeSession();
+        await writeFile(seeded.sessionFilePath, jsonl({ type: 'user', uuid: 'image-fact',
+            timestamp: '2026-08-18T08:00:00.000Z', message: { content: [{ type: 'tool_result', tool_use_id: 'read-image', content: [
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'encoded-image' } },
+            ] }] } }));
+        const mediaPublications: unknown[] = [];
+        let failMedia = true;
+        const bounded = createBoundedAgentExternalSessionsContribution({
+            contribution: seeded.contribution,
+            identity: { pluginId: 'happier.agent.claude', agentId: 'claude', occurrenceId: 'claude-media-retry',
+                contributionQualifiedId: 'happier.agent.claude/agents/claude',
+                sourceCustody: { kind: 'development', registeredRootId: 'claude-media-retry' } },
+            isCurrent: () => true, retirementSignal: new AbortController().signal,
+            createInvocationExec: async () => unavailableInvocationExec,
+            // Session media publication is the real process boundary. Native
+            // row selection, cursor admission and media extraction stay real.
+            createTranscriptMediaService: () => ({ publishToolResultMedia: async input => {
+                mediaPublications.push(input);
+                if (failMedia) { failMedia = false; throw new Error('media transport unavailable'); }
+            } }),
+        });
+        const materializeTranscriptMedia = bounded.materializeTranscriptMedia;
+        if (!materializeTranscriptMedia) throw new Error('Expected native transcript media capability');
+        const page = await bounded.pageTranscript({ ...invocation(), source: seeded.source,
+            remoteSessionId: seeded.remoteSessionId, direction: 'older', projection: 'terminal', maxItems: 200 });
+        if (!page.ok || !page.value.tailCursor) throw new Error('Expected native media page');
+        const event = { kind: 'data' as const, phase: 'initial_replay' as const, providerSessionId: seeded.remoteSessionId,
+            source: seeded.source, fromCursor: null, nextCursor: page.value.tailCursor,
+            items: page.value.items.map(mapPluginExternalTerminalSourceItem) };
+        const enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: true }));
+        const session = { sessionId: 'media-retry', enqueueAgentMessageCommitted };
+        const signal = new AbortController().signal;
+        const publish = createExternalSessionTerminalFollowProjector({ sessionId: session.sessionId, agentId: 'claude',
+            observeSourceTranscript: async () => {},
+            projectRuntimeEvent: (runtimeEvent, admission, sourceReplayLocalId) => projectRuntimeTranscriptEvent({
+                session, provider: 'claude', event: runtimeEvent, admission, sourceReplayLocalId }),
+            materializeTranscriptMedia: async request => {
+                const result = await materializeTranscriptMedia({
+                    ...request,
+                    signal: request.signal ?? signal,
+                    maxSerializedBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
+                });
+                if (!result.ok) throw new Error(result.code);
+            },
+        });
+        const service = createHostTerminalTranscriptFollowService({ signal,
+            loadCommittedLocalIdBaseline: async () => ({ localIds: getSessionCommittedTranscriptLocalIds(session), complete: true }),
+            followProviderSession: async (_request, listener) => {
+                await listener(event);
+                return { status: 'following', startingCursor: event.nextCursor, subscription: { dispose: async () => {} } };
+            }, publish });
+        try {
+            const request = { agentId: 'claude', providerSessionId: seeded.remoteSessionId };
+            await expect(service.bindProviderSession(request)).resolves.toMatchObject({ status: 'unavailable' });
+            await expect(service.bindProviderSession(request)).resolves.toMatchObject({ status: 'following' });
+            expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(1);
+            expect(mediaPublications).toHaveLength(2);
+            expect(mediaPublications[1]).toEqual(mediaPublications[0]);
+        } finally { await service.releaseActiveBindings(); }
+    });
 
     it('admits Claude source-fact user rows during the initial replay phase', async () => {
         const seeded = await seedClaudeSession();

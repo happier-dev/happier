@@ -3,7 +3,7 @@ import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
 import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1Schema, ExternalSessionsContentCoverageSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
-import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
+import { ExternalSessionToolResultMediaReferenceV1Schema, ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
 import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { AgentExternalSessionAccountingSourceSchema, AgentExternalSessionAccountingChangedNativeSessionIdsSchema, AgentExternalSessionsReadAccountingResultSchema } from '@happier-dev/protocol/sessions/external/accounting';
@@ -24,6 +24,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { getAgentExternalSessionsInvocationFailure, isAgentExternalSessionsFailureCode, runWithSessionInputPromptUserTextReader } from '@happier-dev/plugin-sdk/sessions/external';
 import { createCodingSessionInputPromptUserTextReader } from '@/agent/prompting/coding/providerPromptBehaviorRegistry';
+import type { SessionMediaService } from '@happier-dev/plugin-sdk/sessions';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type {
     AgentExternalSessionCandidate,
@@ -185,7 +186,7 @@ function boundManagedEndpointResponseBody(
 }
 
 type WithoutHostStampedInvocationServices<T> = T extends unknown
-    ? Omit<T, 'managedEndpointRead' | 'exec' | 'ripgrep'>
+    ? Omit<T, 'managedEndpointRead' | 'exec' | 'ripgrep' | 'media' | 'transcriptMediaAvailable'>
     : never;
 
 /**
@@ -203,6 +204,7 @@ export type BoundedAgentExternalSessionsContribution = Readonly<{
     supportsCandidateHydration: boolean;
     hydrateCandidates(request: WithoutHostStampedInvocationServices<AgentExternalSessionsHydrateCandidatesRequest>): Promise<AgentExternalSessionsResult<AgentExternalSessionsHydrateCandidatesResult>>;
     supportsAccounting: boolean;
+    supportsTranscriptMedia: boolean;
     readAccounting(request: WithoutHostStampedInvocationServices<AgentExternalSessionsReadAccountingRequest>): Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>>;
 }>;
 
@@ -494,11 +496,11 @@ function parseTranscriptItemId(value: unknown): string | null {
     return parsed.success ? parsed.data : null;
 }
 
-function parseTranscriptItem(value: unknown, readUserText?: (text: string) => string): AgentExternalSessionTranscriptItem | null {
+function parseTranscriptItem(value: unknown, readUserText?: (text: string) => string, allowTranscriptMedia = false): AgentExternalSessionTranscriptItem | null {
     const record = readStrictRecord(
         value,
         ['id', 'createdAtMs', 'raw'],
-        ['localId', 'sidechainId', 'messageRole', 'userProjection'],
+        ['localId', 'sidechainId', 'messageRole', 'userProjection', 'toolResultMedia'],
     );
     if (!record) return null;
     const id = parseTranscriptItemId(record.id);
@@ -523,6 +525,9 @@ function parseTranscriptItem(value: unknown, readUserText?: (text: string) => st
         : parsedUserProjection.success
             ? parsedUserProjection.data
             : null;
+    const toolResultMedia = record.toolResultMedia === undefined ? undefined
+        : ExternalSessionToolResultMediaReferenceV1Schema.safeParse(record.toolResultMedia);
+    if (toolResultMedia && (!allowTranscriptMedia || !toolResultMedia.success)) return null;
     const derivedRole = raw?.role === 'user'
         ? 'user'
         : raw?.role === 'agent'
@@ -553,6 +558,7 @@ function parseTranscriptItem(value: unknown, readUserText?: (text: string) => st
         ...(sidechainId === undefined ? {} : { sidechainId }),
         ...(role === undefined ? {} : { messageRole: role }),
         ...(userProjection === undefined ? {} : { userProjection }),
+        ...(toolResultMedia?.success ? { toolResultMedia: toolResultMedia.data } : {}),
     });
 }
 
@@ -789,7 +795,7 @@ function parseTranscriptPageValue(
             const observation = ExternalSessionTerminalSourceObservationV1Schema.safeParse(item);
             if (observation.success) return observation.data;
         }
-        return parseTranscriptItem(item, readUserText);
+        return parseTranscriptItem(item, readUserText, projection === 'terminal');
     });
     if (items.some((item) => item === null)) throw new ExternalSessionsResultAdmissionError('transcript_page_item');
     const nextCursor = record.nextCursor === null
@@ -898,7 +904,7 @@ function parseReadAfterTranscriptValue(
                     const observation = ExternalSessionTerminalSourceObservationV1Schema.safeParse(item);
                     if (observation.success) return observation.data;
                 }
-                return parseTranscriptItem(item, readUserText);
+                return parseTranscriptItem(item, readUserText, projection === 'terminal');
             });
             const nextCursor = encodeQualifiedCursor(record.nextCursor, identity, scope);
             const boundary = parseBoundedString(record.boundary, MAX_READ_AFTER_BOUNDARY_CODE_UNITS);
@@ -1164,6 +1170,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
      * result bounds before passing that service to a contribution callback.
      */
     createInvocationExec(signal: AbortSignal): Promise<ExecService>;
+    createTranscriptMediaService?(signal: AbortSignal): Pick<SessionMediaService, 'publishToolResultMedia'> | null;
 }>): BoundedAgentExternalSessionsContribution {
     const invocationLogger: NonNullable<AgentExternalSessionsInvocation['logger']> = Object.freeze({
         debug: (message, fields) => logger.debug(message, fields),
@@ -1221,9 +1228,42 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         });
         return Object.freeze({ managedEndpointRead, exec, ripgrep, logger: invocationLogger });
     };
+    const supportsTranscriptMedia = typeof params.contribution.materializeTranscriptMedia === 'function'
+        && typeof params.createTranscriptMediaService === 'function';
     const hydrateCandidates = params.contribution.hydrateCandidates;
     const supportsCandidateHydration = typeof hydrateCandidates === 'function';
     const wrap = Object.freeze({
+        supportsTranscriptMedia,
+        async materializeTranscriptMedia(request) {
+            const operation = params.contribution.materializeTranscriptMedia;
+            if (!supportsTranscriptMedia || !operation) return unavailable();
+            const source = parseSource(request.source);
+            const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
+            const itemId = parseTranscriptItemId(request.itemId);
+            const sourceMessageId = parseTranscriptItemId(request.sourceMessageId);
+            const toolCallId = parseTranscriptItemId(request.toolCallId);
+            const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes ?? EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes);
+            if (!source || !remoteSessionId || !itemId || !sourceMessageId || !toolCallId || maxSerializedBytes === null) return invalidRequest();
+            const scope = { source, remoteSessionId, maxSerializedBytes };
+            const cursor = decodeInputCursor(request.cursor, params.identity, { ...scope, method: 'readAfterTranscript' })
+                ?? decodeInputCursor(request.cursor, params.identity, { ...scope, method: 'pageTranscript' });
+            if (cursor === null) return invalidRequest();
+            return await invokeBounded({
+                signal: request.signal, retirementSignal: params.retirementSignal, isCurrent: params.isCurrent,
+                deadlineAtMs: request.deadlineAtMs,
+                operation: async (signal, deadlineAtMs) => {
+                    const media = params.createTranscriptMediaService?.(signal);
+                    if (!media?.publishToolResultMedia) return unavailable();
+                    const invocation = await bindInvocationContext(source, signal, maxSerializedBytes);
+                    return await operation.call(params.contribution, { source, remoteSessionId, itemId, sourceMessageId, toolCallId, cursor,
+                        signal, deadlineAtMs, maxSerializedBytes, ...invocation, media });
+                },
+                parse: value => parseAndBoundResult(value, candidate => {
+                    const record = readStrictRecord(candidate, ['status'], []);
+                    return record?.status === 'published' ? { status: 'published' as const } : null;
+                }, maxSerializedBytes),
+            });
+        },
         supportsAccounting: typeof params.contribution.readAccounting === 'function',
         async readAccounting(request) {
             const terminal = terminalBeforeAdmission(request.signal);
@@ -1508,6 +1548,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     );
                     return await params.contribution.pageTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),
+                        ...(request.projection === 'terminal' && supportsTranscriptMedia ? { transcriptMediaAvailable: true as const } : {}),
                         ...(request.observation ? { observation: request.observation } : {}),
                         source: parsedSource,
                         remoteSessionId,
@@ -1552,6 +1593,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     );
                     return await params.contribution.readAfterTranscript({
                         ...(request.projection ? { projection: request.projection } : {}),
+                        ...(request.projection === 'terminal' && supportsTranscriptMedia ? { transcriptMediaAvailable: true as const } : {}),
                         ...(request.observation ? { observation: request.observation } : {}),
                         source: parsedSource,
                         remoteSessionId,

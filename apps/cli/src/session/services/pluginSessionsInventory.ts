@@ -552,6 +552,15 @@ export function createPluginSessionsInventory(
       },
     });
     const guardedMedia: SessionHandle['media'] = Object.freeze({
+      ...(media?.publishToolResultMedia ? {
+        async publishToolResultMedia(
+          ...args: Parameters<NonNullable<SessionHandle['media']['publishToolResultMedia']>>
+        ) {
+          const [request, options] = args;
+          await assertSessionAccess(sessionId, 'control', options?.signal);
+          await media.publishToolResultMedia!(request, options);
+        },
+      } : {}),
       async registerSourceRoot(
         ...args: Parameters<SessionHandle['media']['registerSourceRoot']>
       ) {

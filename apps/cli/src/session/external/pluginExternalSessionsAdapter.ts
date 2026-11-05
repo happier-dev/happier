@@ -11,6 +11,7 @@ import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceO
 import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from '@happier-dev/protocol/plugins/contributionLimits';
 import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { ExternalSessionToolResultMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
 import type { ExternalSessionAgentId, ExternalSessionSourceId, ExternalSessionsSource, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { randomUUID } from 'node:crypto';
@@ -620,8 +621,12 @@ export function mapPluginExternalTranscriptItem(
     : parsedSidechainId.success
       ? parsedSidechainId.data
       : fail('plugin_external_transcript_invalid');
+  const toolResultMedia = record.toolResultMedia === undefined ? undefined
+    : ExternalSessionToolResultMediaReferenceV1Schema.safeParse(record.toolResultMedia);
+  if (toolResultMedia && !toolResultMedia.success) fail('plugin_external_transcript_invalid');
   return Object.freeze({
     id: itemId,
+    ...(toolResultMedia?.success ? { toolResultMedia: toolResultMedia.data } : {}),
     ...(localId ? { localId } : {}),
     ...(sidechainId ? { sidechainId } : {}),
     ...(userProjection ? { userProjection } : {}),

@@ -34,6 +34,13 @@ export const ExternalSessionTranscriptSourceTimestampV1Schema = lazyZodSchema(()
 /** Host-derived presentation text; the containing response owns its byte budget. */
 export const ExternalSessionTranscriptDisplayUserTextV1Schema = lazyZodSchema(() => z.string());
 
+/** Exact producer fact selected for deferred inline tool-media materialization. */
+export const ExternalSessionToolResultMediaReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  sourceMessageId: ExternalSessionTranscriptItemIdV1Schema,
+  toolCallId: ExternalSessionTranscriptItemIdV1Schema,
+}));
+export type ExternalSessionToolResultMediaReferenceV1 = z.infer<typeof ExternalSessionToolResultMediaReferenceV1Schema>;
+
 /**
  * Canonical known-field owner for one Agent-produced External Session source
  * item. Callers select their epoch-specific identifier, raw-record, and
@@ -53,6 +60,7 @@ export function createExternalSessionTranscriptSourceItemV1Schema<
     sidechainId: z.optional(z.nullable(SidechainIdSchema)),
     messageRole: z.optional(z.nullable(SessionMessageRoleSchema)),
     userProjection: z.optional(ExternalSessionUserProjectionSchema),
+    toolResultMedia: z.optional(ExternalSessionToolResultMediaReferenceV1Schema),
     raw: options.raw,
   });
 }

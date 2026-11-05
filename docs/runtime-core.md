@@ -786,6 +786,8 @@ identity set, including direct SDK commits. Native display facts already committ
 through the SDK are not rewritten with a different native-source timestamp.
 Source-observation receipts still reach the current native observer, new display
 facts are published, and later live updates retain their normal publication path.
+Semantic custody does not prove media custody: a failed media publication is
+retried through its existing owner before the source frontier is acknowledged.
 Home's same-identity timestamp and provenance checks are unchanged.
 The committed local-ID reader pages all Session scopes to completion under the
 containing follow admission's cancellation and deadline, retaining identities

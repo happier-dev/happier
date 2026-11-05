@@ -298,6 +298,20 @@ export function createPluginSessionHandleCapabilitiesFactory(
     } satisfies SessionHandle['mcp']);
 
     const media = Object.freeze({
+      async publishToolResultMedia(request, options) {
+        const live = readLive();
+        if (!live?.media?.publishToolResultMedia || !isLiveCurrent(live)) {
+          throw new PluginError({ code: 'plugin_session_media_unavailable', message: 'Session tool-result media is unavailable' });
+        }
+        const signal = operationSignal(live, options?.signal);
+        await live.media.publishToolResultMedia(request, { signal });
+        if (signal?.aborted || !isSameLive(live) || !isLiveCurrent(live)) {
+          throw new PluginError({
+            code: 'plugin_session_media_publication_outcome_unknown',
+            message: 'Media publication may have committed before its Session scope retired',
+          });
+        }
+      },
       async registerSourceRoot(request, options) {
         const live = readLive();
         if (!live?.media || !isLiveCurrent(live)) {

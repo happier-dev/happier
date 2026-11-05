@@ -1,3 +1,4 @@
+import { resolveCurrentSessionCapabilityBinding } from '@/session/presentation/currentSessionUiBindings';
 import { randomUUID } from 'node:crypto';
 import { readMcpRequestAuthDispatchCause, type McpRequestAuthPort } from '@/mcp/runtime/mcpRequestAuth';
 import { createRunnerPluginMcpPort } from './runnerPluginMcp';
@@ -441,6 +442,11 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
                 async canonicalizeLinkedSession(params) {
                     return await requireRetainedExternalSessionProviderOps()
                         .canonicalizeLinkedSession!(params);
+                },
+                async materializeTranscriptMedia(params) {
+                    const operation = requireRetainedExternalSessionProviderOps().materializeTranscriptMedia;
+                    if (!operation) throw createRunnerSourceUnavailableError('External Session media materialization is unavailable');
+                    await operation(params);
                 },
                 async pageTranscript(params) {
                     return await requireRetainedExternalSessionProviderOps()
@@ -945,6 +951,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     },
                     isCurrent: () => !lifetime.signal.aborted,
                     retirementSignal: lifetime.signal,
+                    createTranscriptMediaService: () => {
+                        const current = resolveCurrentSessionCapabilityBinding(expectedAuthority.sessionId);
+                        return current?.createMediaService?.(() => false) ?? null;
+                    },
                     createInvocationExec: async () => (
                         createUnavailablePluginServices().exec
                     ),
@@ -1007,6 +1017,13 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 return await (
                     await requireRetainedExternalSessionSurface('canonicalizeLinkedSession')
                 ).canonicalizeLinkedSession(request);
+            },
+            async materializeTranscriptMedia(request) {
+                const surface = await resolveRetainedExternalSessionSurface();
+                if (!surface?.materializeTranscriptMedia) {
+                    throw createRunnerSourceUnavailableError('External Session media materialization is unavailable');
+                }
+                await surface.materializeTranscriptMedia(request);
             },
             async pageTranscript(request) {
                 return await (

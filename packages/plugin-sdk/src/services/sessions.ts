@@ -577,7 +577,20 @@ export interface SessionMediaSourceRoot {
     ): Promise<Readonly<{ status: 'published' }>>;
     dispose(): void;
 }
+export type SessionMediaPublishToolResultRequest = Readonly<{
+    localId: string;
+    toolCallId: string;
+    /** Inline content only; this does not authorize reading plugin-supplied paths. */
+    content: JsonValue;
+    sidechainId?: string;
+    createdAtMs?: number;
+}>;
 export interface SessionMediaService {
+    /** Optional host capability for persisting inline tool-result media in the Session workspace. */
+    publishToolResultMedia?(
+        request: SessionMediaPublishToolResultRequest,
+        options?: PluginCancellationOptions,
+    ): Promise<void>;
     registerSourceRoot(
         request: Readonly<{ rootPath: string }>,
         options?: PluginCancellationOptions,

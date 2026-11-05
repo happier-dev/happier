@@ -209,6 +209,44 @@ function createWrapper(params?: Readonly<{
 }
 
 describe('bounded Agent External Sessions invocation', () => {
+    it('binds deferred media only to a current source occurrence and refuses a different cursor scope', async () => {
+        let current = true;
+        const publishToolResultMedia = vi.fn(async () => {});
+        const contribution: AgentExternalSessionsContribution = {
+            ...contributionWith(method => successFor(method)),
+            async pageTranscript() { return { ok: true, value: { items: [], nextCursor: null, tailCursor: 'native-tail', hasMore: false } }; },
+            async materializeTranscriptMedia(request) {
+                await request.media.publishToolResultMedia!({
+                    localId: 'fact:media:read', toolCallId: request.toolCallId, content: [],
+                }, { signal: request.signal });
+                return { ok: true, value: { status: 'published' } };
+            },
+        };
+        const wrapped = createBoundedAgentExternalSessionsContribution({
+            contribution, identity, isCurrent: () => current,
+            retirementSignal: new AbortController().signal,
+            createInvocationExec: async () => unavailableInvocationExec,
+            createTranscriptMediaService: () => ({ publishToolResultMedia }),
+        });
+        const page = await wrapped.pageTranscript(requestFor('pageTranscript'));
+        if (!page.ok || !page.value.tailCursor) throw new Error('Expected a qualified tail cursor');
+        const request = { source, remoteSessionId: requestFor('pageTranscript').remoteSessionId, itemId: 'row', sourceMessageId: 'fact',
+            toolCallId: 'read', cursor: page.value.tailCursor,
+            signal: new AbortController().signal, maxSerializedBytes: 524_288 };
+        expect(wrapped.supportsTranscriptMedia).toBe(true);
+        await expect(wrapped.materializeTranscriptMedia!(request)).resolves.toMatchObject({ ok: true });
+        expect(publishToolResultMedia).toHaveBeenCalledTimes(1);
+        publishToolResultMedia.mockClear();
+        await expect(wrapped.materializeTranscriptMedia!({ ...request, source: { kind: 'fixture', root: '/other' } }))
+            .resolves.toMatchObject({ ok: false, code: 'invalid_request' });
+        current = false;
+        await expect(wrapped.materializeTranscriptMedia!(request)).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+        expect(publishToolResultMedia).not.toHaveBeenCalled();
+        const browseOnly = createWrapper({ contribution });
+        expect(browseOnly.supportsTranscriptMedia).toBe(false);
+        await expect(browseOnly.materializeTranscriptMedia!(request)).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+    });
+
     it.each([
         [{ items: {}, nextCursor: null }, 'transcript_page_envelope'],
         [{ items: [{ id: 'bad', createdAtMs: 0, raw: {} }], nextCursor: null }, 'transcript_page_item'],

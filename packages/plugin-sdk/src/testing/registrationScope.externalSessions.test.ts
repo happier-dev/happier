@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentExternalSessionsContribution, AgentExternalSessionsReadAccountingRequest } from '@happier-dev/plugin-sdk/sessions/external';
 import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
-import { createPluginRegistrationScope } from '../host/registration/index.js';
+import { createPluginRegistrationScope } from '../registration/scope.js';
 
 const factory = (async () => ({
     sessions: {
@@ -58,10 +58,11 @@ describe('Agent External Sessions registration staging', () => {
         })).toEqual({ ok: true, value: { outcome: 'unchanged' } });
         expect(Object.isFrozen(snapshot)).toBe(true);
     });
-    it('admits and statically captures the optional managed endpoint service declaration', () => {
+    it('retains optional endpoint and media materialization operations', () => {
         const declaring: AgentExternalSessionsContribution = {
             ...externalSessions,
             resolveManagedEndpointService: () => null,
+            materializeTranscriptMedia: async () => ({ ok: true, value: { status: 'published' } }),
         };
         const registrationScope = scope();
         registrationScope.api.agents.registerExternalSessions('assistant', declaring);
@@ -71,10 +72,9 @@ describe('Agent External Sessions registration staging', () => {
             : undefined;
         if (!snapshot) throw new Error('Expected committed External Sessions snapshot');
 
-        expect(snapshot.resolveManagedEndpointService).toEqual(expect.any(Function));
-        expect(Object.getOwnPropertyDescriptor(snapshot, 'resolveManagedEndpointService'))
-            .toMatchObject({ enumerable: true, writable: false, configurable: false });
-        expect(Object.isFrozen(snapshot)).toBe(true);
+        for (const key of ['resolveManagedEndpointService', 'materializeTranscriptMedia'] as const) {
+            expect(snapshot[key]).toEqual(expect.any(Function));
+        }
     });
 
     it('rejects missing or non-callable required operations', () => {

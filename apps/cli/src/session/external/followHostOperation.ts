@@ -353,7 +353,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                     }
                     await emit(Object.freeze({
                         kind: 'data',
-                        ...(terminal ? { providerSessionId: request.ref.remoteSessionId } : {}),
+                        ...(terminal ? { providerSessionId: request.ref.remoteSessionId, source: loaded.session.source } : {}),
                         ...(!fresh ? { phase: 'initial_replay' as const } : {}),
                         items: Object.freeze(batch.items),
                         fromCursor: emittedFromCursor,
@@ -499,7 +499,7 @@ export function createExternalSessionFollowHostOperation(params: Readonly<{
                 if (!isRefreshCurrent()) return;
                 await emit(Object.freeze({
                     kind: 'data',
-                    ...(request.options.projection ? { providerSessionId: request.ref.remoteSessionId } : {}),
+                    ...(request.options.projection ? { providerSessionId: request.ref.remoteSessionId, source: loaded.session.source } : {}),
                     items: Object.freeze(
                         result.items.map(request.options.projection === 'terminal'
                             ? mapPluginExternalTerminalSourceItem

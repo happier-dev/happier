@@ -5619,6 +5619,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     publish: createExternalSessionTerminalFollowProjector({
                         sessionId,
                         agentId: identity.agentId,
+                        materializeTranscriptMedia: async request => {
+                            if (!providerOps?.materializeTranscriptMedia) {
+                                throw new Error('external_session_transcript_media_unavailable');
+                            }
+                            await providerOps.materializeTranscriptMedia(request);
+                        },
                         observeSourceTranscript: async (input) => {
                             if (!session?.observeSourceTranscript) {
                                 throw new Error('external_session_terminal_source_observation_unavailable');

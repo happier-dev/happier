@@ -3,10 +3,13 @@ import { basename, isAbsolute, relative } from 'node:path';
 
 import type {
     SessionMediaPublishGeneratedRequest,
+    SessionMediaPublishToolResultRequest,
     SessionMediaService,
     SessionMediaSourceRoot,
 } from '@happier-dev/plugin-sdk/sessions';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
+import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
+import { logger } from '@/ui/logger';
 
 type ActiveMediaScope = Readonly<{
     sessionId: string;
@@ -74,6 +77,44 @@ export function createPluginSessionMediaHostAdapter(params: Readonly<{
         fixedSessionId: string | null,
         authorizeSourceRoot?: (canonicalRoot: string) => boolean | Promise<boolean>,
     ): SessionMediaService => Object.freeze({
+        async publishToolResultMedia(request: SessionMediaPublishToolResultRequest, options?: Readonly<{ signal?: AbortSignal }>) {
+            throwIfAborted(options?.signal);
+            if (disposed) throw new Error('media_adapter_disposed');
+            const scope = params.readActiveScope();
+            if (!scope || (fixedSessionId !== null && scope.sessionId !== fixedSessionId)) {
+                throw new Error('media_session_scope_forbidden');
+            }
+            requireNonblank(request.localId, 'media_local_id_invalid');
+            requireNonblank(request.toolCallId, 'media_tool_call_id_invalid');
+            const extracted = extractAcpMediaContentBlocks(request.content, {
+                originSource: 'tool-output',
+                toolCallId: request.toolCallId,
+            });
+            if (extracted.diagnostics.length > 0) {
+                logger.warn('[session-media] Tool-result media extraction failed', {
+                    codes: extracted.diagnostics.map(diagnostic => diagnostic.code),
+                });
+            }
+            if (extracted.media.length === 0) {
+                if (extracted.diagnostics.length > 0) throw new Error('media_tool_result_unavailable');
+                return;
+            }
+            await scope.sendAgentSessionMediaCommitted(params.agentId, {
+                localId: request.localId,
+                role: 'output', category: 'tool-artifact',
+                ...(request.sidechainId ? { sidechainId: request.sidechainId } : {}),
+                media: extracted.media.map(item => ({
+                    ...item,
+                    origin: { ...item.origin, agentId: params.agentId },
+                    ...(request.createdAtMs === undefined ? {} : { createdAtMs: request.createdAtMs }),
+                })),
+            });
+            throwIfAborted(options?.signal);
+            const settledScope = params.readActiveScope();
+            if (disposed || !settledScope || settledScope.sessionId !== scope.sessionId) {
+                throw new Error('media_publication_outcome_unknown');
+            }
+        },
         async registerSourceRoot(
             request: Readonly<{ rootPath: string }>,
             options?: Readonly<{ signal?: AbortSignal }>,

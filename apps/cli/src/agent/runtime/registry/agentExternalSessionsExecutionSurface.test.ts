@@ -13,6 +13,7 @@ import { createAgentExternalSessionsExecutionSurface } from './agentExternalSess
 function createContribution(): BoundedAgentExternalSessionsContribution {
     return Object.freeze({
         supportsAccounting: false,
+        supportsTranscriptMedia: false,
         supportsCandidateHydration: false,
         hydrateCandidates: async () => ({ ok: false as const, code: 'unsupported' as const }),
         readAccounting: async () => ({ ok: false as const, code: 'unsupported' as const }),

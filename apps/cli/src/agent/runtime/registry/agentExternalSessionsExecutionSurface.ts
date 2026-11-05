@@ -146,6 +146,16 @@ export function createAgentExternalSessionsExecutionSurface(
         ...(externalSessionTakeoverAdmitted
             ? { externalSessionTakeoverAdmitted: true as const }
             : {}),
+        ...(contribution.supportsTranscriptMedia ? {
+            async materializeTranscriptMedia(request: Parameters<NonNullable<ExternalSessionExecutionSurface['materializeTranscriptMedia']>>[0]) {
+                unwrap('materializeTranscriptMedia', await contribution.materializeTranscriptMedia!({
+                    source: toAgentSource(request.source, 'materializeTranscriptMedia'),
+                    remoteSessionId: request.remoteSessionId, itemId: request.itemId,
+                    sourceMessageId: request.sourceMessageId, toolCallId: request.toolCallId, cursor: request.cursor,
+                    ...invocation(EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes, request.signal, request.deadlineAtMs),
+                }));
+            },
+        } : {}),
         async validateSource(request) {
             const result = unwrap('resolveSource', await contribution.resolveSource({
                 source: toAgentSource(request.source, 'resolveSource'),

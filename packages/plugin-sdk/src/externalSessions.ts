@@ -20,7 +20,7 @@ import type { ManagedServiceSpec } from './managed-services/contract.js';
 import type { ExecService } from './exec.js';
 import type { LoggerService } from './services/core.js';
 import type { JsonValue } from './identity.js';
-import type { SessionMessageRole, SessionSchema } from './services/sessions.js';
+import type { SessionMediaService, SessionMessageRole, SessionSchema } from './services/sessions.js';
 import type { UsageObservationCost, UsageObservationScope, UsageObservationTokens } from './usage.js';
 import type { AgentExternalSessionObservationReconcileResourceRequest, AgentExternalSessionObservationResourceDescriptorV1, AgentExternalSessionObservationWatchFileChangesV1 } from './externalSessionObservation.js';
 
@@ -276,6 +276,7 @@ export type AgentExternalSessionTranscriptItem = Readonly<{
     sidechainId?: string | null;
     messageRole?: SessionMessageRole | null;
     userProjection?: AgentExternalSessionUserProjection;
+    toolResultMedia?: Readonly<{ sourceMessageId: string; toolCallId: string }>;
     raw: AgentExternalSessionTranscriptRawRecord;
 }>;
 
@@ -452,6 +453,8 @@ export type AgentExternalSessionsPageTranscriptRequest = AgentExternalSessionsIn
     maxSerializedBytes: number;
     /** Optional process-local watch facts; safely ignorable, never path authority. */
     observation?: AgentExternalSessionObservationReconcileResourceRequest['observation'];
+    /** Host-stamped availability of deferred materialization in the admitted Session. */
+    transcriptMediaAvailable?: true;
     /** Forward terminal catch-up may include ordered nonvisual source evidence. */
     projection?: 'terminal';
     source: AgentExternalSessionSource;
@@ -464,6 +467,8 @@ export type AgentExternalSessionsReadAfterTranscriptRequest = AgentExternalSessi
     maxSerializedBytes: number;
     /** Optional process-local watch facts; safely ignorable, never path authority. */
     observation?: AgentExternalSessionObservationReconcileResourceRequest['observation'];
+    /** Host-stamped availability of deferred materialization in the admitted Session. */
+    transcriptMediaAvailable?: true;
     /** Terminal consumers also receive ordered nonvisual source evidence. */
     projection?: 'terminal';
     source: AgentExternalSessionSource;
@@ -511,7 +516,24 @@ export type AgentExternalSessionsTranscriptPage = Readonly<{
  * enforced by the canonical invocation owner; contributions must honor the same
  * explicit inputs and must not add lifecycle/control operations here.
  */
+export type AgentExternalSessionsMaterializeTranscriptMediaRequest = AgentExternalSessionsInvocation & Readonly<{
+    maxSerializedBytes: number;
+    source: AgentExternalSessionSource;
+    remoteSessionId: string;
+    itemId: string;
+    sourceMessageId: string;
+    toolCallId: string;
+    cursor: string;
+    /** Host-stamped current Session authority; never supplied by a transcript reader. */
+    media: Pick<SessionMediaService, 'publishToolResultMedia'>;
+}>;
+
 export type AgentExternalSessionsContribution = Readonly<{
+    /** Called only for an image-bearing item accepted by the ordered Session importer. */
+    materializeTranscriptMedia?(
+        request: AgentExternalSessionsMaterializeTranscriptMediaRequest,
+    ): Promise<AgentExternalSessionsResult<Readonly<{ status: 'published' }>>>;
+
     /** Source-wide numeric accounting, invoked only under host-owned machine/source consent. */
     readAccounting?(
         request: AgentExternalSessionsReadAccountingRequest,

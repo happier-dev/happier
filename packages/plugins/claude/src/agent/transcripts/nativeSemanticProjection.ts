@@ -251,9 +251,9 @@ export function readClaudeToolResultText(value: unknown): string | null {
 
 /** Keep native facts, carrying an exactly repeated command/report body only once. */
 export function withClaudeNativeToolResultMetadata(content: unknown, row: unknown): unknown {
-  // Image blocks have the same unsupported-image meaning inside tool results
-  // as at the message level. Their bytes (also duplicated by native Read
-  // metadata) are not display text and cannot enter a bounded transcript page.
+  // Tool-result images are published through the Session media owner. Their
+  // bytes (also duplicated by native Read metadata) are not display text and
+  // cannot enter a bounded transcript page.
   const projectedContent = Array.isArray(content)
     ? content.map(part => isRecord(part) && part.type === 'image' ? { type: 'image' } : part)
     : content;
@@ -335,9 +335,6 @@ function readMessageContentParts(value: unknown, row: RawJSONLines): readonly Cl
             output: withClaudeNativeToolResultMetadata(result.content, row),
             ...(result.isError === undefined ? {} : { isError: result.isError }),
           });
-      if (Array.isArray(valuePart.content) && valuePart.content.some(part => isRecord(part) && part.type === 'image')) {
-        parts.push({ kind: 'unsupported', source: 'image' });
-      }
       continue;
     }
     parts.push({ kind: 'unsupported', source: type === 'image' ? 'image' : 'content' });

@@ -38,6 +38,7 @@ import {
     resolveClaudeConfigDir,
 } from './source.js';
 import {
+    materializeClaudeExternalSessionTranscriptMedia,
     ClaudeTranscriptInvalidCursorError,
     ClaudeTranscriptResultBudgetTooSmallError,
     pageClaudeExternalSessionTranscript as pageClaudeJsonlExternalSessionTranscript,
@@ -159,6 +160,7 @@ function mapTranscriptItem(
         createdAtMs: item.createdAtMs,
         ...('localId' in item && item.localId !== undefined ? { localId: item.localId } : {}),
         ...('messageRole' in item && item.messageRole !== undefined ? { messageRole: item.messageRole } : {}),
+        ...('toolResultMedia' in item && item.toolResultMedia !== undefined ? { toolResultMedia: item.toolResultMedia } : {}),
         ...('userProjection' in item && item.userProjection !== undefined ? { userProjection: item.userProjection } : {}),
         raw: item.raw,
     };
@@ -271,6 +273,28 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
     const readEnv = () => params.env ?? process.env;
 
     return Object.freeze({
+        async materializeTranscriptMedia(request) {
+            const stopped = invocationFailure(request);
+            if (stopped) return stopped;
+            const env = readEnv();
+            const validation = validateSource({ source: request.source, env });
+            if (!validation.ok) return validation;
+            try {
+                await materializeClaudeExternalSessionTranscriptMedia({
+                    ...request, source: validation.value.legacySource, env,
+                    providerSessionId: request.remoteSessionId, maxBytes: request.maxSerializedBytes,
+                });
+                const after = invocationFailure(request);
+                return after ?? ok({ status: 'published' as const });
+            } catch (error) {
+                const after = invocationFailure(request);
+                if (after) return after;
+                if (error instanceof ClaudeTranscriptInvalidCursorError) {
+                    return failed('invalid_request', 'external_sessions_transcript_cursor_invalid');
+                }
+                return failed('agent_error', 'external_sessions_transcript_media_failed', true);
+            }
+        },
         readAccounting(request) {
             const stopped = invocationFailure(request);
             if (stopped) return stopped;
@@ -459,6 +483,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     direction: request.direction,
                     cursor: request.cursor,
                     projection: request.projection,
+                    includeMediaReferences: request.transcriptMediaAvailable === true,
                     maxBytes: request.maxSerializedBytes,
                     maxItems: request.maxItems,
                     signal: request.signal,
@@ -512,6 +537,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     providerSessionId: request.remoteSessionId,
                     cursor: request.cursor,
                     projection: request.projection,
+                    includeMediaReferences: request.transcriptMediaAvailable === true,
                     maxBytes: request.maxSerializedBytes,
                     maxItems: request.maxItems,
                     signal: request.signal,

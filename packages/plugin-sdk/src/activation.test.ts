@@ -122,6 +122,7 @@ describe('plugin activation contract', () => {
             | 'readAfterTranscript'
             | 'readAccounting'
             | 'resolveManagedEndpointService'
+            | 'materializeTranscriptMedia'
         >();
         expectTypeOf<AgentExternalSessionsContribution>().not.toHaveProperty('status');
         expectTypeOf<AgentExternalSessionsContribution>().not.toHaveProperty('follow');

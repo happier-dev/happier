@@ -41,6 +41,13 @@ function stableOffsetId(prefix: string, offset: number): string {
     return `${prefix}:${padded}`;
 }
 
+/** Decode the exact semantic item identity minted by this source projector. */
+export function readClaudeJsonlToolResultItemOffset(itemId: string): number | null {
+    const match = /^claude:(\d+):tool_result:\d+$/.exec(itemId);
+    const offset = match ? Number(match[1]) : Number.NaN;
+    return Number.isSafeInteger(offset) && offset >= 0 ? offset : null;
+}
+
 export function readClaudeJsonlLineIdentity(params: Readonly<{
     lineStartOffsetBytes: number;
     lineValue: unknown;

@@ -258,6 +258,7 @@ export type ClaudeUnifiedTerminalContext = ClaudePermissionContext & Readonly<{
   }>;
   sessions: Readonly<{
     current: ClaudePermissionContext['sessions']['current'] & Readonly<{
+      media?: import('@happier-dev/plugin-sdk/sessions').SessionMediaService;
       workflowActivity: Readonly<{ publishHeadlines: ClaudeWorkflowHeadlinePublisher }>;
       writeSystemRecord: ClaudeWorkflowSystemRecordWriter;
       readSystemRecord: ClaudeWorkflowSystemRecordReader;

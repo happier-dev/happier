@@ -5,7 +5,7 @@ import { z as zMini } from 'zod/mini';
 
 import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
 import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
-import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
+import { ExternalSessionToolResultMediaReferenceV1Schema, ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
 import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { ExternalSessionOperationStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 import { ExternalSessionTranscriptRawMessageV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
@@ -66,6 +66,7 @@ export const RunnerAgentDaemonExternalSessionRefV1Schema = lazyZodSchema(() => z
 
 const ExternalSessionTranscriptItemSchema = lazyZodSchema(() => z.strictObject({
   id: ExternalSessionTranscriptItemIdV1Schema,
+  toolResultMedia: zMini.optional(ExternalSessionToolResultMediaReferenceV1Schema),
   localId: zMini.optional(ExternalSessionTranscriptItemIdV1Schema),
   sidechainId: zMini.optional(zMini.nullable(SidechainIdSchema)),
   userProjection: zMini.optional(ExternalSessionUserProjectionSchema),
@@ -125,6 +126,7 @@ export const AgentRuntimeDaemonExternalSessionFollowEventV1Schema =
       kind: z.literal('data'),
       phase: z.optional(z.literal('initial_replay')),
       providerSessionId: zMini.optional(ExternalSessionRemoteIdSchema),
+      source: z.optional(ExternalSessionsSourceSchema),
       items: z.array(z.union([ExternalSessionTranscriptItemSchema, ExternalSessionTerminalObservationSchema])).check(z.maxLength(200)),
       fromCursor:
         z.nullable(RunnerAgentDaemonExternalSessionCursorV1Schema),

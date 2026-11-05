@@ -9,6 +9,37 @@ import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcrip
 import { createExternalSessionTerminalFollowProjector } from './terminalFollowProjection';
 
 describe('createExternalSessionTerminalFollowProjector', () => {
+  it('materializes image-bearing source rows only after their semantic item reaches durable admission', async () => {
+    const order: string[] = [];
+    const materializeTranscriptMedia = vi.fn(async () => { order.push('media'); });
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1', agentId: 'claude', materializeTranscriptMedia,
+      projectRuntimeEvent: async () => { order.push('tool'); return { projected: true as const }; },
+    });
+    const event = {
+      kind: 'data', providerSessionId: 'native-1', source: { kind: 'claudeConfig', projectId: 'project' }, fromCursor: null, nextCursor: 'cursor-1',
+      items: [{ id: 'claude:000000000000:tool_result:0', timestampMs: 10, kind: 'event',
+        toolResultMedia: { sourceMessageId: 'claude-jsonl:main:user:image-1', toolCallId: 'read-1' },
+        data: { role: 'agent', content: { type: 'acp', agentId: 'claude', data: {
+          type: 'tool-result', callId: 'read-1', output: [{ type: 'image' }],
+        } } },
+      }],
+    } satisfies Parameters<typeof publish>[0];
+    await publish(event);
+    expect(order).toEqual(['tool', 'media']);
+    expect(materializeTranscriptMedia).toHaveBeenCalledWith(expect.objectContaining({
+      remoteSessionId: 'native-1', itemId: 'claude:000000000000:tool_result:0',
+      sourceMessageId: 'claude-jsonl:main:user:image-1', toolCallId: 'read-1', cursor: 'cursor-1',
+    }));
+    materializeTranscriptMedia.mockClear();
+    const reject = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1', agentId: 'claude', materializeTranscriptMedia,
+      projectRuntimeEvent: async () => ({ projected: false as const, reason: 'test-rejection' }),
+    });
+    await expect(reject(event)).rejects.toThrow('external_session_terminal_transcript_projection_rejected');
+    expect(materializeTranscriptMedia).not.toHaveBeenCalled();
+  });
+
   it('delivers historical source correlation in order while preserving only display projection', async () => {
     const order: string[] = [];
     const observed: unknown[] = [];

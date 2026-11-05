@@ -40,6 +40,7 @@ export type { SessionMcpElicitRequest } from '../services/sessions.js';
 export type { SessionMcpElicitResult } from '../services/sessions.js';
 export type { SessionMcpService } from '../services/sessions.js';
 export type { SessionMediaPublishGeneratedRequest } from '../services/sessions.js';
+export type { SessionMediaPublishToolResultRequest } from '../services/sessions.js';
 export type { SessionMediaService } from '../services/sessions.js';
 export type { SessionMediaSourceRoot } from '../services/sessions.js';
 export type { SessionMessagePart } from '../services/sessions.js';
