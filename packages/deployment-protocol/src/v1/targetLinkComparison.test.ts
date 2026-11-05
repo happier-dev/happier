@@ -8,7 +8,7 @@ it('recognizes the exact linked native Compose project across pages and ignores 
         members: [{ machineId: 'machine-a', installationId: id === 'other-installation' ? 'retired-installation' : 'installation-a', state: 'active' }] }));
     const origin = { projectName: 'production', dockerEndpoint: 'engine', workingDirectory: '/project', capture: { installationId: 'installation-a' } };
     const found = await findExistingNativeComposeTargetLinkV1({ machineId: 'machine-a', origin }, {
-        list: async cursor => createDeploymentTargetLinksListResultV1({ items: (cursor ? links.slice(2) : links.slice(0, 2))
+        list: async (_selection, cursor) => createDeploymentTargetLinksListResultV1({ items: (cursor ? links.slice(2) : links.slice(0, 2))
             .map(targetLink => ({ environment: { ...environment, runtimeTargetLinkId: targetLink.id }, targetLink })), nextCursor: cursor ? null : 'next' }),
         artifact: async link => ({ artifactId: link.contentArtifactId, revision: { headerVersion: 1, bodyVersion: 1 },
             header: { kind: 'deployment-target-link.v1', title: '' }, body: JSON.stringify({ nativeOrigin: {

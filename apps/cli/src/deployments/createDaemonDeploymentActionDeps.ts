@@ -553,9 +553,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             }, defaultsHost));
             if (nativeOrigin) {
                 const existing = await findExistingNativeComposeTargetLinkV1({ machineId: host.machineId, origin: nativeOrigin }, {
-                    async list(cursor) {
+                    async list(selection, cursor) {
                         const path = '/v1/deployments/targets/list';
-                        const body = { serverId: host.serverId, scope: defaults.projectOwner, ...(cursor ? { cursor } : {}) };
+                        const body = { serverId: host.serverId, scope: defaults.projectOwner, selection, ...(cursor ? { cursor } : {}) };
                         const response = await axios.request({ method: 'POST', url: new URL(path, host.serverHttpBaseUrl).href,
                             data: body, signal: context.signal, validateStatus: () => true,
                             headers: await artifactAuthorization(context)({ method: 'POST', path, body }) });

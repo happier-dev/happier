@@ -277,6 +277,7 @@ export const DeploymentTargetLinkInputV1Schema = lazyZodSchema(() => z.safeExten
 export const DeploymentTargetLinkProviderIntentInputV1Schema = lazyZodSchema(() => z.safeExtend(
   DeploymentTargetLinkIntentInputV1Schema, {
     source: deploymentPluginTargetSourceV1Schema,
+    targetKind: DeploymentIdentifierV1Schema,
     provider: DeploymentTargetLinkProviderContentV1Schema,
   },
 ));
