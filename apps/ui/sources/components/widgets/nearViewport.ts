@@ -4,6 +4,7 @@ import { Dimensions } from 'react-native';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { measureInWindow } from '@/components/ui/popover/measure';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /**
  * Which widget bodies a scrolling host builds: the one near-viewport rule shared by the Session
@@ -194,8 +195,11 @@ export function useMeasuredNearViewport(
     const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
     const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
     const placement = useNearViewportPlacement(tracker, span, true);
+    // A hidden retained page has no geometry (display: none): its place is what it last presented, and
+    // it is measured again on the render that presents it.
+    const presented = useLayoutPresentationActive();
     const measure = React.useCallback(() => {
-        if (!tracker) return;
+        if (!tracker || !presented) return;
         const node = nodeRef.current;
         const measurement = tracker.measureSpan(node);
         latestMeasurement.current = measurement;
@@ -203,9 +207,9 @@ export function useMeasuredNearViewport(
             if (latestMeasurement.current !== measurement || nodeRef.current !== node) return;
             setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
         });
-    }, [nodeRef, tracker]);
+    }, [nodeRef, presented, tracker]);
     React.useEffect(() => {
-        if (!tracker) return;
+        if (!tracker || !presented) return;
         let revision = tracker.getLayoutRevision();
         measure();
         const unsubscribe = tracker.subscribe(() => {
@@ -215,6 +219,6 @@ export function useMeasuredNearViewport(
             measure();
         });
         return () => { unsubscribe(); latestMeasurement.current = null; };
-    }, [measure, tracker, focused, instanceId]);
+    }, [measure, tracker, focused, instanceId, presented]);
     return { near: placement === 'near', measured: placement !== 'unmeasured', measure };
 }

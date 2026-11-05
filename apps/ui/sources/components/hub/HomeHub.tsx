@@ -32,7 +32,7 @@ import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useW
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
-import { PopoverScope } from '@/components/ui/popover';
+import { HomeHubFrame } from './HomeHubFrame';
 import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
 import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
@@ -495,14 +495,12 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         loadingShown: loadingMoment.shown, reducedMotion: atmosphere.reducedMotion, writing: heroFrame.isWriting,
     });
     // Home's menus and its Add surface float inside this column, never over the sidebar or the title bar.
-    const paneBoundaryRef = React.useRef<View>(null);
     const framed = (content: React.ReactNode) => (
-        <View ref={paneBoundaryRef} style={styles.pane} onLayout={onHubLayout}>
-            <PopoverScope boundaryRef={paneBoundaryRef}>
-                {content}
-            </PopoverScope>
-            {loadingMoment.layer}
-        </View>
+            <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
+                <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
+                    {content}
+                </View>
+            </HomeHubFrame>
     );
     useVoiceBriefHomeRequest({
         available: focused && guidance.kind !== 'loading' && guidance.kind !== 'connect_machine' && guidance.kind !== 'start_daemon',
@@ -615,7 +613,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
 
     if (heroActive) {
         return framed(
-            <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
                 <ItemList
                     ref={homeListRef}
                     innerViewRef={contentRef as React.RefObject<View>}
@@ -656,7 +653,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     </ItemGroup>
                     {sections}
                 </ItemList>
-            </View>
         );
     }
 

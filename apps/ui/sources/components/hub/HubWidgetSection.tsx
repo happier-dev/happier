@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { useLayoutPresentationActive, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { WidgetSurface, type WidgetSurfaceProps } from '@/components/widgets/surface/WidgetSurface';
@@ -8,8 +9,7 @@ import { getWidgetSizeFootprintV1, resolveWidgetRowOwnerSizeV1, type WidgetInput
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
-    useIsNearViewport,
-    type NearViewportSpan,
+    useMeasuredNearViewport,
     type NearViewportTracker,
 } from '@/components/widgets/nearViewport';
 import { isBuiltinWidgetSwitchedOff, readWidgetSourcePluginName, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -34,7 +34,7 @@ import { useSessionSurfaceEntityDrag, useSessionSurfaceCarriedStyle, SessionSurf
  * has one page to open. The plugin's body draws its own rows and states (loading, empty, error,
  * stale); the frame keeps their room.
  *
- * Its body is built only while Home is the focused route and the section is near the viewport;
+ * Its body is built only while Home is visible and the section is near the viewport;
  * otherwise it keeps its place (the height it last had) and holds no plugin execution, Host API
  * binding or subscription. The widget's data lives inside that body, so a change there re-renders
  * this section alone — never the hub or its sibling sections.
@@ -72,6 +72,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     followSource?: Readonly<{ value: string; wide: boolean; /** The group's own header names the value: this widget does not repeat it. */ groupNamesValue: boolean }>;
 }>) {
     const focused = useIsFocused();
+    const presented = useLayoutPresentationActive();
     const phone = !useIsTablet();
     const descriptor = props.widget ?? null;
     const appRuntime = useAppShellPluginUiProjection();
@@ -99,37 +100,13 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const drag = useSessionSurfaceEntityDrag(focused ? entityDrag : null);
     const carriedStyle = useSessionSurfaceCarriedStyle(drag);
     const sectionRef = React.useRef<View>(null);
-    const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
-    const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
-    const near = useIsNearViewport(props.tracker, span);
+    const { near, measure } = useMeasuredNearViewport(props.tracker, sectionRef, presented, props.instance.id);
     const [bodyHeight, setBodyHeight] = React.useState(0);
-    const active = focused && near;
+    // A retained hidden Home keeps its body; live demand still withdraws with presentation.
+    const active = usePresentedValue(presented && near);
     const size = props.ownsRow ? resolveWidgetRowOwnerSizeV1('home', savedSize, descriptor?.sizeDeclaration) : savedSize;
     const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('home', size)! }), [size]);
 
-    const measure = React.useCallback(() => {
-        const node = sectionRef.current;
-        if (!props.tracker) return;
-        const measurement = props.tracker.measureSpan(node);
-        latestMeasurement.current = measurement;
-        void measurement.then(next => {
-            if (latestMeasurement.current !== measurement || sectionRef.current !== node) return;
-            setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
-        });
-    }, [props.tracker]);
-    React.useEffect(() => {
-        const tracker = props.tracker;
-        if (!tracker) return;
-        let revision = tracker.getLayoutRevision();
-        measure();
-        const unsubscribe = tracker.subscribe(() => {
-            const next = tracker.getLayoutRevision();
-            if (next === revision) return;
-            revision = next;
-            measure();
-        });
-        return () => { unsubscribe(); latestMeasurement.current = null; };
-    }, [measure, props.tracker, focused, props.instance.id]);
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
         const height = event.nativeEvent.layout.height;
         setBodyHeight((current) => (current === height ? current : height));

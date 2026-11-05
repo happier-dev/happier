@@ -92,3 +92,16 @@ export function usePluginSurfaceCurrentUiContextEligibility(): boolean {
 export function useLayoutPresentationActive(): boolean {
     return React.useContext(PluginSurfaceFocusEligibilityContext)?.presentationEffective ?? true;
 }
+
+/**
+ * `value` as this subtree last presented it. While a retained surface is hidden its consumers keep what
+ * they last showed (built bodies, measured props), so a hide does no teardown and a show rebuilds
+ * nothing; the current value flows in on the render that presents the surface again. Live demand still
+ * withdraws through `useLayoutPresentationActive`, which this does not touch.
+ */
+export function usePresentedValue<T>(value: T): T {
+    const presented = useLayoutPresentationActive();
+    const presentedValue = React.useRef(value);
+    if (presented) presentedValue.current = value;
+    return presentedValue.current;
+}
