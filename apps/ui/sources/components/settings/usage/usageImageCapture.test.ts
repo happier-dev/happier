@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { captureUsageViewPng, deliverUsageImageFile, deliverUsageImageFileResult } from './usageAnalyticsExport';
+import { captureUsageViewPng, deliverUsageImageFileResult } from './usageImageFile';
 
 const boundary = vi.hoisted(() => ({ OS: 'web', dataUri: 'data:image/png;base64,iVBORw==', capture: vi.fn(), download: vi.fn() }));
 vi.mock('react-native', async () => ({ ...(await (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock()), Platform: boundary }));
@@ -51,7 +51,8 @@ describe('usage PNG production and local delivery boundaries', () => {
     it('does not download a file after authority retirement', async () => {
         const anchor = { click: boundary.download, remove() {}, style: {} };
         vi.stubGlobal('document', { createElement: () => anchor });
-        expect(await deliverUsageImageFile({ mediaType: 'image/png', fileName: 'safe.png', base64: 'iVBORw==' }, 'save', { isCurrent: () => false })).toBe(false);
+        expect(await deliverUsageImageFileResult({ mediaType: 'image/png', fileName: 'safe.png', base64: 'iVBORw==' }, 'save', { isCurrent: () => false }))
+            .toEqual({ kind: 'cancelled' });
         expect(boundary.download.mock.calls).toEqual([]);
     });
 });

@@ -2,10 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
-import type { UsageRecapComposed } from '@happier-dev/protocol';
+import type { UsageRecapComposed } from '@happier-dev/protocol/usage/usageRecap';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
-import { captureUsageViewPng } from '../../usageAnalyticsExport';
+import { captureUsageViewPng } from '../../usageImageFile';
 import { UsageStatCard } from './UsageStatCard';
 import { buildUsageStatCardModel } from './usageStatCardModel';
 
