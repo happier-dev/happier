@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { compareSessionProviderBindingV1 } from './lifecycle.js';
 import { SessionProviderBindingMetadataV1Schema } from './bindingMetadataV1.js';
+import { createProviderBindingSecurityFingerprintV1 } from '../securityFingerprintsV1.js';
 
 function binding(overrides: Record<string, unknown> = {}) {
   return {
@@ -37,6 +38,40 @@ describe('compareSessionProviderBindingV1', () => {
     expect(compareSessionProviderBindingV1(binding(), binding({
       bindingSecurityFingerprint: 'binding-security:v1:b',
     }))).toBe('security_change');
+  });
+
+  it('keeps source and credential changes distinct from admitted model and declaration changes', () => {
+    const basis = { v: 1 as const, deployment: { kind: 'external' as const },
+      agentTargetKey: 'agent:codex', connectionId: binding().connectionId, contributionKey: binding().contributionKey,
+      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+        protocol: 'openai-responses' as const, publicHeaders: {} }, runtimeCredentialTransport: null,
+      prepared: { v: 1 as const, materialization: 'engineConfig' as const, adapterBindingKey: 'p_pc_a' }, adapterVersion: 1,
+      agentSupport: { acceptsProtocols: ['openai-responses' as const], required: {},
+        credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+        authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] }, materialization: 'engineConfig' as const,
+        applyPolicy: 'restart_session' as const, supportsFreeformModelIds: true },
+      credentialAuthorization: { connectionSecurityFingerprint: 'connection:v1:a', grantFingerprint: 'grant:v1:a',
+        selectedSecretBindingId: null, selectedSecretRecordFingerprint: null } };
+    const metadata = (adapterVersion: number, url = basis.endpoint.normalizedUrl, modelId = 'model-a') => SessionProviderBindingMetadataV1Schema.parse({
+      ...binding(), model: { id: modelId, name: modelId, capabilities: { reasoningControls: adapterVersion === 1 ? 'unknown' : 'supported' } },
+      runtimeBindingBasis: { ...basis, adapterVersion, endpoint: { ...basis.endpoint, normalizedUrl: url } },
+      compatibilityFingerprint: `compatibility:v1:${adapterVersion}`,
+      bindingSecurityFingerprint: createProviderBindingSecurityFingerprintV1({ agentTargetKey: basis.agentTargetKey,
+        connectionId: basis.connectionId, modelId, modelCapabilities: {},
+        endpointTemplateId: basis.endpoint.endpointTemplateId, endpointUrl: url, protocol: basis.endpoint.protocol,
+        publicHeaders: {}, materialization: 'engineConfig', adapterBindingKey: basis.prepared.adapterBindingKey,
+        adapterVersion, compatibilityFingerprint: `compatibility:v1:${adapterVersion}` }),
+    });
+    // Retain the actual producer's declaration-sensitive hash from before the update.
+    const previous = metadata(1);
+    expect(compareSessionProviderBindingV1(previous, metadata(2))).toBe('benign_change');
+    expect(compareSessionProviderBindingV1(previous, metadata(2, 'https://other.example/v1'))).toBe('security_change');
+    const changedCredentialDestination = SessionProviderBindingMetadataV1Schema.parse({ ...metadata(2),
+      runtimeBindingBasis: { ...basis, runtimeCredentialTransport: { id: 'api-key', uses: ['runtime'], protocols: ['openai-responses'],
+        destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } } },
+    });
+    expect(compareSessionProviderBindingV1(previous, changedCredentialDestination)).toBe('security_change');
+    expect(compareSessionProviderBindingV1(previous, { ...metadata(2), contributionKey: 'other/plugin' })).toBe('security_change');
   });
 
   it('distinguishes a different connection from a same-connection security edit', () => {

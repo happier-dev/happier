@@ -1,4 +1,4 @@
-import type { SessionProviderBindingMetadataV1 } from './bindingMetadataV1.js';
+import { createSessionProviderBindingFingerprintV1, type SessionProviderBindingMetadataV1 } from './bindingMetadataV1.js';
 
 export type SessionProviderBindingChangeV1 =
   | 'unchanged'
@@ -11,6 +11,9 @@ export function compareSessionProviderBindingV1(
   next: SessionProviderBindingMetadataV1,
 ): SessionProviderBindingChangeV1 {
   if (current.connectionId !== next.connectionId) return 'connection_change';
-  if (current.bindingSecurityFingerprint !== next.bindingSecurityFingerprint) return 'security_change';
+  if (current.contributionKey !== next.contributionKey) return 'security_change';
+  const currentIdentity = createSessionProviderBindingFingerprintV1(current, 'continuity');
+  const nextIdentity = createSessionProviderBindingFingerprintV1(next, 'continuity');
+  if ((currentIdentity ?? current.bindingSecurityFingerprint) !== (nextIdentity ?? next.bindingSecurityFingerprint)) return 'security_change';
   return JSON.stringify(current) === JSON.stringify(next) ? 'unchanged' : 'benign_change';
 }

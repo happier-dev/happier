@@ -1481,6 +1481,15 @@ control can safely resubmit the retained input.
 
 At launch, Happier persists the structured model selection plus exact non-secret resolution metadata: connection revision, chosen protocol, `compatibilityFingerprint`, `bindingSecurityFingerprint`, and the materialization kind. It does not persist a transient compatibility status, a derived materialization fingerprint, or credentials in session metadata.
 
+In 0.3 development, resume continuity uses the retained runtime binding basis
+and model to compare actual connection, endpoint, materialization and credential
+destination facts. Adapter-version or model-capability metadata drift alone is
+not a security change.
+Actual source/destination changes and hard incompatibility
+still refuse or require the existing recovery. Historical records without those
+retained facts keep their existing opaque-fingerprint comparison; no missing
+historical destination is inferred. Stored fingerprint formats are unchanged.
+
 In the development Session-creation Action path, a daemon Provider rejection retains its validated `ProviderErrorV1` in the `spawn_failed` result, including the Provider's retryability. The ordinary New Session composer uses that result for its existing inline recovery controls. Recovery stays bound to the original launch context; changing the Home, Machine, or Provider selection must not retry the previous request against the new target.
 
 In 0.3 development, unexpected launch preparation, Agent activation and model

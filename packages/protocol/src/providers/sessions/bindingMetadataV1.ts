@@ -209,12 +209,25 @@ export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
       );
   if (!structuralFactsMatch) return false;
 
+  return input.binding.bindingSecurityFingerprint === createSessionProviderBindingFingerprintV1(input.binding);
+}
+
+/** Reconstruct from retained facts, including records written before declaration drift was excluded from continuity. */
+export function createSessionProviderBindingFingerprintV1(
+  binding: SessionProviderBindingMetadataV1,
+  purpose: 'binding' | 'continuity' = 'binding',
+): string | null {
+  const basis = binding.runtimeBindingBasis;
+  const model = binding.model;
+  if (!basis || !model) return null;
+
   try {
     const sharedFingerprintInput = {
       agentTargetKey: basis.agentTargetKey,
       connectionId: basis.connectionId,
+      // Model admission owns model changes; continuity compares their source and destination.
       modelId: model.id,
-      modelCapabilities: {
+      modelCapabilities: purpose === 'continuity' ? {} : {
         ...(model.capabilities?.reasoningControls
           ? { reasoningControls: model.capabilities.reasoningControls }
           : {}),
@@ -232,10 +245,10 @@ export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
               basis.runtimeCredentialTransport.destination,
           }
         : {}),
-      compatibilityFingerprint: input.binding.compatibilityFingerprint,
-      adapterVersion: basis.adapterVersion,
+      compatibilityFingerprint: purpose === 'continuity' ? 'continuity:v1' : binding.compatibilityFingerprint,
+      adapterVersion: purpose === 'continuity' ? 1 : basis.adapterVersion,
     };
-    const expectedFingerprint = basis.deployment.kind === 'managedLocal'
+    return basis.deployment.kind === 'managedLocal'
       ? createProviderBindingSecurityFingerprintV1({
           ...sharedFingerprintInput,
           deployment: {
@@ -252,10 +265,8 @@ export function sessionProviderBindingMetadataMatchesRuntimeBasisV1(
             endpointUrl: basis.endpoint.normalizedUrl,
           })
         : null;
-    if (expectedFingerprint === null) return false;
-    return input.binding.bindingSecurityFingerprint === expectedFingerprint;
   } catch {
-    return false;
+    return null;
   }
 }
 
