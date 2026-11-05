@@ -341,6 +341,77 @@ function accountChangeWake(id: string): Readonly<{
 }
 
 describe('sync AccountChange catch-up projection', () => {
+    it('gathers one Home page of missing documents without opening the other 124 Sessions', async () => {
+        const { createCompactSessionListFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+        const { SessionReadBatchRequestV1Schema } = await import('@happier-dev/protocol/sessions/read/sessionReadBatchV1');
+        const rows = Array.from({ length: 174 }, (_, index) => createPlainSessionCurrentProjectionRecordFixture({ id: `home-page-${index}` }));
+        const batches: string[][] = [];
+        const boundary = createCompactSessionListFetchBoundary(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v2/sessions/active') return jsonResponse({ sessions: [], hasNext: false, nextCursor: null });
+            if (path === '/v2/sessions') return jsonResponse({ sessions: rows.slice(0, 50), hasNext: true, nextCursor: 'next-home-page' });
+            const row = rows.find(row => path === `/v2/sessions/${row.id}`);
+            return row ? jsonResponse({ session: row }) : undefined;
+        });
+        await restoreTestAccount({ physicalRequest: (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === '/v2/sessions/read-batch') batches.push([...SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body))).sessionIds]);
+            return path === '/v2/sessions' || path.startsWith('/v2/sessions/') && path !== '/v2/sessions/metadata-upgrades'
+                ? boundary(url, init) : undefined;
+        } });
+        expect(batches).toEqual([rows.slice(0, 50).map(row => row.id)]);
+    });
+
+    it('applies pushed metadata to an open viewer through the exact-Home reader', async () => {
+        const requests: string[] = [];
+        const sessionId = 'pushed-owner-tuple';
+        let row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId });
+        domainHttp.mockImplementation(async ({ url }) => new URL(url).pathname === `/v2/sessions/${sessionId}`
+            ? jsonResponse({ session: row }) : Response.json({}, { status: 404 }));
+        await restoreTestAccount({ physicalRequest: url => { requests.push(new URL(url).pathname); return undefined; } });
+        const runtime = syncRuntime;
+        if (!runtime || !account) throw new Error('Expected restored Account');
+        const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected exact Home scope');
+        const { storage } = await import('./domains/state/storage');
+        const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+        const release = registerSessionRealtimeTranscriptConsumer(sessionId, scope.serverId);
+        try {
+            await runtime.ensureSessionVisibleForMessageRoute(sessionId, { serverId: scope.serverId,
+                hydrateMessages: false, includeTurnsProjection: false });
+            requests.length = 0;
+            row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, metadataVersion: 2,
+                metadata: { path: '/pushed-owner', host: 'home' } });
+            await runtime.consumeSessionRealtimeUpdateForHome({ serverId: scope.serverId,
+                credentials: account.credentials, encryption: null, isCurrent: () => true,
+                update: { id: 'owner-metadata-push', seq: 9, createdAt: 9, body: {
+                    t: 'update-session', id: sessionId, metadataLayoutVersion: 1,
+                    metadata: { version: row.metadataVersion, value: row.metadata! }, ownerMetadata: row.ownerMetadata!,
+                } } });
+            await waitForHomeGovernance(() => expect(storage.getState().sessions[sessionId]?.ownerMetadataView?.path).toBe('/pushed-owner'));
+            // Full owner documents pass through the canonical owner reader;
+            // they do not trigger an Account inventory or changes-feed refresh.
+            expect(requests).toContain('/v2/sessions/read-batch');
+            expect(requests).not.toContain('/v2/sessions');
+            expect(requests).not.toContain('/v2/changes');
+            requests.length = 0;
+            row = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, metadataVersion: 3,
+                metadata: { path: '/pushed-owner', host: 'home', summary: { text: 'pushed summary', updatedAt: 10 } } });
+            await runtime.consumeSessionRealtimeUpdateForHome({ serverId: scope.serverId,
+                credentials: account.credentials, encryption: null, isCurrent: () => true,
+                update: { id: 'shared-metadata-push', seq: 10, createdAt: 10, body: {
+                    t: 'update-session', id: sessionId, metadataLayoutVersion: 1,
+                    metadata: { version: row.metadataVersion, value: row.metadata! },
+                } } });
+            await waitForHomeGovernance(() => expect(storage.getState().sessions[sessionId]?.metadata?.summary?.text).toBe('pushed summary'));
+            expect(storage.getState().sessions[sessionId]?.ownerMetadataView?.path).toBe('/pushed-owner');
+            expect(requests).toContain('/v2/sessions/read-batch');
+            expect(requests).not.toContain('/v2/sessions');
+            expect(requests).not.toContain('/v2/changes');
+        } finally { release(); }
+    });
+
     let localStorage: LocalStorageMockHandle | null = null;
     let webLocks: WebLockManagerMockHandle | null = null;
 
