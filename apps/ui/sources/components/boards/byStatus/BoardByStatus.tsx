@@ -6,7 +6,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { describeWorkStatusBucket, WORK_STATUS_BUCKETS } from '@/components/work/status/workStatusBuckets';
 import { t } from '@/text';
 
-import { BoardCardActionButton, BoardCardContent, BoardCardFrame } from '../cards/BoardCardView';
+import { BoardCardActionButton, BoardCardBodyContent, BoardCardFacts, BoardCardMark, BoardCardStatus, shownBoardCardWord } from '../cards/BoardCardView';
 import type { BoardCard } from '../model/boardCards';
 import type { BoardCardAction } from '../model/boardCardOpenTarget';
 import type { BoardCanvasWidget, BoardCanvasWidgetRender } from '../canvas/BoardCanvas';
@@ -55,11 +55,17 @@ export const BoardByStatus = React.memo(function BoardByStatus(props: Readonly<{
     const renderWidget = props.renderWidget;
     const onAction = props.onAction;
     const anatomy = React.useMemo((): CollectionAnatomy<StatusItem> => ({
-        boardContent: item => isWidget(item) ? renderWidget?.(item, { grip: null, lifted: false, active: true }) ?? null : <BoardCardContent card={item} showStatusWord={false} />,
-        // The card's frame holds its open target and its action, which Collection keeps as sibling targets.
-        wrapItem: (item, card) => isWidget(item) ? card : <BoardCardFrame card={item}>{card}</BoardCardFrame>,
-        action: item => isWidget(item) ? null : <BoardCardActionButton card={item} onAction={onAction} />,
-        glyph: () => null,
+        card: {
+            headerRight: item => isWidget(item) ? null : <BoardCardActionButton card={item} onAction={onAction} />,
+            facts: item => isWidget(item) ? null : <BoardCardFacts card={item} />,
+            description: item => isWidget(item) ? null : <BoardCardBodyContent card={item} showStatusWord={false} />,
+        },
+        // A widget is its own framed surface with live controls, so it stands in place of a card, never inside one.
+        wrapItem: (item, card) => isWidget(item) ? renderWidget?.(item, { grip: null, lifted: false, active: true }) ?? null : card,
+        // The column names the bucket; a qualifying word leads the card's facts line, so a narrow column's title keeps
+        // the card's width (lab boards-B2).
+        reason: item => isWidget(item) || shownBoardCardWord(item, false) === null ? null : <BoardCardStatus card={item} showStatusWord={false} />,
+        glyph: item => isWidget(item) ? null : <BoardCardMark card={item} />,
         title: item => item.title,
         accessibilityLabel: item => `${item.title}, ${isWidget(item) ? t('boards.widgets.kind') : item.status.word}`,
         testID: item => isWidget(item) ? `board-status-widget:${item.key}` : `board-status-card:${item.key}`,

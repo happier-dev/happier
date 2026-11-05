@@ -1,16 +1,18 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPageSheet } from '@happier-dev/plugin-ui/presentation';
+import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Icon } from '@/components/ui/icons/Icon';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX } from '@/components/ui/lists/itemGroupSpacing';
@@ -120,14 +122,7 @@ export function WorkflowExamplesSection(props: Readonly<{
         onCloseChoice={() => setChoice(null)} onUse={useExample} />;
     return <ItemGroup title={props.hideTitle ? undefined : t('workflows.examples.title')} surface="none"
         {...(props.opensDraft === false ? {} : { description: t('workflows.examples.description') })}>
-        {/* Tiles in a sheetless section share the sheets' edge (as `SelectionTiles` do); a content row's
-            inset would push the cards a row inset inside every other section on the page. */}
-        <ItemGroupColumns columns={2} paddingHorizontal={0} paddingVertical={0}>
-            {examples.map((example) => <ItemGroupColumn key={example.key} style={styles.cell}>
-                <ExampleCard example={example} onUse={() => choose(example)} useControl={choice?.key === example.key ? <ExampleSessionChooser example={example} lifetime={choice.lifetime}
-                    onClose={() => setChoice(null)} onUse={useExample} /> : undefined} />
-            </ItemGroupColumn>)}
-        </ItemGroupColumns>
+        <ExampleCards examples={examples} choose={choose} choice={choice} onCloseChoice={() => setChoice(null)} onUse={useExample} />
     </ItemGroup>;
 }
 
@@ -149,17 +144,13 @@ function ExamplesStrip(props: Readonly<{
     const [pickerOpen, setPickerOpen] = React.useState(false);
     const anchorRef = React.useRef<View>(null);
     const rest = props.examples.length - STRIP_EXAMPLE_COUNT;
+    const { examples } = props;
+    const shown = React.useMemo(() => examples.slice(0, STRIP_EXAMPLE_COUNT), [examples]);
     return <ItemGroup title={t('workflows.examples.title')} description={t('workflows.examples.description')} surface="none"
         action={rest > 0 ? <View ref={anchorRef} collapsable={false}><SectionActionButton testID="workflow-examples:more"
             icon="tree-structure" title={t('common.more')} expanded={pickerOpen}
             onPress={() => setPickerOpen(true)} /></View> : undefined}>
-        <ItemGroupColumns columns={2} paddingHorizontal={0} paddingVertical={0}>
-            {props.examples.slice(0, STRIP_EXAMPLE_COUNT).map((example) => <ItemGroupColumn key={example.key} style={styles.cell}>
-                <ExampleCard example={example} compact onUse={() => props.choose(example)}
-                    useControl={props.choice?.key === example.key ? <ExampleSessionChooser example={example} lifetime={props.choice.lifetime}
-                        onClose={props.onCloseChoice} onUse={props.onUse} /> : undefined} />
-            </ItemGroupColumn>)}
-        </ItemGroupColumns>
+        <ExampleCards examples={shown} compact choose={props.choose} choice={props.choice} onCloseChoice={props.onCloseChoice} onUse={props.onUse} />
         {pickerOpen ? <WorkflowExamplesPopover anchorRef={anchorRef} onRequestClose={() => setPickerOpen(false)} /> : null}
     </ItemGroup>;
 }
@@ -200,79 +191,94 @@ function ExampleSessionChooser(props: Readonly<{
     </View>;
 }
 
+/** Two cards side by side in a library or picker column; a phone stacks them. */
+const EXAMPLE_CARD_MIN_WIDTH_PX = 320;
+const passThroughScroller = (children: React.ReactNode) => children;
+const readExampleKey = (example: WorkflowStarterExampleV1) => example.key;
+
 /**
- * One example (lab `nav-N3`): what it does, the thing itself as the small map under it, and a footer
- * with the one fact that sizes it and its bordered **Use this**.
+ * The examples as the one Collection card (DESIGN.md → "Happier has one card"): what each does, its **Use this** in
+ * the right slot, the thing itself as the small map, and the one fact that sizes it at the foot. Pressing the card
+ * uses it too, since an example has no page of its own to open.
  */
-function ExampleCard(props: Readonly<{ example: WorkflowStarterExampleV1; onUse: () => void; useControl?: React.ReactNode; compact?: boolean }>) {
-    const { example } = props;
+function ExampleCards(props: Readonly<{
+    examples: readonly WorkflowStarterExampleV1[];
+    compact?: boolean;
+    choose: (example: WorkflowStarterExampleV1) => void;
+    choice: Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null;
+    onCloseChoice: () => void;
+    onUse: (example: WorkflowStarterExampleSelection) => void;
+}>) {
+    const { examples, compact, choose, choice, onCloseChoice, onUse } = props;
     const { theme } = useUnistyles();
     const language = getPreferredLanguage();
-    const projection = React.useMemo(() => projectWorkflowFlow(example.definition, {}, Object.fromEntries(
-        Object.keys(en.workflows.examples.nodes).map(key => [key,
-            t(`workflows.examples.nodes.${key as keyof typeof en.workflows.examples.nodes}`)]),
-    )), [example.definition, language]);
-    const stepCount = React.useMemo(
-        () => countWorkflowStepsV1(example.definition.blocks),
-        [example.definition],
-    );
-    const structure = projection.nodes.find(node => node.kind === 'parallel' || node.kind === 'loop' || node.kind === 'if');
-    const shape = structure?.kind === 'parallel' ? t('workflows.editor.addParallel') : structure?.label;
-    return <HappierPageSheet testID={`workflow-examples:${example.key}`} rowDividers={false} style={styles.sheet}
-        colors={{ sheet: theme.colors.surface.base, sheetBorder: theme.colors.border.default,
-            rowDivider: theme.colors.border.subtle, groupDivider: theme.colors.border.subtle }}><View style={styles.card}>
-        <View style={styles.copy}>
-            <View style={styles.titleRow}>
-                <Text style={styles.title}>{tLoose(example.titleKey)}</Text>
-                <ExampleNewTag example={example} />
-            </View>
-            <Text style={styles.description} numberOfLines={props.compact ? 1 : undefined}>{tLoose(example.descriptionKey)}</Text>
-        </View>
-        {props.compact ? null : <View testID={`workflow-examples:${example.key}:preview`} style={styles.preview}>
-            {/* The one map at its small size (lab nav-N3 `uwMap(…, { sm: true })`): one-line labels on
-                the card's own paper, so a short example leaves quiet space, not an empty well (DESIGN-7 P5). */}
-            <WorkflowFlowView projection={projection} selectedNodeId={null} preview density="compact"
-                testIDPrefix={`workflow-examples:${example.key}:flow`} />
-        </View>}
-        <View style={styles.footer}>
-            <Text style={styles.meta}>{[t('workflows.examples.stepCount', { count: stepCount }), shape].filter(Boolean).join(' · ')}</Text>
-            {props.useControl ?? <RoundButton testID={`workflow-examples:${example.key}:use`} size="small" display="secondary"
-                title={t('workflows.examples.use')} accessibilityLabel={`${t('workflows.examples.use')}: ${tLoose(example.titleKey)}`} onPress={props.onUse} />}
-        </View>
-    </View></HappierPageSheet>;
+    const projections = React.useMemo(() => {
+        const nodeLabels = Object.fromEntries(Object.keys(en.workflows.examples.nodes).map(key => [key,
+            t(`workflows.examples.nodes.${key as keyof typeof en.workflows.examples.nodes}`)]));
+        return new Map(examples.map(example => [example.key, projectWorkflowFlow(example.definition, {}, nodeLabels)]));
+    }, [examples, language]);
+    const onOpenChange = React.useCallback((key: string | null) => {
+        const example = examples.find(candidate => candidate.key === key);
+        if (example) choose(example);
+    }, [choose, examples]);
+    const model = useHappierCollection<WorkflowStarterExampleV1>({ items: examples, keyOf: readExampleKey, openKey: null, onOpenChange });
+    const glyphColor = theme.colors.text.secondary;
+    const anatomy = React.useMemo((): CollectionAnatomy<WorkflowStarterExampleV1> => ({
+        glyph: () => <Icon name="tree-structure" size={20} color={glyphColor} />,
+        title: (example) => tLoose(example.titleKey),
+        titleSuffix: (example) => (NEW_EXAMPLE_KEYS.has(example.key) ? <ExampleNewTag example={example} /> : null),
+        description: (example) => tLoose(example.descriptionKey),
+        accessibilityLabel: (example) => tLoose(example.titleKey),
+        testID: (example) => `workflow-examples:${example.key}`,
+        columnTitles: { title: t('workflows.examples.title') },
+        card: {
+            headerRight: (example) => (choice?.key === example.key
+                ? <ExampleSessionChooser example={example} lifetime={choice.lifetime} onClose={onCloseChoice} onUse={onUse} />
+                : <RoundButton testID={`workflow-examples:${example.key}:use`} size="small" display="secondary"
+                    title={t('workflows.examples.use')} accessibilityLabel={`${t('workflows.examples.use')}: ${tLoose(example.titleKey)}`} onPress={() => choose(example)} />),
+            facts: (example) => {
+                const structure = projections.get(example.key)?.nodes.find(node => node.kind === 'parallel' || node.kind === 'loop' || node.kind === 'if');
+                const shape = structure?.kind === 'parallel' ? t('workflows.editor.addParallel') : structure?.label;
+                return <Text style={styles.meta}>{[t('workflows.examples.stepCount', { count: countWorkflowStepsV1(example.definition.blocks) }), shape].filter(Boolean).join(' · ')}</Text>;
+            },
+            ...(compact ? {} : { body: { render: (example: WorkflowStarterExampleV1) => {
+                const projection = projections.get(example.key);
+                return projection ? <View testID={`workflow-examples:${example.key}:preview`} style={styles.preview}>
+                    {/* The one map at its small size (lab nav-N3 `uwMap(…, { sm: true })`): one-line labels on
+                        the card's own paper, so a short example leaves quiet space, not an empty well (DESIGN-7 P5). */}
+                    <WorkflowFlowView projection={projection} selectedNodeId={null} preview density="compact"
+                        testIDPrefix={`workflow-examples:${example.key}:flow`} />
+                </View> : null;
+            } } }),
+        },
+    }), [choice, choose, compact, glyphColor, onCloseChoice, onUse, projections]);
+    // The grid draws its own gutter inside the section's content: pull it back out so the cards stand on the page's edge.
+    return <View style={styles.cards}>
+        <CoreCollectionScope renderPageScroller={passThroughScroller}>
+            <Collection<WorkflowStarterExampleV1>
+                testID="workflow-examples:cards"
+                model={model}
+                anatomy={anatomy}
+                accessibilityLabel={t('workflows.examples.title')}
+                presentation="grid"
+                detail="none"
+                scroll="page"
+                minListWidth={EXAMPLE_CARD_MIN_WIDTH_PX}
+                minDetailWidth={EXAMPLE_CARD_MIN_WIDTH_PX}
+                preferredListRatio={1}
+                minCardWidth={EXAMPLE_CARD_MIN_WIDTH_PX}
+            />
+        </CoreCollectionScope>
+    </View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
     listHeader: { paddingHorizontal: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.rowPaddingHorizontalPx },
-    // A row's cells share its height, and each card fills its cell, so cards side by side end together.
-    cell: { flexGrow: 1 },
-    // The map band runs edge to edge, so the sheet clips it to its own corners.
-    sheet: { flexGrow: 1, minWidth: 0, overflow: 'hidden' },
-    card: { flexGrow: 1, minWidth: 0 },
-    copy: { gap: theme.space.s4, padding: theme.space.s12 },
-    titleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s4 },
-    title: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary },
+    cards: { marginHorizontal: -HAPPIER_PAGE_METRICS.sheetInsetPx },
+    // A short map beside a taller neighbour sits in the middle of the paper it is given, not on top of an
+    // empty well (DESIGN-9 P5 "Ask once").
+    preview: { flexGrow: 1, justifyContent: 'center' },
     description: { ...Typography.variant('body'), color: theme.colors.text.secondary },
-    // The example itself, on the card's paper (lab nav-N3); the footer's hairline closes it. A short map
-    // beside a taller neighbour sits in the middle of the paper it is given, not on top of an empty well
-    // (DESIGN-9 P5 "Ask once").
-    preview: {
-        flexGrow: 1,
-        justifyContent: 'center',
-        paddingHorizontal: theme.space.s12,
-        paddingBottom: theme.space.s12,
-    },
-    footer: {
-        marginTop: 'auto',
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: theme.space.s8,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s8,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.subtle,
-    },
     meta: { ...Typography.variant('meta'), flexShrink: 1, color: theme.colors.text.tertiary },
     chooser: { flexShrink: 1, minWidth: 0, alignItems: 'flex-end', gap: theme.space.s4 },
 }));

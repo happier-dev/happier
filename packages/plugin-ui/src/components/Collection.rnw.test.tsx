@@ -358,6 +358,8 @@ function presentationHost(
 type HarnessOptions = Readonly<{
   presentation?: 'table' | 'list' | 'board' | 'grid';
   items?: readonly Entry[];
+  narrowGrid?: CollectionProps<Entry>['narrowGrid'];
+  minCardWidth?: number;
   grouped?: boolean;
   grouping?: HappierCollectionGrouping<Entry>;
   boardLayout?: CollectionProps<Entry>['boardLayout'];
@@ -453,6 +455,8 @@ function Harness(props: HarnessProps): ReactElement {
         ? {}
         : { detailHeader: props.detailHeader })}
       windowStatement="3 loaded · complete"
+      {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
+      {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
       {...(props.loading === undefined ? {} : { loading: props.loading })}
       {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}
       {...(props.empty === undefined ? {} : { empty: props.empty })}
@@ -592,6 +596,21 @@ function headerTitles(container: HTMLElement): readonly string[] {
     : [...header.querySelectorAll('[dir="auto"]')].map(
         (node) => node.textContent ?? '',
       );
+}
+
+/**
+ * The pointer-events value the browser hit-tests for an element, as React Native Web draws it: an element's own
+ * `none`/`auto` wins; `box-none` makes the element itself `none` and hands `auto` to its children (RNW's `>*`
+ * rule, which a test DOM shows as the parent's inline value); otherwise the value inherits.
+ */
+function resolvedPointerEvents(element: HTMLElement): string {
+  const own = (node: HTMLElement) => getComputedStyle(node).pointerEvents.replace(/\s*!important$/, '');
+  const value = own(element);
+  if (value === 'box-none') return 'none';
+  if (value !== '' && value !== 'inherit') return value;
+  const parent = element.parentElement;
+  if (parent === null) return 'auto';
+  return own(parent) === 'box-none' ? 'auto' : resolvedPointerEvents(parent);
 }
 
 describe('Collection table', () => {
@@ -2731,6 +2750,7 @@ describe('the title suffix', () => {
     expect(view.query('row:a:title-suffix')).toBeNull();
     view.unmount();
   });
+
 });
 
 describe('the title controls', () => {
@@ -3091,6 +3111,61 @@ function within(container: HTMLElement | null, testID: string): boolean {
 }
 
 describe('board', () => {
+  it('lets wrapItem stand an item in place of its card, so its own controls stay live (a Board widget)', () => {
+    const view = mount({ presentation: 'board', anatomy: {
+      ...anatomy,
+      wrapItem: (entry, card) => (entry.id === 'a' ? <Text testID="own:a">Own surface</Text> : card),
+    } });
+    view.measure(1440);
+    expect(view.query('own:a')).not.toBeNull();
+    expect(view.query('row:a:chrome')).toBeNull();
+    expect(view.query('row:b:chrome')).not.toBeNull();
+    view.unmount();
+  });
+
+  it.each(['board', 'grid'] as const)('keeps bounded %s body and header controls outside card-open through resize', async (presentation) => {
+    let mounts = 0;
+    let effects = 0;
+    function Body() {
+      const [value, setValue] = React.useState('draft');
+      React.useEffect(() => { mounts += 1; }, []);
+      return <View>
+        <input data-testid="bounded-input" defaultValue={value} />
+        <Button testID="bounded-body-control" title="Edit" onPress={() => { effects += 1; setValue('edited'); }} />
+        <Text testID="bounded-value">{value}</Text>
+      </View>;
+    }
+    const bounded: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      card: {
+        headerRight: (entry) => entry.id === 'a' ? <Button testID="bounded-header-control" title="Run" onPress={() => { effects += 1; }} /> : null,
+        facts: (entry) => <Text testID={`bounded-facts:${entry.id}`}>{entry.repo}</Text>,
+        body: { render: (entry) => entry.id === 'b' ? <Body /> : null },
+      },
+    };
+    const view = mount({ presentation, grouped: false, anatomy: bounded });
+    try {
+      view.measure(1440);
+      const input = view.query('bounded-input') as HTMLInputElement | null;
+      expect(input).not.toBeNull();
+      expect(view.query('bounded-facts:a')?.textContent).toBe('payments-api');
+      const target = view.query('row:a')!;
+      expect(view.query('row:b')!.contains(view.query('bounded-body-control'))).toBe(false);
+      expect(target.contains(view.query('bounded-header-control'))).toBe(false);
+      act(() => { view.query('bounded-header-control')!.click(); view.query('bounded-body-control')!.click(); });
+      expect(effects).toBe(2);
+      expect(view.openChanges).toEqual([]);
+      expect(view.query('bounded-value')?.textContent).toBe('edited');
+      act(() => { input!.focus(); });
+      view.measure(390);
+      expect(view.query('bounded-input')).toBe(input);
+      expect(document.activeElement).toBe(input);
+      expect(mounts).toBe(1);
+      act(() => { target.click(); });
+      expect(view.openChanges).toEqual(['a']);
+    } finally { view.unmount(); }
+  });
+
   it('keeps five status columns on stable tracks with empty buckets still reachable', () => {
     const view = mount({
       presentation: 'board',
@@ -3120,7 +3195,9 @@ describe('board', () => {
     expect(widths.reduce((sum, width) => sum + width, 0)).toBeLessThanOrEqual(
       980,
     );
-    expect(columns[0]!.textContent).toContain('None');
+    // An empty column says so by its count alone: no second "None" line under "Needs you 0".
+    expect(columns[0]!.textContent).not.toContain('None');
+    expect(columns[0]!.querySelector('[data-testid^="row:"]')).toBeNull();
     expect(view.query('collection:hints')).toBeNull();
     view.measure(600);
     const narrowWidths = columns.map((column) =>
@@ -3133,6 +3210,100 @@ describe('board', () => {
     view.unmount();
   });
 
+  it("keeps a board's card track at the caller's narrowest card and brings the open card's column into view", async () => {
+    const pane = createPaneHost();
+    const items: readonly Entry[] = [
+      { id: 'a', title: 'Retry idempotent payment intents', group: 'needs', repo: 'payments-api', reason: 'Review requested', age: '18m' },
+      { id: 'z', title: 'Rotate staging service principals', group: 'rest', repo: 'ops', reason: '', age: '2d' },
+    ];
+    const view = mount({
+      presentation: 'board',
+      boardLayout: 'columns',
+      pane,
+      items,
+      minCardWidth: 280,
+      grouping: {
+        axis: [
+          { key: 'needs', title: 'Needs you' },
+          { key: 'agent', title: 'With an agent' },
+          { key: 'review', title: 'In review' },
+          { key: 'rest', title: 'Everything else' },
+        ],
+        groupOf: (entry) => entry.group,
+        retainEmpty: true,
+      },
+    });
+    try {
+      view.measure(1400);
+      const widthOf = (key: string) => Number.parseFloat(getComputedStyle(view.query(`collection:column:${key}`)!).width);
+      // Wide enough: the four columns share the width, each at least the card plus its insets.
+      expect(widthOf('needs')).toBeGreaterThanOrEqual(280);
+      // Narrower than four cards: the board keeps its card track rather than squeezing its columns to fit.
+      view.measure(700);
+      expect(widthOf('needs')).toBeGreaterThanOrEqual(280);
+      const column = view.query('collection:column:rest')!;
+      // The horizontal scroller is the DOM boundary: record where it is asked to scroll to.
+      const scrolls: Array<Readonly<{ node: Element; left: number }>> = [];
+      const original = Object.getOwnPropertyDescriptor(Element.prototype, 'scroll');
+      Object.defineProperty(Element.prototype, 'scroll', { configurable: true, writable: true,
+        value(this: Element, options?: ScrollToOptions) { scrolls.push({ node: this, left: options?.left ?? 0 }); } });
+      try {
+        // Opening a card in the last column, off screen, scrolls its column into view.
+        await view.setOpen('z');
+        expect(view.query('host-pane')).not.toBeNull();
+      } finally {
+        if (original === undefined) delete (Element.prototype as { scroll?: unknown }).scroll;
+        else Object.defineProperty(Element.prototype, 'scroll', original);
+      }
+      const reveal = scrolls.filter((call) => call.node.contains(column) && call.left > 0).at(-1);
+      expect(reveal).toBeDefined();
+      const columnEnd = ([...column.parentElement!.children].indexOf(column) + 1) * widthOf('rest');
+      expect(reveal!.left + 700).toBeGreaterThanOrEqual(columnEnd);
+    } finally { view.unmount(); }
+  });
+
+  it("puts a board card's state word on its facts line even beside its own control, so the title keeps the width", () => {
+    const view = mount({
+      presentation: 'board',
+      boardLayout: 'columns',
+      detail: 'none',
+      anatomy: {
+        ...anatomy,
+        card: { headerRight: (entry) => <Text testID={`control:${entry.id}`}>⋯</Text> },
+      },
+    });
+    try {
+      view.measure(1200);
+      const card = view.query('row:a:chrome')!;
+      const header = view.query('row:a:chrome.header')!;
+      expect(header.querySelector('[data-testid="control:a"]')).not.toBeNull();
+      // Not in the header beside the title: under it, on the card's facts line.
+      expect(header.textContent).not.toContain('Review requested');
+      expect(card.textContent).toContain('Review requested');
+    } finally { view.unmount(); }
+  });
+
+  it("says a board card's designation once, in its byline, not again after the title", () => {
+    const view = mount({
+      presentation: 'board',
+      boardLayout: 'columns',
+      detail: 'none',
+      anatomy: {
+        ...anatomy,
+        titleSuffix: () => '#2481',
+        byline: (entry) => `${entry.repo} #2481`,
+      },
+    });
+    try {
+      view.measure(1200);
+      const column = view.query('collection:column:needs')!;
+      expect(column.textContent).toContain('payments-api #2481');
+      expect(column.textContent).toContain('Retry idempotent payment intents');
+      // Two cards in the column, each saying the designation once.
+      expect(column.textContent!.split('#2481')).toHaveLength(3);
+    } finally { view.unmount(); }
+  });
+
   it('stretches a stacked domain card through its primary gridcell without reserving an accessory column', () => {
     const view = mount({
       presentation: 'board',
@@ -3140,11 +3311,11 @@ describe('board', () => {
       detail: 'none',
       anatomy: {
         ...anatomy,
-        boardContent: (entry) => (
+        card: { body: { render: (entry) => (
           <View style={{ width: '100%' }} testID={`body:${entry.id}`}>
             <Text>{entry.title}</Text>
           </View>
-        ),
+        ) } },
       },
     });
     view.measure(390);
@@ -3168,11 +3339,11 @@ describe('board', () => {
       detail: 'none',
       anatomy: {
         ...anatomy,
-        boardContent: (entry) => (
+        card: { body: { render: (entry) => (
           <View testID={`body:${entry.id}`}>
             <Text>{entry.title}</Text>
           </View>
-        ),
+        ) } },
         wrapItem: (entry, card) => (
           <View testID={`frame:${entry.id}`}>{card}</View>
         ),
@@ -3209,6 +3380,48 @@ describe('board', () => {
     expect(view.openChanges).toEqual(['a']);
     view.unmount();
   });
+
+  it.each(['board', 'grid'] as const)(
+    "lets a pointer on a %s card's title, description, body and facts reach the card's open target",
+    (presentation) => {
+      const view = mount({
+        presentation,
+        detail: 'none',
+        anatomy: {
+          ...anatomy,
+          titleSuffix: (entry) => entry.repo,
+          description: (entry) => `About ${entry.title}`,
+          card: {
+            facts: (entry) => <Text testID={`facts:${entry.id}`}>{entry.age}</Text>,
+            body: { render: (entry) => (
+              <View testID={`body:${entry.id}`}>
+                <Text testID={`body-text:${entry.id}`}>{entry.title}</Text>
+              </View>
+            ) },
+          },
+        },
+      });
+      view.measure(1440);
+      const target = view.query('row:a')!;
+      const card = view.query('row:a:chrome')!;
+      const title = [...card.querySelectorAll<HTMLElement>('[dir="auto"]')].find((node) => node.textContent === entries[0]!.title)!;
+      const description = [...card.querySelectorAll<HTMLElement>('[dir="auto"]')].find((node) => node.textContent === `About ${entries[0]!.title}`)!;
+      // Every part of a card that is not a control lets the pointer through to the open target beneath it, as
+      // the browser resolves pointer-events (a `box-none` wrapper re-enables its children).
+      for (const leaf of [title, description, view.query('body-text:a')!, view.query('facts:a')!]) {
+        expect(resolvedPointerEvents(leaf)).toBe('none');
+      }
+      // So does every box the frame draws them in: a card without controls takes no pointer hit of its own.
+      // (An empty control slot draws nothing to hit.)
+      const hitTargets = [card, ...card.querySelectorAll<HTMLElement>('*')]
+        .filter((node) => node.childNodes.length > 0 && resolvedPointerEvents(node) !== 'none');
+      expect(hitTargets.map((node) => node.dataset.testid ?? node.tagName)).toEqual([]);
+      expect(target.contains(card)).toBe(false);
+      act(() => target.click());
+      expect(view.openChanges).toEqual(['a']);
+      view.unmount();
+    },
+  );
 
   it("draws one labelled column per group of the one axis, each holding exactly its group's cards", () => {
     const view = mount({ presentation: 'board' });
@@ -3435,20 +3648,36 @@ describe('grid', () => {
       anatomy: described,
     });
     view.measure(1440);
-    expect(
-      view
-        .queryAll('collection:grid-row')[0]!
-        .querySelectorAll('[data-testid$=":card"]').length,
-    ).toBe(3);
+    const card = view.query('row:b:card')!;
+    const parent = card.parentElement;
+    const wideWidth = Number.parseFloat(card.style.width);
     view.measure(390);
-    const rows = view.queryAll('collection:grid-row');
-    expect(rows.length).toBe(3);
-    expect(
-      rows.every(
-        (row) => row.querySelectorAll('[data-testid$=":card"]').length === 1,
-      ),
-    ).toBe(true);
+    expect(view.query('row:b:card')).toBe(card);
+    expect(card.parentElement).toBe(parent);
+    expect(Number.parseFloat(card.style.width)).toBeGreaterThan(wideWidth);
+    expect(new Set(['a', 'b', 'c'].map(id => view.query(`row:${id}:card`)!.style.width)).size).toBe(1);
     view.unmount();
+  });
+
+  it('pages a one-column grid sideways as one row of cards with the next card showing, and walks it with ← →', async () => {
+    const view = mount({ presentation: 'grid', grouped: false, detail: 'none', anatomy: described, narrowGrid: 'page' });
+    try {
+      view.measure(1440);
+      const wideRow = view.query('row:a:card')!.parentElement;
+      expect(view.query('row:b:card')!.parentElement).toBe(wideRow);
+      view.measure(390);
+      const width = (id: string) => Number.parseFloat(view.query(`row:${id}:card`)!.style.width);
+      // One row of equal cards, each narrower than the grid, so the next card's edge shows beside it.
+      expect(new Set(['a', 'b', 'c'].map(width)).size).toBe(1);
+      expect(width('a')).toBeLessThan(390 - 2 * 16 - 12);
+      await act(async () => {
+        view.query('row:a')!.focus();
+        view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(view.query('row:b'));
+    } finally {
+      view.unmount();
+    }
   });
 
   it('sizes a one-column grid card to its content instead of reserving two description lines', () => {
@@ -3459,22 +3688,22 @@ describe('grid', () => {
     });
     view.measure(390);
     // One card per row has no row peers to align with: its height follows its content.
-    expect(view.query('row:a:card')!.style.height).toBe('');
+    expect(view.query('row:a:card')!.style.minHeight).toBe('');
     view.measure(1440);
-    expect(view.query('row:a:card')!.style.height).not.toBe('');
+    expect(view.query('row:a:card')!.style.minHeight).not.toBe('');
     view.unmount();
   });
 
-  it('composes a card with no description and no footer as a compact tile: one row, about 52-56px', () => {
+  it('omits empty description, body and facts bands from a title-only tile', () => {
     const view = mount({
       presentation: 'grid',
       grouped: false,
-      anatomy: { ...anatomy, reason: undefined, age: undefined },
+      anatomy: { ...anatomy, where: undefined, reason: undefined, age: undefined },
     });
     view.measure(1440);
-    const height = parseFloat(view.query('row:a:card')!.style.height);
-    expect(height).toBeGreaterThan(40);
-    expect(height).toBeLessThanOrEqual(60);
+    expect(view.query('row:a:description')).toBeNull();
+    expect(view.query('row:a:chrome.body')).toBeNull();
+    expect(view.query('row:a:chrome.footer')).toBeNull();
     view.unmount();
   });
 
@@ -3485,6 +3714,7 @@ describe('grid', () => {
       detail: 'none',
       anatomy: {
         ...anatomy,
+        where: undefined,
         reason: undefined,
         age: undefined,
         description: (entry) =>
@@ -3493,15 +3723,8 @@ describe('grid', () => {
     });
     try {
       view.measure(1440);
-      const rows = view.queryAll('collection:grid-row');
-      // The compact tile does not stretch to its described neighbours' height: it starts its own row.
-      expect(
-        rows.map(
-          (row) => row.querySelectorAll('[data-testid$=":card"]').length,
-        ),
-      ).toEqual([2, 1]);
       const height = (id: string) =>
-        parseFloat(view.query(`row:${id}:card`)!.style.height);
+        parseFloat(view.query(`row:${id}:card`)!.style.minHeight);
       expect(height('c')).toBeLessThan(height('a'));
       // Keyboard rows are the drawn rows: ArrowDown from the second described card lands on the tile below.
       await act(async () => {
@@ -3520,7 +3743,7 @@ describe('grid', () => {
     }
   });
 
-  it('drops the description and footer bands for a shelf where no card has them, keeping heights equal within each shelf', () => {
+  it('omits empty bands for a shelf while retaining a common minimum track within each shelf', () => {
     const view = mount({
       presentation: 'grid',
       anatomy: {
@@ -3533,14 +3756,14 @@ describe('grid', () => {
     });
     view.measure(1440);
     const height = (id: string) =>
-      parseFloat(view.query(`row:${id}:card`)!.style.height);
+      parseFloat(view.query(`row:${id}:card`)!.style.minHeight);
     expect(height('a')).toBe(height('b'));
     // "Everything else" has neither a description nor a status: its card is just its head.
     expect(height('c')).toBeLessThan(height('a'));
     view.unmount();
   });
 
-  it('keeps every card the same height, with two description lines reserved and the footer in place', () => {
+  it('aligns minimum tracks without clipping growing content and bounds a description to two lines', () => {
     const view = mount({
       presentation: 'grid',
       grouped: false,
@@ -3548,7 +3771,7 @@ describe('grid', () => {
     });
     view.measure(1440);
     const heights = ['a', 'b', 'c'].map(
-      (id) => view.query(`row:${id}:card`)!.style.height,
+      (id) => view.query(`row:${id}:card`)!.style.minHeight,
     );
     expect(heights[0]).not.toBe('');
     expect(new Set(heights).size).toBe(1);
@@ -3560,7 +3783,7 @@ describe('grid', () => {
     view.unmount();
   });
 
-  it('makes the footer action its own target that never opens the item', () => {
+  it('makes the default header action its own target that never opens the item', () => {
     actionPresses.length = 0;
     const view = mount({
       presentation: 'grid',
@@ -3582,7 +3805,7 @@ describe('grid', () => {
     view.unmount();
   });
 
-  it('keeps a long warning and its action in separate footer slots at phone width', () => {
+  it('keeps a long warning from displacing its independent header action at phone width', () => {
     actionPresses.length = 0;
     const warning =
       'This plugin needs a repository to watch before it can run on this machine.';
@@ -3601,8 +3824,7 @@ describe('grid', () => {
     view.measure(390);
     const status = view.query('warning:a')!;
     const action = view.query('action:a')!;
-    // The status and action share the actual footer's two columns, rather than an absolutely overlaid
-    // control on full-width status text. Flex layout can shrink the warning without shrinking the action.
+    // The warning gives way before the independent action does.
     const statusSlot = status.parentElement!;
     const actionSlot = action.parentElement!;
     expect(statusSlot.parentElement).toBe(actionSlot.parentElement);
@@ -3819,97 +4041,9 @@ describe('grid', () => {
     view.unmount();
   });
 
-  it("draws a live domain card body inside the card's own activation target, at one declared height for every card", () => {
-    actionPresses.length = 0;
-    const bodied: CollectionAnatomy<Entry> = {
-      ...described,
-      cardContent: {
-        height: 180,
-        render: (entry) => (
-          <View testID={`card-body:${entry.id}`}>
-            <Text>{`Live ${entry.title}`}</Text>
-          </View>
-        ),
-      },
-    };
-    const view = mount({
-      presentation: 'grid',
-      grouped: false,
-      anatomy: bodied,
-    });
-    view.measure(1440);
-    // The body replaces the generic head and description; the card stays the one press and focus target.
-    expect(within(view.query('row:a'), 'card-body:a')).toBe(true);
-    expect(view.query('row:a:description')).toBeNull();
-    const heights = ['a', 'b', 'c'].map((id) =>
-      Number.parseFloat(view.query(`row:${id}:card`)!.style.height),
-    );
-    expect(new Set(heights).size).toBe(1);
-    // The declared body height plus the footer's reserved place: the card never grows with its content.
-    expect(heights[0]).toBeGreaterThanOrEqual(180);
-    act(() => {
-      view.query('card-body:b')!.click();
-    });
-    expect(view.openChanges).toEqual(['b']);
-    // The footer action keeps its own target beside the body.
-    expect(within(view.query('row:a'), 'action:a')).toBe(false);
-    act(() => {
-      view.query('action:a')!.click();
-    });
-    expect(actionPresses).toEqual(['a']);
-    expect(view.openChanges).toEqual(['b']);
-    view.unmount();
-  });
-
-  it('lets a domain body own the footer place: the action sits over it, outside the card target, with no extra band', () => {
-    actionPresses.length = 0;
-    const ownsFooter = (flag: boolean): CollectionAnatomy<Entry> => ({
-      ...described,
-      cardContent: {
-        height: 180,
-        ...(flag ? { ownsFooter: true } : {}),
-        render: (entry) => (
-          <View testID={`card-body:${entry.id}`}>
-            <Text>{`Live ${entry.title}`}</Text>
-          </View>
-        ),
-      },
-    });
-    const draw = (flag: boolean) => {
-      const view = mount({
-        presentation: 'grid',
-        grouped: false,
-        anatomy: ownsFooter(flag),
-      });
-      view.measure(1440);
-      return view;
-    };
-    const reserved = draw(false);
-    const owned = draw(true);
-    const height = (view: ReturnType<typeof mount>) =>
-      Number.parseFloat(view.query('row:a:card')!.style.height);
-    // The body draws its own footer, so the card is the body and nothing more.
-    expect(height(owned)).toBeLessThan(height(reserved));
-    expect(height(owned)).toBe(182);
-    // The action is still its own target beside the card's, so it never nests a button in a button.
-    const nested = owned
-      .query('row:a:card')!
-      .querySelectorAll(
-        '[role="button"] [role="button"], button [role="button"], [role="button"] button, button button',
-      );
-    expect(nested.length).toBe(0);
-    act(() => {
-      owned.query('action:a')!.click();
-    });
-    expect(actionPresses).toEqual(['a']);
-    expect(owned.openChanges).toEqual([]);
-    reserved.unmount();
-    owned.unmount();
-  });
-
-  it('reserves the description lines and the footer only when some card in the grid fills them', () => {
+  it('keeps a common minimum track for populated descriptions without reserving an empty band', () => {
     const cardHeight = (view: ReturnType<typeof mount>) =>
-      Number.parseFloat(view.query('row:a:card')!.style.height);
+      Number.parseFloat(view.query('row:a:card')!.style.minHeight);
     const full = mount({
       presentation: 'grid',
       grouped: false,
@@ -3922,8 +4056,16 @@ describe('grid', () => {
       anatomy: { ...anatomy, reason: undefined },
     });
     bare.measure(1440);
-    // No card has a description, a status or an action: the grid keeps neither slot, so its cards are shorter.
+    // An empty slot does not reserve a facts or description band.
     expect(cardHeight(bare)).toBeLessThan(cardHeight(full));
+    for (const description of [null, '']) {
+      const absent = mount({ presentation: 'grid', grouped: false,
+        anatomy: { ...anatomy, reason: undefined, description: () => description } });
+      absent.measure(1440);
+      expect(absent.query('row:a:description')).toBeNull();
+      expect(cardHeight(absent)).toBe(cardHeight(bare));
+      absent.unmount();
+    }
     // One described card is enough for every card in the grid to keep the two lines (equal heights, aligned rows).
     const one = mount({
       presentation: 'grid',
@@ -3936,7 +4078,7 @@ describe('grid', () => {
     });
     one.measure(1440);
     expect(cardHeight(one)).toBeGreaterThan(cardHeight(bare));
-    expect(Number.parseFloat(one.query('row:c:card')!.style.height)).toBe(
+    expect(Number.parseFloat(one.query('row:c:card')!.style.minHeight)).toBe(
       cardHeight(one),
     );
     full.unmount();
@@ -3946,7 +4088,7 @@ describe('grid', () => {
 
   it('draws the item itself in a preview band above every card, at one height, and never in a list', () => {
     const cardHeight = (view: ReturnType<typeof mount>) =>
-      Number.parseFloat(view.query('row:a:card')!.style.height);
+      Number.parseFloat(view.query('row:a:card')!.style.minHeight);
     const previewed: CollectionAnatomy<Entry> = {
       ...anatomy,
       preview: (entry) => <Text>{`Preview of ${entry.id}`}</Text>,
@@ -3960,9 +4102,9 @@ describe('grid', () => {
     });
     grid.measure(1440);
     expect(grid.query('row:b:preview')?.textContent).toBe('Preview of b');
-    // The band is reserved on every card, so rows stay equal and footers align.
+    // The preview contributes to every card's minimum track.
     expect(cardHeight(grid)).toBeGreaterThan(cardHeight(plain));
-    expect(Number.parseFloat(grid.query('row:c:card')!.style.height)).toBe(
+    expect(Number.parseFloat(grid.query('row:c:card')!.style.minHeight)).toBe(
       cardHeight(grid),
     );
     const list = mount({
@@ -3975,6 +4117,32 @@ describe('grid', () => {
     plain.unmount();
     grid.unmount();
     list.unmount();
+  });
+
+  it('stands a preview card on its band: mark beside the title, where under it, kind and age at the foot (lab artifacts A1)', () => {
+    const previewed: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      preview: (entry) => <Text>{`Preview of ${entry.id}`}</Text>,
+    };
+    const grid = mount({ presentation: 'grid', grouped: false, anatomy: previewed });
+    grid.measure(1440);
+    const header = grid.query('row:a:chrome.header')!;
+    const titleBlock = grid.query('row:a:chrome.titleBlock')!;
+    const foot = grid.query('row:a:chrome.footer')!;
+    // The band already identifies the item, so its mark needs no row of its own above the title.
+    expect(getComputedStyle(header).flexDirection).toBe('row');
+    expect(titleBlock.textContent).toContain('payments-api');
+    expect(foot.textContent).toContain('Review requested');
+    expect(foot.textContent).toContain('18m');
+    expect(foot.textContent).not.toContain('payments-api');
+    expect(header.textContent).not.toContain('Review requested');
+    grid.unmount();
+    // A card with no band keeps the one card: its reason stays in the right slot, its mark on its own row.
+    const plain = mount({ presentation: 'grid', grouped: false, anatomy });
+    plain.measure(1440);
+    expect(getComputedStyle(plain.query('row:a:chrome.header')!).flexDirection).toBe('column-reverse');
+    expect(plain.query('row:a:chrome.header')!.textContent).toContain('Review requested');
+    plain.unmount();
   });
 
   it('scrolls the page header and footer with the cards, in one scroll container, as a page-sized collection', () => {

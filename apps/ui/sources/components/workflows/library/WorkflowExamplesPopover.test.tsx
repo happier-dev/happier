@@ -13,6 +13,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 // The Popover's measuring and portal are the platform boundary; the picker's own props are what is read.
 vi.mock('@/components/ui/popover', async () => ({
+    ...await vi.importActual<typeof import('@/components/ui/popover')>('@/components/ui/popover'),
     // This owner-level check observes the native portal's measured-frame inputs.
     Popover: (props: React.ComponentProps<typeof import('@/components/ui/popover')['Popover']>) => {
         const { children: _children, ...frameProps } = props;

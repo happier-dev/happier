@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, renderHook, standardCleanup } from '@/dev/testkit';
+import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
@@ -295,6 +296,7 @@ describe('WorkflowEditorHostScreen saved-entry intents', () => {
     it('inserts an example into the current draft as one undoable change without saving or running', async () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />, { wrapper: EditorPaneWrapper });
         await screen.pressByTestIdAsync('workflow-editor-add-root-examples');
+        await reportCollectionLayout(screen, 'workflow-examples:cards');
         await screen.pressByTestIdAsync('workflow-examples:morning-digest:use');
         expect(screen.findByTestId('workflow-editor-name')?.props.value).toBe('workflows.examples.morningDigest.title');
         expect(screen.findByTestId('workflow-editor-step-digest')).not.toBeNull();

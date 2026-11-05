@@ -438,13 +438,16 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
             }))),
         ],
         ...(view === 'grid' ? {
-            cardContent: {
-                height: metrics.length > 0 ? MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX : MACHINE_CARD_BODY_HEIGHT_PX,
-                // The body draws its footer (work, chevron); Update stands over it as its own target, outside the card's.
-                ownsFooter: true,
-                render: (item: MachineIndexItem) => <MachineIndexCard item={item} style={style} metrics={metrics} />,
+            // The machine card body draws its own name and mark, so the shared card adds none of its own.
+            title: () => '',
+            glyph: () => null,
+            card: {
+                headerRight: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
+                body: {
+                    heightAtNormalText: metrics.length > 0 ? MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX : MACHINE_CARD_BODY_HEIGHT_PX,
+                    render: (item: MachineIndexItem) => <MachineIndexCard item={item} style={style} metrics={metrics} />,
+                },
             },
-            action: (item: MachineIndexItem) => <MachineIndexUpdateAction item={item} />,
         } : {}),
         accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, item.presence].filter(Boolean).join(', '),
         testID: (item) => `machines.index.row.${item.key}`,

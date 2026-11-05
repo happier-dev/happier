@@ -29,6 +29,7 @@ import {
   standardCleanup,
 } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -411,6 +412,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     const screen = await renderScreen(
       <WorkflowExamplesSection opensDraft={false} onUse={() => {}} />,
     );
+    await reportCollectionLayout(screen, 'workflow-examples:cards');
     expect(
       screen.findAllByTestId('workflow-examples:notify-when-agent-waits:use'),
     ).toHaveLength(0);
@@ -607,6 +609,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     await act(async () => {
       addMenu.props.onSelect('example');
     });
+    await reportCollectionLayout(screen, 'workflow-examples:cards');
     for (const example of WORKFLOW_STARTER_EXAMPLES_V1)
       expect(
         screen.findByTestId(`workflow-examples:${example.key}:use`),
@@ -628,6 +631,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
       sessions: { [session.id]: session },
     });
     const screen = await renderScreen(<WorkflowExamplesSection />);
+    await reportCollectionLayout(screen, 'workflow-examples:cards');
     await screen.pressByTestIdAsync(
       'workflow-examples:notify-when-agent-waits:use',
     );
@@ -733,6 +737,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     const screen = await renderScreen(
       <WorkflowExamplesSection onUse={onUse} />,
     );
+    await reportCollectionLayout(screen, 'workflow-examples:cards');
     await screen.pressByTestIdAsync(
       'workflow-examples:daily-summary-in-session:use',
     );
@@ -768,6 +773,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     const screen = await renderScreen(
       <WorkflowExamplesSection onUse={onUse} />,
     );
+    await reportCollectionLayout(screen, 'workflow-examples:cards');
     await screen.pressByTestIdAsync(
       'workflow-examples:test-after-every-turn:use',
     );
@@ -858,6 +864,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
       const shown = firstVisit
         ? WORKFLOW_STARTER_EXAMPLES_V1
         : WORKFLOW_STARTER_EXAMPLES_V1.slice(0, 2);
+      await reportCollectionLayout(screen, 'workflow-examples:cards');
       for (const example of shown) {
         expect(
           screen.findHostByTestId(`workflow-examples:${example.key}`),

@@ -88,6 +88,20 @@ describe('example tiles, as a browser lays them out', () => {
             WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.triggerSeed === undefined).map(example => `workflow-examples:${example.key}:use`),
         );
     });
+    it('draws every example through the one Collection card, with no footer band and its Use control in the right slot', async () => {
+        const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => {
+            root!.render(React.createElement(View, { style: { width: 900 } }, React.createElement(WorkflowExamplesSection, { onUse: () => {} })));
+        });
+        await measureWebLayout(host, { viewport: { width: 900, height: 2400 }, texts: [], settle: (replay) => act(replay) });
+        const header = host.querySelector('[data-testid="workflow-examples:ask-once:chrome.header"]');
+        expect(host.querySelector('[data-testid="workflow-examples:ask-once:card"]')).not.toBeNull();
+        expect(header?.querySelector('[data-testid="workflow-examples:ask-once:use"]')).not.toBeNull();
+        expect(host.querySelector('[data-testid="workflow-examples:ask-once:chrome.footer"]')?.querySelector('[data-testid$=":use"]')).toBeNull();
+    });
     it('draw each example as the small map on the card\'s paper: whole labels in the regular face, lanes wrap, no empty well (DESIGN-7/9 P5)', async () => {
         const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
         const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
@@ -168,7 +182,7 @@ describe('example tiles, as a browser lays them out', () => {
         // empty well (DESIGN-9 P5 "Ask once").
         const description = layout.textRects(askDescription)[0]!;
         const answer = layout.rect('workflow-examples:ask-once:flow-node-ask');
-        const use = layout.rect('workflow-examples:ask-once:use');
-        expect(Math.abs((answer.top - description.bottom) - (use.top - answer.bottom))).toBeLessThanOrEqual(16);
+        const facts = layout.rect('workflow-examples:ask-once:chrome.footer');
+        expect(Math.abs((answer.top - description.bottom) - (facts.top - answer.bottom))).toBeLessThanOrEqual(16);
     });
 });

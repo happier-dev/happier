@@ -51,14 +51,14 @@ type IsEqual<Left, Right> = (
 
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
   | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'renderDetail' | 'detailHeader'
-  | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'groupAction' | 'collapsedGroups'
+  | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
   | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'selection' | 'search' | 'empty' | 'header' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
   | 'sort' | 'summaryRows' | 'labels'
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
-  | 'boardContent' | 'cardContent' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
+  | 'card' | 'destination' | 'wrapItem' | 'glyph' | 'glyphBadge' | 'title' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline'
   | 'reason' | 'signal'
   | 'agent' | 'age' | 'titleMeta'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'

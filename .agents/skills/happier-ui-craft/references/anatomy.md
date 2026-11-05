@@ -136,7 +136,8 @@ names its current owners. Pages bind their data, routes and Actions to those own
 - **One card.** Grid, shelf and Board use `CollectionCards` and its shared portable WidgetFrame
   chrome: mark and independent right slot, title, description only when supplied, quiet facts,
   optional rich body. Bounded `card.headerRight/facts/body` slots retain frame and activation
-  ownership; there is no divided footer. Truly title-only cards remain compact. A body height is
+  ownership; there is no divided footer. A `preview` band card sets its mark beside the title, with
+  where under it and kind then age at the foot. Truly title-only cards remain compact. A body height is
   a text-scaled minimum, never a clipping cap. Interactive controls remain siblings of open.
 
 | Shape | When | Build |

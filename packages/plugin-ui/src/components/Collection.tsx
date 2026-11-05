@@ -138,29 +138,26 @@ export type CollectionField<Item> = Readonly<{
 
 /** The one item anatomy every presentation draws from. Renderers are pure. */
 export type CollectionAnatomy<Item> = Readonly<{
-  /** A domain card body inside the shared Board activation/focus/scroll owner. */
-  boardContent?: (item: Item) => ReactNode;
-  /**
-   * A live domain card body for `grid`, drawn inside the card's shared activation/focus owner in place of the
-   * generic head and description (the footer's `reason` and `action` keep their slots). Unlike `preview`, it may
-   * subscribe to live data. Every card in the grid is one height: `height` is the body's exact height at normal
-   * text size (it scales with the reader's text size), and the body fits it rather than growing the card.
-   */
-  cardContent?: Readonly<{
-    height: number;
-    render: (item: Item) => ReactNode;
+  /** Bounded card content, shared by grid and Board; controls stay outside the open target. */
+  card?: Readonly<{
+    headerRight?: (item: Item) => ReactNode;
+    facts?: (item: Item) => ReactNode;
     /**
-     * The body draws the footer's place itself (its status, its chevron), inside the card's one target. The grid then
-     * reserves no band below it, and the anatomy's `action` stands over that place as its own target, outside the
-     * card's, so an action is never a button inside the card's button.
+     * A live description the domain draws (a Board card's status line), in the description's own place: 2 under
+     * the title, above the facts. It stands in for the string `description`; a body is for content beyond it.
      */
-    ownsFooter?: boolean;
+    description?: (item: Item) => ReactNode;
+    body?: Readonly<{
+      render: (item: Item) => ReactNode;
+      /** A measured domain band, scaled with the reader's text; never a clipping cap. */
+      heightAtNormalText?: number;
+    }>;
   }>;
   /** Shareable qualified page/location for this item, without transferring selection or navigation ownership. */
   destination?: (item: Item) => NavigationListDestination | null;
   /**
-   * A core destination owner may decorate the shared row/card without replacing its anatomy or activation. A
-   * board's domain card draws its frame here, around both its open target and its `action`.
+   * An interaction/presence decorator; it never draws or replaces card framing.
+   * Destination-only decorators use `destination` instead.
    */
   wrapItem?: (item: Item, content: ReactNode) => ReactNode;
   /** The item's mark; `null` when the kind has none (skills): the list then draws no glyph column for the row. */
@@ -243,8 +240,7 @@ export type CollectionAnatomy<Item> = Readonly<{
    */
   description?: (item: Item) => string | null;
   /**
-   * A grid card's one footer action (Install, Manage, a switch), right of its status (`reason`); in a board, a
-   * domain card's (`boardContent`) action, on its own line under the body; in a list at rest, the row's trailing
+   * A card's independent header action (Install, Manage, a switch); in a list at rest, the row's trailing
    * action (beside an open detail the list leaves it to the detail). It is its own press and focus target beside the
    * card's or row's, never inside it, and never opens the item.
    */
@@ -404,8 +400,17 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   minListWidth: number;
   minDetailWidth: number;
   preferredListRatio: number;
-  /** The grid's narrowest card at normal text size; its columns follow the measured width. */
+  /**
+   * The narrowest card at normal text size: the grid's columns follow the measured width, and a board's columns keep
+   * at least this card (with its insets), scrolling sideways rather than squeezing it.
+   */
   minCardWidth?: number;
+  /**
+   * A grid whose width holds only one column: `stack` (default) puts each group's cards one under the other;
+   * `page` keeps each group in one row that pages sideways, a card at `minCardWidth` with the next card's edge
+   * showing (a phone shelf, lab store `st-hscroll`). Wider grids are unchanged.
+   */
+  narrowGrid?: 'stack' | 'page';
   /**
    * One action at the end of a group's header ("See all" on a shelf the caller shortened, "All results" on the one
    * it focused), by group key; `null` where the group has none. Drawn on grid shelves and on list and table groups.
@@ -2460,6 +2465,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
                     selection={cardSelection}
                     useRowActions={props.useRowActions}
                     {...(props.minCardWidth === undefined ? {} : { minCardWidth: props.minCardWidth })}
+                    {...(props.narrowGrid === undefined ? {} : { narrowGrid: props.narrowGrid })}
                     {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
                     {...(props.loading === undefined ? {} : { loading: props.loading })}
                     {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}

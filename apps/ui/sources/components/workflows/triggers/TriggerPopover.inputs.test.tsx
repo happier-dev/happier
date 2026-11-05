@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { act } from 'react-test-renderer';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -317,6 +318,7 @@ describe('Run a workflow trigger inputs', () => {
             onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" initial={null}
             workflowOptions={[]} onSubmit={submit} />);
         await act(async () => { screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'example-trigger-then')!.props.onSelect('example'); });
+        await reportCollectionLayout(screen, 'workflow-examples:cards');
         await screen.pressByTestIdAsync('workflow-examples:ask-once:use');
         expect(screen.findByTestId('example-trigger-submit')?.props.disabled).toBe(true);
         await act(async () => { screen.changeTextByTestId('example-trigger-input-request', 'Review the changes'); });

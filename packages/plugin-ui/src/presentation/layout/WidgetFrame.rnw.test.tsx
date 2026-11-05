@@ -104,7 +104,7 @@ describe('HappierWidgetFrame', () => {
     view.unmount();
   });
 
-  it('draws a card: the adapter surface around the header, body and a footer on a divider', () => {
+  it('draws a card with one surface around its header, body and quiet facts', () => {
     const view = mount();
     const frame = byId(view.container, 'frame')!;
     expect(frame.style.backgroundColor).toBe('rgb(1, 2, 3)');
@@ -114,7 +114,8 @@ describe('HappierWidgetFrame', () => {
     expect(frame.textContent).toContain('menu');
     expect(frame.textContent).toContain('body');
     const footer = byId(frame, 'frame.footer')!;
-    expect(footer.style.borderTopColor).toBe('rgb(9, 8, 7)');
+    expect(footer.textContent).toBe('Open Channels');
+    expect(footer.style.borderTopColor).not.toBe('rgb(9, 8, 7)');
     expect(frame.style.borderTopColor).not.toBe('rgb(9, 8, 7)');
   });
 

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -669,6 +670,7 @@ describe('workflow library page anatomy', () => {
         expect(screen.findByTestId('workflows-column:add:trigger')).not.toBeNull();
         expect(screen.findByTestId('workflows-column:more:settings')).not.toBeNull();
         const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
+        await reportCollectionLayout(screen, 'workflow-examples:cards');
         for (const example of WORKFLOW_STARTER_EXAMPLES_V1) {
             expect(screen.findByTestId(`workflow-examples:${example.key}:use`)).not.toBeNull();
         }

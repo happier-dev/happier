@@ -194,6 +194,74 @@ export const BoardCardContent = React.memo(function BoardCardContent(props: Read
     );
 });
 
+/** Domain identity; the Collection and widget frame own its placement. */
+export function BoardCardMark(props: Readonly<{ card: BoardCard }>) {
+    const { theme } = useUnistyles();
+    return <Icon name={KIND_ICON[props.card.ref.kind]} size={16} color={theme.colors.text.secondary} />;
+}
+
+export function shownBoardCardWord(card: BoardCard, showStatusWord?: boolean): string | null {
+    if (card.availability === 'not_loaded'
+        || ((showStatusWord === false || (card.ref.kind === 'workflow' && card.availability === 'ready'))
+            && card.status.tone === 'neutral')) return null;
+    return card.status.word;
+}
+
+export function BoardCardStatus(props: Readonly<{ card: BoardCard; showStatusWord?: boolean }>) {
+    const { card } = props;
+    const grouped = props.showStatusWord === false;
+    const word = shownBoardCardWord(card, props.showStatusWord);
+    if (word === null) return null;
+    return <Text testID={`board-card:${card.key}:${grouped ? 'needs' : 'word'}`}
+        style={[styles.word, workStatusWordStyle(card.status.tone)]}>{word}</Text>;
+}
+
+/** Domain context stays live only while its rendered card demands it. */
+export function BoardCardFacts(props: Readonly<{ card: BoardCard }>) {
+    const { card } = props;
+    const kindLabel = t(`boards.kinds.${card.ref.kind}`);
+    if ((card.availability !== 'ready' && card.availability !== 'not_loaded')
+        || (card.body.kind === 'session' && card.body.statusDetail !== undefined)
+        || (card.body.kind !== 'session' && card.title === kindLabel)) return null;
+    return card.body.kind === 'session'
+        ? <SessionContext serverId={card.body.serverId} sessionId={card.body.sessionId} />
+        : <Text style={styles.kind}>{kindLabel}</Text>;
+}
+
+/** Live domain body only; identity, facts, actions and activation belong to the shared card. */
+export const BoardCardBodyContent = React.memo(function BoardCardBodyContent(props: Readonly<{
+    card: BoardCard;
+    /** The enclosing status group already states this fact; accessibility keeps the exact word. */
+    showStatusWord?: boolean;
+}>) {
+    const { theme } = useUnistyles();
+    const { card } = props;
+    // A Session card names itself from encrypted content: it demands that content like a visible list row.
+    const sessionAddress = card.ref.kind === 'session' && card.availability !== 'home_unavailable'
+        ? normalizeSessionAddress(card.ref.qualifiedId.serverId, card.ref.qualifiedId.id) : null;
+    useSessionContentDemand(sessionAddress ? [sessionAddress] : NO_SESSION_ADDRESSES, { tag: 'board.hydrateSessionCard', hydrate: 'unsettled' });
+    const unavailable = card.availability !== 'ready';
+    // The semantic title stays available while its content is still arriving.
+    const loading = card.availability === 'not_loaded';
+    const reducedMotion = useReducedMotionPreference();
+    // Group headers name healthy states; a speaking word still explains what needs the person.
+    const shownWord = shownBoardCardWord(card, props.showStatusWord);
+    const readNextRefresh = React.useCallback((nowMs: number) => readBodyRefreshAtMs(card.body, nowMs), [card.body]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, !unavailable
+        && (card.body.kind === 'workflow' || card.body.kind === 'workflow_run'));
+    const body = unavailable
+        ? (card.unavailableReason ?? (card.availability === 'home_unavailable' ? t('boards.card.unavailableBody') : null))
+        : describeBody(card.body, nowMs, shownWord);
+    return (
+        <>
+            {loading ? <View testID={`board-card:${card.key}:loading`} accessible accessibilityLabel={card.title} style={styles.titleSkeleton}>
+                <HappierSkeletonBlock width="55%" height={10} radius={5} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+            </View> : null}
+            {body ? <Text style={[styles.body, unavailable ? styles.quiet : null]}>{body}</Text> : null}
+        </>
+    );
+});
+
 /** The card's secondary action, on its own line under the content; `null` when the card has none. */
 export function BoardCardActionButton(props: Readonly<{
     card: BoardCard;

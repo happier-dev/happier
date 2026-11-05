@@ -717,6 +717,10 @@ live in the page-presentation owners in code.
     the third moves to the detail;
   - no footer band, divider, agent strip or second box inside the card. Insets are the card
     padding role, cards sit the card gap apart, the radius is the sheet radius, and the edge is flat;
+  - a card that shows **the thing itself** (Artifacts' `preview` band) opens with that band, a hair
+    off the paper and closed by a divider. The band already says what it is, so the mark steps down
+    beside the title, where it came from sits under the title, and the facts line reads kind at the
+    start, age at the end;
   - **the right slot says one thing.** An item shows its state when it speaks (Update available,
     Needs review, Added · Sign in) or its quiet add control; a group (a job, a preset) shows the
     marks of what it brings together — at most four distinct marks, never the same mark twice,
