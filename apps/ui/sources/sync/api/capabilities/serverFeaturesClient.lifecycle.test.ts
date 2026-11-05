@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
@@ -5,7 +6,8 @@ import { MMKV } from 'react-native-mmkv';
 import { renderHook } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { abortServerFetches } from '@/sync/http/client';
-import { resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
+import { resetServerProfilesRuntimeForTests, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import {
@@ -31,6 +33,9 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: boundary.fetch,
 }));
+
+// Load the real Settings/Services graph after network installation, outside a timed hook body.
+const { useLocalServicePresentationFeatures } = await import('@/components/sessions/localServices/useLocalServicePublicPreviewFeature');
 
 afterEach(async () => {
     vi.restoreAllMocks();
@@ -227,4 +232,145 @@ it('does not publish the successor Home into a retired focused-Home observation 
     expect(getCachedServerFeaturesSnapshot({ serverId: first.id })).toBeNull();
     expect(boundary.fetch.mock.calls.some(([url]) => String(url).startsWith(successorOrigin)
         && String(url).endsWith('/v1/features'))).toBe(false);
+});
+
+it('limits foreign-Home Services feature reads and retries to presented demand', async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://feature-services-focused.example.test' });
+    const home = await upsertServerProfile({ serverUrl: 'https://feature-services-foreign.example.test' });
+    await upsertServerProfile({ serverUrl: 'https://feature-services-unrelated.example.test' });
+    let recovered = false;
+    boundary.fetch.mockImplementation(async (url) => String(url).endsWith('/v1/features')
+        ? recovered ? Response.json(createRootLayoutFeaturesResponse()) : new Response(null, { status: 503 })
+        : Response.json({ ok: true }));
+    vi.useFakeTimers();
+    let presented = false;
+    const hook = await renderHook(() => useLocalServicePresentationFeatures(home.id), {
+        wrapper: ({ children }) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+            { active: presented, presentationActive: presented, children }),
+        flushOptions: { cycles: 1, turns: 0 },
+    });
+    const featureRequests = () => boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'));
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(341_240); });
+        expect(featureRequests()).toHaveLength(0);
+        presented = true;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(featureRequests()).toHaveLength(1);
+        expect(getCachedServerFeaturesSnapshot({ serverId: home.id })).toMatchObject({ status: 'error', httpStatus: 503 });
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+        expect(featureRequests()).toHaveLength(2);
+        presented = false;
+        await hook.rerender();
+        const closedRequests = featureRequests().length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(341_240); });
+        expect(featureRequests()).toHaveLength(closedRequests);
+        recovered = true;
+        presented = true;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(featureRequests()).toHaveLength(closedRequests + 1);
+        expect(getCachedServerFeaturesSnapshot({ serverId: home.id })).toMatchObject({ status: 'ready' });
+        expect(featureRequests().every(([url]) => String(url).startsWith(home.serverUrl))).toBe(true);
+    } finally {
+        await hook.unmount();
+    }
+    const releasedRequests = featureRequests().length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(341_240); });
+    expect(featureRequests()).toHaveLength(releasedRequests);
+});
+
+it('keeps a visible foreign-Home feature consumer alive when retained Services hides', async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://feature-peer-focused.example.test' });
+    const home = await upsertServerProfile({ serverUrl: 'https://feature-peer-foreign.example.test' });
+    let complete: ((response: Response) => void) | undefined;
+    let requestSignal: AbortSignal | null | undefined;
+    boundary.fetch.mockImplementation(async (url, init) => {
+        if (!String(url).endsWith('/v1/features')) return Response.json({ ok: true });
+        requestSignal = init?.signal;
+        return await new Promise<Response>((resolve, reject) => {
+            complete = resolve;
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+        });
+    });
+    const peer = await renderHook(() => useServerFeaturesSnapshotForServerId(home.id));
+    let presented = true;
+    const services = await renderHook(() => useLocalServicePresentationFeatures(home.id), {
+        wrapper: ({ children }) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+            { active: presented, presentationActive: presented, children }),
+    });
+    try {
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'))).toHaveLength(1);
+        presented = false;
+        await services.rerender();
+        expect(requestSignal?.aborted).toBe(false);
+        await act(async () => {
+            complete?.(Response.json(createRootLayoutFeaturesResponse()));
+            // Response headers precede body consumption/publication in the real HTTP owner.
+            await getServerFeaturesSnapshot({ serverId: home.id });
+        });
+        expect(peer.getCurrent()).toMatchObject({ status: 'ready' });
+        presented = true;
+        await services.rerender();
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'))).toHaveLength(1);
+    } finally {
+        await services.unmount();
+        await peer.unmount();
+    }
+});
+
+it('projects the exact canonical Services cache on the first reopen and Home-switch commits', async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://feature-cache-focused.example.test' });
+    const home = await upsertServerProfile({ serverUrl: 'https://feature-cache-foreign.example.test' });
+    const other = await upsertServerProfile({ serverUrl: 'https://feature-cache-other.example.test' });
+    let revision = 'first';
+    boundary.fetch.mockImplementation(async (url) => {
+        if (!String(url).endsWith('/v1/features')) return Response.json({ ok: true });
+        const payload = createRootLayoutFeaturesResponse();
+        const reason = String(url).startsWith(other.serverUrl) ? 'other_home_policy' : revision;
+        return Response.json({ ...payload, capabilities: { ...payload.capabilities,
+            localServices: { ...payload.capabilities.localServices,
+                publicPreview: { ...payload.capabilities.localServices.publicPreview, disabledReasons: [reason] },
+            },
+        } });
+    });
+    vi.useFakeTimers();
+    let presented = true;
+    let serverId = home.id;
+    const committedReasons: Array<readonly string[]> = [];
+    const hook = await renderHook(() => {
+        const value = useLocalServicePresentationFeatures(serverId);
+        React.useLayoutEffect(() => { committedReasons.push([...value.publicPreviewCapabilityDisabledReasons.publicPreview]); });
+        return value;
+    }, {
+        wrapper: ({ children }) => React.createElement(PluginSurfaceFocusEligibilityProvider,
+            { active: presented, presentationActive: presented, children }),
+        flushOptions: { cycles: 1, turns: 0 },
+    });
+    const featureRequests = () => boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'));
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(hook.getCurrent().publicPreviewCapabilityDisabledReasons.publicPreview).toEqual(['first']);
+        presented = false;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(600_001); });
+        expect(featureRequests()).toHaveLength(1);
+        revision = 'refreshed';
+        committedReasons.length = 0;
+        presented = true;
+        await hook.rerender();
+        expect(committedReasons[0]).toEqual(['first']);
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(featureRequests()).toHaveLength(2);
+        expect(hook.getCurrent().publicPreviewCapabilityDisabledReasons.publicPreview).toEqual(['refreshed']);
+        committedReasons.length = 0;
+        serverId = other.id;
+        await hook.rerender();
+        expect(committedReasons[0]).toEqual([]);
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(hook.getCurrent().publicPreviewCapabilityDisabledReasons.publicPreview).toEqual(['other_home_policy']);
+        expect(featureRequests()).toHaveLength(3);
+    } finally {
+        await hook.unmount();
+    }
 });

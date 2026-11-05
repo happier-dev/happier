@@ -3,7 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
@@ -34,7 +35,7 @@ vi.mock('@/modal', async () => {
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { ModalProvider } = await import('@/modal');
-const { primeServerFeaturesSnapshot } =
+const { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } =
   await import('@/sync/api/capabilities/serverFeaturesClient');
 const { BrowserLocalPreviewPublicLinkControls } =
   await import('./BrowserLocalPreviewElsewhere');
@@ -62,6 +63,54 @@ afterEach(async () => {
 });
 
 describe('BrowserLocalPreviewPublicLinkControls', () => {
+  it('loads public-link features only for a presented Session-bound preview', async () => {
+    const serverId = await home.addHome({ name: 'Preview Demand Home', serverUrl: 'https://browser-public-link-demand.test',
+      accountId: 'owner', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse({ features: { localServices: {
+      enabled: true, inventory: { enabled: true }, managed: { enabled: true }, launcher: { enabled: true },
+      actions: { enabled: true, terminate: { enabled: true } }, preview: { enabled: true }, publicPreview: { enabled: true },
+    } } });
+    home.answer(serverId, '/v1/features', { body: features });
+    home.answer(serverId, '/v1/features/authenticated', { body: features });
+    transport.rpc.mockImplementation(async (rpc: Rpc) => rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS
+      ? { protocolVersion: 1, snapshot: { v: 1, machineId: target.machineId, sessionId: target.sessionId,
+        previewId: target.targetId, generatedAt: 1_000, refreshState: 'idle',
+        policy: { enabled: true, allowedModes: ['secret_link'] }, exposures: [], diagnostics: [] } }
+      : new Promise(() => {}));
+    const featureReads = () => home.requests.filter(request => request.serverId === serverId && request.path === '/v1/features').length;
+    const statusReads = () => transport.rpc.mock.calls.filter(([rpc]: readonly unknown[]) => typeof rpc === 'object' && rpc !== null
+      && 'method' in rpc && rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS).length;
+    const baseline = featureReads();
+    const renderControls = (presented: boolean, sessionBound: boolean) => <ModalProvider>
+      <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+        <BrowserLocalPreviewPublicLinkControls
+          target={sessionBound ? target : { kind: 'localServicePreview', targetId: target.targetId, machineId: target.machineId }}
+          serviceTitle="web" serverId={serverId} testID="browser-public-demand" />
+      </PluginSurfaceFocusEligibilityProvider>
+    </ModalProvider>;
+    const screen = await renderScreen(renderControls(true, false));
+    try {
+      await flushHookEffects({ cycles: 4, turns: 4 });
+      expect(featureReads()).toBe(baseline);
+      expect(statusReads()).toBe(0);
+      await screen.update(renderControls(true, true));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('browser-public-demand-target:preview-1-create')).not.toBeNull());
+      expect(featureReads()).toBe(baseline + 1);
+      expect(statusReads()).toBe(1);
+      await screen.update(renderControls(false, true));
+      await act(async () => { deleteServerFeaturesSnapshot({ serverId }); });
+      await flushHookEffects({ cycles: 4, turns: 4 });
+      expect(featureReads()).toBe(baseline + 1);
+      expect(statusReads()).toBe(1);
+      await screen.update(renderControls(true, true));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('browser-public-demand-target:preview-1-create')).not.toBeNull());
+      expect(featureReads()).toBe(baseline + 2);
+      expect(statusReads()).toBe(2);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('waits for the approval its Action requires before a public link is created', async () => {
     const serverId = await home.addHome({
       name: 'Preview Home',
