@@ -6,6 +6,7 @@ import {
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 import { PluginUiLaunchInputV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui/semanticCommands';
 
 import type { GithubApiClientV1 } from '../../../../scm-github/src/observations/githubApiClient.js';
 
@@ -86,9 +87,11 @@ describe('Triage detail surface input', () => {
   });
 
   it('fits linked Sessions by bytes and marks the retained prefix incomplete', () => {
+    // Each title fits beside the detail envelope, while the full page exceeds the host's launch budget.
+    const titleBytes = Math.min(MAX_TRIAGE_TEXT_UTF8_BYTES_V1, PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1 / 2);
     const linkedSessions = Array.from({ length: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 }, (_, index) => ({
       sessionId: `session-${index}`,
-      displayTitle: '🦊'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 4)),
+      displayTitle: '🦊'.repeat(Math.floor(titleBytes / 4)),
     }));
     const built = build({ linkedSessions });
     expect(built.kind).toBe('admitted');
