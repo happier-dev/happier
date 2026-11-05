@@ -14,6 +14,8 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
 import type { InputFieldHint } from '../inputs/inputFields.js';
 
+export { USAGE_BREAKDOWN_DIMENSION_HEADING, readUsageBreakdownsInstanceTitleV1 } from './usageBreakdownTitleV1.js';
+
 /** Native Session content identities; presentation references and configured copies share this owner. */
 export const SESSION_COMPANION_BUILTIN_ITEM_IDS = ['session_summary', 'agent_plan', 'changes', 'local_services'] as const;
 export const PROJECT_BUILTIN_WIDGET_IDS_V1 = ['project_about', 'project_code', 'project_readme', 'project_checkouts', 'project_scripts', 'project_sessions', 'project_changes'] as const;
