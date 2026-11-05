@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assertNativeComposeAvailable } from './nativeComposeLifecycle';
-import { prepareNativeComposeNormalizationProfileForHost, readNativeComposeEngine } from './nativeComposeEngine';
+import { prepareNativeComposeNormalizationProfileForHost, readNativeComposeEngine, readNativeDockerEffectEngines } from './nativeComposeEngine';
+import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 
 describe('canonical Compose discovery lookup profile', () => {
     it('keeps binding lookup placeholders but pins owned controls from the sanctioned host tuple', async () => {
@@ -51,6 +52,20 @@ describe('canonical Compose discovery lookup profile', () => {
 });
 
 describe('canonical Compose engine observation', () => {
+    it('admits installing a missing engine while preserving unavailable-engine ambiguity', async () => {
+        const input = { command: 'docker', prefix: [], cwd: '/release', env: {},
+            io: { async run() { throw Object.assign(new Error('missing executable'), { code: 'ENOENT' }); } } };
+        await expect(readNativeDockerEffectEngines(input)).resolves.toEqual([]);
+        await machineNativeEffectAdmission.run({ operation: { operationId: 'known-engine', kind: 'deploy' },
+            keys: [{ kind: 'dockerEngine', dockerEndpoint: 'retained-engine' }] }, async () => {
+            await expect(readNativeDockerEffectEngines(input)).resolves.toEqual(['retained-engine']);
+        });
+        for (const code of ['EACCES', 'ECONNREFUSED']) {
+            await expect(readNativeDockerEffectEngines({ ...input,
+                io: { async run() { throw Object.assign(new Error('unavailable'), { code }); } } }))
+                .rejects.toMatchObject({ code: 'native_engine_impact_ambiguous' });
+        }
+    });
     it('uses the engine identity from structured Docker facts in one finite read', async () => {
         const calls: string[][] = [];
         const id = await assertNativeComposeAvailable({ command: '/docker', prefix: [], cwd: '/release', env: {},
