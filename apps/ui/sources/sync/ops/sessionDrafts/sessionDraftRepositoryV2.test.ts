@@ -320,8 +320,8 @@ describe('session draft repository V2 addresses', () => {
         const survivorFlow = resolveNewSessionDraftAttachmentFlowId(survivorId);
         const bytes = new Uint8Array([1, 2, 3]);
         const files = [{ id: 'local-file', status: 'pending' as const, source: { kind: 'memory' as const, bytes, name: 'local.txt' } }];
-        writeNewSessionAttachmentDrafts(flowId, files);
-        writeNewSessionAttachmentDrafts(survivorFlow, files);
+        writeNewSessionAttachmentDrafts(flowId, files, scope);
+        writeNewSessionAttachmentDrafts(survivorFlow, files, scope);
         const remote = createRemote(address);
         const cipher = plainCipher();
         let cleanupFinished = false;
@@ -331,7 +331,7 @@ describe('session draft repository V2 addresses', () => {
             onDraftRemoved: async () => {
                 // The installed cleanup is composed, rather than replaced; its
                 // failure must still retain sources for the repository's retry.
-                expect(readNewSessionAttachmentDrafts(flowId)[0]?.source).toMatchObject({ bytes });
+                expect(readNewSessionAttachmentDrafts(flowId, scope)[0]?.source).toMatchObject({ bytes });
                 cleanupFinished = true;
             },
         });
@@ -352,8 +352,8 @@ describe('session draft repository V2 addresses', () => {
         }
         expect(cleanupFinished).toBe(true);
         expect(repository.getSessionDraftSnapshot(scope, address)).toBeNull();
-        expect(readNewSessionAttachmentDrafts(flowId)).toEqual([]);
-        expect(readNewSessionAttachmentDrafts(survivorFlow)[0]?.source).toMatchObject({ bytes });
+        expect(readNewSessionAttachmentDrafts(flowId, scope)).toEqual([]);
+        expect(readNewSessionAttachmentDrafts(survivorFlow, scope)[0]?.source).toMatchObject({ bytes });
         expect(repository.getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: survivorId })).not.toBeNull();
         clearAllNewSessionAttachmentDrafts();
     });
