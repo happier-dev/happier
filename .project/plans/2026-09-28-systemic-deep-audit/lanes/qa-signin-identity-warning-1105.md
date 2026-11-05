@@ -1,7 +1,7 @@
-IMPLEMENTED_LIVE_BLOCKED
+DONE
 
 Helper fixes committed: `e12ac8f19a7f8d49b9e59c65b67021a44e256ab9`. Focused 10, adjacent 8, entry-load graphs 7 passed.
-[blocked] Live replay awaits Main's READY70 release of its 09:25Z hold. The owned CDP forward retired at 09:47Z; worker PID1238259 is absent. No held mutation attempted.
+Loaded CLI replay passed after READY70 (live-final.json); first run returned account_unavailable despite later HTTP200, retained in live.json. This failure did not reproduce on Account reload or full replay; cause remains unproven.
 
 Observed Home identity and address
 - `agent-qa-l12-main` owns nldw3:9446, server on nl3:10306; Lane 12 Main owns this QA stack.
@@ -29,12 +29,12 @@ Change and verification
 - Removed the old row/child-index dependency and internal Stack-info test mock; endpoint discovery stays with Stack-info, browser operations with qa_browser_signin_page.mjs.
 - Constructed RED: `red-mac-host.log` (4/4 fail: stale row, alias); `red-profile-source.log` (4 profile failures); `red-alias-consent.log` (current-address consent must not authorize another alias).
 - GREEN: `green-current.log` (10/10), `green-adjacent.log` (8/8), `entry-loads.log` (7/7 graphs); all under `.project/tmp/qa-signin-identity-warning-1105/`.
-- Commands: hstack-exec --target=mac-host -- node --test (focused file; adjacent browser-signin/CDP pattern); hstack-exec --target=mac-host -- pnpm check:entry-loads.
+- Commands: hstack-exec --target=mac-host -- node --test (focused file; adjacent browser-signin/CDP pattern); hstack-exec --target=mac-host -- pnpm check:entry-loads. Loaded actual CLI: stdin restore → Account header/profile → Home sidebar; exit0, credential output false, final fields empty.
 - Mandatory finalizer passed (zero changed TS roots); private-index commit uses current machine identity. Foreign staging/worktree hunks preserved; no push.
 - Mechanisms: contract checks +3/−1 (alias pair, mounted header replacing old row, Home/main-navigation profile correlation); error codes +1/−0; persistent states/timers/retries +0/−0; source/test files +2/−0.
 - ID validation moved from row text to profile; temporary DOM/CDP observation remains event-driven, with one profile-body read and no extra server fetch. CLI help documents consent; no product documentation change.
 
 Residual risk and next action
-- Main: release READY70; then start a fresh owned browser and run the composed CLI journey on the named stack: stdin restore → normal alias confirmation → Account header/profile identity → Home sidebar, using the owned browser and no filled-field snapshots.
+- Observed READY70 server selected=loaded b60c10761b4f161a; daemon selected=loaded 93576e924a9e757e. Default daemon PID1871849 survived before/after. Owned browser worker PID2066504 was retired after replay; no stack lifecycle changed.
 - QA-K-58C/Providers ORCH: after your stack is READY, add --confirm-home-alias=https://leeroy-mbp.tailfce179.ts.net:8443 for the verified saved Mac alias, then rerun; unexpected addresses require investigation.
-- Live replay is unverified while held. First browser-profile writer, historical DB-identity creator and exact UI activation time remain unproven. No Account settings/shared identity/DB/stack lifecycle changed.
+- Residual: first account_unavailable has no causal trace and remains unexplained; do not infer a transport defect from it. Replay trace proves GET200 from this main document and excludes preflight. First browser-profile writer, historical DB creator and exact UI activation remain unproven. No Account settings/shared identity/DB changed.
