@@ -11,14 +11,14 @@ import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 const EMPTY_REVIEW_COMMENT_DRAFTS_BY_FILE_PATH: ReadonlyMap<string, readonly ReviewCommentDraft[]> = new Map();
 
+type DiffFileFacts = Pick<ChangedFilesReviewDiffBlockProps, 'isBinaryContent' | 'estimatedChangedLines' | 'onOpenFile'>;
+
 export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     theme: any;
     sessionId: string;
     snapshotSignature: string | null;
     workspaceScope?: WorkspaceScopeBase | null;
     diffStateSource: ChangedFilesReviewDiffStateSource;
-    binaryPaths?: ReadonlySet<string>;
-    getEstimatedChangedLines?: (path: string) => number | null;
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -35,12 +35,10 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     hunkNotes?: ChangedFilesReviewDiffBlockProps['hunkNotes'];
     /** Before/after facts per changed image path, from the Review's comparison entries. */
     getImageCompare?: (path: string) => ChangedFilesReviewDiffBlockProps['imageCompare'];
-    /** Opens a file's File page from inside its block (a changed recording plays there). */
-    onOpenFile?: (path: string) => void;
     /** Keep / Discard rows on every file's changes (one checkout, one discard owner). */
     getHunkReview?: (path: string) => Readonly<{ hunks: NonNullable<ChangedFilesReviewDiffBlockProps['hunkReview']>;
         reviewUnits: ChangedFilesReviewDiffBlockProps['reviewUnits'] }>;
-}>): (path: string) => React.ReactNode {
+}>): (path: string, fileFacts: DiffFileFacts) => React.ReactNode {
     const {
         theme,
         sessionId,
@@ -55,7 +53,6 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         onScrollToLine,
         externalScrollView,
         lineTarget,
-        getEstimatedChangedLines,
     } = input;
     const flat = input.flat === true;
 
@@ -80,8 +77,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
             : EMPTY_REVIEW_COMMENT_DRAFTS_BY_FILE_PATH;
     }, [reviewCommentDrafts, reviewCommentsEnabled]);
 
-    return React.useCallback((path: string) => {
-        const estimated = getEstimatedChangedLines ? getEstimatedChangedLines(path) : null;
+    return React.useCallback((path: string, fileFacts: DiffFileFacts) => {
         const fileReviewCommentDrafts = reviewCommentDraftsByDiffFilePath.get(path)
             ?? EMPTY_REVIEW_COMMENT_DRAFTS;
         const review = input.getHunkReview?.(path);
@@ -92,8 +88,8 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 snapshotSignature={snapshotSignature}
                 workspaceScope={workspaceScope ?? null}
                 filePath={path}
-                isBinaryContent={input.binaryPaths?.has(path)}
-                estimatedChangedLines={estimated}
+                isBinaryContent={fileFacts.isBinaryContent}
+                estimatedChangedLines={fileFacts.estimatedChangedLines}
                 diffStateSource={diffStateSource}
                 reviewCommentsEnabled={reviewCommentsEnabled === true}
                 reviewCommentDrafts={fileReviewCommentDrafts}
@@ -109,7 +105,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 evidenceOnly={input.evidenceOnly}
                 hunkNotes={input.hunkNotes}
                 imageCompare={input.getImageCompare?.(path) ?? null}
-                onOpenFile={input.onOpenFile}
+                onOpenFile={fileFacts.onOpenFile}
                 hunkReview={review?.hunks ?? null}
                 reviewUnits={review?.reviewUnits}
             />
@@ -121,11 +117,8 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         input.hunkNotes,
         input.getHunkReview,
         input.getImageCompare,
-        input.onOpenFile,
         input.findModel,
         input.findActive,
-        input.binaryPaths,
-        getEstimatedChangedLines,
         onDeleteReviewCommentDraft,
         onReviewCommentError,
         onScrollToLine,

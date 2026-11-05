@@ -46,7 +46,9 @@ import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
 import { useSetting } from '@/sync/domains/state/storage';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
-import { DiffFilesListView, type DiffFilesListViewHandle } from '@/components/ui/code/diff/DiffFilesListView';
+import { DiffFilesListView, type DiffFilesListViewHandle, type DiffFilesListViewProps } from '@/components/ui/code/diff/DiffFilesListView';
+import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
@@ -98,6 +100,30 @@ export function resolveChangedFilesReviewCurrentWebScrollRoot<T>(params: Readonl
 }
 
 type ChangedFilesReviewTheme = Theme;
+
+type ReviewListFile = DiffFileEntry & Readonly<{
+    reviewFile: ScmFileStatus;
+    showDivider: boolean;
+    sectionTitle: string | undefined;
+    highlighted: boolean;
+    attribution: SessionAttributedFile | undefined;
+}>;
+
+function ReviewListDiff(props: Readonly<{
+    file: ReviewListFile;
+    render: ReturnType<typeof useChangedFilesReviewDiffBlockRenderer>;
+    onFilePress: ((file: ScmFileStatus) => void) | undefined;
+}>) {
+    const { file, render, onFilePress } = props;
+    const openFile = React.useCallback(() => deferOnWeb(() => onFilePress?.(file.reviewFile)), [file.reviewFile, onFilePress]);
+    const added = Number.isFinite(file.added) ? Math.max(0, file.added) : 0;
+    const removed = Number.isFinite(file.removed) ? Math.max(0, file.removed) : 0;
+    return <>{render(file.filePath ?? file.key, {
+        isBinaryContent: file.reviewFile.isBinary === true,
+        estimatedChangedLines: added + removed,
+        onOpenFile: onFilePress ? openFile : undefined,
+    })}</>;
+}
 
 /** The source coverage of the files Review lists: how many, and their line totals when every file has them. */
 export type ChangedFilesReviewCoverage = Readonly<{
@@ -509,25 +535,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return out;
     }, [sections]);
 
-    const sectionHeaderTitleByKey = React.useMemo(() => {
-        const map = new Map<string, string>();
-        for (const entry of reviewFileEntries) {
-            if (entry.indexInSection !== 0) continue;
-            map.set(entry.key, entry.sectionTitle);
-        }
-        return map;
-    }, [reviewFileEntries]);
-
-    const fileMetaByKey = React.useMemo(() => {
-        const map = new Map<string, { file: ScmFileStatus; showDivider: boolean }>();
-        for (let i = 0; i < reviewFileEntries.length; i++) {
-            const entry = reviewFileEntries[i];
-            const next = reviewFileEntries[i + 1];
-            map.set(entry.key, { file: entry.file, showDivider: Boolean(next && next.sectionKey === entry.sectionKey) });
-        }
-        return map;
-    }, [reviewFileEntries]);
-
     const reviewListFiles = React.useMemo(() => reviewFileEntries.map((entry) => entry.file), [reviewFileEntries]);
     const coverageFileCount = reviewListFiles.length;
     const coverageAdded = reviewListFiles.reduce((sum, file) => sum + Math.max(0, file.linesAdded ?? 0), 0);
@@ -540,24 +547,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         linesKnown: coverageLinesKnown,
     }), [coverageAdded, coverageFileCount, coverageLinesKnown, coverageRemoved]);
 
-    const diffFiles = React.useMemo(() => {
-        const mapKind = (status: ScmFileStatus['status']): 'new' | 'deleted' | 'renamed' | undefined => {
-            if (status === 'added' || status === 'untracked') return 'new';
-            if (status === 'deleted') return 'deleted';
-            if (status === 'renamed') return 'renamed';
-            return undefined;
-        };
-        return reviewFileEntries.map((entry) => ({
-            key: entry.key,
-            isComplete: entry.file.isComplete,
-            filePath: entry.key,
-            added: typeof entry.file.linesAdded === 'number' ? entry.file.linesAdded : 0,
-            removed: typeof entry.file.linesRemoved === 'number' ? entry.file.linesRemoved : 0,
-            kind: mapKind(entry.file.status),
-        }));
-    }, [reviewFileEntries]);
-
-    const allKeys = React.useMemo(() => diffFiles.map((f) => f.key), [diffFiles]);
+    const publishedKeys = React.useRef<readonly string[]>([]);
+    const allKeys = React.useMemo(() => publishedKeys.current = retainDeep(
+        publishedKeys.current, reviewFileEntries.map(entry => entry.key),
+    ), [reviewFileEntries]);
     const binaryReviewPaths = React.useMemo(() => new Set(reviewFiles.filter((file) => file.isBinary === true).map((file) => file.fullPath)), [reviewFiles]);
     const reviewFind = useChangedFilesReviewFind();
     const intraLineDiff = useIntraLineWordDiffConfig();
@@ -1032,20 +1025,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
-    const estimatedChangedLinesByPath = React.useMemo(() => {
-        const map = new Map<string, number>();
-        for (const file of reviewListFiles) {
-            if (!file?.fullPath) continue;
-            const added = typeof file.linesAdded === 'number' && Number.isFinite(file.linesAdded) ? file.linesAdded : 0;
-            const removed = typeof file.linesRemoved === 'number' && Number.isFinite(file.linesRemoved) ? file.linesRemoved : 0;
-            map.set(file.fullPath, Math.max(0, added) + Math.max(0, removed));
-        }
-        return map;
-    }, [reviewListFiles]);
-    const getEstimatedChangedLines = React.useCallback((path: string) => {
-        return estimatedChangedLinesByPath.get(path) ?? null;
-    }, [estimatedChangedLinesByPath]);
-
     const reviewViewportRef = React.useRef<View | null>(null);
     const onScrollToLine = useChangedFilesReviewLineScroll({
         viewportRef: reviewViewportRef,
@@ -1118,12 +1097,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         const entry = snapshot?.entries.find(file => file.path === path);
         return entry ? { kind: 'workingTree' as const, changeKind: entry.kind, area: diffArea, signature: snapshotSignature } : null;
     }, [props.hunkReview?.source, snapshot, diffArea, snapshotSignature]);
-    const openReviewPath = React.useCallback((path: string) => {
-        const file = reviewFiles.find((entry) => entry.fullPath === path);
-        if (file) deferOnWeb(() => onFilePress(file));
-    }, [reviewFiles, onFilePress]);
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
-        binaryPaths: binaryReviewPaths,
         hunkNotes,
         evidenceOnly: props.evidenceOnly,
         externalScrollView: Platform.OS === 'web' ? undefined : externalScrollView,
@@ -1136,7 +1110,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         snapshotSignature,
         workspaceScope,
         diffStateSource,
-        getEstimatedChangedLines,
         reviewCommentsEnabled,
         reviewCommentDrafts,
         onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
@@ -1145,7 +1118,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         flat: Boolean(props.comparisonChrome),
         getHunkReview,
         getImageCompare,
-        onOpenFile: props.evidenceOnly ? undefined : openReviewPath,
     });
 
     const onFilePressPinned = props.onFilePressPinned;
@@ -1250,17 +1222,17 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         snapshot?.repo.rootPath,
     ]);
 
-    const renderBeforeFileRow = React.useCallback(({ file }: Readonly<{ file: any; index: number }>) => {
-        // A lone section is already named by the scope control (the toolbar menu or the comparison bar).
-        if (changedFilesViewMode === 'repository' || ((props.toolbarLeading || comparisonChrome) && sectionHeaderTitleByKey.size === 1)) return null;
-        const title = sectionHeaderTitleByKey.get(file.key as string);
-        if (!title) return null;
+    const hasComparisonChrome = comparisonChrome !== null;
+    const showSectionHeaders = changedFilesViewMode !== 'repository'
+        && !((props.toolbarLeading || hasComparisonChrome) && sections.length === 1);
+    const renderBeforeFileRow = React.useCallback<NonNullable<DiffFilesListViewProps<ReviewListFile>['renderBeforeFileRow']>>(({ file }) => {
+        if (!showSectionHeaders || !file.sectionTitle) return null;
         return (
             <ChangedFilesSectionHeader theme={theme} color={theme.colors.text.secondary}>
-                {title}
+                {file.sectionTitle}
             </ChangedFilesSectionHeader>
         );
-    }, [changedFilesViewMode, comparisonChrome, props.toolbarLeading, sectionHeaderTitleByKey, theme]);
+    }, [showSectionHeaders, theme]);
 
     const attributedEntriesByPath = React.useMemo(() => {
         const entries = changedFilesViewMode === 'session' ? sessionAttributedFiles
@@ -1270,10 +1242,30 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return new Map(entries.map((entry) => [entry.file.fullPath, entry]));
     }, [changedFilesViewMode, sessionAttributedFiles, turnAgentReportedFiles, turnCheckpointFiles, turnAttributedFiles]);
 
-    const renderFileRow = React.useCallback((params: any) => {
-        const meta = fileMetaByKey.get(params.file.key as string);
-        if (!meta) return null;
-        const file = meta.file;
+    // The list consumes each file's facts directly. A repository update replaces only changed
+    // entries rather than making a renderer close over the entire metadata/attribution inventory.
+    const publishedFiles = React.useRef<readonly ReviewListFile[]>([]);
+    const diffFiles = React.useMemo(() => {
+        const incoming: ReviewListFile[] = reviewFileEntries.map((entry, index) => ({
+            key: entry.key,
+            filePath: entry.key,
+            isComplete: entry.file.isComplete,
+            added: entry.file.linesAdded,
+            removed: entry.file.linesRemoved,
+            kind: entry.file.status === 'added' || entry.file.status === 'untracked' ? 'new'
+                : entry.file.status === 'deleted' ? 'deleted' : entry.file.status === 'renamed' ? 'renamed' : undefined,
+            reviewFile: entry.file,
+            showDivider: reviewFileEntries[index + 1]?.sectionKey === entry.sectionKey,
+            sectionTitle: entry.indexInSection === 0 ? entry.sectionTitle : undefined,
+            highlighted: highlightedPath === entry.file.fullPath,
+            attribution: attributedEntriesByPath.get(entry.file.fullPath),
+        }));
+        return publishedFiles.current = retainKeyedRows(publishedFiles.current, incoming, file => file.key);
+    }, [reviewFileEntries, attributedEntriesByPath, highlightedPath]);
+
+    const renderFileRow = React.useCallback<NonNullable<DiffFilesListViewProps<ReviewListFile>['renderFileRow']>>((params) => {
+        const file = params.file.reviewFile;
+        const attributed = params.file.attribution;
         const safePath = toTestIdSafeValue(file.fullPath);
         const collapseControl = (
             <HappierPressable
@@ -1339,10 +1331,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             </View>
         );
 
-        if (comparisonChrome) {
+        if (hasComparisonChrome) {
             // The comparison stream's file header (lab WT8): chevron, file icon, folder and name, counts,
             // then the file's controls. How the change was attributed stays one hover or focus away.
-            const attributed = attributedEntriesByPath.get(file.fullPath);
             const qualification = attributed ? sessionAttributedFileAccessibilityQualification(attributed) : undefined;
             return (
                 <ScmChangeRow
@@ -1353,7 +1344,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     showChangeMark={false}
                     tag={resolveScmChangePathTag(file.fullPath)}
                     accessibilityQualification={qualification}
-                    highlighted={highlightedPath === file.fullPath}
+                    highlighted={params.file.highlighted}
                     leadingElement={(
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                             {collapseControl}
@@ -1394,11 +1385,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         <FileIcon fileName={file.fileName} size={16} appearance="line" />
                     </View>
                 )}
-                accessibilityQualification={attributedEntriesByPath.has(file.fullPath)
-                    ? sessionAttributedFileAccessibilityQualification(attributedEntriesByPath.get(file.fullPath)!)
+                accessibilityQualification={attributed
+                    ? sessionAttributedFileAccessibilityQualification(attributed)
                     : undefined}
                 density={rowDensity}
-                highlighted={highlightedPath === file.fullPath}
+                highlighted={params.file.highlighted}
                 onPressPinned={
                     onFilePressPinned
                         ? () => deferOnWeb(() => onFilePressPinned(file))
@@ -1406,16 +1397,13 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 }
                 onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
                 trailingElement={rightElement}
-                showDivider={meta.showDivider}
+                showDivider={params.file.showDivider}
                 onPress={params.onToggleExpanded}
             />
-            {attributedEntriesByPath.has(file.fullPath) ? <ChangedFileEvidenceDisclosure entry={attributedEntriesByPath.get(file.fullPath)!} /> : null}
+            {attributed ? <ChangedFileEvidenceDisclosure entry={attributed} /> : null}
             </View>
         );
     }, [
-        attributedEntriesByPath,
-        fileMetaByKey,
-        highlightedPath,
         onFilePressPinned,
         onFilePress,
         onToggleSelectionForFile,
@@ -1423,15 +1411,15 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         renderFileTrailingActions,
         rowDensity,
         theme,
-        comparisonChrome,
+        hasComparisonChrome,
         props.evidenceOnly,
     ]);
 
     const renderFileNotes = props.comparisonChrome?.renderFileNotes ?? null;
     const notesPlacement = props.comparisonChrome?.indexPlacement === 'rail' ? 'column' as const : 'inline' as const;
-    const renderInlineUnifiedDiff = React.useCallback(({ file }: any) => {
+    const renderInlineUnifiedDiff = React.useCallback<NonNullable<DiffFilesListViewProps<ReviewListFile>['renderInlineUnifiedDiff']>>(({ file }) => {
         const path = typeof file.filePath === 'string' ? file.filePath : String(file.key ?? '');
-        const block = renderDiffBlock(path);
+        const block = <ReviewListDiff file={file} render={renderDiffBlock} onFilePress={props.evidenceOnly ? undefined : onFilePress} />;
         const notes = renderFileNotes ? renderFileNotes(path, notesPlacement) : null;
         if (!notes) return block;
         if (notesPlacement === 'inline') return <View>{notes}{block}</View>;
@@ -1441,7 +1429,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 {notes}
             </View>
         );
-    }, [notesPlacement, renderDiffBlock, renderFileNotes]);
+    }, [notesPlacement, renderDiffBlock, renderFileNotes, onFilePress, props.evidenceOnly]);
 
     const reviewTotals = reviewListFiles.reduce(
         (sum, file) => ({

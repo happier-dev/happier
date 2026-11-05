@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { createChangedFilesReviewDiffStateSource } from './ChangedFilesReviewDiffStore';
 import { useChangedFilesReviewDiffBlockRenderer } from './useChangedFilesReviewDiffBlockRenderer';
@@ -49,7 +49,6 @@ describe('useChangedFilesReviewDiffBlockRenderer', () => {
             snapshotSignature: 'snapshot-1',
             workspaceScope: null,
             diffStateSource: createChangedFilesReviewDiffStateSource(),
-            getEstimatedChangedLines: vi.fn(() => 12),
             reviewCommentsEnabled: true,
             reviewCommentDrafts: [
                 matchingDraft,
@@ -58,7 +57,7 @@ describe('useChangedFilesReviewDiffBlockRenderer', () => {
             ],
         }));
 
-        const node = hook.getCurrent()('src/a.ts');
+        const node = hook.getCurrent()('src/a.ts', { estimatedChangedLines: 12 });
 
         if (!React.isValidElement<DiffBlockElementProps>(node)) {
             throw new Error('Expected diff block element');

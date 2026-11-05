@@ -52,6 +52,8 @@ type CapturingLegendListMockOptions = Readonly<{
     emitLoadDuringLayout?: boolean;
     /** Keep mounted cells until their item or the recycler's dataVersion changes. */
     memoizeItems?: boolean;
+    /** Observe memoized cell render work, including invalidation through extraData. */
+    onRenderItem?: () => void;
     /** Stateful geometry feed: merged over the static defaults on every getState() read. */
     resolveState?: () => Partial<LegendListMockState> | null | undefined;
 }>;
@@ -114,8 +116,12 @@ export function createCapturingLegendListMock(
         item: unknown;
         index: number;
         dataVersion: unknown;
+        extraData: unknown;
         renderItemRef: React.RefObject<((input: Readonly<{ item: unknown; index: number }>) => React.ReactNode) | undefined>;
-    }>) => React.createElement('LegendListItem', null, itemProps.renderItemRef.current?.({ item: itemProps.item, index: itemProps.index })));
+    }>) => {
+        options.onRenderItem?.();
+        return React.createElement('LegendListItem', null, itemProps.renderItemRef.current?.({ item: itemProps.item, index: itemProps.index }));
+    });
     const LegendList = React.forwardRef<any, any>((nextProps, ref) => {
         props = nextProps;
         // Like the recycler, changing renderItem alone updates the callback but does not invalidate a cell.
@@ -149,7 +155,7 @@ export function createCapturingLegendListMock(
                 .slice(0, options.renderItemLimit ?? nextProps.data.length)
                 .map((item: any, index: number) => options.memoizeItems ? React.createElement(MemoizedItem, {
                     key: nextProps.keyExtractor?.(item, index) ?? item?.id ?? String(index),
-                    item, index, dataVersion: nextProps.dataVersion, renderItemRef,
+                    item, index, dataVersion: nextProps.dataVersion, extraData: nextProps.extraData, renderItemRef,
                 }) : React.createElement(
                 'LegendListItem',
                 { key: nextProps.keyExtractor?.(item, index) ?? item?.id ?? String(index) },

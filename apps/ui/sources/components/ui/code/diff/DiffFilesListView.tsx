@@ -50,7 +50,7 @@ export type DiffFileFindState = Pick<DiffViewerBaseProps, 'findActive' | 'findRa
 
 const DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE = 72;
 
-type DiffFilesListViewRenderContext = Readonly<{
+type DiffFilesListViewRenderContext<TFile extends DiffFileEntry> = Readonly<{
     fileRowColor: string;
     rowHoverColor: string;
     controlColor: string;
@@ -61,10 +61,9 @@ type DiffFilesListViewRenderContext = Readonly<{
     onOpenFile?: (filePath: string) => void;
     onOpenFilePinned?: (filePath: string) => void;
     onToggleExpanded: (key: string) => void;
-    renderBeforeFileRow?: DiffFilesListViewProps['renderBeforeFileRow'];
-    renderFileRow?: DiffFilesListViewProps['renderFileRow'];
-    renderInlineUnifiedDiff?: DiffFilesListViewProps['renderInlineUnifiedDiff'];
-    getFindStateForFile?: DiffFilesListViewProps['getFindStateForFile'];
+    renderBeforeFileRow?: DiffFilesListViewProps<TFile>['renderBeforeFileRow'];
+    renderFileRow?: DiffFilesListViewProps<TFile>['renderFileRow'];
+    getFindStateForFile?: DiffFilesListViewProps<TFile>['getFindStateForFile'];
     showLineNumbers: boolean;
     showPrefix: boolean;
     virtualizationByteThreshold: number;
@@ -72,11 +71,12 @@ type DiffFilesListViewRenderContext = Readonly<{
     wrapLines: boolean;
 }>;
 
-type DiffFilesListViewItem = Readonly<{
+type DiffFilesListViewItem<TFile extends DiffFileEntry> = Readonly<{
     key: string;
-    file: DiffFileEntry;
+    file: TFile;
     expanded: boolean;
     focused: boolean;
+    renderInlineUnifiedDiff: DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff'];
 }>;
 
 export type DiffFilesListViewHandle = Readonly<{
@@ -87,9 +87,9 @@ export type DiffFilesListViewHandle = Readonly<{
 
 type DiffFilesListVirtualizedListLayout = 'bounded' | 'intrinsic';
 
-export type DiffFilesListViewProps = Readonly<{
+export type DiffFilesListViewProps<TFile extends DiffFileEntry = DiffFileEntry> = Readonly<{
     testID?: string;
-    files: readonly DiffFileEntry[];
+    files: readonly TFile[];
     expandedKeys: ReadonlySet<string>;
     onToggleExpanded: (key: string) => void;
     canRenderInlineDiffs: boolean;
@@ -110,17 +110,17 @@ export type DiffFilesListViewProps = Readonly<{
     onOpenFile?: (filePath: string) => void;
     onOpenFilePinned?: (filePath: string) => void;
     drawDistanceMultiplier?: number;
-    getFindStateForFile?: (file: DiffFileEntry) => DiffFileFindState | undefined;
-    renderBeforeFileRow?: (params: Readonly<{ file: DiffFileEntry; index: number }>) => React.ReactNode;
+    getFindStateForFile?: (file: TFile) => DiffFileFindState | undefined;
+    renderBeforeFileRow?: (params: Readonly<{ file: TFile; index: number }>) => React.ReactNode;
     renderFileRow?: (params: Readonly<{
-        file: DiffFileEntry;
+        file: TFile;
         index: number;
         expanded: boolean;
         focused: boolean;
         onToggleExpanded: () => void;
     }>) => React.ReactNode;
     renderInlineUnifiedDiff?: (params: Readonly<{
-        file: DiffFileEntry;
+        file: TFile;
         virtualized: boolean;
         maxVirtualizedHeight: number;
         wrapLines: boolean;
@@ -130,9 +130,9 @@ export type DiffFilesListViewProps = Readonly<{
     }>) => React.ReactNode;
 }>;
 
-export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffFilesListViewProps>(function DiffFilesListView(
-    props,
-    ref,
+function DiffFilesListViewInner<TFile extends DiffFileEntry>(
+    props: DiffFilesListViewProps<TFile>,
+    ref: React.ForwardedRef<DiffFilesListViewHandle>,
 ) {
     const {
         testID,
@@ -158,8 +158,8 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         drawDistanceMultiplier,
         renderBeforeFileRow,
         renderFileRow,
-        renderInlineUnifiedDiff,
         getFindStateForFile,
+        renderInlineUnifiedDiff,
     } = props;
     const virtualizedListLayout = props.virtualizedListLayout ?? 'bounded';
     const { theme } = useUnistyles();
@@ -205,33 +205,35 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         return style;
     }, []);
     const virtualizedListContentContainerStyle = React.useMemo(() => ({ paddingBottom: 12 }), []);
-    const keyExtractor = React.useCallback((item: DiffFilesListViewItem) => item.key, []);
+    const keyExtractor = React.useCallback((item: DiffFilesListViewItem<TFile>) => item.key, []);
 
-    const listItemCacheRef = React.useRef(new Map<string, DiffFilesListViewItem>());
+    const listItemCacheRef = React.useRef(new Map<string, DiffFilesListViewItem<TFile>>());
     const listData = React.useMemo(() => {
         const previous = listItemCacheRef.current;
-        const next = new Map<string, DiffFilesListViewItem>();
+        const next = new Map<string, DiffFilesListViewItem<TFile>>();
         const data = files.map((file) => {
             const key = file.key;
             const expanded = expandedKeys.has(key);
             const focused = focusedFileKey === key;
+            const inlineRenderer = expanded && canRenderInlineDiffs ? renderInlineUnifiedDiff : undefined;
             const previousItem = previous.get(key);
             if (
                 previousItem
                 && previousItem.file === file
                 && previousItem.expanded === expanded
                 && previousItem.focused === focused
+                && previousItem.renderInlineUnifiedDiff === inlineRenderer
             ) {
                 next.set(key, previousItem);
                 return previousItem;
             }
-            const item = { key, file, expanded, focused };
+            const item = { key, file, expanded, focused, renderInlineUnifiedDiff: inlineRenderer };
             next.set(key, item);
             return item;
         });
         listItemCacheRef.current = next;
         return data;
-    }, [expandedKeys, files, focusedFileKey]);
+    }, [canRenderInlineDiffs, expandedKeys, files, focusedFileKey, renderInlineUnifiedDiff]);
 
     const clearMeasurementCache = React.useCallback(() => {
         if (virtualizeFileList !== true) return;
@@ -268,7 +270,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         [clearMeasurementCache, scrollToIndex, scrollToOffset],
     );
 
-    const renderContextRef = React.useRef<DiffFilesListViewRenderContext | null>(null);
+    const renderContextRef = React.useRef<DiffFilesListViewRenderContext<TFile> | null>(null);
     renderContextRef.current = {
         fileRowColor, rowHoverColor, controlColor,
         canRenderInlineDiffs,
@@ -280,7 +282,6 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         onToggleExpanded,
         renderBeforeFileRow,
         renderFileRow,
-        renderInlineUnifiedDiff,
         showLineNumbers,
         getFindStateForFile,
         showPrefix,
@@ -300,7 +301,6 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         onToggleExpanded,
         renderBeforeFileRow,
         renderFileRow,
-        renderInlineUnifiedDiff,
         showLineNumbers,
         showPrefix,
         virtualizationByteThreshold,
@@ -317,7 +317,6 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         onToggleExpanded,
         renderBeforeFileRow,
         renderFileRow,
-        renderInlineUnifiedDiff,
         showLineNumbers,
         showPrefix,
         virtualizationByteThreshold,
@@ -325,7 +324,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         wrapLines,
     ]);
 
-    const renderFileNode = React.useCallback((item: DiffFilesListViewItem, index: number) => {
+    const renderFileNode = React.useCallback((item: DiffFilesListViewItem<TFile>, index: number) => {
         const ctx = renderContextRef.current;
         if (!ctx) return null;
         const { file, expanded, focused } = item;
@@ -367,8 +366,8 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
             showLineNumbers: ctx.showLineNumbers,
             showPrefix: ctx.showPrefix,
         };
-        const customInlineDiff = ctx.canRenderInlineDiffs && expanded && ctx.renderInlineUnifiedDiff
-            ? ctx.renderInlineUnifiedDiff(inlineDiffRendererProps)
+        const customInlineDiff = ctx.canRenderInlineDiffs && expanded && item.renderInlineUnifiedDiff
+            ? item.renderInlineUnifiedDiff(inlineDiffRendererProps)
             : null;
         const hasCustomInlineDiff = customInlineDiff !== null && customInlineDiff !== undefined && customInlineDiff !== false;
         const inlineVirtualizedContainerStyle = inlineVirtualized
@@ -533,7 +532,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         );
     }, []);
     const renderVirtualizedItem = React.useCallback(
-        ({ item, index }: { item: DiffFilesListViewItem; index: number }) => renderFileNode(item, index),
+        ({ item, index }: { item: DiffFilesListViewItem<TFile>; index: number }) => renderFileNode(item, index),
         [renderFileNode],
     );
 
@@ -542,7 +541,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         <PaneHeaderScrollIsolation>
         <PierreScrollRootVirtualizerProvider>
             {shouldUseVirtualizedList ? (
-                <VirtualizedList<DiffFilesListViewItem>
+                <VirtualizedList<DiffFilesListViewItem<TFile>>
                     ref={listRef}
                     testID={testID}
                     style={virtualizedListStyle}
@@ -585,7 +584,12 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         </PierreScrollRootVirtualizerProvider>
         </PaneHeaderScrollIsolation>
     );
-});
+}
+
+// forwardRef retains the file type shared by the data and its row renderers.
+export const DiffFilesListView = React.forwardRef(DiffFilesListViewInner) as <TFile extends DiffFileEntry = DiffFileEntry>(
+    props: DiffFilesListViewProps<TFile> & React.RefAttributes<DiffFilesListViewHandle>,
+) => React.ReactElement;
 
 const styles = StyleSheet.create((theme) => ({
     fileRowContainer: {
