@@ -6975,6 +6975,8 @@ deps: {
         },
         askUserQuestion: {
             submit: 'Envia resposta',
+            dismiss: 'Descarta la pregunta',
+            dismissed: 'Pregunta descartada',
             submissionFailures: {
                 update: 'Actualitza el CLI de Happier i torna-ho a provar.',
                 reconnect: 'Torna a connectar aquesta sessió i torna-ho a provar.',

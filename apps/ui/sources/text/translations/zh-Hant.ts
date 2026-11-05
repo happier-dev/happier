@@ -6235,6 +6235,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         askUserQuestion: {
             submit: '提交答案',
+            dismiss: '關閉問題',
+            dismissed: '問題已關閉',
             claudeDialogNotice: {
                 header: 'Claude 對話框',
                 question: 'Claude 正在顯示對話框。請開啟終端機查看並選擇如何繼續。',

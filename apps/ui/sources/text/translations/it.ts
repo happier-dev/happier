@@ -7677,6 +7677,8 @@ export const it: TranslationStructure = {
     },
     askUserQuestion: {
         submit: "Invia risposta",
+        dismiss: 'Ignora la domanda',
+        dismissed: 'Domanda ignorata',
         submissionFailures: {
             update: "Aggiorna Happier CLI e riprova.",
             reconnect: "Riconnetti questa sessione e riprova.",

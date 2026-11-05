@@ -7190,6 +7190,8 @@ export const zhHans: TranslationStructure = {
     },
     askUserQuestion: {
         submit: "提交答案",
+        dismiss: '关闭问题',
+        dismissed: '问题已关闭',
         submissionFailures: {
             update: "请更新 Happier CLI，然后重试。",
             reconnect: "请重新连接此会话，然后重试。",

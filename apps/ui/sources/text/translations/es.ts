@@ -7397,6 +7397,8 @@ export const es: TranslationStructure = {
     },
     askUserQuestion: {
         submit: "Enviar respuesta",
+        dismiss: 'Descartar pregunta',
+        dismissed: 'Pregunta descartada',
         submissionFailures: {
             update: "Actualiza Happier CLI y vuelve a intentarlo.",
             reconnect: "Vuelve a conectar esta sesión e inténtalo de nuevo.",

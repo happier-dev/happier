@@ -6959,6 +6959,8 @@ export const de: TranslationStructure = {
         },
         askUserQuestion: {
             submit: 'Antwort senden',
+            dismiss: 'Frage verwerfen',
+            dismissed: 'Frage verworfen',
             submissionFailures: {
                 update: 'Aktualisiere die Happier-CLI und versuch es dann noch einmal.',
                 reconnect: 'Verbinde diese Session neu und versuch es dann noch einmal.',

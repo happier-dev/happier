@@ -7606,6 +7606,8 @@ localTailscale: {
     },
     askUserQuestion: {
         submit: "回答を送信",
+        dismiss: '質問を閉じる',
+        dismissed: '質問を閉じました',
         submissionFailures: {
             update: "Happier CLI を更新して、もう一度お試しください。",
             reconnect: "このセッションに再接続して、もう一度お試しください。",

@@ -123,4 +123,27 @@ describe('AskUserQuestionView submission acknowledgment', () => {
             id: 'toolu_1', approved: true, answers: { 'Pick one': 'A', 'What else?': 'Keep this answer' },
         }, expect.any(Object));
     });
+
+    it('dismisses only the pending question after CLI acceptance without sending an answer', async () => {
+        const acknowledgment = createDeferred<unknown>();
+        sessionRPC.mockReturnValueOnce(acknowledgment.promise);
+        const screen = await renderQuestion();
+
+        let dismissal: Promise<void>;
+        await act(async () => {
+            dismissal = screen.findByTestId('ask-user-question.dismiss')!.props.onPress();
+        });
+        expect(sessionRPC).toHaveBeenCalledWith('s1', 'permission', {
+            id: 'toolu_1', approved: false, decision: 'denied',
+        }, expect.any(Object));
+        expect(screen.findByTestId('ask-user-question.dismiss')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('ask-user-question.option:0:0')?.props.disabled).toBe(true);
+
+        acknowledgment.resolve({ ok: true });
+        await act(async () => { await dismissal; });
+        expect(screen.findByTestId('ask-user-question.dismiss')).toBeNull();
+        expect(screen.findByTestId('ask-user-question.submit')).toBeNull();
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('tools.askUserQuestion.dismissed');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Keep this answer');
+    });
 });

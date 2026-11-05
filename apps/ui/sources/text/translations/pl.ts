@@ -7417,6 +7417,8 @@ export const pl: TranslationStructure = {
     },
     askUserQuestion: {
         submit: "Wyślij odpowiedź",
+        dismiss: 'Odrzuć pytanie',
+        dismissed: 'Pytanie odrzucone',
         submissionFailures: {
             update: "Zaktualizuj Happier CLI i spróbuj ponownie.",
             reconnect: "Połącz ponownie tę sesję i spróbuj jeszcze raz.",

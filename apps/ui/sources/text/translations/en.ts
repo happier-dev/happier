@@ -6991,6 +6991,8 @@ export const en = {
         },
         askUserQuestion: {
             submit: 'Submit Answer',
+            dismiss: 'Dismiss question',
+            dismissed: 'Question dismissed',
             submissionFailures: {
                 update: 'Update Happier CLI, then try again.',
                 reconnect: 'Reconnect this session, then try again.',

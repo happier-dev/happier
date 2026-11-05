@@ -7400,6 +7400,8 @@ export const ru: TranslationStructure = {
     },
     askUserQuestion: {
         submit: "Отправить ответ",
+        dismiss: 'Закрыть вопрос',
+        dismissed: 'Вопрос закрыт',
         submissionFailures: {
             update: "Обновите Happier CLI и повторите попытку.",
             reconnect: "Переподключите этот сеанс и повторите попытку.",
