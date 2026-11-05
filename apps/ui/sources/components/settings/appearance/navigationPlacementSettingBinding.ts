@@ -1,6 +1,15 @@
-import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
+import type { SettingOperationResult, SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { mergeNavigationSurfacePlacements, NavigationSurfacePlacementsV1Schema, readNavigationSurfacePlacements, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+
+/** The mounted detail owns its kind and lends the shared customizer to Settings. */
+export async function invokeNavigationPlacementCustomizer(): Promise<SettingOperationResult> {
+    const { readShellColumnActionOwner } = await import('@/sync/ops/actions/scopeActionFamily');
+    const open = readShellColumnActionOwner('main')?.openNavigationCustomizer;
+    if (!open) return { status: 'unavailable', reason: 'current_ui_command_unavailable' };
+    await open();
+    return { status: 'interaction_opened' };
+}
 
 /** The same local placement owner used by navigation, exposed by settings.get/settings.set. */
 export const navigationPlacementStorageBinding = {

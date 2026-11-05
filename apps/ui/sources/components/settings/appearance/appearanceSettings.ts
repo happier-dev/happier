@@ -4,7 +4,7 @@ import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { themeModeStorageBinding } from './themeModeSettingBinding';
 import { resetAppearanceSettings } from './appearanceDefaults';
 import { glassIntensityStorageBinding, glassPresetStorageBinding, glassSurfaceStorageBinding, glassTintStorageBinding } from './glassSettingBindings';
-import { navigationPlacementStorageBinding } from './navigationPlacementSettingBinding';
+import { invokeNavigationPlacementCustomizer, navigationPlacementStorageBinding } from './navigationPlacementSettingBinding';
 import { surfaceFinishOverrideStorageBinding } from './surfaceFinishSettingBindings';
 import { machineSummaryMetricsStorageBinding } from '@/components/machines/summary/machineSummarySettingBindings';
 import { atmosphereFieldStorageBinding, homeAtmosphereStorageBinding, invokeAtmospherePictureOperation } from '@/components/atmosphere/atmosphereSettings';
@@ -64,7 +64,9 @@ export const APPEARANCE_PAGE_SETTINGS = defineSettingsPage({
                 paneArrangement: {},
                 rightPanelPlacement: {},
                 settingsSidebar: {},
-                navigationPlacements: { storage: navigationPlacementStorageBinding },
+                navigationPlacements: { storage: navigationPlacementStorageBinding,
+                    operation: { kind: 'invoke', requiresHumanInteraction: false, requiresApproval: false,
+                        invoke: invokeNavigationPlacementCustomizer } },
             },
         },
         home: {
