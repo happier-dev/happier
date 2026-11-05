@@ -760,10 +760,14 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? { saved: storedConnection, declarations: gatewayDeclarations } : null;
     const availabilityVisible = connection !== null && (connection.scope === 'account' || connection.grants.accountState !== 'absent');
     const teamsSharingAvailable = Boolean(teamCredentialResourcesEnabled && selectedTargetServerMatchesActiveAccount && serverId);
-    // A grant that is not in force is explained by the error above and fixed in here: open by itself.
-    const advancedNeedsAttention = connection !== null && (connection.authorizationError != null
-        || (connection.grants.accountState !== 'valid' && connection.grants.accountState !== 'absent')
-        || (machineSectionVisible && connection.grants.machineState !== 'valid' && connection.grants.machineState !== 'absent'));
+    const authorizationNeedsRepair = connection?.authorizationError != null
+        && connection.authorizationError.code !== 'provider_connection_disabled'
+        && connection.authorizationError.code !== 'provider_not_enabled_on_machine';
+    const advancedRepairError = authorizationNeedsRepair ? connection?.authorizationError
+        : connection?.grants.accountState === 'stale' ? 'provider_account_grant_stale'
+        : machineSectionVisible && connection?.grants.machineState === 'stale' ? 'provider_machine_grant_stale'
+        : null;
+    const advancedNeedsAttention = advancedRepairError != null;
     // A gateway runs where Runs on says and is reached through Happier: availability, grants and
     // endpoints are a gateway user's concern only when one of them is broken and needs the repair.
     const advancedAvailable = gateway
@@ -1544,7 +1548,8 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     <Item
                         testID="provider-connection-advanced"
                         title={t('settingsProviders.detail.advancedTitle')}
-                        subtitle={advancedShown ? undefined : t('settingsProvidersCollection.advancedSummary')}
+                        subtitle={advancedRepairError ? t(presentProviderError(advancedRepairError).descriptionKey)
+                            : advancedShown ? undefined : t('settingsProvidersCollection.advancedSummary')}
                         showChevron={false}
                         accessibilityExpanded={advancedShown}
                         rightElement={<ExpandableItemCaret expanded={advancedShown} />}

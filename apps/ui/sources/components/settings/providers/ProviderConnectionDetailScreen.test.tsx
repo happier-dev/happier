@@ -947,6 +947,26 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(state.connection).toBe(initialConnection);
     });
 
+    it.each(['stale-grant', 'disabled-stale-grant', 'authorization-failure'] as const)('keeps genuine %s repair visible and explained in Advanced', async reason => {
+        const staleGrant = reason !== 'authorization-failure';
+        state.connection = connection({ scope: 'machine',
+            grants: { accountEnabled: !staleGrant, enabledMachineIds: ['machine-a'],
+                accountState: staleGrant ? 'stale' : 'valid', machineState: 'valid', effectiveState: 'valid' },
+            authorizationError: createProviderErrorV1(reason === 'disabled-stale-grant' ? 'provider_connection_disabled'
+                : staleGrant ? 'provider_account_grant_stale' : 'provider_endpoint_unauthorized',
+                { connectionId: 'pc_a', machineId: 'machine-a' }),
+        });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-detail')).not.toBeNull());
+        const advanced = screen.findAllByType(Item).find(item => item.props.testID === 'provider-connection-advanced')!;
+        expect(advanced.props.accessibilityExpanded).toBe(true);
+        expect(advanced.props.onPress).toBeUndefined();
+        expect(advanced.props.subtitle).toBe(staleGrant
+            ? 'settingsProviders.errors.accessChangedDescription' : 'settingsProviders.errors.unauthorizedDescription');
+        expect(probeProviderConnection).not.toHaveBeenCalled();
+    });
+
     it('keeps the lab detail anatomy: rare sections behind Advanced, models on their own page (P2-4)', async () => {
         state.connection = connection({
             scope: 'account',
