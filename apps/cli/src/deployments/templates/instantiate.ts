@@ -2,12 +2,13 @@ import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentTemplateInstantiateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentTargetLinkResultV1Schema,
-    areDeploymentTemplateReviewFactsEqualV1, DeploymentReceiptAcceptedResultV1Schema,
-    type ActionExecutorContext, type ActionExecutorDeps, type DeploymentTemplateInstantiateInputV1,
-    type DeploymentTemplateInstantiateResultV1, type DeploymentArtifactContentReferenceV1,
-    type DeploymentTemplateInstantiationReviewV1, type StoredAppPresetInputV1, type DeploymentDeployIntentInputV1,
-    type DeploymentEnvironmentCreateIntentInputV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInstantiateInputV1,
+    DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
+    DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
+    DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentCreateResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';

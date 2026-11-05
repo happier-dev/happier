@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
-import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
-    type ActionExecutorContext, type ActionExecutorDeps, type ActionExecuteFailure,
-    type DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure,
+    DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';

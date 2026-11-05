@@ -1,6 +1,6 @@
-import { DeploymentEnvironmentCreateResultV1Schema,
-    type DeploymentEnvironmentCreateInputV1, type DeploymentBindingsSetInputV1,
-    type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentEnvironmentCreateInputV1, DeploymentBindingsSetInputV1,
+    DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
