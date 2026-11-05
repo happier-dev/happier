@@ -43,7 +43,8 @@ function ChipPill(props: HappierCapabilityStatusPillProps): React.ReactElement {
             chrome={props.chrome}
             label={props.label}
             labelVariant="phrase"
-            labelNumberOfLines={1}
+            hideDot={props.placement === 'catalog'}
+            {...(props.placement === 'catalog' ? {} : { labelNumberOfLines: 1 })}
             {...(props.detail === undefined ? {} : { detail: props.detail })}
         />
     );

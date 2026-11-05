@@ -18,6 +18,20 @@ const present = (value: HappierCapabilityStatus, placement: HappierCapabilitySta
   presentHappierCapabilityStatus(value, placement, labels);
 
 describe('presentHappierCapabilityStatus', () => {
+  it('uses plain canonical words in catalog rows while retaining row silence, tone and fix', () => {
+    for (const kind of ['cantrun', 'masked', 'revoked', 'error'] as const) {
+      const value = status(kind);
+      const catalog = presentHappierCapabilityStatus(value, 'catalog', labels);
+      expect(catalog.pill).toEqual({ ...present(value).pill, chrome: 'plain' });
+      expect(catalog.tone).toBe(present(value).tone);
+      expect(catalog.fixLabel).toBe(present(value).fixLabel);
+      expect(catalog.blockingRank).toBe(present(value).blockingRank);
+    }
+    for (const kind of ['ready', 'off', 'connected'] as const) {
+      expect(presentHappierCapabilityStatus(status(kind), 'catalog', labels).pill).toBeNull();
+    }
+  });
+
   it('keeps healthy silent and names the one fix for a problem', () => {
     expect(present(status('ready')).pill).toBeNull();
     const signin = present(status('signin'));

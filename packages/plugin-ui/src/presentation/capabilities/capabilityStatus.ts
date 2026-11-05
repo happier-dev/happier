@@ -48,8 +48,8 @@ export type HappierCapabilityStatus = Readonly<{
   fix?: Readonly<{ kind: HappierCapabilityFixKind; onPress: () => void }>;
 }>;
 
-/** 'row': list rows, composer, legends (the where-summary already says "Off"). 'header': detail headers. */
-export type HappierCapabilityStatusPlacement = 'row' | 'header';
+/** Catalog rows use the row's speaking policy with plain words; headers also state Off and Connected. */
+export type HappierCapabilityStatusPlacement = 'row' | 'catalog' | 'header';
 
 /** The pill's ink: amber "needs you", rose "failed", or neutral. */
 export type HappierCapabilityStatusVariant = 'attention' | 'danger' | 'neutral';
@@ -200,7 +200,7 @@ export function doesHappierCapabilityStatusSpeak(
   placement: HappierCapabilityStatusPlacement = 'row',
 ): boolean {
   const silentIn = SPECS[status.kind].silentIn;
-  return silentIn !== 'all' && silentIn !== placement;
+  return silentIn !== 'all' && silentIn !== (placement === 'catalog' ? 'row' : placement);
 }
 
 export function presentHappierCapabilityStatus(
@@ -218,7 +218,7 @@ export function presentHappierCapabilityStatus(
       speaks
         ? {
             variant: spec.variant,
-            chrome: spec.chrome,
+            chrome: placement === 'catalog' ? 'plain' : spec.chrome,
             label: labels.status(status.kind, status.machineName),
             ...(status.detail && !spec.detailIsReason
               ? { detail: status.detail }

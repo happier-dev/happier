@@ -11,6 +11,7 @@ import {
 } from './capabilityStatus.js';
 
 export type HappierCapabilityStatusPillProps = Readonly<{
+  placement?: HappierCapabilityStatusPlacement;
   variant: HappierCapabilityStatusVariant;
   chrome: 'pill' | 'plain';
   label: string;
@@ -26,11 +27,11 @@ export type HappierCapabilityStatusFixProps = Readonly<{
 export type HappierCapabilityStatusChipProps = Readonly<{
   status: HappierCapabilityStatus;
   placement?: HappierCapabilityStatusPlacement;
-  /** In a list's facts line the fix stays in the row's action column; the chip alone is drawn. */
+  /** Catalog rows keep the fix in their independent action slot; the chip alone is drawn. */
   showFix?: boolean;
   testID?: string;
   labels: HappierCapabilityStatusLabels;
-  /** The caller's status pill (one line, sentence-case phrase). */
+  /** The caller's status words, plain in catalog rows and otherwise using the table's chrome. */
   Pill: ComponentType<HappierCapabilityStatusPillProps>;
   /** The caller's small secondary button for the status's one fix. */
   Fix: ComponentType<HappierCapabilityStatusFixProps>;
@@ -59,9 +60,10 @@ export const HappierCapabilityStatusChip = memo(
     const fix = props.status.fix;
     const space = props.space ?? HAPPIER_SPACE_STEPS;
     return (
-      <View style={[ROOT, { gap: space.s2 }]} testID={props.testID}>
+      <View style={[ROOT, props.placement === 'catalog' ? CATALOG_ROOT : null, { gap: space.s2 }]} testID={props.testID}>
         <View style={[ROW, { gap: space.s8 }]}>
           <Pill
+            placement={props.placement ?? 'row'}
             variant={pill.variant}
             chrome={pill.chrome}
             label={pill.label}
@@ -92,6 +94,8 @@ const ROOT = {
   minWidth: 0,
   flexShrink: 1,
 } as const;
+// A catalog row's status word leads its line 2 whole: the description beside it yields first (ST-5).
+const CATALOG_ROOT = { flexShrink: 0 } as const;
 const ROW = {
   flexDirection: 'row',
   alignItems: 'center',

@@ -208,7 +208,8 @@ function StatusPill(props: HappierCapabilityStatusPillProps): ReactElement {
       : `${props.label} · ${props.detail}`;
   if (props.chrome === 'plain')
     return (
-      <Text variant="meta" tone="secondary" numberOfLines={1}>
+      <Text variant="meta" tone={props.variant === 'neutral' ? 'secondary' : props.variant}
+        {...(props.placement === 'catalog' ? {} : { numberOfLines: 1 })}>
         {label}
       </Text>
     );
