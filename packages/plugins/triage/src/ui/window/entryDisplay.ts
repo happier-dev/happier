@@ -51,7 +51,8 @@ export function readTriageEntryGlyphV1(
   if (lifecycle === 'resolved') {
     return workflowSubject === 'pullRequest' ? 'change-complete' : 'check';
   }
-  if (lifecycle !== 'active') return 'info';
+  // Active, or a lifecycle nobody has said yet (a pin no read has materialized, a source's `unknown`): the entry is
+  // still the kind it is, so it keeps its kind's glyph rather than a generic info mark.
   if (workflowSubject === 'issue') return 'issue';
   if (workflowSubject === 'errorIssue') return 'bug';
   if (workflowSubject === 'other') return 'info';

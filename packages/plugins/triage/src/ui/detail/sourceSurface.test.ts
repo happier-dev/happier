@@ -117,6 +117,10 @@ describe('the source detail contribution lookup', () => {
         }
         expect(readTriageEntryGlyphV1('active', null)).toBe('info');
         expect(readTriageEntryGlyphV1('resolved', null)).toBe('check');
+        // A pin no read has materialized, or a source that did not say its lifecycle, still knows what the entry is:
+        // it keeps its kind's glyph rather than a generic info mark (LAB-JUDGE-2 R4).
+        expect(readTriageEntryGlyphV1(null, 'pullRequest')).toBe('change-open');
+        expect(readTriageEntryGlyphV1('unknown', 'issue')).toBe('issue');
     });
     it('keeps source rendering and execution unavailable on an Account mount without an admitted occurrence', () => {
         const context = createSurfaceContextFixture({
