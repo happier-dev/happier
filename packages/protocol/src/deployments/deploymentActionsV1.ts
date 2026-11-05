@@ -421,6 +421,12 @@ export type DeploymentEnvironmentDeleteResultV1 = z.infer<typeof DeploymentEnvir
 export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema) }), DeploymentActionFailureV1Schema,
 ]));
+/** The preparing host returns its exact candidate for the Team Move sharing consumer. */
+export const DeploymentBindingsSetResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...result, preparedArtifact: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
+  DeploymentActionFailureV1Schema,
+]));
+export type DeploymentBindingsSetResultV1 = z.infer<typeof DeploymentBindingsSetResultV1Schema>;
 export const DeploymentTargetLinkAlreadyLinkedResultV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false), error: z.literal('provider_scope_already_linked'),
   environment: DeploymentEnvironmentRefV1Schema, targetLinkId: DeploymentIdentifierV1Schema,
@@ -677,7 +683,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.environments.get': DeploymentEnvironmentGetResultV1Schema,
   'deployments.receipts.get': DeploymentReceiptGetResultV1Schema,
   'deployments.receipts.observe': DeploymentReceiptResultV1Schema,
-  'deployments.bindings.set': DeploymentEnvironmentCreateResultV1Schema,
+  'deployments.bindings.set': DeploymentBindingsSetResultV1Schema,
   'deployments.environments.list': DeploymentEnvironmentListResultV1Schema,
   'deployments.receipts.list': DeploymentReceiptListResultV1Schema,
 } as const));

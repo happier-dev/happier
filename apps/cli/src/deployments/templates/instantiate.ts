@@ -6,7 +6,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInsta
     DeploymentTemplateInstantiateResultV1, DeploymentArtifactContentReferenceV1,
     DeploymentTemplateInstantiationReviewV1, StoredAppPresetInputV1, DeploymentDeployIntentInputV1,
     DeploymentEnvironmentCreateIntentInputV1, DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentCreateResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -266,7 +266,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update' | 'deployments.bindings.set', input: Parameters<Host['storage']>[1]) => {
                 const result = await host.storage(actionId, input, context);
                 if ('errorCode' in result) return refuse(result.errorCode);
-                const parsed = DeploymentEnvironmentCreateResultV1Schema.parse(result);
+                const parsed = (actionId === 'deployments.bindings.set'
+                    ? DeploymentBindingsSetResultV1Schema : DeploymentEnvironmentCreateResultV1Schema).parse(result);
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };

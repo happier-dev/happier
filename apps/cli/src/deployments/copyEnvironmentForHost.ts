@@ -1,4 +1,4 @@
-import { DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentEnvironmentCreateInputV1, DeploymentBindingsSetInputV1,
     DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
@@ -60,10 +60,11 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
         const applied = await context.hostReviewedChild!.invoke({ action: 'deployments.bindings.set',
             role: COPY_ENVIRONMENT_BINDINGS_ROLE, input: bindingInput });
         if (!applied.ok) return partial(applied.errorCode);
-        const settled = DeploymentEnvironmentCreateResultV1Schema.safeParse(applied.result);
+        const settled = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
         if (!settled.success) return partial('invalid_action_output');
         if (!settled.data.ok) return partial(settled.data.error);
-        return settled.data.environmentId === created.environmentId ? settled.data : partial('invalid_action_output');
+        return settled.data.environmentId === created.environmentId
+            ? { ok: true, environmentId: settled.data.environmentId, revision: settled.data.revision } : partial('invalid_action_output');
     } catch (error) {
         return partial(context.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string'

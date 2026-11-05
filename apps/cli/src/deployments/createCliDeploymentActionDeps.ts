@@ -121,6 +121,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     creationReview?: DeploymentEnvironmentCreationReviewV1): Promise<DeploymentActionOutputV1 | ActionExecuteFailure> {
     let issued = false;
     let method = 'POST';
+    let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
     let preparedUpdateBindings: Pick<PreparedDeploymentBindingStorageV1, 'grants' | 'referencedSavedSecretRevisions'> | undefined;
     try {
       const denied = await params.admitAccount(input.serverId, context);
@@ -218,6 +219,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if (!params.prepareBindings) return failure('client_required');
         const prepared = await params.prepareBindings({ input: DeploymentActionInputSchemasV1[actionId].parse(input), context });
         if ('errorCode' in prepared) return prepared;
+        preparedBindingArtifact = { contentArtifactId: prepared.contentArtifactId,
+          contentHeaderVersion: prepared.contentHeaderVersion, contentBodyVersion: prepared.contentBodyVersion };
         body = homeId ? { ...prepared, serverId: homeId } : prepared;
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
@@ -244,7 +247,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
       }
-      return parsed.data;
+      return actionId === 'deployments.bindings.set' && 'ok' in parsed.data && parsed.data.ok && preparedBindingArtifact
+        ? { ...parsed.data, preparedArtifact: preparedBindingArtifact } : parsed.data;
     } catch (error) {
       // HTTP rejected these headers before routing, including for mutations.
       if (!context.signal?.aborted) {

@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { MachineServiceAdoptInputV1Schema, MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure,
     DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
+import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { DeploymentNativeComposeOriginV1 } from '@happier-dev/deployment-protocol';
@@ -141,7 +141,7 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                             input: normalizeStrictJsonValue({ serverId: input.serverId, environmentId, expectedRevision: revision,
                                 set: input.bindings, remove: [] }) });
                         if (!applied.ok) return partial(applied.errorCode);
-                        const result = DeploymentEnvironmentCreateResultV1Schema.safeParse(applied.result);
+                        const result = DeploymentBindingsSetResultV1Schema.safeParse(applied.result);
                         if (!result.success) return partial('invalid_action_output');
                         if (!result.data.ok) return partial(result.data.error);
                         revision = result.data.revision;
