@@ -626,7 +626,7 @@ describe('fake Codex app-server harness', () => {
             params: expect.objectContaining({
               item: expect.objectContaining({
                 type: 'exitedReviewMode',
-                review: expect.stringContaining('Full review comments:'),
+                review: expect.any(String),
               }),
             }),
           }),
@@ -635,7 +635,7 @@ describe('fake Codex app-server harness', () => {
             params: expect.objectContaining({
               item: expect.objectContaining({
                 type: 'agentMessage',
-                text: expect.stringContaining('Full review comments:'),
+                text: expect.any(String),
               }),
             }),
           }),
@@ -649,6 +649,23 @@ describe('fake Codex app-server harness', () => {
             }),
           }),
         ]);
+
+        const exitedReviewItem = notifications[3]?.params as { item: { review: string } };
+        const assistantItem = notifications[4]?.params as { item: { text: string } };
+        const expectedReview = {
+          overall_explanation: 'Native Codex review completed.',
+          findings: [{
+            title: 'Duplicate assistant text is persisted once',
+            body: 'The review bridge should not store both exitedReviewMode text and the matching final assistant message as duplicate output.',
+            priority: 2,
+            code_location: {
+              absolute_file_path: '/fake/workspace/src/nativeReview.ts',
+              line_range: { start: 12, end: 14 },
+            },
+          }],
+        };
+        expect(JSON.parse(exitedReviewItem.item.review)).toEqual(expectedReview);
+        expect(JSON.parse(assistantItem.item.text)).toEqual(expectedReview);
 
         const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
         expect(requests).toEqual(expect.arrayContaining([
