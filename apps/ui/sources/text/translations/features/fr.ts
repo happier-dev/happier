@@ -16314,6 +16314,9 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         openSourceSession: 'Ouvrir la session dont elle vient',
         observedActivity: 'Activité observée',
         observedActivityBody: 'Happier voit les phases et les agents de cet agent, mais il n’a pas été lancé comme un flux de travail géré : il ne peut donc être ni modifié, ni enregistré, ni réexécuté.',
+        interruptedSentence: 'Le travail terminé est conservé.',
+        interruptedStepSentence: ({ step }) => `${step} a été interrompu. Le travail terminé est conservé.`,
+        stepComposerPlaceholder: 'Répondre dans cette étape…',
     },
 
     recovery: {

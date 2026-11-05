@@ -16289,6 +16289,9 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         openSourceSession: 'Obre la sessió d’on ve',
         observedActivity: 'Activitat observada',
         observedActivityBody: 'Happier pot veure les fases i els agents d’aquest agent, però no es va iniciar com un flux de treball gestionat, així que no es pot editar, desar ni tornar a executar.',
+        interruptedSentence: 'La feina acabada es conserva.',
+        interruptedStepSentence: ({ step }) => `${step} s’ha interromput. La feina acabada es conserva.`,
+        stepComposerPlaceholder: 'Respon en aquest pas…',
     },
 
     recovery: {

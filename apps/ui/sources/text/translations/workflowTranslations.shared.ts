@@ -628,6 +628,9 @@ export const en = {
         openSourceSession: 'Open the session it came from',
         observedActivity: 'Observed activity',
         observedActivityBody: 'Happier can see this agent’s phases and agents, but it was not started as a managed workflow, so it cannot be edited, saved or run again.',
+        interruptedSentence: 'Completed work is retained.',
+        interruptedStepSentence: ({ step }: { step: string }) => `${step} was interrupted. Completed work is retained.`,
+        stepComposerPlaceholder: 'Reply in this step…',
     },
 
     recovery: {

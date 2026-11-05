@@ -437,6 +437,40 @@ async function layoutPopoverContent(
 }
 
 describe('WorkflowRunContent', () => {
+  it('gives a step that worked in the bare home folder no workspace row, and reads its result before its input', async () => {
+    const screen = await renderContent({
+      selectedInvocationId: 'inv-1',
+      workspaceHomeDirectory: '/Users/alice',
+      selectedInvocationProgress: {
+        kind: 'happier.workflow-progress.v1',
+        invocationPath: { blockId: 'analyze', scope: [] },
+        blockKind: 'step',
+        attempt: '0',
+        logicalInvocationRecordId: 'inv-1',
+        input: 'Return the single word FIRST.',
+        result: 'FIRST',
+        workspace: { descriptor: { machineId: 'machine-1', directory: '/Users/alice', checkoutRootPath: '/Users/alice' } },
+      },
+    });
+    // "Workspace ~" told nothing (FIN-DESIGN-REVIEW H4).
+    expect(screen.findByTestId('workflow-run-workspace')).toBeNull();
+    const text = screen.getTextContent();
+    expect(text.indexOf('FIRST')).toBeGreaterThan(-1);
+    expect(text.lastIndexOf('Return the single word')).toBeGreaterThan(text.indexOf('workflows.input.result'));
+  });
+
+  it('makes Stop the one primary of an interrupted Run with nothing to resume (FIN-DESIGN-REVIEW H3)', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({
+        state: 'interrupted',
+        availability: { cancel: true, pause: false, resumeBoundary: false },
+      }),
+      onCancel: vi.fn(),
+      selectedInvocationId: null,
+    });
+    expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
+      .map((button) => button.props.testID)).toEqual(['workflow-run-cancel']);
+  });
   it('retires stale holds when the Run settles after Stop', async () => {
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({
@@ -2985,7 +3019,7 @@ describe('WorkflowRunContent', () => {
     expect(settled.findByTestId('workflow-run-machine-unavailable')).toBeNull();
   });
 
-  it('says in words that a settled step reported no usage, and says nothing while it still runs', async () => {
+  it('omits missing usage for settled steps, running steps and containers', async () => {
     const renderStep = (lifecycle: 'completed' | 'running') =>
       renderContent({
         invocations: [
@@ -3001,14 +3035,9 @@ describe('WorkflowRunContent', () => {
           ...(lifecycle === 'completed' ? { result: 'done' } : {}),
         },
       });
-    // A settled step without usage says so in words, never a bare em dash (UX-26: explicitly unavailable).
+    // A settled step without usage has no usage row: "Not reported" told nothing (FIN-DESIGN-REVIEW H4).
     const step = await renderStep('completed');
-    const usage = step.findByTestId('workflow-run-invocation-usage');
-    expect(
-      usage?.findAll((node) => node.props.children === 'workflows.run.usageNotReported').length,
-    ).toBeGreaterThan(0);
-    expect(usage?.findAll((node) => node.props.children === '\u2014')).toHaveLength(0);
-    expect(usage?.props.accessibilityLabel).toBe('workflows.run.usageUnavailable');
+    expect(step.findByTestId('workflow-run-invocation-usage')).toBeNull();
     await step.unmount();
 
     // A running step has not reported yet; an empty usage row would only be noise.

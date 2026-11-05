@@ -15759,6 +15759,9 @@ const de = translated(workflowValueReferenceTranslations.de, {
         openSourceSession: 'Die Session öffnen, aus der er stammt',
         observedActivity: 'Beobachtete Aktivität',
         observedActivityBody: 'Happier sieht die Phasen und Agents dieses Agents, aber er wurde nicht als verwalteter Workflow gestartet und lässt sich deshalb nicht bearbeiten, speichern oder erneut ausführen.',
+        interruptedSentence: 'Erledigte Arbeit bleibt erhalten.',
+        interruptedStepSentence: ({ step }) => `${step} wurde unterbrochen. Erledigte Arbeit bleibt erhalten.`,
+        stepComposerPlaceholder: 'In diesem Schritt antworten…',
     },
 
     recovery: {

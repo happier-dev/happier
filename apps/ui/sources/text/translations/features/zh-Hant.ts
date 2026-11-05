@@ -16249,6 +16249,9 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         openSourceSession: '開啟它來自的工作階段',
         observedActivity: '觀察到的活動',
         observedActivityBody: 'Happier 看得到這個代理的階段與各個代理，但它不是以受管理的工作流程啟動的，因此無法編輯、儲存或重新執行。',
+        interruptedSentence: '已完成的工作會保留。',
+        interruptedStepSentence: ({ step }) => `${step} 已中斷。已完成的工作會保留。`,
+        stepComposerPlaceholder: '在此步驟中回覆…',
     },
 
     recovery: {

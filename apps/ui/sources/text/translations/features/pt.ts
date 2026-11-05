@@ -16266,6 +16266,9 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         openSourceSession: 'Abrir a sessão de onde veio',
         observedActivity: 'Atividade observada',
         observedActivityBody: 'O Happier consegue ver as fases e os agentes deste agente, mas ele não foi iniciado como um fluxo de trabalho gerenciado, então não pode ser editado, salvo nem executado de novo.',
+        interruptedSentence: 'O trabalho concluído é mantido.',
+        interruptedStepSentence: ({ step }) => `${step} foi interrompido. O trabalho concluído é mantido.`,
+        stepComposerPlaceholder: 'Responder nesta etapa…',
     },
 
     recovery: {

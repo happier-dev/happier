@@ -44,6 +44,8 @@ export type SessionViewEmbeddedPresentation = Readonly<{
     readOnlyNotice?: 'openSession' | 'readOnly';
     /** One quiet line under the composer, saying where replies go (the peek). */
     repliesBanner?: React.ReactNode;
+    /** What the empty composer asks in this host; default the Session placeholder. */
+    composerPlaceholder?: string;
 }>;
 
 export type SessionViewPresentation =

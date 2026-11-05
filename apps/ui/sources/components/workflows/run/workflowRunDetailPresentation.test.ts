@@ -36,6 +36,13 @@ import {
 } from './workflowRunDetailPresentation';
 
 describe('managed workflow Run presentation', () => {
+    it('says what an interrupted Run stopped on and that finished work is retained, never the bare word (H3)', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
+        const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage, failure: { step: 'For each issue' } }))
+            .toBe('For each issue was interrupted. Completed work is retained.');
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is retained.');
+    });
     it('never assigns a failure cause from later Machine reachability (R5 03:42–04:58 / 10:28)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', finishedAt: '2026-10-19T04:58:00.000Z' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', createdAt: '2026-10-19T03:42:00.000Z',

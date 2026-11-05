@@ -16297,6 +16297,9 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         openSourceSession: 'Открыть сессию, из которой он пришёл',
         observedActivity: 'Наблюдаемая активность',
         observedActivityBody: 'Happier видит фазы и агентов этого агента, но он был запущен не как управляемый рабочий процесс, поэтому его нельзя изменить, сохранить или запустить снова.',
+        interruptedSentence: 'Завершённая работа сохранена.',
+        interruptedStepSentence: ({ step }) => `${step}: прервано. Завершённая работа сохранена.`,
+        stepComposerPlaceholder: 'Ответить в этом шаге…',
     },
 
     recovery: {

@@ -16249,6 +16249,9 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         openSourceSession: '打开它来自的会话',
         observedActivity: '观察到的活动',
         observedActivityBody: 'Happier 能看到这个代理的阶段和各个代理，但它不是作为受管理的工作流启动的，因此无法编辑、保存或重新运行。',
+        interruptedSentence: '已完成的工作会保留。',
+        interruptedStepSentence: ({ step }) => `${step} 已中断。已完成的工作会保留。`,
+        stepComposerPlaceholder: '在此步骤中回复…',
     },
 
     recovery: {

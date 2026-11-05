@@ -28,7 +28,6 @@ import { t } from '@/text';
 import { MultiTextInput } from '@/components/ui/forms/MultiTextInput';
 
 import { describeWorkflowInvocationAttempt } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { isTerminalWorkflowInvocationLifecycle } from '@/components/work/status/resolveWorkStatusTone';
 import { formatWorkflowUsageLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -204,6 +203,9 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const answeredBy = useAnsweredByLabel(props.progress?.review?.resultSource);
     const visibleResult = props.finalResult != null ? props.finalResult.value : props.progress?.result;
     const workspace = recovery.workspace;
+    // A step that worked in the home folder with nothing else to say ("~") gets no row (FIN-DESIGN-REVIEW H4).
+    const workspaceInformative = workspace != null && (workspace.displayDirectory !== '~' || workspace.branchName !== null
+        || workspace.checkoutRootPath !== workspace.directory || props.workspaceSourceLabel != null);
     const prepared = recovery.preparedRecovery;
     const continuation = useReviewedContinuation(prepared, {
         text: props.continuationText,
@@ -274,18 +276,11 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
         return parsed.success ? parsed.data : undefined;
     }, [props.progress?.resultContract]);
     const previousAttemptRecordId = props.progress?.previousAttemptRecordId;
-    // A step that executed and reported no usage is explicitly unavailable
-    // (UX-26), never zero and never silently absent. A container frame runs no
-    // agent of its own, so it has no usage row; an unopened row has nothing to
-    // say yet.
-    // A step still working has not reported yet, so it shows no usage row at all; once settled, missing
-    // usage says so in words rather than a bare dash.
-    const usageSettled = props.lifecycle != null && isTerminalWorkflowInvocationLifecycle(props.lifecycle);
-    const usageUnavailable = props.progress?.blockKind === 'step' && props.progress.usage === undefined;
+    // Missing usage carries no reported fact; container frames run no agent.
     const usageLabel = props.progress === null || props.progress.blockKind !== 'step'
         ? null
         : props.progress.usage === undefined
-            ? usageSettled ? t('workflows.run.usageNotReported') : null
+            ? null
             : formatWorkflowUsageLabel(props.progress.usage, {
                 tokens: t('usage.tokens'),
                 input: t('usage.tokenMix.input'),
@@ -316,8 +311,9 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // Only this attempt's recorded failure explains what happened. Connectivity only affects recovery.
     const failureCause = recovery.failureCause ?? null;
     const unavailableMachine = recovery.unavailableMachine ?? null;
-    const showRecoveryCard = choiceOffered || recovery.workspaceUnavailable || failureCause !== null
-        || props.lifecycle === 'failed' || props.lifecycle === 'outcome_uncertain';
+    const unreadable = props.contentUnavailable === true && failureCause === null && !choiceOffered;
+    const showRecoveryCard = !unreadable && (choiceOffered || recovery.workspaceUnavailable || failureCause !== null
+        || props.lifecycle === 'failed' || props.lifecycle === 'outcome_uncertain');
     const reportedMessage = failureCause?.kind === 'reported_failure' ? failureCause.headline : null;
     const causeHeadline = reportedMessage
         ?? props.cause
@@ -805,15 +801,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     {t('workflows.recovery.waitingForStop')}
                 </Text>
             )}
-            {props.progress?.input === undefined ? null : (
-                // What the step was given reads in the same card anatomy as what it returned.
-                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page">
-                    <ItemGroup title={t('workflows.input.label')}>
-                        <WorkflowReviewValue value={props.progress.input} contract={undefined}
-                            testIDPrefix={`${testIDPrefix}-invocation-input`} />
-                    </ItemGroup>
-                </ListPresentationProvider></View>
-            )}
             {visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed')) ? (
                 // The answer reads as the card it was typed in: the Wait's question heads it and the value
                 // sits in the review card's own rows (DESIGN-16 D4, D5). Any other step's own result heads
@@ -844,11 +831,20 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     </ItemGroup>
                 </ListPresentationProvider></View>
             ) : null}
+            {props.progress?.input === undefined ? null : (
+                // What the step was given reads in the same card anatomy as what it returned.
+                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page">
+                    <ItemGroup title={t('workflows.input.label')}>
+                        <WorkflowReviewValue value={props.progress.input} contract={undefined}
+                            testIDPrefix={`${testIDPrefix}-invocation-input`} />
+                    </ItemGroup>
+                </ListPresentationProvider></View>
+            )}
             {/*
               * The quiet facts in one meta block (DESIGN-17 R1): usage, where the step worked, and where
-              * to inspect it. A settled step's missing usage reads "Not reported" in quiet meta, never a bare dash.
+              * to inspect it. Only reported usage reads here.
               */}
-            {usageLabel === null && workspace === null && sessionLink === null && executionLink === null
+            {usageLabel === null && !workspaceInformative && sessionLink === null && executionLink === null
                 && technicalLines.length === 0 ? null : (
                 <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page">
                     <ItemGroup header="none">
@@ -861,14 +857,13 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                     <Text
                                         testID={`${testIDPrefix}-invocation-usage`}
                                         style={styles.metric}
-                                        accessibilityLabel={usageUnavailable ? t('workflows.run.usageUnavailable') : undefined}
                                     >
                                         {usageLabel}
                                     </Text>
                                 )}
                             />
                         )}
-                        {workspace === null ? null : (
+                        {!workspaceInformative || workspace === null ? null : (
                             <Item
                                 testID={`${testIDPrefix}-workspace`}
                                 title={t('workflows.workspace.title')}

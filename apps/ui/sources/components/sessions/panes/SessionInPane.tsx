@@ -25,6 +25,8 @@ export type SessionInPaneProps = Readonly<{
     composer: boolean;
     /** One quiet line under the composer, saying where replies go. */
     repliesBanner?: React.ReactNode;
+    /** What the empty composer asks in this host; default the Session's own placeholder. */
+    composerPlaceholder?: string;
 }>;
 
 export const SessionInPane = React.memo((props: SessionInPaneProps) => {
@@ -37,7 +39,8 @@ export const SessionInPane = React.memo((props: SessionInPaneProps) => {
         modelPicker: true,
         readOnlyNotice: 'openSession',
         repliesBanner: props.repliesBanner,
-    }), [props.composer, props.repliesBanner]);
+        ...(props.composerPlaceholder === undefined ? {} : { composerPlaceholder: props.composerPlaceholder }),
+    }), [props.composer, props.composerPlaceholder, props.repliesBanner]);
     if (!props.active) {
         return <View testID={`session-in-pane-inactive:${props.sessionId}`} style={{ flex: 1 }} />;
     }

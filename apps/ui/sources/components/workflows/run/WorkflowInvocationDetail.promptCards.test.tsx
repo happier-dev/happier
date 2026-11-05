@@ -225,6 +225,33 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(screen.findByTestId('workflow-run-runtime-issue-reset') !== null).toBe(resetAtMs !== null);
         if (resetAtMs !== null) expect(screen.getTextContent()).toContain('2030');
     });
+    it.each(['failed', 'outcome_uncertain'] as const)('shows only the unreadable-content notice without a cause or recovery choice for %s (H3)', async lifecycle => {
+        const screen = await renderDetail({ progress: null, lifecycle, contentUnavailable: true,
+            recovery: { ...recovery, failureCause: null } });
+        expect(screen.findByTestId('workflow-run-content-unavailable')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-recovery-card')).toBeNull();
+    });
+
+    it.each(['cause', 'choice'] as const)('keeps a known recovery %s visible beside unreadable content (H3)', async known => {
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+            invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'leaf',
+            reason: { code: 'session_input_failed', message: 'The recorded turn failed' } };
+        const onRetry = vi.fn();
+        const screen = await renderDetail({ progress: null, lifecycle: 'failed', contentUnavailable: true,
+            recovery: known === 'cause' ? projectWorkflowInvocationRecovery({
+                run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+                invocation: createWorkflowInvocationIndexFixture({ lifecycle: 'failed' }),
+                progress, machineHomeDirectory: null,
+            }) : { ...recovery, failureCause: null, canRetry: true }, onRetry });
+        expect(screen.findByTestId('workflow-run-content-unavailable')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-recovery-card')).not.toBeNull();
+        if (known === 'cause') expect(screen.getTextContent()).toContain('The recorded turn failed');
+        else {
+            await screen.pressByTestIdAsync('workflow-run-retry');
+            expect(onRetry).toHaveBeenCalledOnce();
+        }
+    });
+
     it.each(['cancelled', 'cancel_requested'] as const)('keeps a stopped attempt\'s partial result as one card, its status left to the header, for %s (DESIGN-16 D4)', async lifecycle => {
         const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'action',
             invocationPath: { blockId: 'inspect', scope: [] }, attempt: '0', logicalInvocationRecordId: 'stopped',

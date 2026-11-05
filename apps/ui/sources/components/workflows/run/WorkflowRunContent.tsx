@@ -411,7 +411,7 @@ function WorkflowSelectedDetail(props: Readonly<{
         {!props.phone ? card : null}
         {reopenReview}
         {props.sessionId === null ? null : <SessionInPane sessionId={props.sessionId}
-            serverId={props.serverId} active={active && !reviewOpen} composer />}
+            serverId={props.serverId} active={active && !reviewOpen} composer composerPlaceholder={t('workflows.run.stepComposerPlaceholder')} />}
         <ScrollView testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
             // The inspector is the body under the step's header: its scroll drives that header's shade.
             onScroll={paneHeaderScroll ? reportInspectorScroll : undefined} scrollEventThrottle={16}
@@ -770,7 +770,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * at the moment it matters. The state resolves the primary first; every
      * other eligible action stays secondary.
      */
-    const primaryAction: 'outcome' | 'resume' | 'run_again' | null =
+    const primaryAction: 'outcome' | 'resume' | 'run_again' | 'stop' | null =
         terminalOutcome?.kind === 'open_result' || terminalOutcome?.kind === 'see_failures'
             || terminalOutcome?.kind === 'result_absent'
             ? 'outcome'
@@ -778,7 +778,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 ? 'resume'
                 : props.run.state !== 'succeeded' && props.onRunAgain !== undefined
                     ? 'run_again'
-                    : null;
+                    : props.run.state === 'interrupted' && props.run.availability.cancel && props.onCancel !== undefined
+                        && props.cancelRequested !== true
+                        ? 'stop'
+                        : null;
 
     /** The row's authored block kind, from the frozen definition through the structure owner. */
     const invocationBlockKind = React.useCallback((invocation: WorkflowRunInvocationIndexV1): string | null => {
@@ -813,7 +816,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         }), [props.failurePresentation, props.run, failureInvocation, structureProgressById, props.selectedInvocationId,
             props.selectedInvocationRecoveryAvailability, derivedStructure, flowProjection, props.workspaceHomeDirectory,
             props.machineReachable, props.machineName, props.machineLastSeenAt, props.invocations, props.invocationHistoryComplete]);
-    const failedStepLabel = props.run.state === 'failed' ? failurePresentation?.step?.name ?? null : null;
+    const failedStepLabel = props.run.state === 'failed' || props.run.state === 'interrupted'
+        ? failurePresentation?.step?.name ?? null : null;
     // Why the Run failed is said once: here, unless the inspector beside the header is open on that step and its
     // recovery card already heads with it. A phone pushes the step to its own page, so its header keeps the line.
     // The line names the failed step's number, what the attempt recorded
@@ -1067,7 +1071,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     busy={operationPending}
                     onPress={props.onCancel}
                     destructive
-                    icon={<Icon name="stop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+                    {...(primaryAction === 'stop' ? { tone: 'primary' as const } : {})}
+                    icon={<Icon name="stop" size={ICON_SIZE.sm}
+                        color={primaryAction === 'stop' ? theme.colors.button.primary.tint : theme.colors.text.secondary} />}
                     label={props.pendingControl === 'cancel'
                         ? t('workflows.run.stopping')
                         : props.cancelRequested === true

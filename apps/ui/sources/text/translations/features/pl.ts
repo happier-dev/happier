@@ -16285,6 +16285,9 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         openSourceSession: 'Otwórz sesję, z której pochodzi',
         observedActivity: 'Obserwowana aktywność',
         observedActivityBody: 'Happier widzi fazy i agentów tego agenta, ale nie został on uruchomiony jako zarządzany przepływ pracy, więc nie można go edytować, zapisać ani uruchomić ponownie.',
+        interruptedSentence: 'Ukończona praca jest zachowana.',
+        interruptedStepSentence: ({ step }) => `${step} został przerwany. Ukończona praca jest zachowana.`,
+        stepComposerPlaceholder: 'Odpowiedz w tym kroku…',
     },
 
     recovery: {

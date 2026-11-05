@@ -16253,6 +16253,9 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         openSourceSession: '元のセッションを開く',
         observedActivity: '観測されたアクティビティ',
         observedActivityBody: 'Happier はこのエージェントのフェーズとエージェントを見ることができますが、管理されたワークフローとして開始されていないため、編集・保存・再実行はできません。',
+        interruptedSentence: '完了した作業は保持されます。',
+        interruptedStepSentence: ({ step }) => `${step} が中断されました。完了した作業は保持されます。`,
+        stepComposerPlaceholder: 'このステップで返信…',
     },
 
     recovery: {

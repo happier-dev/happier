@@ -536,6 +536,12 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
             ? t('workflows.run.failedStepSentence', { step: params.failure.step })
             : t('workflows.run.failedSentence');
     }
+    // An interrupted Run says what stopped and that finished work is kept (07 §6.1), never the bare word.
+    if (run.state === 'interrupted') {
+        return params.failure
+            ? t('workflows.run.interruptedStepSentence', { step: params.failure.step })
+            : t('workflows.run.interruptedSentence');
+    }
     if (run.state === 'succeeded') {
         // A loaded page is not necessarily complete history. Until the cursor is
         // exhausted, neither the success count nor the absence of failures is

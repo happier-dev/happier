@@ -6212,7 +6212,7 @@ export function useSessionComposerController({
                         ? guardComposerState.placeholder
                     : externalSessionOperationShell.composerPlaceholderKey
                         ? t(externalSessionOperationShell.composerPlaceholderKey)
-                        : t('session.inputPlaceholder')}
+                        : embedded?.composerPlaceholder ?? t('session.inputPlaceholder')}
                 onChangeText={setVisibleComposerDraftValue}
                 onComposerFocusChange={onComposerFocusChange}
                 onComposerFocusRequestChange={onComposerFocusRequestChange}
