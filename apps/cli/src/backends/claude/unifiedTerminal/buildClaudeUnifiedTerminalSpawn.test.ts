@@ -316,6 +316,8 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
       });
       expect(launchSpec.env).toMatchObject({ ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' });
       expect(spawn.spawnEnv).toMatchObject({ ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' });
+      // Shell closure cannot prove the native CLI stopped.
+      expect(spawn.providerInvocation).toBeUndefined();
     });
   });
 
@@ -430,6 +432,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     const launchSpec = await readLaunchSpecFromSpawn(spawn);
     expect(launchSpec.command).toBe('/managed/node');
     expect(launchSpec.args?.[0]).toBe('/happier/scripts/claude_local_launcher.cjs');
+    expect(spawn.providerInvocation).toEqual({ command: launchSpec.command, args: launchSpec.args });
     expect(launchSpec.args).toContain('/tmp/plugin');
     expect(launchSpec.args).toContain('/tmp/settings.json');
     expect(JSON.stringify(launchSpec.args)).not.toContain('synthetic-sensitive-value');
@@ -884,6 +887,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
     expect(spawn.spawnArgv).not.toContain('/usr/local/bin/claude');
     const launchSpec = await readLaunchSpecFromSpawn(spawn);
     expect(launchSpec.command).toBe('/usr/local/bin/claude');
+    expect(spawn.providerInvocation).toEqual({ command: launchSpec.command, args: launchSpec.args });
     expect(launchSpec.env?.DISABLE_AUTOUPDATER).toBe('1');
   });
 

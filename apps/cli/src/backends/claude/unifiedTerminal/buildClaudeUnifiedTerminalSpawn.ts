@@ -44,7 +44,10 @@ import {
   withCurrentHappierSessionId,
 } from '@/agent/runtime/session/currentSessionIdEnv';
 
-export type ClaudeUnifiedTerminalSpawn = TerminalSpawn;
+export type ClaudeUnifiedTerminalSpawn = TerminalSpawn & Readonly<{
+  /** The actual provider process, excluding shell shims and the launch-spec runner. */
+  providerInvocation?: Readonly<{ command: string; args: readonly string[] }>;
+}>;
 
 export class ClaudeUnifiedTerminalUnsupportedOptionError extends Error {
   readonly code = 'claude_unified_terminal_unsupported_option';
@@ -437,8 +440,9 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
       throw new Error('Claude unified terminal launch-spec runner not found. Please ensure CLI runtime assets are present next to the running bundle.');
     }
 
+    const isJavaScriptCli = deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath);
     let childInvocation: CommandInvocation;
-    if (deps.isClaudeCliJavaScriptFile(resolvedClaudeCliPath)) {
+    if (isJavaScriptCli) {
       if (
         !existsSync(deps.claudeLocalLauncherPath)
         && !isEmbeddedBunBundlePath(deps.claudeLocalLauncherPath)
@@ -486,6 +490,11 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
 
     return {
       spawnArgv: [nodeExecutable, deps.terminalLaunchSpecRunnerPath, specPath],
+      ...(!childInvocation.windowsVerbatimArguments
+        && (!isJavaScriptCli
+          || (env.HAPPIER_CLAUDE_PATH ?? env.HAPPY_CLAUDE_PATH) === resolvedClaudeCliPath)
+        ? { providerInvocation: { command: childInvocation.command, args: childInvocation.args } }
+        : {}),
       spawnEnv: {
         ...buildTerminalLauncherProcessEnv(),
         ...splitEnv.passthroughEnv,

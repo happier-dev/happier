@@ -69,6 +69,8 @@ export type TerminalHostLiveness = Readonly<{
   paneDead?: boolean;
   panePid?: number;
   paneCurrentCommand?: string;
+  /** Positive process observations only: foreground jobs are not a complete descendant census. */
+  paneForegroundProcesses?: readonly Readonly<{ pid: number; argv: readonly string[] }>[];
   paneExitStatus?: number;
   paneScreenDumpCaptured?: boolean;
   paneScreenDumpTruncated?: boolean;

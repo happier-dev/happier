@@ -3127,6 +3127,10 @@ jobs:
         with:
           xcode_version: "27.1"
 
+      - name: Reclaim iOS runner disk
+        if: ${{ matrix.platform == 'ios' }}
+        uses: ./.github/actions/reclaim-ios-runner-disk
+
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
 
