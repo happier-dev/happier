@@ -386,7 +386,7 @@ describe('concurrent session cache socket routing', () => {
         });
         try {
             await h.start(); await h.ready();
-            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values)).toEqual([]);
+            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(0);
             expect(Object.keys(rows() ?? {})).toEqual(encryptedRows.map(row => row.id));
             for (const row of encryptedRows) {
                 // The canonical locked-owner projection admits the Account-encrypted
@@ -413,11 +413,12 @@ describe('concurrent session cache socket routing', () => {
                 log: { log() {} },
             });
             for (const row of encryptedRows) expect((await readDemandedSession(row.id)).ok).toBe(true);
-            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values)).toHaveLength(encryptedRows.length);
+            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(encryptedRows.length);
             expect(rows()?.['encrypted-session-0']?.metadata?.name).toBe('Encrypted 0');
+            expect(rows()?.['encrypted-session-0']?.metadata?.path).toBe('/repo');
             decryptDataKeys.mockClear();
             for (const row of encryptedRows) expect((await readDemandedSession(row.id)).ok).toBe(true);
-            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values)).toEqual([]);
+            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(0);
             const demandedRows = rows();
             await h.refresh();
             for (const [index, row] of encryptedRows.entries()) {
@@ -425,7 +426,7 @@ describe('concurrent session cache socket routing', () => {
                 expect(rows()?.[row.id]?.metadata?.name).toBe('Encrypted ' + index);
                 expect(rows()?.[row.id]?.encryptedContentAvailability).toBe(demandedRows?.[row.id]?.encryptedContentAvailability);
             }
-            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values)).toEqual([]);
+            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(0);
             // The first lean refresh binds owner provenance to the concurrent
             // runtime's retained credentials; identical later refreshes reuse it.
             const initialRows = rows();
@@ -438,7 +439,7 @@ describe('concurrent session cache socket routing', () => {
             expect(h.requests('/v2/sessions/encrypted-session-0').map(request => request.url.origin))
                 .toEqual([h.homeB.serverUrl, h.homeB.serverUrl]);
             expect(h.storage.getState().sessionListRowsByServerId[h.homeA.id]?.['encrypted-session-0']).toBeUndefined();
-            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values)).toEqual([]);
+            expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(0);
         } finally {
             decryptDataKeys.mockRestore();
         }

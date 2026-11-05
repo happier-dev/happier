@@ -95,6 +95,7 @@ export const SessionOwnerDisplayV1Schema = lazyZodSchema(() => z.strictObject({
     createdAtMs: z.number().check(z.int(), z.nonnegative()), strategy: z.string(),
   })),
   hiddenSystemSession: z.optional(z.boolean()),
+  systemSessionKind: z.optional(z.literal('voice_custody')),
 }));
 export type SessionOwnerDisplayV1 = z.infer<typeof SessionOwnerDisplayV1Schema>;
 

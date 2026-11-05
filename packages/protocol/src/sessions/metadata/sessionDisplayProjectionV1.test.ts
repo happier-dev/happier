@@ -9,6 +9,22 @@ import {
 } from './sessionDisplayProjectionV1.js';
 
 describe('Session semantic display', () => {
+  it.each([
+    ['voice_conversation', true, 'voice_custody'],
+    ['voice_carrier', true, 'voice_custody'],
+    ['voice_conversation_retired', true, 'voice_custody'],
+    ['other-hidden-service', true, undefined],
+    ['voice_conversation', false, undefined],
+  ])('projects exact Voice custody for key %s hidden %s', (key, hidden, kind) => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1,
+      system: { systemSessionV1: { v: 1, key, hidden } } });
+    const display = projectSessionDisplayV1({ sharedMetadata: { v: 1 }, ownerMetadata });
+    expect(display.owner).toHaveProperty('hiddenSystemSession', hidden);
+    expect(Reflect.get(display.owner!, 'systemSessionKind')).toBe(kind);
+    expect(display.shared).not.toHaveProperty('systemSessionKind');
+    expect(display.owner).not.toHaveProperty('systemSessionV1');
+  });
+
   it('projects the same admitted tuple into disjoint shared and compact owner facts', () => {
     const sharedMetadata = SessionSharedMetadataV1Schema.parse({ v: 1,
       summary: { text: 'Shared title', updatedAt: 1 }, agentPresentation: { agentId: 'codex' }, bot: { kind: 'bot' },

@@ -35,6 +35,7 @@ import { buildRenderableFromRowAndCache, fetchAndApplySessions as fetchAndApplyS
 import { createCompactSessionListFetchBoundary, createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { fetchAndApplySessionById } from './sessionById';
 import { buildUpdatedSessionFromSocketUpdate } from './syncSessions';
+import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 function fetchAndApplySessions(params: Parameters<typeof fetchAndApplySessionsSource>[0]) {
     const request = params.request;
@@ -142,8 +143,8 @@ it('hydrates full Sessions only on demand while reusing current display document
     vi.useFakeTimers();
     await refresh();
     await vi.runAllTimersAsync();
-    expect([...sessionDataKeys.keys()].sort()).toEqual(rows.map(row => row.id));
-    expect(open).toHaveBeenCalledTimes(6);
+    expect([...sessionDataKeys.keys()].sort()).toEqual(['demand-1', 'demand-2']);
+    expect(open).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(Object.keys(storage.getState().sessions).filter(id => id.startsWith('demand-')).sort()).toEqual(['demand-1', 'demand-2']));
     const retainedRows = readRows();
     const rowPublications: Array<Readonly<{ changedIds: string[]; fields: string[] }>> = [];
@@ -165,12 +166,12 @@ it('hydrates full Sessions only on demand while reusing current display document
         expect(rowPublications).toEqual([]);
         expect(readRows()).toBe(retainedRows);
     } finally { unsubscribe(); }
-    expect(open).toHaveBeenCalledTimes(6);
+    expect(open).toHaveBeenCalledTimes(2);
     expect(storage.getState().sessions['demand-4']).toBeUndefined();
     expect(vi.getTimerCount()).toBe(0);
     await refresh('demand-4');
     await vi.runAllTimersAsync();
-    expect(open).toHaveBeenCalledTimes(6);
+    expect(open).toHaveBeenCalledTimes(3);
     // AES completes at the platform boundary, independently of fake timer drains.
     await vi.waitFor(() => expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Session 4'));
     expect(storage.getState().sessions['demand-5']).toBeUndefined();
@@ -181,15 +182,18 @@ it('hydrates full Sessions only on demand while reusing current display document
         summary: { text: 'Updated Session 4', updatedAt: 2 } }]);
     rows[4] = { ...rows[4]!, metadata: encodeBase64(replacementMetadata!), metadataVersion: 2,
         dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(replacementKey)) };
-    await refresh();
-    await vi.runAllTimersAsync();
-    // The changed display opens its replacement key, without publishing a full Session.
-    expect(open).toHaveBeenCalledTimes(7);
-    expect(readRows()['demand-4']?.metadata?.summaryText).toBe('Updated Session 4');
-    expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Session 4');
+    const releaseVisible = retainVisibleSessionListSurfaces([{ serverId, sessionId: 'demand-4' }]);
+    try {
+        await refresh();
+        await vi.runAllTimersAsync();
+        // The visible display opens its replacement key without publishing a full Session.
+        expect(open).toHaveBeenCalledTimes(4);
+        expect(readRows()['demand-4']?.metadata?.summaryText).toBe('Updated Session 4');
+        expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Session 4');
+    } finally { releaseVisible(); }
     await refresh('demand-4');
     await vi.runAllTimersAsync();
-    expect(open).toHaveBeenCalledTimes(7);
+    expect(open).toHaveBeenCalledTimes(4);
     await vi.waitFor(() => expect(storage.getState().sessions['demand-4']?.metadata?.summary?.text).toBe('Updated Session 4'));
 });
 
@@ -515,7 +519,7 @@ it('projects Account-opened full-detail owner envelopes through the shared title
     expect(titles.getCurrent()[0]).toBe(t('session.untitled'));
 });
 
-it('hydrates missing cold compact display facts before applying their visibility', async () => {
+it('classifies cold compact visibility without keys and opens explicitly demanded display facts', async () => {
     const secret = new Uint8Array(32).fill(31);
     const credentials = { token: 'visibility', secret: encodeBase64(secret) };
     const accountCurrentness = createLegacyAccountEncryptionCurrentnessFixture({ secret });
@@ -538,8 +542,9 @@ it('hydrates missing cold compact display facts before applying their visibility
         };
     }));
     const openDataKey = vi.spyOn(dataKeyEnvelopes, 'openEncryptedDataKeyEnvelopeV1');
-    const refresh = () => fetchAndApplySessions({
+    const refresh = (displayDemand = false) => fetchAndApplySessions({
         serverId, credentials, encryption,
+        contentDemand: displayDemand ? 'list-projection' : undefined,
         accountCurrentness,
         sessionDataKeys: new Map(),
         request: async () => Response.json({ sessions: rows, nextCursor: null, hasNext: false }),
@@ -552,6 +557,14 @@ it('hydrates missing cold compact display facts before applying their visibility
         log: { log() {} },
     });
     await refresh();
+    const coldRows = storage.getState().sessionListRowsByServerId[serverId]!;
+    expect(rows.map(row => isUserFacingSession(coldRows[row.id]!))).toEqual([true, false, false]);
+    expect(coldRows['choice-0']?.metadata?.path).toBe('');
+    expect(coldRows['choice-1']?.metadata?.hiddenSystemSession).toBe(true);
+    expect(coldRows['choice-2']?.metadataUnavailable).toBe(true);
+    expect(openDataKey.mock.calls.length).toBe(0);
+    // An explicit inventory reader needs the private display fields and current owner view.
+    await refresh(true);
     const state = storage.getState();
     const index = state.sessionListIndexByServerId[serverId] ?? null;
     expect(resolveVisibleSessionListIndexSummary({ enabled: false, activeServerId: serverId, activeIndex: index }))
@@ -581,7 +594,7 @@ it('hydrates missing cold compact display facts before applying their visibility
             system: { systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } },
         randomBytes: length => new Uint8Array(length).fill(11),
     }) };
-    await refresh();
+    await refresh(true);
     const refreshed = storage.getState();
     expect(refreshed.sessionListRowsByServerId[serverId]?.['choice-0']?.metadata).toMatchObject({
         path: '/private/0', summaryText: 'Private title 0', hiddenSystemSession: true,

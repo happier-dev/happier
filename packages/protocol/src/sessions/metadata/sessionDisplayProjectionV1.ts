@@ -2,6 +2,7 @@ import { SessionSharedMetadataV1Schema, type SessionSharedMetadataV1, type Sessi
 import { resolveLinkedExternalSessionMetadataV1 } from '../external/linkedSessionMetadata.js';
 import { projectSessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
 import { projectSessionUsageLimitRecoveryDisplayV1 } from '../state/valueSchemas/usageLimitRecovery.js';
+import { isVoiceConversationCustodySessionMetadata } from '../../voice/sessionBinding.js';
 import { SessionAgentActivityHeadlineV1Schema } from '../work/agentActivity/agentActivityHeadlineV1.js';
 import { SessionWorkflowActivityHeadlineV1Schema } from '../work/workflow/sessionWorkflowActivityHeadlineV1.js';
 import { SessionSharedDisplayV1Schema, SessionOwnerDisplayV1Schema, type SessionOwnerDisplayV1, type SessionSemanticDisplayV1 } from './sessionDisplaySchemasV1.js';
@@ -77,5 +78,6 @@ export function projectSessionOwnerDisplayV1(owner: SessionOwnerMetadataV1): Ses
     ...(fork ? { forkV1: { v: 1, parentSessionId: fork.parentSessionId,
       parentCutoffSeqInclusive: fork.parentCutoffSeqInclusive, createdAtMs: fork.createdAtMs, strategy: fork.strategy } } : {}),
     ...(owner.system?.systemSessionV1?.hidden !== undefined ? { hiddenSystemSession: owner.system.systemSessionV1.hidden } : {}),
+    ...(isVoiceConversationCustodySessionMetadata(owner.system) ? { systemSessionKind: 'voice_custody' } : {}),
   });
 }

@@ -4379,6 +4379,14 @@ mode transitions carry the target owner leaf through their existing atomic
 transition. These describe development source; source/composed validation and
 the combined managed-runtime live gate are separate from released availability.
 
+Secondary-Home background lists do not open Session keys merely to complete a
+display. Account-owned names and hidden-system visibility remain available
+independently; visible rows, open Sessions and explicit inventory/query readers
+drive shared-display opening through the existing demand owners. An owner-only
+projection carries no shared-document readiness witness. A missing sidecar may
+require the existing exact read for its owner envelope, but that read alone does
+not demand the Session cipher or full-tuple display maintenance.
+
 Current development role snapshots remain owner-private throughout this path.
 The metadata writer accepts the canonical `work.sessionRolesV1` produced by the
 role owner, seals it inside the Account-owned work category, and restores that

@@ -936,10 +936,6 @@ async function refreshServerSnapshot(
         });
         noteConcurrentSessionListObserved(entry);
 
-        await ensureSessionDisplayProjectionsForRead({ serverId: entry.id, credentials: entry.credentials,
-            request: (path, init) => request(path, init), prefetched: result.prefetchedFullSessionReads,
-            signal, isCurrent: shouldContinue });
-
         if (!didApplySessionListRenderables) {
             const previousRows = storage.getState().sessionListRowsByServerId?.[entry.id] ?? {};
             const nextRenderables = fallbackSessions.map((session) => (

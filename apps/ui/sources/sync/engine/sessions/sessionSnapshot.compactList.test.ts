@@ -3,7 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { buildSessionListCacheEntriesFromRenderables } from '@/sync/domains/state/warmCacheAdapters';
 import { createSessionFixture } from '@/dev/testkit';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { V2SessionListResponseSchema, V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { buildSessionListRenderableFromSession, SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildRenderableFromRowAndCache, fetchAndApplySessions } from './sessionSnapshot';
 import { fetchAndApplySessionById } from './sessionById';
@@ -186,7 +186,7 @@ it('does not publish display documents opened after their encryption generation 
     });
     const { metadata: _metadata, agentState: _agentState, ...scalars } = full;
     const refreshing = fetchAndApplySessions({ serverId, credentials: { token: 'display-account', secret: encodeBase64(secret) },
-        encryption, sessionDataKeys: new Map(), request: async path => path === '/v2/sessions/read-batch'
+        contentDemand: 'list-projection', encryption, sessionDataKeys: new Map(), request: async path => path === '/v2/sessions/read-batch'
             ? Response.json({ results: [{ sessionId: full.id, detail: { status: 200, body: { session: full } } }] })
             : Response.json({ sessions: [{ ...scalars, documents: 'omitted', metadataAudience: 'owner', agentStateDocument: 'omitted' }] }),
         getCurrentSessionListRenderable: id => storage.getState().sessionListRowsByServerId[serverId]?.[id],
@@ -199,6 +199,39 @@ it('does not publish display documents opened after their encryption generation 
     await refreshing;
     expect(storage.getState().sessionListRowsByServerId[serverId]?.[full.id]?.metadata).toBeNull();
     expect(storage.getState().sessions[full.id]).toBeUndefined();
+});
+
+it('opens demanded legacy owner content without fabricating a transferable Session key', async () => {
+    const serverId = 'legacy-owner-demand-home';
+    const id = 'legacy-owner-demand';
+    const secret = new Uint8Array(32).fill(61);
+    const credentials = { token: 'legacy-owner-demand', secret: encodeBase64(secret) };
+    const encryption = await Encryption.create(secret);
+    encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+    await encryption.initializeSessions(new Map([[id, null]]), { serverId });
+    const cipher = encryption.getSessionEncryption(id)!;
+    const full = V2SessionRecordSchema.parse({ id, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+        encryptionMode: 'e2ee', metadataLayoutVersion: 0, metadataVersion: 1, agentStateVersion: 0,
+        metadata: await cipher.encryptRaw({ path: '/legacy-owner', host: 'home', name: 'Legacy owner' }),
+        agentState: null, dataEncryptionKey: null, share: null });
+    const sessionDataKeys = new Map<string, Uint8Array>();
+    const keyOpens = vi.spyOn(encryption, 'decryptEncryptionKeys');
+    await fetchAndApplySessions({ serverId, credentials, encryption, sessionDataKeys,
+        accountCurrentness: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+        requiredHydrationSessionIds: [id], awaitSessionListHydration: true,
+        request: async path => path === '/v2/sessions/read-batch'
+            ? Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: full } } }] })
+            : Response.json({ sessions: [createCompactSessionListRowFixture(full)] }),
+        getExistingSession: sessionId => storage.getState().sessions[sessionId],
+        getCurrentSessionListRenderable: sessionId => storage.getState().sessionListRowsByServerId[serverId]?.[sessionId],
+        applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+        applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
+    });
+    expect(storage.getState().sessions[id]?.metadata).toMatchObject({ name: 'Legacy owner', path: '/legacy-owner' });
+    expect(storage.getState().sessions[id]?.encryptedContentAvailability).toBe('ready');
+    expect(sessionDataKeys.has(id)).toBe(false);
+    expect(keyOpens.mock.calls.length).toBe(0);
 });
 
 it('reuses documents opened by the authoritative full reader on the next compact refresh', async () => {

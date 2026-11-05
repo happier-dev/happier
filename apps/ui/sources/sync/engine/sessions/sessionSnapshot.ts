@@ -83,6 +83,8 @@ import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from 
 import { hasAuthoritativeSessionRouteData, isHydratedSessionCurrentForListState } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { validateSessionDisplayProjectionV1 } from '@happier-dev/protocol';
 import { createSessionDisplayCrypto } from '@/sync/encryption/sessionDisplayCrypto';
+import { isSessionListRowVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import { admitOpenedSessionListDisplayProjection } from '@/sync/domains/session/sessionDocumentAdmission';
 import {
     buildSessionOwnerMetadataUnavailableShell,
@@ -1987,10 +1989,13 @@ export async function fetchAndApplySessions(params: {
         maxBackgroundHydrationRows: params.sessionListBackgroundHydrationMaxRows,
     });
     const demandedSessionIds = new Set(hydrationPriority.rows.map(row => row.id));
+    const hasDisplayDemand = (id: string) => isListProjectionDemand || demandedSessionIds.has(id)
+        || isSessionListRowVisible(id, params.serverId)
+        || resolveSessionLiveConsumption(id, params.serverId).isFullContentConsumer;
     // Gather before awaiting: compact omissions never enter the full-document opener.
     // The transport owner chunks at the real body boundary and shares pending reads.
     const openedDisplayRows = new Map<string, SessionListRenderableSession>();
-    const readCurrentDisplay = (id: string) => params.getCurrentSessionListRenderable?.(id) ?? openedDisplayRows.get(id);
+    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? params.getCurrentSessionListRenderable?.(id);
     const encryptionScope: EncryptionScopeInput = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? { serverId: params.serverId.trim() } : {};
     let capturedEncryptionGeneration = encryption?.getCurrentEncryptionGenerationScope?.(encryptionScope) ?? null;
@@ -2012,18 +2017,43 @@ export async function fetchAndApplySessions(params: {
         return admitted.ok && (row.metadataAudience !== 'owner' || admitted.projection.owner != null)
             ? [{ row, projection: admitted.projection }] : [];
     });
-    const encryptedDisplayRows = displayCandidates.filter(({ row }) => row.encryptionMode !== 'plain').map(({ row }) => row);
+    const encryptedDisplayRows = displayCandidates.filter(({ row }) => row.encryptionMode !== 'plain'
+        && hasDisplayDemand(row.id)).map(({ row }) => row);
     if (encryptedDisplayRows.length && !(await hydrateDataKeyRows(encryptedDisplayRows))) return buildFetchResult();
     for (const { row, projection } of displayCandidates) {
         if (!isDataKeyHydrationCurrent() || !isSessionCurrent(row.id)) return buildFetchResult();
         const crypto = createSessionDisplayCrypto({ sessionMode: row.encryptionMode === 'plain' ? 'plain' : 'e2ee',
             accountMode: accountCurrentness?.mode, credentials, sessionEncryption: encryption?.getSessionEncryption(row.id) });
-        const shared = await crypto.openSharedDisplay(projection.shared);
-        if (!isDataKeyHydrationCurrent() || !isSessionCurrent(row.id)) return buildFetchResult();
         const owner = row.metadataAudience === 'owner'
             ? accountCurrentness ? crypto.openOwnerDisplay(projection.owner, accountCurrentness)
                 : { ok: false as const, reason: 'crypto_unavailable' as const }
             : undefined;
+        const displayDemanded = row.encryptionMode === 'plain' || hasDisplayDemand(row.id);
+        // Account-owned names/visibility do not demand the independent Session cipher.
+        // An owner-only semantic projection carries no opened shared-document witness.
+        if (!displayDemanded) {
+            if (!owner?.ok) continue;
+            const descriptor = documentAdmission(row, admissionScope);
+            const incumbent = readCurrentDisplay(row.id);
+            const previous = sameDocumentAdmission(incumbent?.[SESSION_LIST_DOCUMENT_ADMISSION], descriptor) ? incumbent : undefined;
+            if (previous && !classifySessionTupleApplyCurrentness(previous, row).metadataCurrent) continue;
+            const access = normalizeSessionAccessProjection(row, { allowLegacy: true });
+            const source = { ...row, serverId: params.serverId ?? previous?.serverId,
+                metadata: null, ownerMetadataView: null, agentState: null, metadataUndecided: true,
+                metadataVersion: previous?.metadataVersion ?? 0, agentStateVersion: previous?.agentStateVersion ?? 0,
+                access, accessLevel: normalizeAccessLevel(access?.level), canApprovePermissions: access?.capabilities.approveRuntimePermissions,
+                thinking: row.thinking === true, thinkingAt: row.thinkingAt ?? 0,
+                presence: previous?.presence, optimisticThinkingAt: previous?.optimisticThinkingAt ?? null,
+                encryptedContentAvailability: previous?.encryptedContentAvailability,
+                [SESSION_OWNER_METADATA_PROJECTION]: null, [SESSION_LIST_DOCUMENT_ADMISSION]: descriptor,
+            } as SessionListRenderableSource;
+            openedDisplayRows.set(row.id, buildSessionListRenderableFromSession(source, previous ?? undefined, undefined, undefined,
+                { shared: { v: 1 }, owner: { v: 1, name: owner.display.name, hiddenSystemSession: owner.display.hiddenSystemSession,
+                    systemSessionKind: owner.display.systemSessionKind } }));
+            continue;
+        }
+        const shared = await crypto.openSharedDisplay(projection.shared);
+        if (!isDataKeyHydrationCurrent() || !isSessionCurrent(row.id)) return buildFetchResult();
         if (!shared.ok || (owner && !owner.ok)) {
             console.info(`[sessionsSnapshot] Display projection unavailable for ${row.id}: ${!shared.ok ? shared.reason : owner && !owner.ok ? owner.reason : 'invalid_envelope'}`);
             continue;
@@ -2048,17 +2078,12 @@ export async function fetchAndApplySessions(params: {
         openedDisplayRows.set(row.id, buildSessionListRenderableFromSession(source, previous ?? undefined, undefined, undefined,
             { shared: shared.display, ...(owner?.ok ? { owner: owner.display } : {}) }));
     }
-    if (openedDisplayRows.size && shouldContinue()) {
-        if (params.applySessionListRenderablePatches) {
-            applySessionListRenderablePatches?.([...openedDisplayRows.values()].map(row => ({ sessionId: row.id, patch: row })));
-        } else {
-            params.applySessionListRenderables?.(sessions.map(row => openedDisplayRows.get(row.id)
-                ?? params.getCurrentSessionListRenderable?.(row.id)
-                ?? buildRenderableFromRowAndCache(row, credentials, accountCurrentness, cachedSessionListEntries[row.id],
-                    params.getExistingSession?.(row.id), undefined, admissionScope)), { replace: true });
-        }
-    }
     const displayDemand = sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
+        && (row.encryptionMode === 'plain' || hasDisplayDemand(row.id)
+            || (row.metadataLayoutVersion === 1 && row.metadataAudience === 'owner' && !openedDisplayRows.has(row.id)
+                && !(readCurrentDisplay(row.id)?.[SESSION_OWNER_METADATA_PROJECTION]?.isCurrentAuthority?.({
+                    credentials, accountMode: accountCurrentness?.mode, accountCurrentness,
+                }) && readCurrentDisplay(row.id)?.metadataVersion === row.metadataVersion)))
         && shouldApplyRenderables && needsWarmHydration({ row,
             cachedEntry: cachedSessionListEntries[row.id], existingSession: params.getExistingSession?.(row.id),
             currentRenderable: readCurrentDisplay(row.id),
@@ -2097,9 +2122,35 @@ export async function fetchAndApplySessions(params: {
         accountCurrentness = await readAccountCurrentness();
         if (!shouldContinue()) return buildFetchResult();
     }
+    if (!isDataKeyHydrationCurrent()) return buildFetchResult();
 
+    // Older/missing sidecars still use the same admitted full transport parts for
+    // owner names. Project their Account envelope without opening shared content.
+    for (const row of displayDemand) {
+        if (row.encryptionMode === 'plain' || hasDisplayDemand(row.id)) continue;
+        const fullRow = fullRows.get(row.id);
+        if (!fullRow || !isSessionCurrent(row.id) || !shouldContinue()) continue;
+        const previous = readCurrentDisplay(row.id);
+        if (previous && !classifySessionTupleApplyCurrentness(previous, fullRow).metadataCurrent) continue;
+        openedDisplayRows.set(row.id, {
+            ...buildRenderableFromRowAndCache(fullRow, credentials, accountCurrentness,
+                cachedSessionListEntries[row.id], params.getExistingSession?.(row.id), previous, admissionScope),
+            [SESSION_LIST_DOCUMENT_ADMISSION]: documentAdmission(row, admissionScope),
+        });
+    }
+    if (openedDisplayRows.size && shouldContinue()) {
+        if (params.applySessionListRenderablePatches) {
+            applySessionListRenderablePatches?.([...openedDisplayRows.values()].map(row => ({ sessionId: row.id, patch: row })));
+        } else {
+            params.applySessionListRenderables?.(sessions.map(row => openedDisplayRows.get(row.id)
+                ?? params.getCurrentSessionListRenderable?.(row.id)
+                ?? buildRenderableFromRowAndCache(row, credentials, accountCurrentness, cachedSessionListEntries[row.id],
+                    params.getExistingSession?.(row.id), undefined, admissionScope)), { replace: true });
+        }
+    }
     const hydratedKeys = await hydrateDataKeyRows([...fullRows.values()].filter(session => !shouldApplyRenderables
-        || demandedSessionIds.has(session.id) || displayDemandIds.has(session.id)));
+        || demandedSessionIds.has(session.id) || (displayDemandIds.has(session.id)
+            && (session.encryptionMode === 'plain' || hasDisplayDemand(session.id)))));
     if (!hydratedKeys) return buildFetchResult();
     const { missingEncryptedDataKeySessionIds, hydrationStates } = hydratedKeys;
 
@@ -2227,6 +2278,7 @@ export async function fetchAndApplySessions(params: {
     if (displayDemand.length > 0) {
         const displaySessions = await runTasksWithLimit(displayDemand.map(row => async () => {
             if (!shouldContinue() || !isSessionCurrent(row.id)) return null;
+            if (row.encryptionMode !== 'plain' && !hasDisplayDemand(row.id)) return null;
             const fullRow = fullRows.get(row.id);
             if (!fullRow) return null;
             const previous = params.getCurrentSessionListRenderable?.(row.id);

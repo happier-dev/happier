@@ -17,6 +17,7 @@ import { buildSessionFromListRenderable, createSessionListPresentationSource } f
 import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionDocumentAdmission';
 import { createAccountScopedCryptoMaterialSnapshotV1, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { retainVisibleSessionListSurfaces } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 const initialState = storage.getState();
 afterEach(() => storage.setState(initialState, true));
@@ -130,6 +131,7 @@ it('renders a cold current owner display without reading or publishing full Sess
 });
 
 it.each([
+    { sessionMode: 'plain' as const, accountMode: 'plain' as const },
     { sessionMode: 'plain' as const, accountMode: 'e2ee' as const },
     { sessionMode: 'e2ee' as const, accountMode: 'plain' as const },
     { sessionMode: 'e2ee' as const, accountMode: 'e2ee' as const },
@@ -138,7 +140,9 @@ it.each([
     const id = 'independent-display';
     const secret = new Uint8Array(32).fill(41);
     const key = new Uint8Array(32).fill(42);
-    const credentials = { token: 'independent-display-account', secret: encodeBase64(secret) };
+    const credentials = sessionMode === 'plain' && accountMode === 'plain'
+        ? { token: 'independent-display-account' }
+        : { token: 'independent-display-account', secret: encodeBase64(secret) };
     const encoder = await Encryption.create(secret);
     encoder.configureNativeCryptoWorker({ routing: { mode: 'off' } });
     await encoder.initializeSessions(new Map([[id, key]]), { serverId });
@@ -172,25 +176,48 @@ it.each([
     encryption?.configureNativeCryptoWorker({ routing: { mode: 'off' } });
     let fullReads = 0;
     let scalarRevision = 1;
+    let offeredRecord = record;
+    let offeredProjection = projection;
+    const inventorySize = sessionMode === 'e2ee' && accountMode === 'e2ee' ? 1_000 : 1;
     const sessionDataKeys = new Map<string, Uint8Array>();
     const readRow = (sessionId: string) => storage.getState().sessionListRowsByServerId[serverId]?.[sessionId];
-    const acquire = () => fetchAndApplySessions({ serverId, credentials, encryption,
+    const acquire = (explicitDisplayRead = true) => fetchAndApplySessions({ serverId, credentials, encryption,
         accountCurrentness,
-        sessionDataKeys, contentDemand: 'list-projection', sessionListBackgroundHydrationMaxRows: 0,
+        sessionDataKeys, contentDemand: explicitDisplayRead ? 'list-projection' : undefined, sessionListBackgroundHydrationMaxRows: 0,
         request: async path => {
             if (path === '/v2/sessions/read-batch') {
                 fullReads++;
-                return Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: record } } }] });
+                return Response.json({ results: [{ sessionId: id, detail: { status: 200, body: { session: offeredRecord } } }] });
             }
-            return Response.json({ sessions: [{ ...createCompactSessionListRowFixture(record),
-                seq: scalarRevision, updatedAt: scalarRevision, displayProjectionV1: projection }] });
+            return Response.json({ sessions: Array.from({ length: inventorySize }, (_, index) => ({
+                ...createCompactSessionListRowFixture({ ...offeredRecord, id: index === 0 ? id : `${id}-${index}` }),
+                seq: scalarRevision, updatedAt: scalarRevision, displayProjectionV1: offeredProjection,
+            })) });
         },
         getCurrentSessionListRenderable: readRow,
         applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
         applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
         applySessions: rows => storage.getState().applySessions(rows), log: { log() {} },
     });
-    await acquire();
+    const coldKeyOpens = vi.spyOn(Encryption.prototype, 'decryptEncryptionKeys');
+    try {
+        await acquire(false);
+        expect(coldKeyOpens.mock.calls.flatMap(([values]) => values).length).toBe(0);
+        expect(fullReads).toBe(0);
+        if (sessionMode === 'e2ee') {
+            expect(readRow(id)?.metadata?.name).toBe('Independent private title');
+            expect(readRow(id)?.metadata?.path ?? '').toBe('');
+            expect(readRow(id)?.[SESSION_LIST_DOCUMENT_ADMISSION]?.openedMetadataVersion).toBeUndefined();
+            const coldRow = readRow(id);
+            const releaseOtherHome = retainVisibleSessionListSurfaces([{ serverId: 'other-display-home', sessionId: id }]);
+            try { await acquire(false); } finally { releaseOtherHome(); }
+            expect(readRow(id)).toBe(coldRow);
+            expect(coldKeyOpens.mock.calls.flatMap(([values]) => values).length).toBe(0);
+        }
+        const releaseVisible = retainVisibleSessionListSurfaces([{ serverId, sessionId: id }]);
+        try { await acquire(false); } finally { releaseVisible(); }
+        expect(coldKeyOpens.mock.calls.flatMap(([values]) => values).length).toBe(sessionMode === 'e2ee' ? 1 : 0);
+    } finally { coldKeyOpens.mockRestore(); }
     expect(fullReads).toBe(0);
     expect(readRow(id)).toMatchObject({ metadataVersion: 3, metadata: { name: 'Independent private title', path: '/independent' } });
     expect(storage.getState().sessions[id]).toBeUndefined();
@@ -199,17 +226,49 @@ it.each([
     const sharedOpens = cipherReader ? vi.spyOn(cipherReader, 'decryptRaw') : null;
     const keyOpens = encryption ? vi.spyOn(encryption, 'decryptEncryptionKeys') : null;
     try {
-        await acquire();
+        await acquire(false);
         expect(readRow(id)).toBe(current);
         scalarRevision = 2;
-        await acquire();
+        await acquire(false);
         expect(readRow(id)).toMatchObject({ seq: 2, updatedAt: 2,
             metadataVersion: 3, metadata: { name: 'Independent private title', path: '/independent' } });
         expect(fullReads).toBe(0);
-        expect(sharedOpens?.mock.calls ?? []).toHaveLength(0);
-        expect(keyOpens?.mock.calls ?? []).toHaveLength(0);
+        expect(sharedOpens?.mock.calls.length ?? 0).toBe(0);
+        expect(keyOpens?.mock.calls.flatMap(([values]) => values).length ?? 0).toBe(0);
         expect(storage.getState().sessions[id]).toBeUndefined();
+        // An explicit inventory is a real display consumer for every returned row.
+        await acquire();
+        expect(keyOpens?.mock.calls.flatMap(([values]) => values).length ?? 0)
+            .toBe(sessionMode === 'e2ee' ? inventorySize - 1 : 0);
     } finally { sharedOpens?.mockRestore(); keyOpens?.mockRestore(); }
+
+    if (sessionMode === 'e2ee') {
+        // Retaining the row/cipher after leaving is not demand for a replacement key.
+        const nextKey = new Uint8Array(32).fill(44);
+        await encoder.initializeSessions(new Map([[id, nextKey]]), { serverId });
+        const nextCipher = encoder.getSessionEncryption(id)!;
+        const nextCrypto = createSessionDisplayCrypto({ sessionMode, accountMode, credentials, sessionEncryption: nextCipher });
+        offeredRecord = { ...record, metadataVersion: 4,
+            metadata: await nextCipher.encryptRaw(SessionSharedMetadataV1Schema.parse({ ...sharedMetadata,
+                summary: { text: 'Changed shared display', updatedAt: 4 } })),
+            dataEncryptionKey: encodeBase64(await encoder.encryptEncryptionKey(nextKey)) };
+        offeredProjection = { ...projection, sourceMetadataVersion: 4,
+            shared: await nextCrypto.encodeSharedDisplay({ ...display.shared, summaryText: 'Changed shared display' }) };
+        const rotatedKeyOpens = vi.spyOn(encryption!, 'decryptEncryptionKeys');
+        try {
+            await acquire(false);
+            expect(rotatedKeyOpens.mock.calls.flatMap(([values]) => values).length).toBe(0);
+            expect(readRow(id)?.metadata?.name).toBe('Independent private title');
+            expect(readRow(id)?.metadata?.path ?? '').toBe('');
+            expect(readRow(id)?.[SESSION_LIST_DOCUMENT_ADMISSION]?.openedMetadataVersion).toBeUndefined();
+            const releaseVisible = retainVisibleSessionListSurfaces([{ serverId, sessionId: id }]);
+            try { await acquire(false); } finally { releaseVisible(); }
+            expect(rotatedKeyOpens.mock.calls.flatMap(([values]) => values).length).toBe(1);
+            expect(readRow(id)?.metadata?.summaryText).toBe('Changed shared display');
+            expect(readRow(id)?.metadata?.path).toBe('/independent');
+            expect(fullReads).toBe(0);
+        } finally { rotatedKeyOpens.mockRestore(); }
+    }
 });
 
 it.each(['missing', 'unreadable'] as const)('falls back to full owner documents when the required owner display is %s', async kind => {
