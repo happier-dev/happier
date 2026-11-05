@@ -10,7 +10,7 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['template', 'environment'] as const)('retains generated secret outcomes through the %s entry and refuses a fresh disabled-source request', async entry => {
+it.each(['template', 'environment', 'admittedTemplate'] as const)('retains generated secret outcomes through the %s entry and refuses a fresh disabled-source request', async entry => {
     const fixture = await createSavedSecretsCliHttpFixture();
     try {
         const credentials = await fixture.deps.readCredentialsFn?.();
@@ -93,17 +93,27 @@ it.each(['template', 'environment'] as const)('retains generated secret outcomes
             expect(fixture.writes).toEqual([]);
         }
         sourceReads = 0;
-        const result = await fixture.inHome(() => entry === 'template'
-            ? templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' })
-            : templates.instantiateCreate(DeploymentEnvironmentCreateIntentInputV1Schema.parse({
+        const result = await fixture.inHome(async () => {
+            const context = { runtimeAccountId: 'account-cli-fixture' };
+            if (entry === 'admittedTemplate') {
+                const prepared = await templates.prepare(input, context);
+                if ('errorCode' in prepared) return prepared;
+                const execute = prepared.hostReviewedChildren.executeAdmittedAction;
+                if (!execute) throw new Error('Missing admitted template continuation');
+                return execute({ actionId: 'deployments.templates.instantiate', input, context,
+                    execute: async () => { throw new Error('Captured template plan owns this effect'); } });
+            }
+            return entry === 'template' ? templates.instantiate(input, context)
+                : templates.instantiateCreate(DeploymentEnvironmentCreateIntentInputV1Schema.parse({
                 mode: 'apply', serverId: input.serverId, projectSourceId: input.projectSourceId,
                 name: 'App', requestKey: 'generated-app', protection: 'nonProduction', purpose: 'standard',
                 deployerMode: 'managers', controllerMachineId: 'target',
                 definition: { from: 'catalogApp', templateRef: input.templateRef },
                 firstTargetLink: { machines: [{ machineId: 'target', installationId: identity.installationId }] },
                 bindings: input.bindings, generatedSecretAudience: input.generatedSecretAudience,
-            }), { runtimeAccountId: 'account-cli-fixture' }));
-        const partial = entry === 'template' ? result : 'details' in result ? result.details : undefined;
+            }), context);
+        });
+        const partial = 'details' in result ? result.details : result;
         if (entry === 'environment') expect.soft(result).toMatchObject({ ok: false,
             errorCode: 'content_boundary_interrupted', error: 'content_boundary_interrupted' });
         expect.soft(partial).toMatchObject({ kind: 'partial', phase: 'environment', errorCode: 'content_boundary_interrupted',

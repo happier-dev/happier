@@ -9,6 +9,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, DeploymentTemplateInsta
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
+import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -31,6 +32,13 @@ import type { DeploymentCreationDefaultRequestForHost, DeploymentCreationDefault
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const deploymentTemplateDomainChildRole = (key: string) => `template.domain:${key}`;
+function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiationReviewV1): HostReviewedChildrenPreparationV1 {
+    const children = review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
+        role: deploymentTemplateDomainChildRole(domain.key) }));
+    return { children: [...children, ...(review.deploy ? [{ action: 'deployments.deploy' as const,
+        role: 'template.deploy' }] : [])] };
+}
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
     if (error instanceof DeploymentTemplatePreparationErrorV1 && error.code === errorCode) return { ok: false, errorCode,
         error: error.message, ...(error.details ? { details: error.details } : {}) };
@@ -212,6 +220,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
     async function instantiate(raw: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
         reviewed?: DeploymentTemplateInstantiationReviewV1,
         creationReview?: DeploymentTemplateInstantiationReviewV1): Promise<DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure> {
+        try {
+            const plan = await prepare(raw, context, creationReview);
+            if (reviewed && !areDeploymentTemplateReviewFactsEqualV1(reviewed, plan.review)) return failure('deployment_conflict');
+            return await instantiatePrepared(plan, context);
+        } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
+    }
+    async function instantiatePrepared(plan: Awaited<ReturnType<typeof prepareInput>>, context: ActionExecutorContext): Promise<DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure> {
         const savedSecrets: SavedSecrets = [];
         let phase: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['phase'] = 'generation';
         let environmentId: string | undefined; let revision: number | undefined; let targetLinkId: string | undefined;
@@ -220,9 +235,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         let deployment: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['deployment'];
         let effectIssued = false;
         try {
-            const plan = await prepare(raw, context, creationReview);
             if (plan.input.mode === 'preview') return { kind: 'preview', review: plan.review };
-            if (reviewed && !areDeploymentTemplateReviewFactsEqualV1(reviewed, plan.review)) return failure('deployment_conflict');
             const { input } = plan;
             const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
             const bindings: StoredAppPresetInputV1['bindings'] = [...input.bindings];
@@ -341,13 +354,33 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };
         }
     }
+    function projectCreateResult(result: DeploymentTemplateInstantiateResultV1 | ActionExecuteFailure) {
+        if ('kind' in result && result.kind === 'partial') return { ok: false as const, effectAttempted: true,
+            errorCode: result.errorCode, error: result.errorCode, details: result };
+        return 'errorCode' in result ? result : result.kind === 'applied'
+            ? { ok: true as const, environmentId: result.environmentId, revision: result.revision }
+            : failure('invalid_action_output');
+    }
+    function admittedPreparation(plan: Awaited<ReturnType<typeof prepareInput>>, create: boolean): HostReviewedChildrenPreparationV1 {
+        return { ...deploymentTemplateReviewedChildren(plan.review), async executeAdmittedAction({ context }): Promise<ActionExecuteResult> {
+            const result = await instantiatePrepared(plan, context);
+            if (create) {
+                const projected = projectCreateResult(result);
+                return projected.ok ? { ok: true, result: projected } : projected;
+            }
+            if ('kind' in result && result.kind === 'partial') return { ok: false, effectAttempted: true, errorCode: result.errorCode, error: result.errorCode, details: result };
+            if ('errorCode' in result) return result;
+            return { ok: true, result };
+        } };
+    }
     return { instantiate, preparePublishEntry,
         async prepareCreate(input: DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext,
             review?: DeploymentEnvironmentCreationReviewV1) {
             try {
                 const plan = await prepareInput(fromCreate(input), context, 'deployments.environments.create', review?.template);
                 if (!plan.defaults.values.controllerMachineId) return failure('client_required');
-                return { input: { ...input, mode: 'apply' as const, ...plan.defaults.values }, preview: normalizeStrictJsonValue({
+                return { input: { ...input, mode: 'apply' as const, ...plan.defaults.values },
+                    hostReviewedChildren: admittedPreparation(plan, true), preview: normalizeStrictJsonValue({
                     creationDefaults: plan.defaults, ...(plan.review.creationDefaultsBasis ? { creationDefaultsBasis: plan.review.creationDefaultsBasis } : {}),
                     template: plan.review,
                 }) };
@@ -356,18 +389,18 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         async instantiateCreate(input: DeploymentEnvironmentCreateIntentInputV1, context: ActionExecutorContext,
             review?: DeploymentEnvironmentCreationReviewV1) {
             try {
-                const result = await instantiate(DeploymentTemplateInstantiateInputV1Schema.parse(fromCreate(input)), context,
-                    review?.template, review?.template);
-                if ('kind' in result && result.kind === 'partial') {
-                    return { ok: false as const, errorCode: result.errorCode, error: result.errorCode, details: result };
-                }
-                return 'errorCode' in result ? result : result.kind === 'applied'
-                    ? { ok: true as const, environmentId: result.environmentId, revision: result.revision }
-                    : failure('invalid_action_output');
+                const plan = await prepareInput(fromCreate(input), context, 'deployments.environments.create', review?.template);
+                if (review?.template && !areDeploymentTemplateReviewFactsEqualV1(review.template, plan.review)) return failure('deployment_conflict');
+                const result = await instantiatePrepared(plan, context);
+                return projectCreateResult(result);
             } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
         },
         async prepare(input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext) {
-        try { return { input, preview: normalizeStrictJsonValue((await prepare(input, context)).review) }; }
+        try {
+            const plan = await prepare(input, context);
+            return { input, preview: normalizeStrictJsonValue(plan.review),
+                hostReviewedChildren: admittedPreparation(plan, false) };
+        }
         catch (error) { return failure(errorCode(error), error); }
     } };
 }
