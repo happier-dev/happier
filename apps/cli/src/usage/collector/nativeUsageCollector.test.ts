@@ -18,6 +18,46 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
+    it('reactivates a consented source when its watch boundary retires without a metadata change', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-retirement-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        let boundary = new AbortController();
+        const watches: { signal: AbortSignal; disposed: boolean }[] = [];
+        let reads = 0;
+        const collector = createNativeUsageCollector({ authority, storage, store,
+            budgetRegistry: new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null, maxConcurrentOneShotTasks: null }),
+            discoverSources: async () => [{ agent: { pluginId: 'fixture.agent', localId: 'agent' },
+                source: { kind: 'fixture' }, sourceKey: 'root', root: directory, supported: true }],
+            resolveRoot: async () => { throw new Error('No root edit'); },
+            readAccounting: async () => { reads += 1; return { ok: true, value: { outcome: 'unchanged' } }; },
+            // Plugin occurrence retirement and the OS watcher are the external boundaries.
+            subscribeSource: async (_source, _change, signal) => {
+                const watch = { signal, disposed: false }; watches.push(watch);
+                return { retirementSignal: boundary.signal, dispose() { watch.disposed = true; } };
+            },
+            publisher: { publish: async () => { throw new Error('No observations'); } },
+            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+        });
+        try {
+            const [source] = await collector.discover();
+            await collector.setConsent(source.sourceId, true);
+            await collector.flushPending();
+            await collector.discover();
+            expect(watches).toHaveLength(1);
+            expect(reads).toBe(1);
+            boundary.abort(); boundary = new AbortController();
+            await collector.discover();
+            await collector.flushPending();
+            expect(watches).toHaveLength(2);
+            expect(watches[0]).toMatchObject({ disposed: true });
+            expect(watches[0].signal.aborted).toBe(true);
+            expect(watches[1].signal.aborted).toBe(false);
+            expect(reads).toBe(2);
+            expect((await collector.get(source.sourceId))[0].consent).toBe('enabled');
+        } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
+    });
     it('keeps Claude record replay identity separate from witnessed inference correlation', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-claude-correlation-'));
         let collector: ReturnType<typeof createNativeUsageCollector> | undefined;

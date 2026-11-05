@@ -18,12 +18,12 @@ function projectCaptureSourceDescriptor(descriptor: NativeUsageSourceDescriptor)
         ...(rootKind === undefined ? {} : { rootKind }), ...(error === undefined ? {} : { error }),
         ...(accountingSources === undefined ? {} : { accountingSources }) };
 }
-function applyCaptureSourceDescriptor(current: NativeUsageCaptureSource, descriptor: NativeUsageSourceDescriptor) {
+function applyCaptureSourceDescriptor(current: NativeUsageCaptureSource, descriptor: NativeUsageSourceDescriptor, rootChange = false) {
     const rootKind = current.rootKind;
     Object.assign(current, descriptor);
     if (descriptor.accountingSources === undefined) delete current.accountingSources;
     if (!descriptor.error && (current.error === 'source_unavailable' || current.error === 'agent_unavailable')) delete current.error;
-    if (rootKind === 'override') current.rootKind = rootKind;
+    if (!rootChange && rootKind === 'override') current.rootKind = rootKind;
     else if (descriptor.rootKind === undefined) delete current.rootKind;
 }
 export type NativeUsageCollectorDependencies = Readonly<{
@@ -36,7 +36,10 @@ export type NativeUsageCollectorDependencies = Readonly<{
         projectKey: string; workspaceId?: string;
     }>;
     readAccounting(source: NativeUsageCaptureSource, signal: AbortSignal, changedNativeSessionIds?: readonly string[]): Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAccountingResult>>;
-    subscribeSource(source: NativeUsageCaptureSource, onChange: (changedNativeSessionIds?: readonly string[]) => void, signal: AbortSignal): Promise<{ dispose(): void | Promise<void> }>;
+    subscribeSource(source: NativeUsageCaptureSource, onChange: (changedNativeSessionIds?: readonly string[]) => void, signal: AbortSignal): Promise<{
+        readonly retirementSignal?: AbortSignal;
+        dispose(): void | Promise<void>;
+    }>;
     publisher: Pick<ReturnType<typeof createUsageObservationPublisher>, 'publish'>;
     deleteHistory(source: NativeUsageCaptureSource, dateRange?: UsageSourceDateRangeV1): Promise<{ success: true; deletedEventCount: number }>;
     budgetRegistry: ExecutionBudgetRegistry;
@@ -51,7 +54,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
     type Lifetime = {
         sourceId: string; controller: AbortController; dirty: boolean; publish: boolean;
         changedNativeSessionIds?: Set<string>;
-        subscription?: { dispose(): void | Promise<void> }; setup?: Promise<void>; task?: Promise<void>;
+        subscription?: Awaited<ReturnType<NativeUsageCollectorDependencies['subscribeSource']>>; setup?: Promise<void>; task?: Promise<void>;
     };
     const active = new Map<string, Lifetime>();
     let disposed = false;
@@ -61,8 +64,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
         if (!source) throw new Error('usage_source_not_found');
         return source;
     };
-    const isActive = (life: Lifetime) => !disposed && !life.controller.signal.aborted && active.get(life.sourceId) === life
-        && requireSource(life.sourceId).consented;
+    const isActive = (life: Lifetime) => !life.controller.signal.aborted;
     const identity = (source: NativeUsageSourceDescriptor, observation?: AgentExternalSessionAccountingObservation) => deriveNativeUsageAccountingIdentity({
         authority: input.authority, storage: input.storage, agent: source.agent, sourceKey: source.sourceKey,
         ...(observation ? { nativeSessionId: observation.nativeSessionId, inferenceId: observation.inferenceId ?? observation.observation.key ?? undefined } : {}),
@@ -324,7 +326,9 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                         if (!isDeepStrictEqual(current, proposed)) updates.set(sourceId, descriptor);
                     }
                 }
-                const changedConsented = [...updates.keys()].filter(sourceId => currentById.get(sourceId)?.consented);
+                const changedConsented = sources.filter(source => source.consented
+                    && (updates.has(source.sourceId) || active.get(source.sourceId)?.subscription?.retirementSignal?.aborted))
+                    .map(source => source.sourceId);
                 await Promise.all(changedConsented.map(retire));
                 if (updates.size) await commit(next => {
                     const nextById = new Map(next.map(source => [source.sourceId, source]));
@@ -361,7 +365,10 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 const replacementId = identity(descriptor).sourceRootKey;
                 await commit(next => {
                     const current = next.find(source => source.sourceId === replacementId);
-                    if (current) Object.assign(current, descriptor, { consented: false });
+                    if (current) {
+                        applyCaptureSourceDescriptor(current, descriptor, true);
+                        current.consented = false;
+                    }
                     else next.push({ ...descriptor, sourceId: replacementId, consented: false, pending: [] });
                 });
                 return view(requireSource(replacementId));
@@ -391,6 +398,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
         },
         async dispose() {
             disposed = true;
+            for (const life of active.values()) life.controller.abort();
             await initialization?.catch(() => {});
             await Promise.all([...active.keys()].map(retire));
         },

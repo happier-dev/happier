@@ -1,11 +1,10 @@
 import { join } from 'node:path';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { AgentExternalSessionSource, AgentExternalSessionsReadAccountingResult, AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
 import { UsageSourceDeleteResultV1Schema } from '@happier-dev/protocol/usage/usageSources';
 import type { UsageSourceDateRangeV1 } from '@happier-dev/protocol/usage/usageSources';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { configuration } from '@/configuration';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { acquireAuthoritativePluginRuntimeRegistryLease, tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -33,6 +32,7 @@ export type NativeUsageDaemonRuntimeInput = Readonly<{
     token: string;
     storage: DeviceLocalSecretStorage;
     budgetRegistry: ExecutionBudgetRegistry;
+    /** Capture Account Project key material once for this Machine lifetime. */
     readCredentials(): Promise<StoredCredentials | null>;
     observation: Pick<ReturnType<typeof createExternalSessionObservationDaemonProjection>, 'registerAccountingSource'>;
     invalidateSources?(): void;
@@ -50,17 +50,15 @@ export async function readNativeUsageAccountingAtAdmission(input: Parameters<typ
         ...(input.changedNativeSessionIds === undefined ? {} : { changedNativeSessionIds: input.changedNativeSessionIds }), signal: input.signal });
 }
 
-/** Captures one authenticated Machine lifetime; all leaf calls retain registry occurrence fencing. */
+/** Captures one authenticated Machine lifetime; finite reads keep their admitted input. */
 export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeInput) {
     const lifetime = new AbortController();
     let discovered = false;
     let sourceSettingsKeys: readonly string[] = [];
-    const credentials = async () => {
-        if (lifetime.signal.aborted || configuration.activeServerId !== input.authority.serverId) return null;
-        const value = await input.readCredentials();
-        return !lifetime.signal.aborted && configuration.activeServerId === input.authority.serverId
-            && value && readAccountIdFromToken(value.token) === input.authority.accountId ? value : null;
-    };
+    // Capture private Account material once for Project reads. Every HTTP call
+    // uses this Machine lifetime's bearer; the server owns token revocation.
+    const capturedCredentials = input.readCredentials().then(value => value && readAccountIdFromToken(value.token) === input.authority.accountId
+        ? { ...value, token: input.token } : null).catch(() => null);
     const acquireBoundary = async (agent: NativeUsageCaptureSource['agent']) => {
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) return null;
@@ -83,7 +81,7 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
         } finally { await lease.release(); }
     };
     const metadata = async (source: NativeUsageCaptureSource, signal: AbortSignal, admittedSourceKey?: string) => {
-        if (signal.aborted || !await credentials() || signal.aborted) return null;
+        if (signal.aborted || lifetime.signal.aborted) return null;
         const acquired = await acquireBoundary(source.agent);
         if (!acquired) return null;
         const resolved = await resolveNativeUsageSourceMetadata({ ...acquired, source: source.source,
@@ -91,33 +89,27 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
         return resolved ? { ...acquired, ...resolved } : null;
     };
     const publisher = createUsageObservationPublisher({ token: input.token, apiServerUrl: input.serverHttpBaseUrl,
-        resolveToken: async () => (await credentials())?.token ?? null, emitLegacyUsageReport: () => false });
+        emitLegacyUsageReport: () => false });
     const custodyKey = input.storage.deriveOpaqueIdentity({ purpose: 'usage_accounting_identity',
         value: JSON.stringify(['capture', input.authority.serverId, input.authority.accountId, input.authority.machineId]) });
     const collector = createNativeUsageCollector({
         authority: input.authority, storage: input.storage, budgetRegistry: input.budgetRegistry,
         onSourceSettled: () => {
-            // Check captured Home/Account again at the actual outward wake.
-            void credentials().then(auth => {
-                if (auth && !lifetime.signal.aborted) input.invalidateSources?.();
-            }).catch(error => logger.warn('[USAGE] Native source invalidation failed', {
-                code: error instanceof Error ? error.name : 'usage_source_failed',
-            }));
+            if (!lifetime.signal.aborted) input.invalidateSources?.();
         },
         resolveProject: createNativeUsageProjectResolver({ authority: input.authority, storage: input.storage,
-            serverHttpBaseUrl: input.serverHttpBaseUrl, readCredentials: credentials }),
+            serverHttpBaseUrl: input.serverHttpBaseUrl, readCredentials: async () => await capturedCredentials }),
         store: createNativeUsageCaptureStore({ authority: input.authority, storage: input.storage,
             path: join(input.activeServerDir, 'usage', `${custodyKey}.sealed`) }),
         discoverSources: async () => {
-            const auth = await credentials();
-            if (!auth) throw new Error('usage_account_authority_unavailable');
+            lifetime.signal.throwIfAborted();
             const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
             let agents: typeof lease.registry.contributes.agents;
             try { agents = lease.registry.contributes.agents; } finally { await lease.release(); }
             sourceSettingsKeys = configuredExternalSessionSourceSettingsKeys(agents.flatMap(agent =>
                 agent.richDefinition?.definition.surfaces?.externalSession.sources ?? []));
             const account = configuredExternalSessionSourcesUseConnectedProfiles(agents)
-                ? await fetchAccountProfile({ token: auth.token, signal: lifetime.signal })
+                ? await fetchAccountProfile({ token: input.token, signal: lifetime.signal })
                 : { connectedServicesV2: [] };
             return await discoverNativeUsageSourceMetadata({ agents, account,
                 agentSettings: getActiveAccountSettingsSnapshot()?.settings,
@@ -143,7 +135,7 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
             return { ...resolved.descriptor, rootKind: root === null ? 'default' as const : 'override' as const };
         },
         readAccounting: async (source, signal, changedNativeSessionIds) => {
-            if (signal.aborted || !await credentials() || signal.aborted) return { ok: false, code: 'unavailable' };
+            if (signal.aborted || lifetime.signal.aborted) return { ok: false, code: 'unavailable' };
             const acquired = await acquireBoundary(source.agent);
             if (!acquired) return { ok: false, code: 'unavailable' };
             return await readNativeUsageAccountingAtAdmission({ ...acquired, source: source.source, cursor: source.cursor,
@@ -151,16 +143,17 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
                 admittedSourceKey: source.sourceKey, activeServerDir: input.activeServerDir,
                 signal: AbortSignal.any([signal, lifetime.signal]) });
         },
-        subscribeSource: async (source, onChange, signal): Promise<Disposable> => {
+        subscribeSource: async (source, onChange, signal) => {
             let demand: Disposable | null = null;
             let disposed = false;
             let refreshDemand: Promise<void> | null = null;
-            let topologyChanged = false;
+            let refreshRequested = false;
             const bind = async () => {
                 const resolved = await metadata(source, signal, source.sourceKey);
                 const observation = resolved?.metadata.accountingSource;
                 if (!resolved || !observation) throw new Error('usage_source_observation_unavailable');
                 if (disposed || signal.aborted || lifetime.signal.aborted) return;
+                if (!resolved.boundary.isCurrent() || resolved.boundary.retirementSignal.aborted) throw new Error('usage_source_observation_unavailable');
                 const next = await input.observation.registerAccountingSource({
                     resource: { pluginId: source.agent.pluginId, agentLocalId: source.agent.localId,
                         occurrenceId: resolved.boundary.occurrenceId, resourceKey: observation.resourceKey,
@@ -171,37 +164,45 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
                         if (disposed || signal.aborted || lifetime.signal.aborted) return;
                         onChange(changedNativeSessionIds);
                         if (reason !== 'topology_changed') return;
-                        topologyChanged = true;
-                        if (refreshDemand) return;
-                        // New files join the incumbent file set after a structural invalidation.
-                        refreshDemand = (async () => {
-                            while (topologyChanged && !disposed && !signal.aborted && !lifetime.signal.aborted) {
-                                topologyChanged = false;
-                                await bind();
-                            }
-                        })().finally(() => { refreshDemand = null; });
-                        void refreshDemand.catch(error => logger.warn('[USAGE] Accounting observation refresh failed', {
-                            code: error instanceof Error ? error.name : 'usage_source_failed',
-                        }));
+                        refresh();
                     },
                 });
                 if (disposed || signal.aborted || lifetime.signal.aborted) { await next.dispose(); return; }
                 const previous = demand;
                 demand = next;
                 await previous?.dispose();
+                return resolved.boundary.retirementSignal;
             };
-            await bind();
-            return { async dispose() { disposed = true; await refreshDemand?.catch(() => {}); await demand?.dispose(); } };
+            const refresh = () => {
+                refreshRequested = true;
+                if (refreshDemand) return;
+                // Topology changes refresh this observation; the collector owns plugin retirement.
+                refreshDemand = (async () => {
+                    while (refreshRequested && !disposed && !signal.aborted && !lifetime.signal.aborted) {
+                        refreshRequested = false;
+                        await bind();
+                    }
+                })().finally(() => {
+                    refreshDemand = null;
+                });
+                void refreshDemand.catch(error => logger.warn('[USAGE] Accounting observation refresh failed', {
+                    code: error instanceof Error ? error.name : 'usage_source_failed',
+                }));
+            };
+            const retirementSignal = await bind();
+            return {
+                retirementSignal,
+                async dispose() { disposed = true; await refreshDemand?.catch(() => {}); await demand?.dispose(); },
+            };
         },
-        publisher: { publish: async observation => await credentials()
+        publisher: { publish: async observation => !lifetime.signal.aborted
             ? await publisher.publish(observation) : { status: 'failed' } },
         deleteHistory: async (source, dateRange) => {
-            const auth = await credentials();
-            if (!auth) throw new Error('usage_account_authority_unavailable');
+            lifetime.signal.throwIfAborted();
             const response = await axios.post(`${input.serverHttpBaseUrl}/v2/usage-events/delete-native-history`, {
                 machineId: input.authority.machineId, sourceRootKey: source.sourceId,
                 ...(dateRange ? { dateRange } : {}),
-            }, { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${auth.token}` },
+            }, { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.token}` },
                 signal: lifetime.signal });
             return UsageSourceDeleteResultV1Schema.parse(response.data);
         },

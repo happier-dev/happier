@@ -35,14 +35,14 @@ export async function resolveNativeUsageSourceMetadata(input: Readonly<{
     /** A retained capture may resolve metadata, but may not adopt a different source identity. */
     admittedSourceKey?: string;
     includeAccountingSource?: boolean;
-}>): Promise<Readonly<{ descriptor: NativeUsageSourceDescriptor; metadata: AgentExternalSessionsResolveSourceResult }> | null> {
+}>, admittedSource?: Extract<Awaited<ReturnType<typeof resolveConfiguredExternalSessionSourceAtAdmission>>, { ok: true }>): Promise<Readonly<{ descriptor: NativeUsageSourceDescriptor; metadata: AgentExternalSessionsResolveSourceResult }> | null> {
     const agent = input.agents.find(candidate => candidate.id === input.agentId);
     if (!agent?.identity || !input.boundary.isCurrent() || input.signal.aborted) return null;
-    const admitted = await resolveConfiguredExternalSessionSourceAtAdmission({ ...input, catalogEntry: input.boundary.catalogEntry });
+    const admitted = admittedSource ?? await resolveConfiguredExternalSessionSourceAtAdmission({ ...input, catalogEntry: input.boundary.catalogEntry });
     if (!admitted.ok) return null;
     const resolved = await input.boundary.externalSessions.resolveSource({ source: admitted.source, signal: input.signal,
         ...(input.includeAccountingSource === false ? { includeAccountingSource: false } : {}) });
-    if (!resolved.ok || input.signal.aborted || !input.boundary.isCurrent()) return null;
+    if (!resolved.ok || input.signal.aborted) return null;
     const canonical = resolveExternalSessionSourceFromAgentProjection({ agents: input.agents }, input.agentId, resolved.value.source);
     if (!canonical.ok) return null;
     if (input.admittedSourceKey !== undefined && canonical.sourceKey !== input.admittedSourceKey) return null;
@@ -95,7 +95,7 @@ export async function discoverNativeUsageSourceMetadata(input: Readonly<{
             && typeof admitted.source[instance.field] === 'string');
         const rootKind = hasConnectedProfile ? 'materialized' : configured ? 'configured' : 'default';
         const resolved = boundary
-            ? await resolveNativeUsageSourceMetadata({ ...input, agentId: candidate.agentId, source: admitted.source, boundary })
+            ? await resolveNativeUsageSourceMetadata({ ...input, agentId: candidate.agentId, source: admitted.source, boundary }, admitted)
             : null;
         if (!resolved) {
             if (input.signal.aborted || boundary?.retirementSignal.aborted) continue;

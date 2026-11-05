@@ -265,13 +265,17 @@ describe('native source metadata discovery', () => {
         const retirement = new AbortController();
         const contentAccess = () => { throw new Error('Native records must remain unopened without consent'); };
         let discoveredFileCount: number | undefined;
+        let retireDuringResolve = false;
         const contribution: AgentExternalSessionsContribution = {
-            resolveSource: ({ source }) => ({ ok: true, value: {
+            resolveSource: ({ source }) => {
+                if (retireDuringResolve) retirement.abort();
+                return { ok: true, value: {
                 source: { ...source, configDir: '/configured/claude' },
                 accountingSource: { rootPath: '/configured/claude', rootField: 'configDir', resourceKey: 'claude-root',
                     ...(discoveredFileCount === undefined ? {} : { discoveredFileCount }),
                     changeObservation: 'watch_file_changes', watchFileChanges: { files: ['/configured/claude/a.jsonl', '/configured/claude/b.jsonl'], topologyDirectories: ['/configured/claude'] } },
-            } }),
+            } };
+            },
             listCandidates: contentAccess, resolveLinkIdentity: contentAccess, resolveLinkedIdentity: contentAccess,
             pageTranscript: contentAccess, readAfterTranscript: contentAccess, readAccounting: contentAccess,
         };
@@ -298,7 +302,9 @@ describe('native source metadata discovery', () => {
             // Plugin activation is an executable boundary and can be unavailable independently.
             resolveBoundary: async () => { throw new Error('Plugin activation unavailable'); },
         })).toEqual([expect.objectContaining({ supported: false, error: 'agent_unavailable' })]);
-        retirement.abort();
+        retireDuringResolve = true;
+        expect(await discoverNativeUsageSourceMetadata(request)).toEqual(sources);
+        // The next admission refuses a retired occurrence.
         expect(await discoverNativeUsageSourceMetadata({ agents, account: { connectedServicesV2: [] },
             activeServerId: 'home', activeServerDir: '/happier/home', signal: new AbortController().signal,
             resolveBoundary: async () => ({ catalogEntry: null, externalSessions: bounded, occurrenceId: 'current', retirementSignal: retirement.signal,
