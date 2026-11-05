@@ -28,6 +28,8 @@ function createLayout(input: {
   };
   const listeners = new Map<string, Listener[]>();
   const observers = new Set<() => void>();
+  const frames = new Map<number, () => void>();
+  let frameId = 0;
   const counts = {
     boundingRects: 0,
     elementFromPoint: 0,
@@ -91,6 +93,10 @@ function createLayout(input: {
     },
   };
   const win = {
+    requestAnimationFrame: (callback: () => void) => { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    addEventListener: scroller.addEventListener,
+    removeEventListener: scroller.removeEventListener,
     document: {
       get activeElement(): unknown {
         counts.activeElement += 1;
@@ -122,12 +128,62 @@ function createLayout(input: {
     emit: (type: string) =>
       (listeners.get(type) ?? []).forEach((listener) => listener({ target: scroller })),
     relayout: () => observers.forEach((callback) => callback()),
+    flushFrames: () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); },
     focusedOffset: () =>
       focused.getBoundingClientRect().top - layout.viewportTop,
   };
 }
 
 describe('attachWebScrollReadingAnchor', () => {
+  it('preserves the reading position when browser scroll clamping precedes the resize observer', () => {
+    const page = createLayout({ rowsAbove: 400, scrollTop: 160, width: 1440 });
+    const detach = attachWebScrollReadingAnchor(page);
+    const offset = page.focusedOffset();
+    page.emit('resize');
+    page.layout.width = 390;
+    page.layout.scrollTop = 0;
+    page.emit('scroll');
+    page.emit('scrollend');
+    page.relayout();
+    expect(page.layout.scrollTop).toBe(160);
+    expect(page.focusedOffset()).toBe(offset);
+    detach();
+  });
+
+  it('keeps a native relayout scroll until the delayed viewport resize is observed', () => {
+    const page = createLayout({ rowsAbove: 400, scrollTop: 160, width: 1440 });
+    const detach = attachWebScrollReadingAnchor(page);
+    const offset = page.focusedOffset();
+    page.emit('resize');
+    page.layout.width = 390;
+    page.relayout();
+    // Chrome's layout scroll arrives before its viewport-height update, without scrollend.
+    page.layout.scrollTop = 0;
+    page.emit('scroll');
+    page.layout.viewportHeight -= 56;
+    page.relayout();
+    page.emit('scroll');
+    page.emit('scrollend');
+    expect(page.layout.scrollTop).toBe(160);
+    expect(page.focusedOffset()).toBe(offset);
+    detach();
+  });
+
+  it('restores a native scroll after the final resize callback without waiting for another resize', () => {
+    const page = createLayout({ rowsAbove: 400, scrollTop: 160, width: 390 });
+    const detach = attachWebScrollReadingAnchor(page);
+    const offset = page.focusedOffset();
+    page.emit('resize');
+    page.layout.width = 1440;
+    page.relayout();
+    page.layout.scrollTop = 0;
+    page.emit('scroll'); // Layout adjustment, without the scrollend a completed reveal emits.
+    page.flushFrames();
+    expect(page.layout.scrollTop).toBe(160);
+    expect(page.focusedOffset()).toBe(offset);
+    detach();
+  });
+
   it.each([1, 100])('does no anchor queries, layout reads or renders over %i ordinary scroll events', async (events) => {
     const page = createLayout({ rowsAbove: 400, scrollTop: 180, width: 1440 });
     vi.stubGlobal('window', page.win);
@@ -170,11 +226,14 @@ describe('attachWebScrollReadingAnchor', () => {
     expect(resized.activeElement).toBe(0);
     expect(resized.contains).toBe(0);
     expect(renders.read()).toEqual({ renders: 0, commits: 0 });
+    // Detach while a native layout scroll has queued a restoration.
+    act(() => { page.layout.scrollTop = 0; page.emit('scroll'); });
     await hook.unmount();
     page.resetCounts();
     page.emit('scroll');
     page.emit('scrollend');
     page.relayout();
+    page.flushFrames();
     expect(page.counts).toEqual({
       boundingRects: 0, elementFromPoint: 0, activeElement: 0, contains: 0,
       dimensions: 0, scrollTop: 0,
@@ -248,6 +307,8 @@ describe('attachWebScrollReadingAnchor', () => {
     // A reveal (or the person) scrolls; no wheel or touch is involved for a programmatic scroll.
     page.layout.scrollTop = 20;
     page.emit('scroll');
+    page.emit('scrollend'); // A completed reveal establishes the new reading position.
+    page.flushFrames();
     const offsetAfterScroll = page.focusedOffset();
     // A content-only resize keeps that new position rather than pulling back to the old one.
     page.relayout();
@@ -290,6 +351,10 @@ describe('attachWebScrollReadingAnchor', () => {
       removeEventListener: () => {},
     };
     const win = {
+      requestAnimationFrame: () => 1,
+      cancelAnimationFrame: () => {},
+      addEventListener: scroller.addEventListener,
+      removeEventListener: scroller.removeEventListener,
       document: {
         activeElement: null,
         elementFromPoint: (_x: number, y: number) => {
