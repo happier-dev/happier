@@ -1,0 +1,7 @@
+What do you want to do?
+
+❯ 1. Stop and wait for limit to reset
+  2. Wait here, then continue automatically at Nov 8, 4pm
+  3. Switch to usage credits
+
+Enter to confirm · Esc to cancel

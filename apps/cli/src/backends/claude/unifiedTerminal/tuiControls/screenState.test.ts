@@ -28,6 +28,13 @@ const CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG = [
   'Enter to confirm · Esc to cancel',
 ].join('\n');
 
+// Native 2.1.316 chooser labels: installed executable bytes 318821800–318823900 and
+// 318831900–318833700; viewport shape from incident-weekly-limit-after-numbered-transcript.txt.
+const CLAUDE_2_1_316_CROPPED_USAGE_LIMIT_DIALOG = readFileSync(
+  new URL('./__fixtures__/claude-2.1.316-cropped-usage-limit.txt', import.meta.url),
+  'utf8',
+);
+
 const CLAUDE_2_1_259_HIDDEN_INDEX_TRUST_DIALOG = [
   'Accessing workspace:',
   '/tmp/happier-claude-dialog-probe',
@@ -137,6 +144,63 @@ const CLAUDE_2_1_170 = {
 } as const;
 
 describe('parseClaudeScreenState — usage-limit chooser', () => {
+  it.each([
+    [1, 'Stop and wait for limit to reset', 'at Nov 8, 4pm'],
+    [2, 'Stop and wait for limit to reset', 'shortly'],
+    [3, 'Stop and wait for limit to reset', 'when the limit resets'],
+    [1, 'Stop', 'when the limit resets'],
+    [2, 'Stop', 'at Nov 8, 4pm'],
+    [3, 'Stop', 'shortly'],
+  ] as const)('recognizes the cropped 2.1.316 chooser focused on %i with %s / %s', (focus, stop, automatic) => {
+    const capture = CLAUDE_2_1_316_CROPPED_USAGE_LIMIT_DIALOG
+      .replace('Stop and wait for limit to reset', stop)
+      .replace('at Nov 8, 4pm', automatic)
+      .replace('❯ 1.', '  1.')
+      .replace(`  ${focus}.`, `❯ ${focus}.`);
+    const state = parseClaudeScreenState(capture);
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleDialogSelection?.options.map((option) => option.focused)).toEqual(
+      [1, 2, 3].map((choice) => choice === focus),
+    );
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
+  });
+
+  it('recognizes usage-limit semantics independently of option index', () => {
+    const state = parseClaudeScreenState([
+      'What do you want to do?',
+      '',
+      '  1. Switch to usage credits',
+      '❯ 2. Stop and wait for limit to reset',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n'));
+
+    expect(state.usageLimitDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+  });
+
+  it.each([
+    ['skipped option number', CLAUDE_2_1_316_CROPPED_USAGE_LIMIT_DIALOG.replace('  2.', '  4.')],
+    ['duplicate focus', CLAUDE_2_1_316_CROPPED_USAGE_LIMIT_DIALOG.replace('  2.', '❯ 2.')],
+    ['missing focus', CLAUDE_2_1_316_CROPPED_USAGE_LIMIT_DIALOG.replace('❯ 1.', '  1.')],
+    ['historical semantics', [
+      'What do you want to do?',
+      'Stop and wait for limit to reset',
+      '',
+      'What do you want to do?',
+      '',
+      '❯ 1. Continue the build',
+      '  2. Cancel the build',
+    ].join('\n')],
+  ])('keeps usage recognition fail-closed for %s', (_name, capture) => {
+    const state = parseClaudeScreenState(capture);
+
+    expect(state.usageLimitDialogVisible).toBe(false);
+    if (_name !== 'missing focus') expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+  });
+
   it.each([
     ['weekly limit', CLAUDE_2_1_228_USAGE_LIMIT_DIALOG.replace('session limit', 'weekly limit')],
     ['trust', CLAUDE_2_1_170.trustFolderPrompt],
