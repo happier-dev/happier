@@ -1,6 +1,7 @@
 import { isServerFeatureEnabledForRequest, readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
 import { acquireGlobalLock } from "@/storage/globalLock";
 import { warn } from "@/utils/logging/log";
+import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
 import { DirectoryProjectionInvariantError } from "../directoryProjectionRepository";
 import {
     runActiveWorkosDirectoryIncremental,
@@ -13,6 +14,7 @@ import {
     claimDirectorySourceFullReconcile,
     claimWorkosDirectorySourceIncremental,
     findNextDirectorySourceDueForSync,
+    hasDirectorySourceDueForSync,
     markActiveWorkosDirectoryPollFailed,
     markDirectorySourceReconcileFailed,
 } from "../directorySourceService";
@@ -67,6 +69,7 @@ export async function runEnterpriseIdentitySyncWorkerPass(params: Readonly<{
     scan?: DirectoryProjectionScan;
     catchUp?: DirectoryProjectionCatchUp;
 }> = {}): Promise<EnterpriseIdentitySyncWorkerPassResult> {
+    if (!await hasDirectorySourceDueForSync()) return { status: "idle" };
     // Each pass reads the Home-effective configuration, so a Home switch applies on the next pass.
     const env = await readHomeEffectiveEnv({ env: params.env });
     if (!isServerFeatureEnabledForRequest("teams", env)) return { status: "disabled" };
@@ -209,12 +212,12 @@ export function startEnterpriseIdentitySyncWorker(params: Readonly<{
     };
     const trigger = async (): Promise<void> => {
         if (stopped || active) return;
-        active = runEnterpriseIdentitySyncWorkerPass({
+        active = withWebLatencyProducerTrace("producer.team-directory", () => runEnterpriseIdentitySyncWorkerPass({
             env,
             signal: controller.signal,
             scan: params.scan,
             catchUp: params.catchUp,
-        }).then(() => undefined, () => undefined);
+        })).then(() => undefined, () => undefined);
         await active;
         active = null;
         schedule(DIRECTORY_WORKER_INTERVAL_MS);

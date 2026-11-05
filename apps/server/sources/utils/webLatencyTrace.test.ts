@@ -42,6 +42,16 @@ describe('web latency request correlation', () => {
         expect(readWebLatencyRequestId()).toBeUndefined();
     });
 
+    it('keeps a session handler correlation when it enters an existing producer root', async () => {
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        const sink = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+        await withWebLatencyProducerTrace('producer.socket.session-alive', () =>
+            withWebLatencyTrace('req-handler', () => timeWebLatencyPhase('socket.session-alive', async () => {
+                await Promise.resolve();
+            }), 'session-publisher'));
+        expect(sink).toHaveBeenCalledWith(expect.objectContaining({ phase: 'socket.session-alive',
+            sessionId: 'session-publisher', requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) }), expect.any(String));
+    });
     it('runs operations without phase clocks or submissions when detailed tracing is disabled', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
         const clock = vi.spyOn(performance, 'now');

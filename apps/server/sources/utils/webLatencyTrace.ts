@@ -74,7 +74,9 @@ export function settleWebLatencyTransactionAttempt(attempt: WebLatencyTransactio
 
 export function withWebLatencyTrace<T>(requestId: unknown, operation: () => T, sessionId?: string): T {
     // Nested action dispatch keeps the request's identity and span sequence.
-    if (context.getStore()) return operation();
+    const current = context.getStore();
+    if (current) return sessionId && !current.sessionId
+        ? context.run({ ...current, sessionId }, operation) : operation();
     // RPC forwards need the existing HTTP root even when detailed phase timing
     // is disabled. Emission and SQL annotation keep their own existing gate.
     return typeof requestId === 'string' && /^(?:req-[0-9a-z]+|(?:new-session-attempt-)?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu.test(requestId)

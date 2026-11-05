@@ -163,6 +163,7 @@ export function startAutomationScheduleWorker(params: Readonly<{
 
     const schedule = async (lastPass: Readonly<{
         progressed: boolean;
+        nextDueAt: Date | null;
         continuationCursor: AutomationScheduleScanCursor | null;
     }>): Promise<void> => {
         if (stopped) return;
@@ -176,12 +177,7 @@ export function startAutomationScheduleWorker(params: Readonly<{
             return;
         }
         scanCursor = null;
-        let nextDueAt: Date | null = null;
-        try {
-            nextDueAt = (await findNextScheduleTrigger())?.nextRunAt ?? null;
-        } catch {
-            warn({ module: "automation-schedule-worker" }, "Automation schedule due scan failed");
-        }
+        const nextDueAt = lastPass.nextDueAt;
         if (stopped) return;
         const now = Date.now();
         const unboundedDelay = nextDueAt === null
@@ -202,7 +198,8 @@ export function startAutomationScheduleWorker(params: Readonly<{
     const trigger = async (): Promise<void> => {
         if (stopped || active) return;
         active = (async () => {
-            let pass = { progressed: false, continuationCursor: null as AutomationScheduleScanCursor | null };
+            let pass = { progressed: false, nextDueAt: null as Date | null,
+                continuationCursor: null as AutomationScheduleScanCursor | null };
             try {
                 pass = await runAutomationScheduleWorkerPass({
                     now: new Date(),

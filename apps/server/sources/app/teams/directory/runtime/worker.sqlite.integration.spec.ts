@@ -69,6 +69,66 @@ describe("enterprise identity sync worker", () => {
         });
     }
 
+    it("checks only for due work while idle and still runs a newly due source", async () => {
+        // Observe the real database boundary; selection, Home policy and leases remain real.
+        const findSource = db.teamDirectorySource.findFirst;
+        const transaction = db.$transaction;
+        const executeRaw = db.$executeRaw;
+        const releaseLock = db.globalLock.deleteMany;
+        let sourceReads = 0;
+        let transactions = 0;
+        let lockWrites = 0;
+        let lockReleases = 0;
+        db.teamDirectorySource.findFirst = new Proxy(findSource, { apply(target, receiver, args: unknown[]) {
+            sourceReads++;
+            return Reflect.apply(target, receiver, args);
+        } });
+        db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+            transactions++;
+            return Reflect.apply(target, receiver, args);
+        } });
+        db.$executeRaw = new Proxy(executeRaw, { apply(target, receiver, args: unknown[]) {
+            lockWrites++;
+            return Reflect.apply(target, receiver, args);
+        } });
+        db.globalLock.deleteMany = new Proxy(releaseLock, { apply(target, receiver, args: unknown[]) {
+            lockReleases++;
+            return Reflect.apply(target, receiver, args);
+        } });
+        try {
+            for (let pass = 0; pass < 3; pass++) {
+                await expect(runEnterpriseIdentitySyncWorkerPass()).resolves.toEqual({ status: "idle" });
+            }
+            expect(sourceReads).toBe(3);
+            expect(transactions).toBe(0);
+            expect(lockWrites).toBe(0);
+            expect(lockReleases).toBe(0);
+
+            const source = await createRunnableSource("after-idle");
+            await expect(runEnterpriseIdentitySyncWorkerPass({
+                scan: async () => ({ ok: true }),
+                catchUp: async () => ({ ok: true }),
+            })).resolves.toEqual({ status: "completed", sourceId: source.id });
+            await expect(db.teamDirectorySource.findUniqueOrThrow({ where: { id: source.id } }))
+                .resolves.toMatchObject({ state: "active", activeReconcileRunId: null });
+
+            const disabled = await createRunnableSource("disabled-due");
+            const writesBeforeDisabledPass = lockWrites;
+            await expect(runEnterpriseIdentitySyncWorkerPass({
+                env: { HAPPIER_FEATURE_TEAMS__ENABLED: "0" },
+            })).resolves.toEqual({ status: "disabled" });
+            expect(lockWrites).toBe(writesBeforeDisabledPass);
+            await expect(db.teamDirectorySource.findUniqueOrThrow({ where: { id: disabled.id } }))
+                .resolves.toMatchObject({ state: "needs_attention", activeReconcileRunId: null });
+            await db.teamDirectorySource.update({ where: { id: disabled.id }, data: { state: "paused" } });
+        } finally {
+            db.teamDirectorySource.findFirst = findSource;
+            db.$transaction = transaction;
+            db.$executeRaw = executeRaw;
+            db.globalLock.deleteMany = releaseLock;
+        }
+    });
+
     it("uses the one database lease so two worker instances cannot scan the same source", async () => {
         await createRunnableSource("exclusive");
         let releaseScan!: () => void;

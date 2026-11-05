@@ -10,10 +10,11 @@ import { inTx } from "@/storage/inTx";
 import { cancelWorkflowRunTx } from "@/app/workflows/workflowRunService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
+import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 
 import { claimAutomationRun } from "./automationClaimService";
 import { createAutomation } from "./automationCrudService";
-import { runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
+import { DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS, runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
 
 const MACHINE_ID = "machine-schedule-firing";
 
@@ -136,6 +137,39 @@ describe("Automation schedule trigger firing (integration)", () => {
             orderBy: [{ triggerId: "asc" }, { id: "asc" }],
         });
     }
+
+    it("retains only the existing fallback scan while a future schedule remains ineligible", async () => {
+        await seedTwoScheduleTriggers();
+        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: new Date(Date.now() + 600_000) } });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        const timers = vi.spyOn(globalThis, "setTimeout");
+        let reads = 0;
+        const release = observePrismaRequests(db, { after: request => {
+            if (request.model === "AutomationTrigger" && request.action.startsWith("find")) reads += 1;
+        } });
+        const worker = startAutomationScheduleWorker();
+        try {
+            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS)).toBe(true));
+            // One due-page read and one next-deadline read; scheduling consumes
+            // that result instead of repeating discovery before arming a wake.
+            expect(reads).toBe(2);
+            const startupReads = reads;
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS / 2);
+            expect(reads - startupReads).toBe(0);
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS / 2);
+            await vi.waitFor(() => expect(reads).toBeGreaterThan(startupReads));
+            await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
+            expect(reads - startupReads).toBe(2);
+            await expect(readRuns()).resolves.toHaveLength(0);
+            expect(vi.getTimerCount()).toBe(1);
+        } finally {
+            await worker.stop();
+            release();
+            timers.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
 
     it("discovers a newly due trigger without a local wake while a future schedule is sleeping", async () => {
         await seedTwoScheduleTriggers();

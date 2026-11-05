@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { TeamDirectorySource } from "@prisma/client";
+import type { Prisma, TeamDirectorySource } from "@prisma/client";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { parseTeamIdentityConnectionDocuments } from "@/app/auth/providers/managed/identityProviderDocuments";
@@ -283,6 +283,74 @@ export async function createDirectorySourceInTx(
     }
 }
 
+const DIRECTORY_SOURCE_KINDS = ["workos_directory", "github_organization"] as const;
+
+function directorySourceDueWhere(
+    now: Date,
+    kinds: readonly TeamDirectoryBindingConfigV1["kind"][],
+): Prisma.TeamDirectorySourceWhereInput {
+    const fullReconcileDueBefore = new Date(now.getTime() - DIRECTORY_FULL_RECONCILE_TARGET_MS);
+    const workosIncrementalDueBefore = new Date(now.getTime() - WORKOS_DIRECTORY_SYNC_TARGET_MS);
+    const githubFullDueBefore = new Date(now.getTime() - GITHUB_DIRECTORY_SYNC_TARGET_MS);
+    return {
+        AND: [
+            { kind: { in: [...kinds] } },
+            { OR: [{ retryNotBefore: null }, { retryNotBefore: { lte: now } }] },
+            { OR: [
+                { state: "initializing" },
+                {
+                    state: "active",
+                    activeReconcileRunId: { not: null },
+                },
+                {
+                    state: { in: ["active", "needs_attention"] },
+                    manualSyncRequestedAt: { not: null },
+                    // An explicit Retry of a source parked on a
+                    // non-retryable failure buys exactly one attempt:
+                    // it is due only while no claim has consumed it.
+                    OR: [
+                        retryableDirectoryErrorWhere(),
+                        { lastAttemptAt: null },
+                        { manualSyncRequestedAt: { gt: db.teamDirectorySource.fields.lastAttemptAt } },
+                    ],
+                },
+                {
+                    state: "needs_attention",
+                    ...retryableDirectoryErrorWhere(),
+                },
+                {
+                    state: "active",
+                    kind: "workos_directory",
+                    AND: [retryableDirectoryErrorWhere()],
+                    OR: [
+                        { lastFullReconcileAt: null },
+                        { lastFullReconcileAt: { lte: fullReconcileDueBefore } },
+                        { lastSuccessAt: null },
+                        { lastSuccessAt: { lte: workosIncrementalDueBefore } },
+                    ],
+                },
+                {
+                    state: "active",
+                    kind: "github_organization",
+                    AND: [retryableDirectoryErrorWhere()],
+                    OR: [
+                        { lastSuccessAt: null },
+                        { lastSuccessAt: { lte: githubFullDueBefore } },
+                    ],
+                },
+            ] },
+        ],
+    };
+}
+
+/** A scheduling hint only; the locked selector and claim still decide admission. */
+export async function hasDirectorySourceDueForSync(params: Readonly<{ now?: Date }> = {}): Promise<boolean> {
+    return await db.teamDirectorySource.findFirst({
+        where: directorySourceDueWhere(params.now ?? new Date(), DIRECTORY_SOURCE_KINDS),
+        select: { id: true },
+    }) !== null;
+}
+
 /**
  * Select the oldest runnable source. The durable manual request is only one
  * way a source becomes due; it does not create a separate in-memory queue or
@@ -293,65 +361,15 @@ export async function findNextDirectorySourceDueForSync(params: Readonly<{
 }> = {}): Promise<Readonly<{ id: string; mode: "full" | "incremental" }> | null> {
     const now = params.now ?? new Date();
     const fullReconcileDueBefore = new Date(now.getTime() - DIRECTORY_FULL_RECONCILE_TARGET_MS);
-    const workosIncrementalDueBefore = new Date(now.getTime() - WORKOS_DIRECTORY_SYNC_TARGET_MS);
-    const githubFullDueBefore = new Date(now.getTime() - GITHUB_DIRECTORY_SYNC_TARGET_MS);
     const candidate = await inTx(async (tx) => {
-        const allowedKinds = (["workos_directory", "github_organization"] as const);
+        const allowedKinds = DIRECTORY_SOURCE_KINDS;
         const runnableKinds: typeof allowedKinds[number][] = [];
         for (const kind of allowedKinds) {
             if (await isDirectorySourceKindAllowedInTx(tx, kind)) runnableKinds.push(kind);
         }
         if (runnableKinds.length === 0) return null;
         return await tx.teamDirectorySource.findFirst({
-            where: {
-                AND: [
-                    { kind: { in: runnableKinds } },
-                    { OR: [{ retryNotBefore: null }, { retryNotBefore: { lte: now } }] },
-                    { OR: [
-                        { state: "initializing" },
-                        {
-                            state: "active",
-                            activeReconcileRunId: { not: null },
-                        },
-                        {
-                            state: { in: ["active", "needs_attention"] },
-                            manualSyncRequestedAt: { not: null },
-                            // An explicit Retry of a source parked on a
-                            // non-retryable failure buys exactly one attempt:
-                            // it is due only while no claim has consumed it.
-                            OR: [
-                                retryableDirectoryErrorWhere(),
-                                { lastAttemptAt: null },
-                                { manualSyncRequestedAt: { gt: db.teamDirectorySource.fields.lastAttemptAt } },
-                            ],
-                        },
-                        {
-                            state: "needs_attention",
-                            ...retryableDirectoryErrorWhere(),
-                        },
-                        {
-                            state: "active",
-                            kind: "workos_directory",
-                            AND: [retryableDirectoryErrorWhere()],
-                            OR: [
-                                { lastFullReconcileAt: null },
-                                { lastFullReconcileAt: { lte: fullReconcileDueBefore } },
-                                { lastSuccessAt: null },
-                                { lastSuccessAt: { lte: workosIncrementalDueBefore } },
-                            ],
-                        },
-                        {
-                            state: "active",
-                            kind: "github_organization",
-                            AND: [retryableDirectoryErrorWhere()],
-                            OR: [
-                                { lastSuccessAt: null },
-                                { lastSuccessAt: { lte: githubFullDueBefore } },
-                            ],
-                        },
-                    ] },
-                ],
-            },
+            where: directorySourceDueWhere(now, runnableKinds),
             orderBy: [{ lastAttemptAt: "asc" }, { id: "asc" }],
             select: {
                 id: true,

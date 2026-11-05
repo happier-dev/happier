@@ -1,4 +1,5 @@
 import { log } from "@/utils/logging/log";
+import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
 import {
     cleanupExpiredAccountEncryptionTransitions,
 } from "@/app/encryption/accountEncryptionTransitionCoordinator";
@@ -28,22 +29,22 @@ export function startPluginWebhookCredentialRetirementWorker(params: Readonly<{
         running = true;
         try {
             await Promise.all([
-                recoverExpiredPluginWebhookClaimsV1({
+                withWebLatencyProducerTrace('producer.webhook-claim-recovery', () => recoverExpiredPluginWebhookClaimsV1({
                     batchSize: PLUGIN_WEBHOOK_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1,
-                }),
-                ageOverduePluginWebhookDeliveriesV1({
+                })),
+                withWebLatencyProducerTrace('producer.webhook-delivery-aging', () => ageOverduePluginWebhookDeliveriesV1({
                     batchSize: PLUGIN_WEBHOOK_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1,
-                }),
-                retireExpiredPluginWebhookCredentialsV1({
+                })),
+                withWebLatencyProducerTrace('producer.webhook-credential-retirement', () => retireExpiredPluginWebhookCredentialsV1({
                     batchSize: PLUGIN_WEBHOOK_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1,
-                }),
-                purgeExpiredPluginWebhookDeliveriesV1({
+                })),
+                withWebLatencyProducerTrace('producer.webhook-delivery-purge', () => purgeExpiredPluginWebhookDeliveriesV1({
                     batchSize: PLUGIN_WEBHOOK_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1,
-                }),
+                })),
                 // This is the incumbent unconditional worker lifecycle: on
                 // restart and each pass it resumes one Account-owned bounded
                 // transition scrub without inventing a second timer/owner.
-                cleanupExpiredAccountEncryptionTransitions(),
+                withWebLatencyProducerTrace('producer.encryption-transition-cleanup', () => cleanupExpiredAccountEncryptionTransitions()),
             ]);
         } catch {
             // The pass handles only ciphertext metadata and never decrypts secrets. Keep the
