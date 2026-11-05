@@ -897,6 +897,14 @@ or UI navigation services. Storage remains with the existing Account KV and
 Collection authorization/CAS owners; nested Actions independently pass the
 ordinary host policy and approval gate.
 
+In 0.3 development source, an aggregate Account read can pass
+`machineAvailability: 'current'` to Action execution or admitted targeted
+execution. Nested Actions inherit this latency hint: a pending optional Machine
+returns its existing unavailable result rather than holding available Account
+sources behind connection settlement. It changes neither placement nor admission.
+Omitting the hint preserves ordinary Machine connection settlement. Account
+targeted declarations publish independently of optional Machine readiness.
+
 Portable Settings expose the existing declaration-bound `snapshot`, `get`,
 `describe` and `watch` operations. Snapshots contain persisted non-secret values;
 `get` also applies the declared default. Daemon Settings and direct Settings

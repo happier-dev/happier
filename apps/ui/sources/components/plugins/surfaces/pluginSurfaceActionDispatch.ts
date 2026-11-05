@@ -1,3 +1,4 @@
+import type { ActionExecutionOptions } from '@happier-dev/plugin-sdk/actions';
 import { createPluginRevealSessionInputHandler } from './pluginRevealSessionInput';
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
@@ -374,6 +375,7 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
     isContributedActionAvailable?: () => boolean;
     /** Reuse the mounted facade's connection settlement before a daemon invocation. */
     settleContributedAction?: PluginSurfaceContributedActionSettlement;
+    machineAvailability?: ActionExecutionOptions['machineAvailability'];
     /** Exact local refusal phase; never inherited by an entered caller's nested Action. */
     onPreInvocationMachineRefusal?: () => void;
     signal?: AbortSignal;
@@ -394,7 +396,7 @@ type PluginSurfaceActionDispatchFailure = Extract<
 
 type PluginSurfaceContributedActionSettlement = (
     identity: PluginContributionIdentityV1,
-    options: Readonly<{ signal?: AbortSignal; requestId?: string }>,
+    options: Readonly<{ signal?: AbortSignal; requestId?: string; machineAvailability?: ActionExecutionOptions['machineAvailability'] }>,
 ) => Promise<Readonly<{ ok: true; binding: PluginSurfaceContributedActionBinding | undefined }> | PluginSurfaceActionDispatchFailure>;
 
 function readActionOriginSurface(input: DispatchPluginSurfaceActionInput) {
@@ -1368,6 +1370,7 @@ async function executeClientContributedAction(
                 const accountCapability = accountOrigin && accountLifetime ? createPluginSurfaceAccountActionServices({
                     pluginId: current.action.pluginId, actionId: current.action.id, occurrenceId: current.registration.occurrenceId,
                     sourceCustody: accountOrigin.sourceCustody, accountLifetime, signal, isCurrent: current.isCurrent,
+                    isMachineAvailable: input.isContributedActionAvailable,
                     ...(input.readObservation?.retire ? { retireReadObservation: input.readObservation.retire } : {}),
                     ...(input.contributedAction ? { machine: {
                         machineId: input.contributedAction.machineId,
@@ -1377,6 +1380,7 @@ async function executeClientContributedAction(
                         let nestedInput: DispatchPluginSurfaceActionInput = {
                             callerPluginId: current.action.pluginId, callerSourceCustody: accountOrigin.sourceCustody,
                             action, input: value,
+                            machineAvailability: options.machineAvailability ?? input.machineAvailability,
                             ...(input.hostAction ? { hostAction: input.hostAction } : {}),
                             ...(input.contributedAction ? { contributedAction: input.contributedAction } : {}),
                             ...(input.isContributedActionAvailable ? { isContributedActionAvailable: input.isContributedActionAvailable } : {}),
@@ -1400,7 +1404,8 @@ async function executeClientContributedAction(
                             const selectedAction = projected ?? (declaration.kind === 'available'
                                 ? declaration.manifest.contributes.actions?.find(candidate => candidate.id === nestedIdentity.localId) : null);
                             if (selectedAction?.execution.target === 'daemon') {
-                                const readiness = await input.settleContributedAction?.(nestedIdentity, { signal: options.signal });
+                                const readiness = await input.settleContributedAction?.(nestedIdentity, { signal: options.signal,
+                                    machineAvailability: nestedInput.machineAvailability });
                                 if (readiness?.ok === false) throw pluginActionDispatchFailureError(readiness);
                                 if (readiness?.binding) nestedInput = { ...nestedInput, contributedAction: readiness.binding };
                                 const currentProjected = resolveProjectedContributedAction(nestedInput, nestedIdentity);
@@ -1886,7 +1891,8 @@ async function executeContributedAction(
     // entered Account caller. The same resolver is read again after settlement.
     const declaredAction = projectedAction ?? input.resolveContributedAction?.(identity);
     if (!input.admissionOnly && declaredAction?.execution.target === 'daemon' && input.settleContributedAction) {
-        const readiness = await input.settleContributedAction(identity, { signal: input.signal, requestId: input.actionRequestId });
+        const readiness = await input.settleContributedAction(identity, { signal: input.signal, requestId: input.actionRequestId,
+            machineAvailability: input.machineAvailability });
         if (!readiness.ok) return readiness;
         const stopped = preflightFailure(input);
         if (stopped) return stopped;
@@ -2419,7 +2425,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
             const request: PluginUiHostApiRequestEnvelopeV1 = { version: 1,
                 requestId: options.requestId ?? 'nested-action-admission', surface: input.surfaceContext,
                 method: 'executeAction', payload: { action: identity } };
-            await hostApi.waitForConnectionSettlement?.({ code: 'unavailable',
+            if (options.machineAvailability !== 'current') await hostApi.waitForConnectionSettlement?.({ code: 'unavailable',
                 diagnostics: ['plugin_surface_contributed_action_unavailable'] }, request, { signal: options.signal });
             if (options.signal?.aborted) return failure('unavailable', 'plugin_ui_invocation_aborted');
             if (!hostAdmissionCurrent || input.isCurrent?.() === false) return failure('stale_surface', 'plugin_ui_generation_retired');

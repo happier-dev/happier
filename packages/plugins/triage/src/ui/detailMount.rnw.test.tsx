@@ -1138,23 +1138,47 @@ describe('opening a row into the source detail', () => {
     });
 
     it('demands the Account aggregate list while no Machine is reachable', async () => {
-        const harness = createHarness();
-        const surface = defineUiSurface(() => {
-            const window = useTriageListWindow();
-            useTriageListWindowViewDemand(true, window.refresh, window.readiness, window.readOwner);
-            return <Text value={window.snapshot.window?.rows[0]?.content?.outcome.snapshot.title ?? 'reading'} />;
-        });
-        const shell = await createPluginUiTestkit({ identity: { instanceId: 'account-list-read', mountNonce: 'account-list-read' },
-            authorPlugin: { id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0' }, surface,
-            surfaceContext: { ...surfaceContext(), machineConnectionPending: true, machineExecutionReady: false },
-            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: harness.ephemeralSharedScope }),
-            handlers: { executeAction: request => harness.executeAction(request) },
-        });
-        mounted.push(shell);
-        await vi.waitFor(() => { expect(document.body.textContent).toBe('Replace the duplicated normalizer'); });
-        await act(async () => { await shell.updateSurface({ ...surfaceContext(),
-            machineConnectionPending: false, machineExecutionReady: true }); });
-        await vi.waitFor(() => { expect(document.body.textContent).toBe('Replace the duplicated normalizer'); });
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(0);
+        try {
+            const harness = createHarness();
+            const dispatches: number[] = [];
+            let rowRenders = 0;
+            const Row = React.memo(({ row }: { row: NonNullable<ReturnType<typeof useTriageListWindow>['snapshot']['window']>['rows'][number] }) => {
+                rowRenders += 1;
+                return <Text value={row.content?.outcome.snapshot.title ?? 'reading'} />;
+            });
+            const surface = defineUiSurface(() => {
+                const window = useTriageListWindow();
+                useTriageListWindowViewDemand(true, window.refresh, window.readiness, window.readOwner);
+                const row = window.snapshot.window?.rows[0];
+                return row ? <Row row={row} /> : <Text value="reading" />;
+            });
+            const shell = await createPluginUiTestkit({ identity: { instanceId: 'account-list-read', mountNonce: 'account-list-read' },
+                authorPlugin: { id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0' }, surface,
+                surfaceContext: { ...surfaceContext(), machineConnectionPending: true, machineExecutionReady: false },
+                adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: harness.ephemeralSharedScope }),
+                handlers: { executeAction: request => {
+                    if (String(request.action) === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1
+                        && TriageListEntriesInputV1Schema.parse(request.input).limit === 0) {
+                        // One configured-source enumeration per refresh; subsequent reads scale with sources.
+                        dispatches.push(Date.now());
+                    }
+                    return harness.executeAction(request);
+                } },
+            });
+            mounted.push(shell);
+            await vi.waitFor(() => { expect(document.body.textContent).toBe('Replace the duplicated normalizer'); });
+            expect(dispatches[0]).toBe(0);
+            expect(dispatches.every(elapsed => elapsed === 0)).toBe(true);
+            const readsBeforeMachine = dispatches.length;
+            const renderedBeforeMachine = rowRenders;
+            await act(async () => { await shell.updateSurface({ ...surfaceContext(),
+                machineConnectionPending: false, machineExecutionReady: true }); });
+            await vi.waitFor(() => { expect(document.body.textContent).toBe('Replace the duplicated normalizer'); });
+            expect(dispatches).toHaveLength(readsBeforeMachine + 1);
+            expect(dispatches.at(-1)).toBe(0);
+            expect(rowRenders - renderedBeforeMachine).toBe(0);
+        } finally { clock.mockRestore(); }
     });
 
     it('keeps a same-entry detail acquisition while re-observation updates its current input', async () => {

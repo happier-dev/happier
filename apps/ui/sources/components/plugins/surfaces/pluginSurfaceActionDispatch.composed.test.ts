@@ -603,6 +603,8 @@ describe('Account Action placement through the executable dispatcher', () => {
     it.each([
         { coldBinding: false, settlement: 'ready' },
         { coldBinding: true, settlement: 'ready' },
+        { coldBinding: true, settlement: 'current' },
+        { coldBinding: false, settlement: 'current' },
         { coldBinding: true, settlement: 'unavailable' },
         { coldBinding: true, settlement: 'cancelled' },
         { coldBinding: true, settlement: 'withdrawn' },
@@ -641,7 +643,13 @@ describe('Account Action placement through the executable dispatcher', () => {
             accountHandler: async (_value, context) => {
                 entered += 1;
                 enteredSignal = context.signal;
-                return await context.services.actions.execute({ pluginId: sourceId, localId: 'list' }, {});
+                try {
+                    return await context.services.actions.execute({ pluginId: sourceId, localId: 'list' }, {},
+                        settlement === 'current' ? { machineAvailability: 'current' } : undefined);
+                } catch (error) {
+                    if (settlement !== 'current' || !isPluginError(error)) throw error;
+                    return { unavailable: error.code };
+                }
             } });
         await activation.composition.unload();
         await activation.composition.reconcile([activation.activation]);
@@ -679,6 +687,17 @@ describe('Account Action placement through the executable dispatcher', () => {
             await act(async () => {});
             expect(enteredSignal?.aborted).toBe(false);
             expect(machine).not.toHaveBeenCalled();
+            if (settlement === 'current') {
+                await vi.waitFor(() => expect(settled, 'a current-availability read must settle without a Machine readiness edge').toBe(true));
+                await expect(read).resolves.toEqual({ unavailable: 'plugin_surface_contributed_action_unavailable' });
+                expect(await hook.rerender({ daemonReady: true, originCurrent: true, pending: false, bound: true })).toBe(controller);
+                await expect(controller.hostApi.handleRequest({ version: 1, requestId: 'available-source-read',
+                    surface: controller.surfaceContext, method: 'executeAction',
+                    payload: { action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {} },
+                })).resolves.toEqual({ rows: ['provider'] });
+                expect(machine).toHaveBeenCalledTimes(1);
+                return;
+            }
             expect(settled, 'daemon readiness is pending even though caller interaction and origin currentness are admitted').toBe(false);
             expect(await hook.rerender({ daemonReady: true, originCurrent: false, pending: true, bound: true })).toBe(controller);
             expect(controller.canInteractWithDaemon()).toBe(false);

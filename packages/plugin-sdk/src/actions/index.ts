@@ -28,6 +28,7 @@ export type { ActionInputOption } from './inputHints.js';
 export type { ActionInputOptionValue } from './inputHints.js';
 export type { ActionInputPredicate } from './inputHints.js';
 export type { ActionSpec } from './service.js';
+export type { ActionExecutionOptions } from './service.js';
 export type { ActionsService } from './service.js';
 export type { AdmittedTargetedOperationExecutionHandle } from './admittedTargetedOperation.js';
 export type { AdmittedTargetedOperationExecutionOptions } from './service.js';

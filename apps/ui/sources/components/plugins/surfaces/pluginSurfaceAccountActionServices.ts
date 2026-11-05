@@ -1,5 +1,5 @@
 import { PluginError, type JsonValue, type PluginContributionRef } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext, AdmittedTargetedOperationExecutionHandle, AdmittedTargetedOperationExecutionOptions } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext, AdmittedTargetedOperationExecutionHandle, AdmittedTargetedOperationExecutionOptions, ActionExecutionOptions } from '@happier-dev/plugin-sdk/actions';
 import { createManifestTargetedContributionsService, requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput, validateTargetedOperationInput, validateTargetedOperationResult } from '@happier-dev/cli-common/plugins/registration';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -25,12 +25,14 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
     signal: AbortSignal;
     retireReadObservation?(): void;
     machine?: Readonly<{ machineId: string; serverId?: string | null }>;
+    isMachineAvailable?(): boolean;
     isCurrent(): boolean;
     execute(action: string | PluginContributionRef, value: JsonValue, options: Readonly<{
         signal: AbortSignal;
         expectedContributorOccurrenceId?: string;
         requiredReadOnly?: true;
         readObservation?: DispatchPluginSurfaceActionInput['readObservation'];
+        machineAvailability?: ActionExecutionOptions['machineAvailability'];
         isCurrent(): boolean;
     }>): Promise<JsonValue>;
 }>): {
@@ -56,11 +58,12 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
     }).bind({ pluginId: input.pluginId, signal: invocation.signal, isCurrent });
 
     const execute: PluginAccountActionContext['services']['actions']['execute'] = (async (
-        action: string | PluginContributionRef, value: JsonValue, options?: Readonly<{ signal?: AbortSignal }>,
+        action: string | PluginContributionRef, value: JsonValue, options?: ActionExecutionOptions,
     ) => {
         assertCurrent();
         const cancellation = mergeAbortSignals([invocation.signal, options?.signal]);
-        try { return await input.execute(action, value, { signal: cancellation.signal, isCurrent }); }
+        try { return await input.execute(action, value, { signal: cancellation.signal, isCurrent,
+            machineAvailability: options?.machineAvailability }); }
         finally { cancellation.dispose(); }
     }) as PluginAccountActionContext['services']['actions']['execute'];
 
@@ -120,6 +123,7 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
             const admitted = await prepareAdmittedTargetedOperation(operation, value, options, cancellation.signal);
             const result = await input.execute(admitted.binding.action, admitted.value, {
                 signal: cancellation.signal, expectedContributorOccurrenceId: admitted.binding.contributorOccurrenceId,
+                machineAvailability: options?.machineAvailability,
                 isCurrent: admitted.isCurrent,
             });
             const accepted = validateTargetedOperationResult(admitted.binding.targetProtocol, result);
@@ -143,6 +147,7 @@ export function createPluginSurfaceAccountActionServices(input: Readonly<{
                     return await input.execute(admitted.binding.action, admitted.value, {
                         signal, expectedContributorOccurrenceId: admitted.binding.contributorOccurrenceId,
                         requiredReadOnly: true, readObservation: observation,
+                        machineAvailability: options?.machineAvailability,
                         isCurrent: admitted.isCurrent,
                     });
                 },

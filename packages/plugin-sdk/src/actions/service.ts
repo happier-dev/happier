@@ -147,7 +147,7 @@ export type ContributedActionReadObservationOptions = PluginCancellationOptions 
  * observe input; it is neither Action input nor a credential capability.
  * @realm daemon
  */
-export type AdmittedTargetedOperationExecutionOptions = PluginCancellationOptions & Readonly<{
+export type AdmittedTargetedOperationExecutionOptions = PluginCancellationOptions & Pick<ActionExecutionOptions, 'machineAvailability'> & Readonly<{
   expectedSelectedConnectedAccountRef?: QualifiedConnectedAccountRef | null;
 }>;
 
@@ -180,6 +180,14 @@ export function isPluginActionApprovalRequestCreated(
  * Canonical host and contributed-action invocation for one bound plugin caller.
  * @realm daemon
  */
+/** Invocation routing and availability preferences; these never grant permission or resolve a selector. */
+export type ActionExecutionOptions = PluginCancellationOptions & Readonly<{
+  /** Read available sources now rather than awaiting an optional Machine connection.
+   * Inherited by nested Actions. Omission retains ordinary connection settlement.
+   * This is a latency hint, never authority or an execution target. */
+  machineAvailability?: 'current';
+}>;
+
 export interface ActionsService {
   /**
    * Current routing of this invocation's own plugin, stamped by the same host
@@ -192,7 +200,7 @@ export interface ActionsService {
   execute<K extends PluginInvocableActionId>(
     actionId: K,
     input: PluginActionInputById[K],
-    options?: PluginCancellationOptions,
+    options?: ActionExecutionOptions,
   ): Promise<PluginActionResultById[K] | ActionApprovalRequestCreatedResult>;
 
   execute<TRef extends PluginContributionRef>(
@@ -200,7 +208,7 @@ export interface ActionsService {
     input: NoInfer<
       TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue
     >,
-    options?: PluginCancellationOptions,
+    options?: ActionExecutionOptions,
   ): Promise<
     TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void
   >;

@@ -13,6 +13,8 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
     machine?: Readonly<{ machineId: string; serverId?: string | null }>;
+    /** Connection-owner fact; an optional pending Machine cannot hold Account admission. */
+    isMachineAvailable?(): boolean;
     isCurrent(): boolean;
 }>) {
     const availability = readPluginAccountAvailability(input.accountLifetime.scope);
@@ -33,6 +35,9 @@ export function createPluginSurfaceTargetedDeclarationSource(input: Readonly<{
                 }
             };
             assertCurrent();
+            await availability.ensureAccountTargetDeclarations(input.pluginId);
+            assertCurrent();
+            if (input.isMachineAvailable?.() === false) return readDeclarations();
             if (input.machine) {
                 const result = await machinePluginTargetedSourceDeclarationsRead(input.machine.machineId, {
                     serverId: input.machine.serverId, pluginId: input.pluginId,

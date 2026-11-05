@@ -13,6 +13,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { machinePluginStructuredMessageActionExecute, resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import { createPluginSurfaceAccountActionServices } from './pluginSurfaceAccountActionServices';
+import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability';
 import { readMountedAccountTargetedContributions } from './mountedAccountTargetedContributions';
 import { resolveManifestTargetedContributions, type TargetedContributionManifestDeclaration } from '@happier-dev/plugin-sdk/host/registration';
@@ -33,6 +34,50 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 const inputSchema = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
 const resultSchema = defineProtocolObject({ accepted: defineProtocolLiteral(true) }, { policy: 'closed' });
+it.each([false, true])('admits the current GitHub source in the Account Triage Session relation view (Machine pending=%s)', async machinePending => {
+    const { PLUGIN_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } = await import('@happier-dev/plugins-triage/manifest');
+    const { GITHUB_PLUGIN } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { indexTriageAdmittedSourcesV1 } = await import('../../../../../../packages/plugins/triage/src/actions/listEntries');
+    const manifests = [PLUGIN_MANIFEST, GITHUB_PLUGIN.manifest].map(value => {
+        const parsed = ingestPluginManifestV2(value);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        return parsed.manifest;
+    });
+    const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://triage-source-view.test', accountId: 'alice' }], route: () => undefined });
+    let owner: ReturnType<typeof createPluginSurfaceAccountActionServices> | undefined;
+    try {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected Account lifetime');
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: manifests.filter(manifest => machinePending || manifest.id === PLUGIN_MANIFEST.id).map(manifest => ({ pluginId: manifest.id, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                    normalizedManifest: manifest, collectionContracts: [], uiSlots: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+            } })),
+        } });
+        machineRpc.mockImplementation(async request => {
+            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) throw new Error('Unexpected Machine RPC');
+            return { status: 'sourceDeclarations', pluginId: PLUGIN_MANIFEST.id, sourceDeclarations: manifests.map(manifest => ({
+                occurrenceId: `${manifest.id}:machine`, sourceCustody: { kind: 'development', registeredRootId: `/plugins/${manifest.id}` },
+                manifest: { id: manifest.id, contributes: { actions: manifest.contributes.actions,
+                    pluginContributionPoints: [], targetedPluginContributions: manifest.contributes.targetedPluginContributions,
+                    ui: { renderers: manifest.contributes.ui.renderers } } },
+            })) };
+        });
+        owner = createPluginSurfaceAccountActionServices({ pluginId: PLUGIN_MANIFEST.id, occurrenceId: 'account-triage',
+            accountLifetime: lifetime, signal: new AbortController().signal, isCurrent: () => true,
+            isMachineAvailable: () => !machinePending,
+            machine: { machineId: 'session-machine', serverId: lifetime.scope.serverId }, execute: async () => null });
+        const observation = owner.services.targetedContributions.observeForSelf(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated() {} });
+        try {
+            const snapshot = await observation.readCurrent();
+            expect(snapshot.contributions.map(row => row.contributor.pluginId)).toContain(GITHUB_PLUGIN.manifest.id);
+            expect([...indexTriageAdmittedSourcesV1(snapshot.contributions).values()].map(row => row.contributor.pluginId)).toContain(GITHUB_PLUGIN.manifest.id);
+            if (machinePending) expect(machineRpc).not.toHaveBeenCalled();
+        } finally { observation.dispose(); }
+    } finally { await owner?.dispose(); machineRpc.mockReset(); resetMachineProjectionReadsForTests(); await home.dispose(); }
+});
 const protocol = defineContributionProtocol({ id: 'external-source', version: 1, operations: {
     inspect: { required: true, input: { kind: 'protocolDefined', schema: inputSchema }, resultSchema,
         action: { surfaces: ['plugin'], dangerLevel: 'safe' } },

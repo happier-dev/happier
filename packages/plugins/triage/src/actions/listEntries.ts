@@ -510,9 +510,9 @@ export function createTriageListEntriesActionHandler(lens?: Readonly<{ taskOnly?
             }
         },
         executeScan: async (operation, scanInput, options) => await context.services.actions
-            .executeAdmittedTargetedOperation(operation, scanInput, options ?? {}),
+            .executeAdmittedTargetedOperation(operation, scanInput, { ...options, machineAvailability: 'current' }),
         executeScopeUnits: async (operation, scopeInput, options) => await context.services.actions
-            .executeAdmittedTargetedOperation(operation, scopeInput, options ?? {}),
+            .executeAdmittedTargetedOperation(operation, scopeInput, { ...options, machineAvailability: 'current' }),
         nowMs: () => Date.now(),
         taskOnly: lens?.taskOnly,
         signal: context.signal,
