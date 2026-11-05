@@ -9,6 +9,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { admitWorkflowRun, getWorkflowRun, listWorkflowRuns, pauseWorkflowRun, resolveAutomationWorkflowAcceptedSnapshot, summarizeWorkflowRuns } from "./workflowRunService";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerWorkflowRunStorageRoutes } from "@/app/api/routes/automations/registerWorkflowRunStorageRoutes";
+import { registerDiscussionRoutes } from "@/app/api/routes/discussions/registerDiscussionRoutes";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
@@ -61,6 +62,49 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             assignments: { create: { machineId: machine.id, priority: 0 } } } });
         return { owner, viewer, team, membership, artifact, runId, machine, acceptedEnvelope };
     }
+
+    it('keeps Discussion Run-id hints private from a Team Run reader without Discussion membership', async () => {
+        vi.stubEnv('HAPPIER_FEATURE_SESSIONS__ENABLED', '1');
+        vi.stubEnv('HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED', '1');
+        try {
+            const f = await fixture();
+            const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Private composer question' }] };
+            const created = await createDiscussion({ actorAccountId: f.owner.id,
+                authentication: createPresentUserSessionAccessAuthentication(),
+                request: buildDiscussionMutationRequestBodyV1({ kind: 'create', creationLocalId: crypto.randomUUID(),
+                    titleContent: { t: 'plain', v: { v: 1, title: 'Private composer' } },
+                    firstMessage: { localId: f.runId, content: { t: 'plain', v: content }, authoredContent: content,
+                        mentionedAccountIds: [] } }) });
+            if (!created.ok) throw new Error(created.error);
+            const discussionId = created.value.discussion.id;
+            await withAuthenticatedTestApp(app => {
+                registerWorkflowRunStorageRoutes(app);
+                registerDiscussionRoutes(app);
+            }, async app => {
+                const knownRun = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                    headers: { 'x-test-user-id': f.viewer.id }, payload: { operation: 'get', runId: f.runId } });
+                expect(knownRun.statusCode, knownRun.body).toBe(200);
+                expect(knownRun.json().run.id).toBe(f.runId);
+                const read = (accountId: string) => app.inject({ method: 'GET', url: `/v1/discussions/${discussionId}/messages`,
+                    headers: { 'x-test-user-id': accountId } });
+                const denied = await read(f.viewer.id);
+                // The canonical Discussion route collapses absence and denied reads to 404.
+                expect(denied.statusCode, denied.body).toBe(404);
+                expect(denied.json()).toEqual({ error: 'discussion_not_found' });
+                expect(denied.body).not.toContain(f.runId);
+                const owner = await read(f.owner.id);
+                expect(owner.statusCode, owner.body).toBe(200);
+                expect(owner.json().messages).toEqual([expect.objectContaining({ localId: f.runId })]);
+                await db.discussionAccountGrant.create({ data: { discussionId, accountId: f.viewer.id,
+                    accessLevel: 'view', createdByAccountId: f.owner.id } });
+                const member = await read(f.viewer.id);
+                expect(member.statusCode, member.body).toBe(200);
+                expect(member.json().messages).toEqual([expect.objectContaining({ localId: null })]);
+            });
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
 
     it('admits a Workflow Discussion destination only at its committed frontier with current grants, keys and Session disclosure', async () => {
         const f = await fixture();
