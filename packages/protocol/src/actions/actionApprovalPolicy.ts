@@ -286,13 +286,6 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && typeof args.context.isPluginSettingsIntentCurrent === 'function'
     && args.spec.safety === 'danger'
     && args.spec.approvalPolicy?.retainUiFieldIntent === true;
-  const mustReturnApprovalCustody = !custodyStaysOnLiveInvocation
-    && (
-      args.context?.surface === 'api'
-      || args.context?.surface === 'cli'
-      || args.context?.surface === 'ui'
-      || args.defaultConfirmation === true
-    );
   // A mounted native read retains interest, not the Machine's replay authority.
   // Its durable operands/result still belong to the exact daemon. The original
   // host waits for that recorded receipt and can withdraw its abandoned intent.
@@ -300,12 +293,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && args.context?.surface === 'ui' && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')
     && args.spec.sideEffectClass === 'read' && !custodyStaysOnLiveInvocation
     && resolveActionExecutionPlacementForInput(args.spec, args.input) === 'machine';
-  const flow = required && (args.retainHostOperationApproval === true && !retainedNativeRead || retainPluginSettingsFieldIntent
-    || custodyStaysOnLiveInvocation && args.spec.approval.flow === 'blocking')
-    ? 'blocking'
-    : required && (mustReturnApprovalCustody
-    || (presentUserRequest && args.spec.approvalInputCustody !== 'live_only'))
-    ? 'deferred'
+  const retainsLiveInvocation = custodyStaysOnLiveInvocation || retainPluginSettingsFieldIntent
+    || args.retainHostOperationApproval === true && !retainedNativeRead;
+  const flow = required ? retainsLiveInvocation ? 'blocking' : 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
 
   return {

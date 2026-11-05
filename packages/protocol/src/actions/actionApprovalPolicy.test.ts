@@ -26,6 +26,14 @@ it('returns CLI live-only results through deferred approval decision custody', (
 });
 
 const EMPTY_SETTINGS: ActionsSettingsV1 = { v: 1, actions: {} as any };
+
+it.each(['ui', 'cli', 'agent', 'mcp', 'rpc', 'api', 'plugin', 'voice'] as const)(
+  'returns durable approval custody instead of retaining a %s invocation', surface => {
+    const actionId = 'session.status.get';
+    expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+      requiredByPolicy: true, context: { surface } }).flow).toBe('deferred');
+  },
+);
 // Approved FIN 03 ยง5.4/ยง5.7 exception; every other danger row retains its floor.
 const DIRECT_SCOPED_SESSION_TRIGGER_REMOVAL =
   'session.trigger.remove' satisfies ActionId;
@@ -185,7 +193,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         settings: EMPTY_SETTINGS,
         context: { surface: 'plugin', authority: 'account_automation' },
       }),
-    ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
 
     // Public UI ingress still returns durable approval custody; only the
     // awaiting plugin continuation needs the actual claimed correlations.
@@ -2625,7 +2633,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required,
     ).toBe(true);
   });
-  it('returns durable CLI approvals while keeping Agent and MCP decision waiters blocking', () => {
+  it('returns durable approvals for CLI, Agent and MCP callers', () => {
     for (const actionId of [
       'connectedServices.pools.create',
       'artifact.update',
@@ -2649,7 +2657,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
             settings: EMPTY_SETTINGS,
             context: { surface, authority: 'account_automation' },
           }),
-        ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+        ).toEqual({ required: true, flow: 'deferred', result: 'required' });
       }
     }
   });
@@ -3698,7 +3706,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     });
   });
 
-  it('routes required-result read actions as blocking when approval is required', async () => {
+  it('routes durable required-result reads as deferred when approval is required', async () => {
     const resolveActionApprovalRouting = await loadRoutingResolver();
     if (!resolveActionApprovalRouting) return;
     expect(
@@ -3710,7 +3718,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }),
     ).toEqual({
       required: true,
-      flow: 'blocking',
+      flow: 'deferred',
       result: 'required',
     });
   });
@@ -4281,7 +4289,7 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN ย
     ).toBe(false);
   });
 
-  it('routes the agent dangerous default as a blocking approval through resolveActionApprovalRouting', () => {
+  it('routes the agent dangerous default as a durable approval through resolveActionApprovalRouting', () => {
     const decision = resolveActionApprovalRouting({
       actionId: 'browser.diagnostics.eval' as any,
       spec: getActionSpec('browser.diagnostics.eval' as any),
@@ -4289,7 +4297,7 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN ย
       context: { surface: 'agent' } as any,
     });
     expect(decision.required).toBe(true);
-    expect(decision.flow).toBe('blocking');
+    expect(decision.flow).toBe('deferred');
     expect(decision.result).toBe('required');
   });
 
@@ -4312,7 +4320,7 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN ย
       context: { surface: 'agent' } as any,
     });
     expect(decision.required).toBe(true);
-    expect(decision.flow).toBe('blocking');
+    expect(decision.flow).toBe('deferred');
     expect(decision.result).toBe('required');
   });
 
