@@ -36,6 +36,7 @@ import { ConnectedConfigurationCatalogV1Schema } from '../../connect/connectedAc
 import { NotificationChannelCatalogRecordV1Schema } from './notificationChannelSchemasV1.js';
 import { SecretStringV1Schema } from '../../crypto/settingsSecretStringSchemasV1.js';
 import { RegistrySourcesRecordV1Schema } from '../../registries/registrySourcesV1.js';
+import { connectedEntitySubjectKeyV1 } from '../../connect/connectedAccountPresentationSchemasV1.js';
 
 describe('registry token SavedSecret reference census', () => {
   it('refuses a projected registry inventory that would hide a recognizable token carrier', () => {
@@ -56,9 +57,9 @@ describe('registry token SavedSecret reference census', () => {
     ] };
     expect(listAccountSettingsSavedSecretReferences({}, ref, catalogs)).toEqual([
       { owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.work',
-        referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Work credential' } },
+        referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work credential' } },
       { owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.unnamed',
-        referrer: { kind: 'connectedAccountCredential', id: 'unnamed' } },
+        referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account: { ...account, accountId: 'unnamed' } }) } },
     ]);
     expect(listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1('free-key'), catalogs)).toEqual([]);
   });
@@ -79,6 +80,63 @@ describe('registry token SavedSecret reference census', () => {
     expect(listAccountSettingsSavedSecretReferences({}, secret.id, { ...catalogs, registrySources: next })).toEqual([]);
     expect(listAccountSettingsSavedSecretReferences({}, reference, { ...catalogs, registrySources: next })).toHaveLength(1);
     expect(registrySources.sources[0].token?.secretRef).toBe(secret.id);
+  });
+});
+
+describe('SavedSecret referrer identity', () => {
+  it('keeps equal account IDs and labels distinct across services and plugins', () => {
+    const accounts = [
+      { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' },
+      { service: { pluginId: 'happier.agent.claude', localId: 'other' }, accountId: 'work' },
+      { service: { pluginId: 'happier.fixture', localId: 'anthropic' }, accountId: 'work' },
+    ];
+    const references = listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1('key'), {
+      profileRecords: [], connectedAccountCredentials: accounts.map(account => ({ account, displayName: 'Work', savedSecretResourceIds: ['key'] })),
+    });
+    expect(references.map(reference => reference.referrer)).toEqual(accounts.map(account => ({
+      kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work',
+    })));
+    expect(new Set(references.map(reference => reference.referrer?.id)).size).toBe(accounts.length);
+  });
+
+  it('names catalog and retained Profiles by their owned identity, including equal names and unnamed retained bindings', () => {
+    const profile = (id: string) => ({ id, name: 'Work', environmentVariables: [], createdAt: 1, updatedAt: 1 });
+    const profileRecords = ['one', 'two'].map(id => ProfileRecordV1Schema.parse({ v: 1, id,
+      definition: { kind: 'legacy', profile: profile(id) }, enabled: true, promptStack: [], secretBindings: { TOKEN: secret.id, OTHER: secret.id } }));
+    const catalogReferences = listAccountSettingsSavedSecretReferences({}, secret.id, { profileRecords });
+    expect(catalogReferences.map(reference => reference.referrer)).toEqual(['one', 'one', 'two', 'two'].map(id => ({
+      kind: 'profile', id, displayName: 'Work',
+    })));
+    const retainedReferences = listAccountSettingsSavedSecretReferences({ profiles: ['one', 'two'].map(profile),
+      secretBindingsByProfileId: { one: { TOKEN: secret.id }, two: { TOKEN: secret.id }, unavailable: { TOKEN: secret.id },
+        'azure-openai': { TOKEN: secret.id } } }, secret.id);
+    expect(retainedReferences.map(reference => reference.referrer)).toEqual([
+      { kind: 'profile', id: 'one', displayName: 'Work' }, { kind: 'profile', id: 'two', displayName: 'Work' },
+      { kind: 'profile', id: 'unavailable' }, { kind: 'profile', id: 'azure-openai', displayName: 'Azure OpenAI' },
+    ]);
+  });
+});
+
+describe('SavedSecret reference settings projection', () => {
+  it('retains known raw roots, Profile names, and future carriers while excluding unrelated preferences', () => {
+    const profiles = [{ id: 'work', name: 'Renamed work', environmentVariables: [], createdAt: 1, updatedAt: 1 }];
+    const future = { nested: { bootstrapCredentialRef: secret.id } };
+    const project = savedSecretOwner.selectSavedSecretReferenceSettingsV1;
+    const source = { profiles, secretBindingsByProfileId: { work: { TOKEN: secret.id } },
+      providerSettingsV1: 'invalid-known-root', future, customSecretRef: secret.id, themePreference: 'dark' };
+    const projected = project(source);
+    expect(projected).toEqual({ profiles, secretBindingsByProfileId: source.secretBindingsByProfileId,
+      providerSettingsV1: 'invalid-known-root', future, customSecretRef: secret.id });
+    expect(projected.profiles).toBe(profiles);
+    expect(projected.future).toBe(future);
+    expect(project({ ...source, themePreference: 'light' })).toEqual(projected);
+    const withoutCarriers = project({ ...source, future: {}, customSecretRef: undefined });
+    expect(withoutCarriers).not.toHaveProperty('future');
+    expect(withoutCarriers).not.toHaveProperty('customSecretRef');
+    expect(() => listAccountSettingsSavedSecretReferences(projected, secret.id)).toThrow(AccountSettingsSavedSecretMutationError);
+    expect(listAccountSettingsSavedSecretReferences(project({ profiles, future }), secret.id)).toEqual([
+      { owner: 'unknown', path: 'future.nested.bootstrapCredentialRef' },
+    ]);
   });
 });
 
@@ -933,7 +991,11 @@ describe('explicit reached Artifact SavedSecret reference census', () => {
     const catalogs = { profileRecords: [record], artifactsById: new Map([['selected', artifact], ['unselected', unselected]]) };
     const raw = { secrets: [secret], opaque: { retained: true } };
     expect(listAccountSettingsSavedSecretReferences(raw, secret.id, catalogs)).toEqual([
-      { owner: 'profile', path: 'profileRows.p.secretBindings.TOKEN' },
+      { owner: 'profile', path: 'profileRows.p.secretBindings.TOKEN', referrer: { kind: 'profile', id: 'p', displayName: 'Selected' } },
+    ]);
+    expect(listAccountSettingsSavedSecretReferences({ profiles: [{ artifactId: 'selected' }] }, secret.id,
+      { ...catalogs, profileRecords: [] })).toEqual([
+      { owner: 'profile', path: 'secretBindingsByProfileId.p.TOKEN', referrer: { kind: 'profile', id: 'p', displayName: 'Selected' } },
     ]);
     const promoted = promotePersonalSavedSecretReference(raw, { secretId: secret.id, expectedUpdatedAt: 1,
       sharedSecretRef: 'happier:shared-secret:v1:imported' }, catalogs);
@@ -995,7 +1057,7 @@ describe('SavedSecret census respects the opened Profile transfer authority', ()
       sharedSecretRef: 'happier:shared-secret:v1:imported' }, prepared)).toThrow();
     const knownRaw = { ...raw, profiles: [] };
     expect(listAccountSettingsSavedSecretReferences(knownRaw, secret.id, prepared)).toContainEqual({
-      owner: 'profile', path: 'secretBindingsByProfileId.p.TOKEN' });
+      owner: 'profile', path: 'secretBindingsByProfileId.p.TOKEN', referrer: { kind: 'profile', id: 'p' } });
   });
 });
 
@@ -3255,7 +3317,7 @@ describe('SavedSecret complete reference census', () => {
       kind: 'delete', secretId: secret.id, expectedUpdatedAt: 2,
     })).toThrowError(expect.objectContaining({ code: 'saved_secret_in_use' }));
     expect(listAccountSettingsSavedSecretReferences(settings, secret.id)).toEqual([
-      { owner: 'profile', path: 'secretBindingsByProfileId.openai.API_KEY' },
+      { owner: 'profile', path: 'secretBindingsByProfileId.openai.API_KEY', referrer: { kind: 'profile', id: 'openai' } },
     ]);
     const target = formatSharedSavedSecretRefV1('resource-inline');
     const result = promotePersonalSavedSecretReference(settings, {
@@ -3279,7 +3341,8 @@ describe('SavedSecret complete reference census', () => {
     }]]);
     expect(listAccountSettingsSavedSecretReferences({ secrets: [secret] }, secret.id, {
       profileRecords: [record], artifactsById,
-    })).toEqual([{ owner: 'profile', path: 'profileRows["profile-private"].secretBindings.TOKEN' }]);
+    })).toEqual([{ owner: 'profile', path: 'profileRows["profile-private"].secretBindings.TOKEN',
+      referrer: { kind: 'profile', id: 'profile-private', displayName: 'Private' } }]);
     const other = ProfileRecordV1Schema.parse({ ...record, id: 'other-profile', secretBindings: {},
       definition: { kind: 'legacy', profile: { id: 'other-profile', name: 'Other', environmentVariables: [], createdAt: 1, updatedAt: 1 } } });
     const promoted = promotePersonalSavedSecretReference({

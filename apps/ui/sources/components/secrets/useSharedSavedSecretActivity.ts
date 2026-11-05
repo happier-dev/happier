@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppState } from 'react-native';
 import type { SavedSecretDisclosureHistoryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -17,6 +18,7 @@ const noOperation = () => {};
 export function useSharedSavedSecretActivity(input: Readonly<{
     scope: ServerAccountScope; resourceId: string; enabled: boolean;
 }>) {
+    const presented = useLayoutPresentationActive();
     const [snapshot, setSnapshot] = React.useState<Readonly<{ serverId: string; accountId: string; resourceId: string; state: State }> | null>(null);
     const snapshotRef = React.useRef(snapshot);
     snapshotRef.current = snapshot;
@@ -24,7 +26,7 @@ export function useSharedSavedSecretActivity(input: Readonly<{
     current.current = input;
     const commands = React.useRef({ refresh: noOperation, loadMore: noOperation });
     React.useEffect(() => {
-        if (!input.enabled) return;
+        if (!input.enabled || !presented) return;
         const { serverId, accountId } = input.scope;
         const resourceId = input.resourceId;
         const controller = new AbortController();
@@ -33,13 +35,16 @@ export function useSharedSavedSecretActivity(input: Readonly<{
             && current.current.resourceId === resourceId;
         const foreground = () => AppState.currentState !== 'background' && AppState.currentState !== 'inactive'
             && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
-        let page: Extract<State, { status: 'ready' }> | null = null;
+        const retained = snapshotRef.current;
+        let page: Extract<State, { status: 'ready' }> | null = retained?.serverId === serverId
+            && retained.accountId === accountId && retained.resourceId === resourceId && retained.state.status === 'ready'
+            ? retained.state : null;
         let reading = false;
         let refreshPending = false;
         const publish = (state: State) => {
             if (exact()) setSnapshot(previous => previous?.state === state ? previous : { serverId, accountId, resourceId, state });
         };
-        publish({ status: 'loading' });
+        if (!page) publish({ status: 'loading' });
         const accountPromise = captureLazyActionAccountContext(serverId, controller.signal);
         let releaseRetirement: (() => void) | undefined;
         void accountPromise.then(account => {
@@ -107,7 +112,7 @@ export function useSharedSavedSecretActivity(input: Readonly<{
             if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visibility);
             releaseRetirement?.();
         };
-    }, [input.scope.serverId, input.scope.accountId, input.resourceId, input.enabled]);
+    }, [input.scope.serverId, input.scope.accountId, input.resourceId, input.enabled, presented]);
     const state = input.enabled && snapshot?.serverId === input.scope.serverId
         && snapshot.accountId === input.scope.accountId && snapshot.resourceId === input.resourceId ? snapshot.state : idle;
     return { state, refresh: React.useCallback(() => commands.current.refresh(), []),

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBrowserClipboardBoundary } from '@/dev/testkit';
@@ -198,6 +199,37 @@ async function initializeRemovalSettings(scope: ServerAccountScope, waiveApprova
 }
 
 describe('Shared Saved Secret person disclosure controller', () => {
+    it('reads no disclosure history while retained hidden and refreshes once on each presentation', async () => {
+        const { scope } = await mount(false);
+        const { useSharedSavedSecretActivity } = await import('@/components/secrets/useSharedSavedSecretActivity');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { savedSecretDisclosureActivityEntityIdV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
+        const path = '/v1/account/saved-secrets/resources/activity/read';
+        harness.answer(scope.serverId, path, { body: { items: [], nextCursor: null } });
+        let presented = false;
+        function Wrapper({ children }: React.PropsWithChildren) {
+            return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>{children}</PluginSurfaceFocusEligibilityProvider>;
+        }
+        const hook = await renderHook(() => useSharedSavedSecretActivity({ scope, resourceId: 'secret-a', enabled: true }), { wrapper: Wrapper });
+        expect(harness.requestsFor(path)).toHaveLength(0);
+        const push = () => publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
+            { source: 'socket', changeKinds: ['account'] });
+        await act(async () => { for (let index = 0; index < 5; index++) push(); });
+        expect(harness.requestsFor(path)).toHaveLength(0);
+        presented = true;
+        await hook.rerender();
+        await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        const settled = hook.getCurrent().state;
+        presented = false;
+        await hook.rerender();
+        await act(async () => { for (let index = 0; index < 5; index++) push(); });
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(hook.getCurrent().state).toBe(settled);
+        presented = true;
+        await hook.rerender();
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(2));
+    });
     it('projects the old value hidden on the first new-subject layout before passive cleanup', async () => {
         const { scope, entries } = await mount(false);
         const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
@@ -257,7 +289,11 @@ describe('Shared Saved Secret person disclosure controller', () => {
             && 'cursor' in input && typeof input.cursor === 'string' && input.cursor
             ? { items: olderRows, nextCursor: 'older-window-cursor' }
             : { items: rows, nextCursor: 'first-page-cursor' } }) });
-        const hook = await renderHook(() => useSharedSavedSecretActivity({ scope, resourceId: 'secret-a', enabled: true }));
+        let presented = true;
+        function Wrapper({ children }: React.PropsWithChildren) {
+            return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>{children}</PluginSurfaceFocusEligibilityProvider>;
+        }
+        const hook = await renderHook(() => useSharedSavedSecretActivity({ scope, resourceId: 'secret-a', enabled: true }), { wrapper: Wrapper });
         await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
         await act(async () => { hook.getCurrent().loadMore(); });
         await vi.waitFor(() => {
@@ -287,6 +323,15 @@ describe('Shared Saved Secret person disclosure controller', () => {
         expect(after.nextCursor).toBe('older-window-cursor');
         // A resource hint names no changed entry: reconcile each consumed page.
         expect(harness.requestsFor(path)).toHaveLength(observedReads + 2);
+        presented = false;
+        await hook.rerender();
+        await act(async () => { publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
+            { source: 'socket', changeKinds: ['account'] }); });
+        expect(harness.requestsFor(path)).toHaveLength(observedReads + 2);
+        presented = true;
+        await hook.rerender();
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(observedReads + 4));
+        expect(hook.getCurrent().state).toBe(after);
         expect(JSON.stringify(after)).not.toContain('test-secret');
         olderRows = [{ ...older, copyOutcome: 'succeeded', copyRequestedAt: '2026-10-28T00:00:01.000Z' }];
         await act(async () => { publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],

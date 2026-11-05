@@ -108,6 +108,18 @@ describe('SecretUsedBySection', () => {
         expect(rowsOf(screen).map((node) => node.props.title)).toEqual(['Studio models']);
     });
 
+    it('preserves distinct referrers with equal labels and unidentified reference paths', async () => {
+        const screen = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[
+            { owner: 'connectedAccountCredential', path: 'credentials.a', referrer: { kind: 'connectedAccountCredential', id: 'a', displayName: 'Work' } },
+            { owner: 'connectedAccountCredential', path: 'credentials.b', referrer: { kind: 'connectedAccountCredential', id: 'b', displayName: 'Work' } },
+            { owner: 'profile', path: 'profiles.a', referrer: { kind: 'profile', id: 'a', displayName: 'Work' } },
+            { owner: 'profile', path: 'profiles.b', referrer: { kind: 'profile', id: 'b', displayName: 'Work' } },
+            { owner: 'mcp', path: 'mcp.a' },
+            { owner: 'mcp', path: 'mcp.b' },
+        ]} />);
+        expect(rowsOf(screen)).toHaveLength(6);
+    });
+
     it('never presents unknown coverage as not used, and gives no row a dead link', async () => {
         const unknown = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={null} />);
         const empty = await renderScreen(<SecretUsedBySection testID="used-by" usedBy={[]} />);

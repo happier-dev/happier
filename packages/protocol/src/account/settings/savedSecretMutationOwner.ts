@@ -59,7 +59,9 @@ import {
   type ConnectedAccountServiceConfigurationEntryV1,
 } from './connectedAccountServiceConfigurationsV1.js';
 import { StoredProfileRecordV1Schema, type ProfileRecordV1 } from '../../profiles/profileRecordSchemaV1.js';
-import { resolveProfileCatalogAuthorityV1, removeTransferredProfileSourcesV1, listTransferredProfileIdsV1, readEffectiveProfileSecretBindingsV1 } from '../../profiles/read.js';
+import { resolveProfileCatalogAuthorityV1, removeTransferredProfileSourcesV1, listTransferredProfileIdsV1, readEffectiveProfileSecretBindingsV1, readAiLaunchProfileCollection } from '../../profiles/read.js';
+import { getBuiltInBackendProfile } from '../../profiles/builtInBackendProfiles.js';
+import { connectedEntitySubjectKeyV1 } from '../../connect/connectedAccountPresentationSchemasV1.js';
 import type { ProfileTransferControlV1 } from '../../profiles/profileTransferSchemaV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import { readLaunchProfileArtifactForReferenceCensusV1, LaunchProfileArtifactReferenceV1Schema } from '../../launchProfiles/launchProfileArtifactV1.js';
@@ -87,6 +89,13 @@ const VOICE_SETTINGS_KEYS = ['voice', 'voiceSettingsV1'] as const;
 const MCP_SETTINGS_KEY = 'mcpServersSettingsV1';
 const ACP_SETTINGS_KEY = 'acpCatalogSettingsV1';
 export const PLUGIN_SECRET_BINDINGS_SETTINGS_KEY = 'pluginSecretBindingsV1';
+/** Roots whose values or validity the reference census reads even without a recognized carrier. */
+export const SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1 = Object.freeze([
+  'profiles', PROFILE_BINDINGS_KEY, PROVIDER_SETTINGS_KEY, ...VOICE_SETTINGS_KEYS,
+  MCP_SETTINGS_KEY, ACP_SETTINGS_KEY, PLUGIN_SECRET_BINDINGS_SETTINGS_KEY,
+  CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
+]);
+const savedSecretReferenceSettingsKeys = new Set<string>(SAVED_SECRET_REFERENCE_SETTINGS_KEYS_V1);
 const MAX_PLUGIN_SECRET_BINDINGS = 256;
 const MAX_PLUGIN_SECRET_BINDINGS_BYTES = 64 * 1024;
 const savedSecretReferenceOwner = z.enum(['profile', 'provider', 'voice', 'mcp', 'acp', 'plugin',
@@ -2353,6 +2362,15 @@ function collectUnknownSavedSecretReferences(
   }
 }
 
+/** Preserve raw census inputs and their identities without subscribing consumers to unrelated preferences. */
+export function selectSavedSecretReferenceSettingsV1(
+  settings: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  return Object.fromEntries(Object.entries(settings).filter(([key, value]) =>
+    savedSecretReferenceSettingsKeys.has(key)
+    || listSavedSecretReferenceCarrierPathsV1({ [key]: value }).length > 0));
+}
+
 function readReachedProfileArtifact(artifactId: string, catalogs?: SavedSecretReferenceCatalogsV1) {
   const resource = catalogs?.artifactsById?.get(artifactId);
   const artifact = resource && resource.artifactId === artifactId
@@ -2400,8 +2418,12 @@ export function listSavedSecretReferenceCatalogRefsV1(catalogs: SavedSecretRefer
   for (const record of catalogs.profileRecords) {
     if (!StoredProfileRecordV1Schema.safeParse(record).success || ids.has(record.id)) invalidReferenceRoot('Profile SavedSecret reference inventory is invalid');
     ids.add(record.id);
+    const profile = record.definition.kind === 'artifact'
+      ? readReachedProfileArtifact(record.definition.artifactId, catalogs).profile : record.definition.profile;
+    const referrer = { kind: 'profile' as const, id: record.id, displayName: profile.name };
     for (const [fieldId, secretId] of Object.entries(readEffectiveProfileSavedSecretBindings(record, catalogs))) {
-      output.push(Object.freeze({ owner: 'profile', path: `profileRows${pathSegment(record.id)}.secretBindings${pathSegment(fieldId)}`, secretId }));
+      output.push(Object.freeze({ owner: 'profile', path: `profileRows${pathSegment(record.id)}.secretBindings${pathSegment(fieldId)}`,
+        referrer, secretId }));
     }
   }
   if (catalogs.remoteHostRecords !== undefined && catalogs.remoteHostRecords !== null) {
@@ -2414,11 +2436,13 @@ export function listSavedSecretReferenceCatalogRefsV1(catalogs: SavedSecretRefer
   }
   for (const credential of catalogs.connectedAccountCredentials ?? []) {
     const { service, accountId } = credential.account;
+    const referrer = { kind: 'connectedAccountCredential' as const,
+      id: connectedEntitySubjectKeyV1({ kind: 'account', account: credential.account }),
+      ...(credential.displayName ? { displayName: credential.displayName } : {}) };
     for (const resourceId of credential.savedSecretResourceIds) {
       output.push(Object.freeze({ owner: 'connectedAccountCredential',
         path: `connectedAccountCredentials${pathSegment(service.pluginId)}${pathSegment(service.localId)}${pathSegment(accountId)}`,
-        referrer: { kind: 'connectedAccountCredential' as const, id: accountId,
-          ...(credential.displayName ? { displayName: credential.displayName } : {}) },
+        referrer,
         secretId: formatSharedSavedSecretRefV1(resourceId) }));
     }
   }
@@ -2464,14 +2488,14 @@ export function listSavedSecretReferenceCatalogRefsV1(catalogs: SavedSecretRefer
 }
 
 function readRawProfileArtifactDefaults(settings: Readonly<Record<string, unknown>>, catalogs?: SavedSecretReferenceCatalogsV1) {
-  const output: Array<Readonly<{ profileId: string; bindings: Readonly<Record<string, string>> }>> = [];
+  const output: Array<Readonly<{ profileId: string; displayName: string; bindings: Readonly<Record<string, string>> }>> = [];
   if (!Array.isArray(settings.profiles)) return output;
   const referenceSchema = createStoredReadSchema(LaunchProfileArtifactReferenceV1Schema);
   for (const source of settings.profiles) {
     const reference = referenceSchema.safeParse(source);
     if (!reference.success) continue;
     const artifact = readReachedProfileArtifact(reference.data.artifactId, catalogs);
-    output.push({ profileId: artifact.profile.id, bindings: artifact.secretBindings });
+    output.push({ profileId: artifact.profile.id, displayName: artifact.profile.name, bindings: artifact.secretBindings });
   }
   return output;
 }
@@ -2487,14 +2511,19 @@ export function listAccountSettingsSavedSecretReferences(
   const output: AccountSettingsSavedSecretReference[] = [];
   const profiles = ownRecord(settings[PROFILE_BINDINGS_KEY]);
   if (profiles) {
+    const names = new Map(readAiLaunchProfileCollection(settings.profiles,
+      { artifactsById: catalogs?.artifactsById ?? new Map() }).entries.flatMap(entry =>
+      entry.kind === 'opaque' ? [] : [[entry.profile.id, entry.profile.name] as const]));
     for (const [profileId, rawBindings] of Object.entries(profiles)) {
       const bindings = ownRecord(rawBindings);
       if (!bindings) continue;
       for (const [fieldId, candidate] of Object.entries(bindings)) {
         if (candidate === secretId) {
+          const displayName = names.get(profileId) ?? getBuiltInBackendProfile(profileId)?.name;
           output.push(Object.freeze({
             owner: 'profile',
             path: `${PROFILE_BINDINGS_KEY}${pathSegment(profileId)}${pathSegment(fieldId)}`,
+            referrer: { kind: 'profile' as const, id: profileId, ...(displayName ? { displayName } : {}) },
           }));
         }
       }
@@ -2504,7 +2533,8 @@ export function listAccountSettingsSavedSecretReferences(
     const overrides = ownRecord(profiles?.[artifact.profileId]);
     for (const [fieldId, reference] of Object.entries(artifact.bindings)) {
       if (reference === secretId && !Object.hasOwn(overrides ?? {}, fieldId)) {
-        output.push(Object.freeze({ owner: 'profile', path: `${PROFILE_BINDINGS_KEY}${pathSegment(artifact.profileId)}${pathSegment(fieldId)}` }));
+        output.push(Object.freeze({ owner: 'profile', path: `${PROFILE_BINDINGS_KEY}${pathSegment(artifact.profileId)}${pathSegment(fieldId)}`,
+          referrer: { kind: 'profile' as const, id: artifact.profileId, displayName: artifact.displayName } }));
       }
     }
   }

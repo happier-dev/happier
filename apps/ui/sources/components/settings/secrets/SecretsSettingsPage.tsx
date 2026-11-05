@@ -641,7 +641,7 @@ export const SecretUsedBySection = React.memo(function SecretUsedBySection(props
             const kind = reference.referrer?.kind ?? reference.owner;
             const { title, subtitle } = savedSecretUsedByCopy(reference);
             const route = kind === 'provider' && reference.referrer ? providerConnectionDetailRoute(reference.referrer.id) : USED_BY_KINDS[kind].route;
-            const key = JSON.stringify([route, title, subtitle]);
+            const key = JSON.stringify([kind, reference.referrer?.id ?? reference.path]);
             if (!unique.has(key)) unique.set(key, { key, title, subtitle, icon: USED_BY_KINDS[kind].icon, route });
         }
         return [...unique.values()];

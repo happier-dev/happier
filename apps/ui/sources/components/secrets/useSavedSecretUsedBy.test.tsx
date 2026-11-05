@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import * as React from 'react';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import * as census from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
@@ -63,11 +65,18 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     const reads = vi.spyOn(census, 'listAccountSettingsSavedSecretReferences');
     const requestsBefore = home.request.mock.calls.length;
     const { useSavedSecretUsedBy } = await import('./useSavedSecretUsedBy');
-    const hook = await renderHook(({ selected }) => useSavedSecretUsedBy(scope, selected), { initialProps: { selected: ref } });
+    let presented = true;
+    function Wrapper({ children }: React.PropsWithChildren) {
+        return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>{children}</PluginSurfaceFocusEligibilityProvider>;
+    }
+    const hook = await renderHook(({ selected }) => useSavedSecretUsedBy(scope, selected), { initialProps: { selected: ref }, wrapper: Wrapper });
     expect(hook.getCurrent()).toMatchObject([{ owner: 'provider', referrer: { id: 'pc_northwind', displayName: 'Northwind models' } }]);
     expect(reads).toHaveBeenCalledTimes(1);
     expect(reads.mock.calls[0]?.[1]).toBe(ref);
     const first = hook.getCurrent();
+    await act(async () => getStorage().setState(state => ({ settings: { ...state.settings, themePreference: 'dark' } })));
+    expect(hook.getCurrent()).toBe(first);
+    expect(reads).toHaveBeenCalledTimes(1);
     await hook.rerender();
     await act(async () => applyProviderCatalogSnapshot({ ...scope, accountId: 'sibling' },
         { status: 'ready', revision: 1, catalog: providers }, true));
@@ -95,7 +104,7 @@ it('opens one secret with one real census, zero fetches and no rereads on render
             acknowledgements: { status: 'loading' }, disclosure: [] }, true);
     });
     expect(hook.getCurrent()).toMatchObject([{ owner: 'connectedAccountCredential',
-        referrer: { id: 'work', displayName: 'Work credential' } }]);
+        referrer: { id: JSON.stringify(['account', account.service.pluginId, account.service.localId, account.accountId]), displayName: 'Work credential' } }]);
     expect(reads).toHaveBeenCalledTimes(4);
     expect(home.request.mock.calls).toHaveLength(requestsBefore);
     // A catalog revalidating is not "unknown": the page keeps the last census until the next one settles.
@@ -107,6 +116,49 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     await hook.rerender({ selected: '' });
     expect(hook.getCurrent()).toBeNull();
     expect(reads).toHaveBeenCalledTimes(4);
+    await act(async () => applyRemoteHostCatalogSnapshot(scope, { status: 'ready', hosts: [], diagnostics: [], revision: 1 }, true));
+    await hook.rerender({ selected: otherRef });
+    const beforeHidden = reads.mock.calls.length;
+    const retained = hook.getCurrent();
+    presented = false;
+    await hook.rerender();
+    await act(async () => getStorage().setState({ profile: AccountProfileSchema.parse({ id: scope.accountId }) }));
+    expect(hook.getCurrent()).toBe(retained);
+    expect(reads).toHaveBeenCalledTimes(beforeHidden);
+    presented = true;
+    await hook.rerender();
+    expect(hook.getCurrent()).toEqual([]);
+    expect(reads).toHaveBeenCalledTimes(beforeHidden + 1);
+});
+
+it('does no census work on a hidden retained surface and reads current sources once when shown', async () => {
+    const { scope } = heldAccount();
+    const { useSavedSecretUsedBy, useSavedSecretUsedBySourcesDemand } = await import('./useSavedSecretUsedBy');
+    const sources = await import('@/sync/store/settings/savedSecretUsedBy');
+    // Call-through instrumentation of the actual source reader, with real stores underneath.
+    const reads = vi.spyOn(sources, 'readSavedSecretUsedBySources');
+    const demand = vi.spyOn(sources, 'observeSavedSecretUsedBySources');
+    let presented = false;
+    function Wrapper({ children }: React.PropsWithChildren) {
+        return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>{children}</PluginSurfaceFocusEligibilityProvider>;
+    }
+    const hook = await renderHook(() => {
+        useSavedSecretUsedBySourcesDemand(scope);
+        return useSavedSecretUsedBy(scope, 'selected');
+    }, { wrapper: Wrapper });
+    expect(reads).not.toHaveBeenCalled();
+    expect(demand).not.toHaveBeenCalled();
+    await act(async () => { for (let index = 0; index < 5; index++) getStorage().setState({ settingsVersion: index }); });
+    expect(reads).not.toHaveBeenCalled();
+    presented = true;
+    await hook.rerender();
+    expect(reads.mock.calls.length).toBeGreaterThan(0);
+    expect(demand).toHaveBeenCalledTimes(1);
+    const shownReads = reads.mock.calls.length;
+    presented = false;
+    await hook.rerender();
+    await act(async () => { for (let index = 5; index < 10; index++) getStorage().setState({ settingsVersion: index }); });
+    expect(reads).toHaveBeenCalledTimes(shownReads);
 });
 
 it('keeps missing coverage and a foreign Account unknown without fetching', async () => {

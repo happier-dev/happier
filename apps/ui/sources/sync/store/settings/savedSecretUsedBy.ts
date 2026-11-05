@@ -1,4 +1,4 @@
-import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference,
+import { listAccountSettingsSavedSecretReferences, selectSavedSecretReferenceSettingsV1, type AccountSettingsSavedSecretReference,
     type SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { projectConnectedAccountCredentialReferenceSources } from '@/sync/domains/connectedServices/connectedAccountCredentialReferenceSources';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -37,7 +37,7 @@ export function observeSavedSecretUsedBySources(scope: ServerAccountScope): () =
 export function readSavedSecretUsedBySources(scope: ServerAccountScope | null) {
     const state = getStorage().getState();
     return {
-        settingsScope: state.settingsScope, settings: state.settings,
+        settingsScope: state.settingsScope, settings: selectSavedSecretReferenceSettingsV1(state.settings),
         profileAccountId: state.profile.id, connectedAccounts: state.profile.connectedAccountsV4,
         connectedAccountLabels: getConnectedMetadataCatalog(scope).labelsByKey,
         profiles: getProfileCatalogSnapshot(scope), providers: getProviderCatalogSnapshot(scope),
@@ -79,7 +79,7 @@ export function readSavedSecretUsedBy(scope: ServerAccountScope, ref: string): r
 }
 
 export function subscribeSavedSecretUsedBySources(listener: () => void): () => void {
-    const subscriptions = [getStorage().subscribe(listener), subscribeProfileCatalogSnapshots(listener),
+    const subscriptions = [getStorage().subscribe(listener, { settings: true, settingsScope: true, profile: ['id', 'connectedAccountsV4'] }), subscribeProfileCatalogSnapshots(listener),
         subscribeProviderCatalogSnapshots(listener), subscribeMcpServerCatalogSnapshots(listener), subscribeAcpCatalogSnapshots(listener),
         subscribeConnectedAccountCatalogSnapshots(listener), subscribeNotificationChannelCatalogSnapshots(listener),
         subscribePromptLibraryCatalogSnapshots(listener), subscribeRemoteHostCatalogSnapshots(listener), subscribeConnectedMetadataCatalog(listener)];
