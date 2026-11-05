@@ -1,4 +1,4 @@
-import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol';
+import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { HappyError } from '@/utils/errors/errors';
 import type { UsageQueryParams } from './apiUsage';
 

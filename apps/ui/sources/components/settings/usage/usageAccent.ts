@@ -19,7 +19,7 @@
  * dimension other than Agent is a review-rejectable regression.
  */
 
-import { HAPPIER_SERIES_RAMP_ALPHAS, resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
 import { getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 
 type UsageAccentThemeSlice = Readonly<{
@@ -54,18 +54,6 @@ export function withUsageAccentAlpha(color: string, alpha: number): string {
     const clamped = Math.max(0, Math.min(1, alpha));
     return `rgba(${(value >> 16) & 0xff}, ${(value >> 8) & 0xff}, ${value & 0xff}, ${clamped})`;
 }
-
-/**
- * Ordered tonal ramp for series/categorical distinction (journey-chart series,
- * token-mix segments, the context-gauge popover category legend). Index 0 is
- * the full signature accent; later steps fade in strictly decreasing,
- * still-legible alpha steps.
- *
- * Eight steps so the widest categorical surface — the context-gauge popover,
- * which can list up to 8 context categories — gets a DISTINCT ordered tone per
- * category and never wraps back to the signature accent (D-6).
- */
-export const USAGE_SERIES_RAMP_ALPHAS = HAPPIER_SERIES_RAMP_ALPHAS;
 
 /**
  * Step `index` of the magnitude ramp. On a known paper the step is SOLID (the accent pre-mixed with

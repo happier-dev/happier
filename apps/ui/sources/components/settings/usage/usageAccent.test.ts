@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { HAPPIER_SERIES_RAMP_ALPHAS as USAGE_SERIES_RAMP_ALPHAS } from '@happier-dev/plugin-ui/presentation';
+
 import {
-    USAGE_SERIES_RAMP_ALPHAS,
     usageMeterFill,
     usageSeriesColor,
     usageSignatureAccent,
