@@ -12,6 +12,7 @@ import {
 import { commandStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 
 export const KEYBOARD_COMMAND_GROUP_TITLE_KEYS: Readonly<Record<KeyboardShortcutCommandGroupId, TranslationKeyNoParams>> = {
+    annotate: 'settingsKeyboard.commands.annotationGroup',
     panes: 'settingsKeyboard.paneGroups.panes',
     terminal: 'settingsKeyboard.paneGroups.terminal',
     search: 'settingsKeyboard.paneGroups.search',
