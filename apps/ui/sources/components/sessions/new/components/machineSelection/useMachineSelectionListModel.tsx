@@ -40,6 +40,7 @@ import type { MachineReachabilityScope } from '@/sync/domains/machines/reachabil
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { Icon } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
 import type { MachinePoolViewV1, SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 import type { MachinePoolSelectionStatus } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
@@ -589,25 +590,11 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             // Status rows explain why this exact Home currently contributes no Pool destinations.
             // They are deliberately ordinary disabled options: the shared destination-count owner
             // continues to count only actual Machines, Pools and Temporary computers.
-            if (poolGroup.pools.length === 0) {
-                // A settled feature-off Home already returned above, so this row only explains an
-                // error. A still-loading answer adds no row: a section whose existence is unknown
-                // never heads the list (most Accounts have no Pools, so it would vanish a moment later).
-                const statusLabel = poolGroup.featureStatus === 'error' || poolGroup.status === 'error'
-                    ? t('machinePools.refreshFailed')
-                    : null;
-                if (statusLabel) {
-                    options.push({
-                        id: `pool-status:${poolGroup.serverId}`,
-                        testID: buildPoolActionTestID(params.testIdPrefix, poolGroup.serverId, 'status'),
-                        label: statusLabel,
-                        accessibilityLabel: statusLabel,
-                        disabled: true,
-                        icon: <Icon name="desktop" size={iconSize} color={theme.colors.text.secondary} />,
-                    });
-                }
-            }
-
+            // A settled feature-off Home already returned above, so this only explains an error. A still-loading
+            // answer adds no row: a section whose existence is unknown never heads the list (most Accounts have no
+            // Pools, so it would vanish a moment later).
+            const readFailedWithNoPools = poolGroup.pools.length === 0
+                && (poolGroup.featureStatus === 'error' || poolGroup.status === 'error');
             if (hasOpenPoolSettings && status?.kind === 'unavailable' && status.reason === 'empty') {
                 options.push({
                     id: `pool-settings:${poolGroup.serverId}`,
@@ -620,28 +607,37 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             const refreshOwner = unavailableReason === 'homeFailed'
                 ? (hasRefreshMachines ? 'machines' : null)
                 : hasRefreshPools && (
-                    unavailableReason === 'poolsFailed'
+                    readFailedWithNoPools
+                    || unavailableReason === 'poolsFailed'
                     || status?.kind === 'error'
                     || (status?.kind === 'unavailable' && status.reason !== 'empty')
                 )
                     ? 'pools'
                     : null;
+            // One cause, one row: what failed in words, and Retry at the row's end; the whole row retries.
+            const refreshFailed = readFailedWithNoPools || unavailableReason === 'poolsFailed' || unavailableReason === 'homeFailed';
             if (refreshOwner) {
                 options.push({
                     id: `pool-refresh:${poolGroup.serverId}`,
                     testID: buildPoolActionTestID(params.testIdPrefix, poolGroup.serverId, 'refresh'),
-                    label: unavailableReason === 'poolsFailed' || unavailableReason === 'homeFailed'
-                        ? t('common.retry')
-                        : t('common.refresh'),
-                    subtitle: unavailableReason === 'poolsFailed'
-                        ? t('machinePools.refreshFailed')
-                        : unavailableReason === 'homeFailed'
-                            ? t('common.error')
-                            : undefined,
-                    icon: <Icon name="arrow-clockwise" size={iconSize} color={theme.colors.text.secondary} />,
+                    label: refreshFailed ? t('machinePools.refreshFailed') : t('common.refresh'),
+                    ...(refreshFailed ? {
+                        accessibilityLabel: `${t('machinePools.refreshFailed')} ${t('common.retry')}`,
+                        rightAccessory: <Text variant="label" style={{ color: theme.colors.text.primary }}>{t('common.retry')}</Text>,
+                    } : {}),
+                    icon: <Icon name={refreshFailed ? 'desktop' : 'arrow-clockwise'} size={iconSize} color={theme.colors.text.secondary} />,
                     onSelect: refreshOwner === 'machines'
                         ? refreshMachines
                         : () => refreshPools(poolGroup.serverId),
+                });
+            } else if (readFailedWithNoPools) {
+                options.push({
+                    id: `pool-status:${poolGroup.serverId}`,
+                    testID: buildPoolActionTestID(params.testIdPrefix, poolGroup.serverId, 'status'),
+                    label: t('machinePools.refreshFailed'),
+                    accessibilityLabel: t('machinePools.refreshFailed'),
+                    disabled: true,
+                    icon: <Icon name="desktop" size={iconSize} color={theme.colors.text.secondary} />,
                 });
             }
             if (hasDismissPoolSelection

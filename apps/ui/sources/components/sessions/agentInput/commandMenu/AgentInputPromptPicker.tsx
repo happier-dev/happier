@@ -51,6 +51,10 @@ export type AgentInputPromptPickerProps = Readonly<{
 
 /** The lab's picker heights: with the preview pane, and the single list (`fprompts` R1 / ST). */
 const PICKER_HEIGHT_WITH_PREVIEW = 430;
+/** A readable list column beside the preview's (`HAPPIER_PROMPT_PICKER_METRICS.previewWidthPx`): one prompt per line, its text legible. */
+const PICKER_WIDTH_WITH_PREVIEW = 880;
+/** The composer popover layout's edge padding on a wide window (`useAgentInputPopoverLayout`). */
+const PICKER_WINDOW_MARGIN_PX = 16;
 const PICKER_HEIGHT = 380;
 const EMPTY_FOLDERS: ReadonlyMap<string, string> = new Map();
 
@@ -223,7 +227,8 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         open anchor={props.anchor} query={query} items={items} selectedIndex={selected ? selectedIndex : -1}
         onMoveUp={() => move(-1)} onMoveDown={() => move(1)} onSelect={(_, index) => { void apply(rows[index], 'insert'); }}
         onRequestClose={props.onRequestClose} preserveHostFocus={false} maxWidth={width} placement="top" phoneSheetTitle={t('agentInput.promptPicker.title')}
-        matchAnchorWidth fillHeight maxHeight={wide ? PICKER_HEIGHT_WITH_PREVIEW : PICKER_HEIGHT}
+        // Where a preview stands beside the list, the picker takes the room both need, centred on the composer.
+        {...(wide ? { centerOnAnchorMaxWidth: Math.min(PICKER_WIDTH_WITH_PREVIEW, width - PICKER_WINDOW_MARGIN_PX * 2) } : { matchAnchorWidth: true })} fillHeight maxHeight={wide ? PICKER_HEIGHT_WITH_PREVIEW : PICKER_HEIGHT}
         testID="agent-input-prompt-picker"
         leadingEmptyGroup={!query && !library.isLoading && !libraryUnavailable && !hasFavorites && rows.length > 0
             ? { title: groups.favorites, hint: t('agentInput.promptPicker.favoritesInvite') } : undefined}

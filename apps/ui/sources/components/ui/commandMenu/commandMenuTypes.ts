@@ -77,6 +77,8 @@ export type CommandMenuProps = Readonly<{
     preserveHostFocus?: boolean;
     /** Take the anchor's (composer's) width rather than the compact menu width. */
     matchAnchorWidth?: boolean;
+    /** This wide, centred on the anchor; the window's edges still bound it. */
+    centerOnAnchorMaxWidth?: number;
     /** Hold the full available height so the surface never resizes while its query narrows the rows. */
     fillHeight?: boolean;
     /** Where a held frame (`fillHeight`) seats its `emptyState`: a pane centres, a one-line state sits under the header. */

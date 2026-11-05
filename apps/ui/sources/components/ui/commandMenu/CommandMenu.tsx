@@ -156,6 +156,7 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             onRequestClose={onRequestClose}
             preserveHostFocus={props.preserveHostFocus}
             matchAnchorWidth={props.matchAnchorWidth}
+            centerOnAnchorMaxWidth={props.centerOnAnchorMaxWidth}
             fillHeight={props.fillHeight}
             phoneSheetTitle={props.phoneSheetTitle}
             header={props.header}

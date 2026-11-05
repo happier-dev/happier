@@ -55,7 +55,7 @@ export const HAPPIER_PROMPT_PICKER_METRICS = Object.freeze({
   rowGapPx: 10,
   leadColumnPx: 20,
   glyphPx: 16,
-  previewWidthPx: 300,
+  previewWidthPx: 440,
   previewPaddingHorizontalPx: 14,
   previewPaddingVerticalPx: 12,
   previewGapPx: 8,

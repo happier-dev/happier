@@ -72,6 +72,15 @@ describe('AgentInputCommandMenu edge padding', () => {
         expect(screen.findAllByType(Popover)[0]?.props.edgePadding).toEqual({ horizontal: 16, vertical: 16, top: 56 });
     });
 
+    it('centres a menu that may grow past its composer', async () => {
+        const { AgentInputCommandMenu } = await import('../AgentInputCommandMenu');
+
+        const screen = await renderScreen(<AgentInputCommandMenu {...buildProps({ centerOnAnchorMaxWidth: 860 })} />);
+        const popover = screen.findAllByType(Popover)[0]!;
+        expect(popover.props.maxWidthCap).toBe(860);
+        expect(popover.props.portal).toMatchObject({ matchAnchorWidth: false, anchorAlign: 'center' });
+    });
+
     it('lets an explicit caller override win over the layout owner', async () => {
         mockWindowWidth = 390;
         const { AgentInputCommandMenu } = await import('../AgentInputCommandMenu');

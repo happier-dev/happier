@@ -21,6 +21,11 @@ const DEFAULT_GAP = 4;
 const PHONE_SHEET_HEIGHT_FRACTION = 0.66;
 let anchorWidthPortalOptions: PopoverPortalOptions | null = null;
 /** The modal-aware portal, sized to the anchor; built once, on first use, so its identity is stable. */
+const ANCHOR_CENTERED_PORTAL_OPTIONS: PopoverPortalOptions = {
+    ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
+    matchAnchorWidth: false,
+    anchorAlign: 'center',
+};
 function resolveAnchorWidthPortalOptions(): PopoverPortalOptions {
     anchorWidthPortalOptions ??= { ...MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, matchAnchorWidth: true };
     return anchorWidthPortalOptions;
@@ -81,6 +86,11 @@ interface CommandMenuSurfaceProps {
     preserveHostFocus?: boolean;
     /** Size to the composer (anchor) width instead of the content-capped menu width. */
     matchAnchorWidth?: boolean;
+    /**
+     * This wide, centred on the anchor (a menu whose content needs more room than its composer). The window's
+     * edges still bound it.
+     */
+    centerOnAnchorMaxWidth?: number;
     /** Hold the full available height, so filtering never resizes the surface. */
     fillHeight?: boolean;
     /** Present in the shared phone sheet under this title; larger screens keep the anchored popover. */
@@ -132,7 +142,7 @@ export const CommandMenuSurface = React.memo((props: CommandMenuSurfaceProps) =>
             phonePresentation={props.phoneSheetTitle ? 'sheet' : undefined}
             sheetMaterial="solid"
             accessibilityLabel={props.phoneSheetTitle}
-            maxWidthCap={maxWidth}
+            maxWidthCap={props.centerOnAnchorMaxWidth ?? maxWidth}
             boundaryRef={boundaryRef}
             clearanceRef={props.clearanceRef}
             keyboardBottomInset={keyboardBottomInset}
@@ -141,7 +151,8 @@ export const CommandMenuSurface = React.memo((props: CommandMenuSurfaceProps) =>
             consumeOutsidePointerDown={consumeOutsidePointerDown}
             onRequestClose={onRequestClose}
             backdrop={backdrop}
-            portal={props.matchAnchorWidth ? resolveAnchorWidthPortalOptions() : MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
+            portal={props.centerOnAnchorMaxWidth !== undefined ? ANCHOR_CENTERED_PORTAL_OPTIONS
+                : props.matchAnchorWidth ? resolveAnchorWidthPortalOptions() : MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
         >
             {({ maxHeight: resolvedMaxHeight }) => (
                 <View testID={testID} collapsable={false} {...(props.preserveHostFocus !== false ? preserveHostFocusOnWebPointerDown : {})}>
