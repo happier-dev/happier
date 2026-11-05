@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
@@ -95,7 +95,8 @@ const SummaryHeader = React.memo(function SummaryHeader(props: Readonly<{ model:
                     {header.meta}
                 </Text>
             </View>
-            <SummaryActions model={model} presentation="popover" />
+            {/* No page header scopes these here: the popover is dense. */}
+            <RoundButtonSizeScope size="small"><SummaryActions model={model} presentation="popover" /></RoundButtonSizeScope>
         </View>
     );
 });

@@ -154,7 +154,10 @@ async function readSegmentMinimumWidths(testID: string, dimension: 'minWidth' | 
         for (const platform of ['ios', 'android'] as const) {
             (Platform as { OS: string }).OS = platform;
             const screen = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
-            const drawn = flattenTestStyle(screen.findByTestId(testID)?.props.style)[dimension];
+            // A missing control is a failure, never a pass: its absent style would read as dense.
+            const control = screen.findByTestId(testID);
+            expect(control).not.toBeNull();
+            const drawn = flattenTestStyle(control?.props.style)[dimension];
             observed.push(`${platform}: ${typeof drawn === 'number' && drawn >= (platform === 'android' ? 48 : 44) ? 'target' : 'dense'}`);
         }
     } finally {
@@ -187,7 +190,7 @@ describe('PluginSettingsHomeScreen segmented controls', () => {
 
     it('draws the Discover source filter at its dense height', async () => {
         mocks.activeView = 'discover';
-        expect(await readSegmentMinimumWidths('settings.plugins.marketplace.sourceFilter.trigger', 'minHeight'))
+        expect(await readSegmentMinimumWidths('settings.plugins.marketplace.sourceFilter', 'minHeight'))
             .toEqual(['ios: dense', 'android: dense']);
     });
 
