@@ -30,6 +30,7 @@ export function useProviderBindingStatus(input: Readonly<{
     selectionIntentPresent?: boolean;
     launchBinding: SessionProviderBindingMetadataV1 | null;
     completedTurnObservedAt?: number | null;
+    bindingRefusalObservedAt?: number | null;
 }>) {
     const { describeProviderBindingStatus, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
@@ -174,15 +175,20 @@ export function useProviderBindingStatus(input: Readonly<{
     }, [accountLifetime, refresh, scopeKey]);
 
     const previousCompletedTurnObservedAt = React.useRef(input.completedTurnObservedAt);
+    const previousBindingRefusalObservedAt = React.useRef(input.bindingRefusalObservedAt);
     React.useEffect(() => {
         const previous = previousCompletedTurnObservedAt.current;
         previousCompletedTurnObservedAt.current = input.completedTurnObservedAt;
+        const previousRefusal = previousBindingRefusalObservedAt.current;
+        previousBindingRefusalObservedAt.current = input.bindingRefusalObservedAt;
         // A recovered turn invalidates an earlier transient read failure. Keep
         // the existing attention state until its canonical binding read settles.
-        if (input.completedTurnObservedAt != null && input.completedTurnObservedAt !== previous) {
+        // The runner can discover a binding change before this client sees any catalog update.
+        const bindingRefused = input.bindingRefusalObservedAt != null && input.bindingRefusalObservedAt !== previousRefusal;
+        if (bindingRefused || (input.completedTurnObservedAt != null && input.completedTurnObservedAt !== previous)) {
             void refresh();
         }
-    }, [input.completedTurnObservedAt, refresh]);
+    }, [input.completedTurnObservedAt, input.bindingRefusalObservedAt, refresh]);
 
     return {
         status: stateMatchesScope ? state.status : null,

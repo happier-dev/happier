@@ -386,3 +386,18 @@ test('finite const-list callback operands resolve Actions and setting refs from 
   assert.deepEqual(report.settings.map(site => site.key), ['appearance.density', 'appearance.locked']);
   assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'setting_unmapped', 'dynamic_action', 'dynamic_action']);
 });
+
+test('runner restart UI effects require Action admission and preserve effect adapters', () => {
+  const content = `import { restartSessionRunnerForProviderBindingChange as recover,
+    restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
+    recover(input); restartSessionRunnerOnCurrentRuntime(input);
+    function local(recover) { recover(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/sessions/composer/Controller.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_session_runner_restart', 'restartSessionRunnerForProviderBindingChange'],
+    ['direct_session_runner_restart', 'restartSessionRunnerOnCurrentRuntime'],
+  ]);
+});

@@ -581,6 +581,15 @@ Custom-provider forms do not support arbitrary query-parameter credentials or in
 Endpoint validation rejects credentials in URLs, unsafe metadata destinations, ambiguous encodings, unsafe redirects, and oversized responses. Redirects are revalidated hop by hop, and credentials are not forwarded across an origin change. DNS is resolved on the daemon for probes, but the spawned Agent may resolve independently; endpoint-bound machine grants remain the authorization boundary for local/private endpoints.
 
 A catalog probe is bounded end to end, not per hop: one wall budget covers pre-dispatch resolution, request establishment and the complete response body across every redirect, and one idle budget bounds the gap between body chunks. Both apply identically to a public endpoint and to a Provider the daemon supervises — a managed probe reaches its service through that service's own supervised request handle, so a response that returns headers and never finishes its body cannot hold a Provider probe slot.
+In 0.3 development, agents and UI hosts can call `providers.binding.status` with
+`{machineId, sessionId}`. The authenticated owner-only Session reader supplies the
+persisted launch binding and canonical model intent to the existing daemon
+pairing owner. A `changed` result includes `providerBindingSecurityChangeConfirmationV1`
+with that Session's exact previous fingerprint and the pairing owner's next
+fingerprint, ready for explicit `session.runtime.refresh` with
+`mode: 'force_current_cli'`. Reading the proposal does not authorize a restart.
+The explicit `selection`/`launchBinding` input used by the Session UI remains
+available through the same pairing owner; daemon RPC admission is unchanged.
 In 0.3 development, binding-status reads use that same canonical wall budget and carry the RPC caller's cancellation through Home/catalog reads, registry activation, DNS, Gateway purpose resolution and runtime catalog observation. A read that cannot finish returns the existing retryable `provider_catalog_unavailable`; the Session banner offers Retry rather than asserting model incompatibility. The existing daemon RPC completion log identifies the stage where a saved probe or binding-status read expires or is cancelled (`failedPhase`, `causeCode`, `phaseDurationsMs`, `phaseTimingsMs`). Stages cover catalog admission, registry, DNS, purpose/group/account lookup, pre-effect revalidation, managed establishment and catalog dispatch, without logging request or credential contents.
 
 The Session's binding-status reader rechecks after a newly observed completed

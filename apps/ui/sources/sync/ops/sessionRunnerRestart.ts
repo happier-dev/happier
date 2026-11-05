@@ -1,6 +1,6 @@
-import { buildSessionRunnerRuntimeRefreshRequestV1, projectSessionRunnerReadFailureV1, readSessionRunnerRestartIdentityGuardV1, RestartSessionRunnerResultV1Schema, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
-import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
-import { SessionProviderBindingSecurityChangeConfirmationV1Schema, type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { buildSessionRunnerRuntimeRefreshRequestV1, projectSessionRunnerReadFailureV1, RestartSessionRunnerResultV1Schema, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { buildSessionRunnerProviderBindingRestartRequestV2 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
+import type { SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { readSessionRunnerRuntimeStateForRestartV1, SessionRunnerRuntimeStateV1Schema, SessionRunnerStatusGetRequestV1Schema, type SessionRunnerRuntimeStateV1, type SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { SessionRunnerRuntimeStatusV2Schema, type SessionRunnerProcessIdentityV2 } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2';
 import {
@@ -30,8 +30,7 @@ type RestartSessionRunnerInput = Readonly<{
 export type RestartStaleSessionRunnerResult = RestartSessionRunnerResultV1;
 
 type RestartSessionRunnerForProviderBindingChangeInput = RestartSessionRunnerInput & Readonly<{
-    launchBinding?: SessionProviderBindingMetadataV1 | null;
-    nextBindingSecurityFingerprint?: string | null;
+    providerBindingSecurityChangeConfirmationV1?: SessionProviderBindingSecurityChangeConfirmationV1;
     runnerProcessIdentity: SessionRunnerProcessIdentityV2 | null;
 }>;
 
@@ -77,12 +76,6 @@ function buildUnsupportedDaemonResult(sessionId: string): RestartSessionRunnerRe
         status: 'unsupported_daemon',
         reasonCode: 'unsupported_daemon_version',
     });
-}
-
-function readNonEmptyString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
 }
 
 // Preserve the source restart owner's observation policy for delayed daemon publication.
@@ -232,36 +225,8 @@ export async function restartSessionRunnerOnCurrentRuntime(
 export async function restartSessionRunnerForProviderBindingChange(
     input: RestartSessionRunnerForProviderBindingChangeInput,
 ): Promise<RestartSessionRunnerResultV1 | null> {
-    const identityGuard = readSessionRunnerRestartIdentityGuardV1(input.runtimeState);
-    if ('ok' in identityGuard) return identityGuard;
-    if (!input.runnerProcessIdentity) {
-        return buildResult({ sessionId: input.runtimeState.sessionId, status: 'version_unknown', reasonCode: 'runner_generation_unattested' });
-    }
-    // Never combine a runtime guard with another process's birth witness.
-    if (identityGuard.expectedRunnerPid !== input.runnerProcessIdentity.pid) {
-        return buildResult({ sessionId: input.runtimeState.sessionId, status: 'runner_identity_changed' });
-    }
-    const nextFingerprint = readNonEmptyString(input.nextBindingSecurityFingerprint);
-    const confirmation = input.launchBinding && nextFingerprint
-        ? SessionProviderBindingSecurityChangeConfirmationV1Schema.parse({
-            v: 1,
-            sessionId: input.runtimeState.sessionId,
-            connectionId: input.launchBinding.connectionId,
-            previousBindingSecurityFingerprint: input.launchBinding.bindingSecurityFingerprint,
-            nextBindingSecurityFingerprint: nextFingerprint,
-        })
-        : undefined;
-    const request = RestartSessionRunnerRequestV2Schema.parse({
-        v: 2,
-        sessionId: input.runtimeState.sessionId,
-        mode: 'force_current_cli',
-        reason: 'provider_binding_change_recovery',
-        expectedRunnerPid: identityGuard.expectedRunnerPid,
-        expectedProcessCommandHash: identityGuard.expectedProcessCommandHash,
-        expectedRunnerEntrypointIdentity: identityGuard.expectedRunnerEntrypointIdentity,
-        expectedRunnerProcessIdentity: input.runnerProcessIdentity,
-        ...(confirmation ? { providerBindingSecurityChangeConfirmationV1: confirmation } : {}),
-    });
+    const request = buildSessionRunnerProviderBindingRestartRequestV2(input);
+    if ('ok' in request) return request;
     return await restartSessionRunnerWithBackgroundWorkConfirmation({
         runtimeState: input.runtimeState,
         serverId: input.serverId,

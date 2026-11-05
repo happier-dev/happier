@@ -50,6 +50,47 @@ describe('CLI machine terminal Action', () => {
     }));
   });
   afterEach(() => { releaseHome(); vi.useRealTimers(); vi.restoreAllMocks(); });
+  it.each(['reviewed', 'unattested', 'wrong-session', 'background-work'] as const)('keeps exact binding restart authority through the public Action (%s)', async scenario => {
+    const credentials = { token: 'token', encryption: null };
+    const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+      sessionId: 'session', serverId: 'home', serverIdentityId: 'home-identity', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null,
+      getCurrentSessionMetadata: () => ({ machineId: 'worker', path: '/repo' }) }));
+    const identity = { pid: 123, processStartTimeMs: 123456 };
+    responses.push({ v: 2, state: { v: 1, sessionId: 'session', machineId: 'worker', daemonId: 'daemon', observedAtMs: 1,
+      runner: { pid: 123, runtimeId: 'old-runtime', cliVersion: '1', entrypointVersion: 'old',
+        processCommandHash: 'old-command', entrypointSource: 'process_command', startedBy: 'daemon', startingMode: 'remote' },
+      daemon: { cliVersion: '2', startedWithCliVersion: '2', currentEntrypointVersion: 'current-runtime', currentEntrypointSource: 'packaged_runtime' },
+      versionState: 'current', statusSource: 'daemon_tracking', plannedRestart: { supported: true, eligible: true, disabledReason: null },
+    }, runnerProcessIdentity: scenario === 'unattested' ? null : identity },
+    scenario === 'background-work'
+      ? { ok: false, status: 'busy', sessionId: 'session', diagnostics: { busySource: 'native_background_work' } }
+      : { ok: true, status: 'restarted', sessionId: 'session' });
+    const confirmation = { v: 1, sessionId: scenario === 'wrong-session' ? 'other-session' : 'session', connectionId: 'pc_gateway',
+      previousBindingSecurityFingerprint: 'security:old', nextBindingSecurityFingerprint: 'security:reviewed' };
+    const result = await executor.execute('session.runtime.refresh', {
+      sessionId: 'session', machineId: 'worker', serverId: 'home', mode: 'force_current_cli',
+      providerBindingSecurityChangeConfirmationV1: confirmation,
+    }, { surface: 'agent', authority: 'present_user', serverId: 'home', defaultSessionId: 'session' });
+    if (scenario === 'wrong-session') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(requests).toEqual([]);
+    } else if (scenario === 'unattested') {
+      expect(result).toMatchObject({ ok: true, result: { ok: false, status: 'version_unknown', reasonCode: 'runner_generation_unattested' } });
+      expect(requests.map(request => request.method)).toEqual([`worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET}`]);
+    } else {
+      expect(result).toEqual({ ok: true, result: scenario === 'background-work'
+        ? { ok: false, status: 'busy', sessionId: 'session', diagnostics: { busySource: 'native_background_work' } }
+        : { ok: true, status: 'restarted', sessionId: 'session' } });
+      expect(requests).toEqual([
+        { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET}`, params: { sessionId: 'session' } },
+        { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2}`, params: {
+          v: 2, sessionId: 'session', mode: 'force_current_cli', reason: 'provider_binding_change_recovery',
+          expectedRunnerPid: 123, expectedProcessCommandHash: 'old-command', expectedRunnerEntrypointIdentity: 'old-runtime',
+          expectedRunnerProcessIdentity: identity, providerBindingSecurityChangeConfirmationV1: confirmation,
+        } },
+      ]);
+    }
+  });
   it.each([
     ['transport', { ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, error: 'unreachable' }, 'partial_failure', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE],
     ['old daemon', { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Method not found' }, 'unsupported_daemon', undefined],
@@ -67,9 +108,9 @@ describe('CLI machine terminal Action', () => {
     expect(requests.map(request => request.method)).toEqual([`worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET}`]);
   });
   it.each(['session', 'different-session', 'busy', 'activity_unavailable'])('preserves exact refresh acknowledgement and diagnostics (%s)', async scenario => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
-      sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
+      sessionId: 'session', serverId: 'home', serverIdentityId: 'home-identity', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     const restartResult = scenario === 'busy'
       ? { ok: false, status: 'busy', sessionId: 'session', reasonCode: 'turn_in_progress',
         diagnostics: { busySource: 'foreground_turn', turnId: 'active-turn' } }

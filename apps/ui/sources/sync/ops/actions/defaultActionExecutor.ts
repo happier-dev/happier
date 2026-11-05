@@ -315,7 +315,7 @@ import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentIns
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
-import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
+import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import {
@@ -2322,14 +2322,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
     },
 
-    sessionRuntimeRefresh: async ({ sessionId, machineId, serverId, signal }) => withAccountLifetime(signal, async signal => {
+    sessionRuntimeRefresh: async ({ sessionId, machineId, serverId, mode, providerBindingSecurityChangeConfirmationV1, signal }) => withAccountLifetime(signal, async signal => {
       accountContext?.assertCurrent();
       throwIfAborted(signal);
       const status = await getSessionRunnerRuntimeStatusSnapshotResult({ sessionId, machineId, serverId, signal });
       accountContext?.assertCurrent();
       throwIfAborted(signal);
       if (!('state' in status)) return status;
-      const result = await restartSessionRunnerOnCurrentRuntime({ runtimeState: status.state, serverId, signal });
+      const result = mode === 'force_current_cli'
+        ? await restartSessionRunnerForProviderBindingChange({ runtimeState: status.state,
+          runnerProcessIdentity: status.runnerProcessIdentity, serverId, signal,
+          ...(providerBindingSecurityChangeConfirmationV1 ? { providerBindingSecurityChangeConfirmationV1 } : {}) })
+        : await restartSessionRunnerOnCurrentRuntime({ runtimeState: status.state, serverId, signal });
       return result ?? { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     }),
 

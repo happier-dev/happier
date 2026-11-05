@@ -4162,6 +4162,16 @@ Run-on writer or store is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `providers.binding.status` accepts an additional
+`{machineId, sessionId}` Action operand. Updated UI and CLI Action hosts derive
+the existing daemon request through authenticated owner-only Session readers;
+the full explicit operand and daemon RPC contract remain valid. Only the
+Session-addressed `changed` result adds the exact
+`providerBindingSecurityChangeConfirmationV1` consumed by `session.runtime.refresh`.
+Refresh the Protocol, SDK DTO projection and originating Action hosts together
+to use this development-only arm. No persisted format, grant decision, RPC
+admission, wire epoch or runtime ABI changes.
+
 Unreleased 0.3 managed bootstrap failures retain isolation Set conflicts and
 changed-plan facts in the existing closed `managedAgentIsolation` details.
 Both metadata versions and policies are retained; native plans and paths are

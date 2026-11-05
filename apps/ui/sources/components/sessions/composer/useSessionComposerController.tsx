@@ -1,4 +1,4 @@
-import { alertComposerRunnerRestartFailure } from "./alertComposerFailure";
+import { alertComposerActionResultFailure, alertComposerRunnerRestartFailure, alertComposerRuntimeStatusUnavailable } from "./alertComposerFailure";
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -202,7 +202,7 @@ import { EMPTY_SESSION_WORKFLOW_ACTIVITY, IDLE_SESSION_MANAGED_WORKFLOW_RUNS, us
 import { STALE_SESSION_RUNNER_STATUS_BADGE_KEY, buildStaleSessionRunnerNoticePresentation, type StaleSessionRunnerOperationStatus } from "@/components/sessions/sessionRunner/staleSessionRunnerNoticePresentation";
 import { readStaleSessionRunnerRuntimeState } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatus";
 import type { SessionRunnerRuntimeStatusSnapshot } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention";
-import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from "@/sync/ops/sessionRunnerRestart";
+import { RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { readSessionWorkStateFromMetadata } from "@/sync/domains/session/workState/readSessionWorkState";
 import { SessionWorkStatePopover } from "@/components/sessions/workState/SessionWorkStatePopover";
 import type { SessionWorkStateGoalSetRequest, SessionWorkStateOperationResult } from "@/components/sessions/workState/SessionWorkStateContent";
@@ -260,7 +260,7 @@ import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1 } from "@happ
 import type { SessionPendingMessageComposerAdmissionAbandonedRequestV1 } from "@happier-dev/protocol/sessions/userMessageRpc";
 import type { ComposerRefV1 } from "@happier-dev/protocol/plugins/ui/composerRef";
 import type { ComposerSnapshotV1, ComposerTransactionResultV1 } from "@happier-dev/protocol/plugins/ui/composer";
-import { SESSION_RUNNER_RUNTIME_METADATA_KEY, SessionRunnerRuntimeStateV1Schema } from "@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1";
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from "@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1";
 import type { ConnectedServiceQuotaSnapshotV1 } from "@happier-dev/protocol/connect/connected-service-schemas";
 import { isHiddenSystemSession } from "@happier-dev/protocol/sessions/control/contract";
 import { readSessionProviderBindingMetadataV1 } from "@happier-dev/protocol/providers/sessions/bindingMetadataV1";
@@ -945,6 +945,7 @@ export function useSessionComposerController({
         selectionIntentPresent: providerModelSelectionIntent !== null,
         launchBinding: providerLaunchBinding,
         completedTurnObservedAt: session.latestTurnStatus === 'completed' ? session.latestTurnStatusObservedAt : null,
+        bindingRefusalObservedAt: session.lastRuntimeIssue?.code === 'provider_binding_changed' ? session.lastRuntimeIssue.occurredAt : null,
     });
     const [providerModelPickerDemanded, setProviderModelPickerDemanded] = React.useState(false);
     const providerModelProjection = useProviderModelProjection({
@@ -2373,22 +2374,23 @@ export function useSessionComposerController({
             fingerprint: staleSessionRunnerPresentation.fingerprint,
             status: { kind: 'pending' },
         });
-        let result: Awaited<ReturnType<typeof restartSessionRunnerOnCurrentRuntime>>;
+        let actionResult: ActionExecuteResult;
         try {
-            result = await restartSessionRunnerOnCurrentRuntime({
-                runtimeState: staleSessionRunnerRuntimeState,
-                serverId: sessionRouteServerId,
-                signal: sessionViewCaller.signal,
-            });
+            actionResult = await actionExecutor.execute('session.runtime.refresh', {
+                sessionId, machineId: staleSessionRunnerRuntimeState.machineId ?? '',
+            }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
+                signal: sessionViewCaller.signal });
         } catch (error) {
             if (sessionViewCaller.signal.aborted) return;
             throw error;
         }
         if (sessionViewCaller.signal.aborted) return;
-        if (!result) {
+        if (!actionResult.ok) {
             setStaleSessionRunnerOperationStatus(null);
+            if (actionResult.errorCode !== 'cancelled') alertComposerActionResultFailure(actionResult);
             return;
         }
+        const result = RestartSessionRunnerResultV1Schema.parse(actionResult.result);
         if (result.status === 'restarted' || result.status === 'already_current') {
             // Resolving the issue removes the banner on its own. Collapse is a remembered user
             // preference per banner kind, so a successful restart must not silently re-expand it.
@@ -2402,10 +2404,12 @@ export function useSessionComposerController({
             status: { kind: 'result', result },
         });
     }, [
+        actionExecutor,
         hasWriteAccess,
         onSessionRunnerRuntimeStatusInvalidated,
         sessionRouteServerId,
         sessionViewCaller,
+        sessionId,
         staleSessionRunnerPresentation,
         staleSessionRunnerRuntimeState,
     ]);
@@ -5580,31 +5584,9 @@ export function useSessionComposerController({
                 const restartMachineId = typeof staleSessionRunnerMachineId === 'string'
                     ? staleSessionRunnerMachineId.trim()
                     : '';
-                const cachedRuntimeStatus = sessionRunnerRuntimeStatus
-                    && sessionRunnerRuntimeStatus.serverId === sessionRouteServerId
-                    && sessionRunnerRuntimeStatus.sessionId === sessionId
-                    && sessionRunnerRuntimeStatus.machineId === restartMachineId
-                    ? sessionRunnerRuntimeStatus
-                    : null;
-                const runtimeStatus = cachedRuntimeStatus
-                    ?? (
-                        restartMachineId
-                            ? await getSessionRunnerRuntimeStatusSnapshotResult({
-                                sessionId,
-                                machineId: restartMachineId,
-                                serverId: sessionRouteServerId,
-                                signal: sessionViewCaller.signal,
-                            })
-                            : null
-                    );
-                if (sessionViewCaller.signal.aborted) return false;
-                if (runtimeStatus && 'ok' in runtimeStatus) {
-                    alertComposerRunnerRestartFailure(runtimeStatus);
-                    return false;
-                }
-                if (!runtimeStatus) {
+                if (!restartMachineId) {
                     if (effectiveModelTransitionActionRequired) {
-                        Modal.alert(t('common.error'), t('common.requestFailed'));
+                        alertComposerRuntimeStatusUnavailable();
                     } else {
                         openSessionModelPicker();
                     }
@@ -5613,23 +5595,28 @@ export function useSessionComposerController({
                 const exactBindingChange = providerBindingStatus.status?.status === 'changed'
                     ? providerBindingStatus.status
                     : null;
-                const result = await restartSessionRunnerForProviderBindingChange({
-                    runtimeState: SessionRunnerRuntimeStateV1Schema.parse(runtimeStatus.state),
-                    runnerProcessIdentity: runtimeStatus.runnerProcessIdentity,
-                    serverId: sessionRouteServerId,
-                    signal: sessionViewCaller.signal,
+                const actionResult = await actionExecutor.execute('session.runtime.refresh', {
+                    sessionId, machineId: restartMachineId, mode: 'force_current_cli',
                     ...(exactBindingChange && providerLaunchBinding ? {
-                        launchBinding: providerLaunchBinding,
-                        nextBindingSecurityFingerprint: exactBindingChange.nextBindingSecurityFingerprint,
+                        providerBindingSecurityChangeConfirmationV1: {
+                            v: 1, sessionId, connectionId: providerLaunchBinding.connectionId,
+                            previousBindingSecurityFingerprint: providerLaunchBinding.bindingSecurityFingerprint,
+                            nextBindingSecurityFingerprint: exactBindingChange.nextBindingSecurityFingerprint,
+                        },
                     } : {}),
-                });
+                }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
+                    signal: sessionViewCaller.signal });
                 if (sessionViewCaller.signal.aborted) return false;
-                if (!result) return false;
+                if (!actionResult.ok) {
+                    if (actionResult.errorCode !== 'cancelled') alertComposerActionResultFailure(actionResult);
+                    return false;
+                }
+                const result = RestartSessionRunnerResultV1Schema.parse(actionResult.result);
                 if (result.status === 'restarted') {
                     setModelTransitionActionRequired(null);
                     return true;
                 }
-                Modal.alert(t('common.error'), t('common.requestFailed'));
+                alertComposerRunnerRestartFailure(result);
                 return false;
             } catch (error) {
                 if (sessionViewCaller.signal.aborted) return false;

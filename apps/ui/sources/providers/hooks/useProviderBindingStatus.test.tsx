@@ -138,6 +138,30 @@ describe('useProviderBindingStatus', () => {
         expect(describeProviderBindingStatus).toHaveBeenCalledTimes(2);
     });
 
+    it('rechecks a current binding once per pushed binding refusal and retains current until the read settles', async () => {
+        let settle!: () => void;
+        const changedRead = new Promise<unknown>(resolve => {
+            settle = () => resolve({ status: 'changed', nextBindingSecurityFingerprint: 'binding-security:v1:next' });
+        });
+        describeProviderBindingStatus.mockResolvedValueOnce({ status: 'current' }).mockReturnValueOnce(changedRead);
+        const rendered = await renderHook(({ bindingRefusalObservedAt }: { bindingRefusalObservedAt: number | null }) =>
+            useProviderBindingStatus({ enabled: true, machineId: 'machine-a', serverId,
+                selection, launchBinding, bindingRefusalObservedAt }),
+        { initialProps: { bindingRefusalObservedAt: null as number | null } });
+        expect(rendered.getCurrent().status).toEqual({ status: 'current' });
+        const initialReads = describeProviderBindingStatus.mock.calls.length;
+        await rendered.rerender({ bindingRefusalObservedAt: 100 });
+        expect(rendered.getCurrent()).toMatchObject({ status: { status: 'current' }, loading: true });
+        expect(describeProviderBindingStatus.mock.calls.length - initialReads).toBe(1);
+        await rendered.rerender({ bindingRefusalObservedAt: 100 });
+        expect(describeProviderBindingStatus.mock.calls.length - initialReads).toBe(1);
+        await act(async () => { settle(); });
+        expect(rendered.getCurrent()).toMatchObject({ loading: false,
+            status: { status: 'changed', nextBindingSecurityFingerprint: 'binding-security:v1:next' } });
+        await rendered.rerender({ bindingRefusalObservedAt: 100 });
+        expect(describeProviderBindingStatus.mock.calls.length - initialReads).toBe(1);
+    });
+
     it('clears a successful binding status immediately when its machine scope changes', async () => {
         let resolveB!: (value: unknown) => void;
         describeProviderBindingStatus

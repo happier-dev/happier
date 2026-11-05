@@ -98,6 +98,9 @@ const launchBinding = {
     displaySnapshot: { providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named', connectionDisplayNameMode: 'custom' },
 } as const;
 const replacedState = { ...runtimeState, versionState: 'current', runner: { ...runtimeState.runner, pid: 456 } } as const;
+const bindingConfirmation = { v: 1, sessionId: 's1', connectionId: launchBinding.connectionId,
+    previousBindingSecurityFingerprint: launchBinding.bindingSecurityFingerprint,
+    nextBindingSecurityFingerprint: 'binding-security:v1:b' } as const;
 function statusResponse(state: SessionRunnerRuntimeStateV1 = replacedState) {
     return { v: 2, state, runnerProcessIdentity: { ...processIdentity, pid: state.runner.pid } };
 }
@@ -105,10 +108,32 @@ function statusResponse(state: SessionRunnerRuntimeStateV1 = replacedState) {
 const restartCases = [
     ['stale', () => ops.restartSessionRunnerOnCurrentRuntime({ runtimeState, serverId: home.id }), RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART],
     ['provider binding', () => ops.restartSessionRunnerForProviderBindingChange({ runtimeState, serverId: home.id,
-        runnerProcessIdentity: processIdentity, launchBinding, nextBindingSecurityFingerprint: 'binding-security:v1:b' }), RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2],
+        runnerProcessIdentity: processIdentity, providerBindingSecurityChangeConfirmationV1: bindingConfirmation }), RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2],
 ] as const;
 
 describe('session runner restart op', () => {
+    it.each(['binding', 'same-session-model'])('executes the reviewed binding restart through the public runtime Action (%s)', async kind => {
+        const confirmation = { v: 1, sessionId: 's1', connectionId: launchBinding.connectionId,
+            previousBindingSecurityFingerprint: launchBinding.bindingSecurityFingerprint,
+            nextBindingSecurityFingerprint: 'binding-security:v1:b' };
+        response = method => method === RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET
+            ? statusResponse(runtimeState) : { ok: true, status: 'restarted', sessionId: 's1' };
+        const { createDefaultActionExecutor } = await import('./actions/defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('session.runtime.refresh', {
+            sessionId: 's1', machineId: 'm1', serverId: home.id, mode: 'force_current_cli',
+            ...(kind === 'binding' ? { providerBindingSecurityChangeConfirmationV1: confirmation } : {}),
+        }, { surface: 'ui', authority: 'present_user', serverId: home.id, actionCaller: { kind: 'host' } });
+        expect(result).toEqual({ ok: true, result: { ok: true, status: 'restarted', sessionId: 's1' } });
+        expect(decodedRequests).toEqual([
+            { method: RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET, payload: { sessionId: 's1' } },
+            { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, payload: {
+                v: 2, sessionId: 's1', mode: 'force_current_cli', reason: 'provider_binding_change_recovery',
+                expectedRunnerPid: 123, expectedProcessCommandHash: 'hash-old',
+                expectedRunnerEntrypointIdentity: 'runner-runtime-old', expectedRunnerProcessIdentity: processIdentity,
+                ...(kind === 'binding' ? { providerBindingSecurityChangeConfirmationV1: confirmation } : {}),
+            } },
+        ]);
+    });
     it.each([
         ['no runner yet', () => ({ v: 2, state: { ...runtimeState, machineId: null, runner: { ...runtimeState.runner, pid: null } }, runnerProcessIdentity: null }), 'runner_not_active', undefined],
         ['wrong machine', () => statusResponse({ ...runtimeState, machineId: 'other-machine' }), 'partial_failure', 'invalid_response'],
@@ -371,8 +396,7 @@ describe('session runner restart op', () => {
             runtimeState: replacedState,
             runnerProcessIdentity: processIdentity,
             serverId: home.id,
-            launchBinding,
-            nextBindingSecurityFingerprint: 'binding-security:v1:b',
+            providerBindingSecurityChangeConfirmationV1: bindingConfirmation,
         })).resolves.toEqual({ ok: false, status: 'runner_identity_changed', sessionId: 's1' });
         expect(boundary.requests).toEqual([]);
         expect(Modal.confirm).not.toHaveBeenCalled();

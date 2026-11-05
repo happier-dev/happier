@@ -114,7 +114,8 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     const binding = input.providerBinding ?? null;
     const sessionNeedsPersonNow = input.sessionStatusState === 'permission_required'
         || input.sessionStatusState === 'action_required';
-    if (binding && !restartActive && !input.sessionStatusResuming && input.sessionUnservable !== true && !sessionNeedsPersonNow) {
+    const sessionFailed = input.sessionStatusState === 'failed';
+    if (binding && !restartActive && !input.sessionStatusResuming && input.sessionUnservable !== true && !sessionNeedsPersonNow && !sessionFailed) {
         return {
             text: binding.text,
             ...(binding.detail ? { detail: binding.detail } : {}),
@@ -157,7 +158,9 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         // and resuming speaks alone: the resume is what delivers the queue.
         text: queueCountText && !restartActive && !input.sessionStatusResuming ? `${statusText} · ${queueCountText}` : statusText,
         ...(showsInactive && input.inactiveDetail ? { detail: input.inactiveDetail } : {}),
-        ...(!restartActive && !input.sessionStatusResuming && input.sessionUnservable !== true && sessionNeedsPersonNow && binding?.action
+        // A failed turn keeps its news, with the binding's specific recovery beside it. Generic
+        // help eligibility for `failed` must not hide that recovery; offline states still win.
+        ...(!restartActive && !input.sessionStatusResuming && (sessionFailed || (input.sessionUnservable !== true && sessionNeedsPersonNow)) && binding?.action
             ? { providerBindingAction: binding.action, detail: binding.detail ?? binding.text } : {}),
         ...(!restartActive && !input.sessionStatusResuming && !sessionNeedsPersonNow && input.inactiveResumeAvailable
             ? { inactiveAction: 'resume' as const } : {}),

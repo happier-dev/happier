@@ -15,12 +15,21 @@ import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAc
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import { readUiOwnedSessionForAction } from './botTemplateActionDeps';
 
 export function createUiProviderActionExecuteV1(account: LazyActionAccountContext,
   options?: Readonly<{ onRpcDispatched?: () => void }>,
 ): NonNullable<ActionExecutorDeps['providerActionExecute']> {
   return createProviderActionExecuteV1({
     assertCurrent: context => { context.signal?.throwIfAborted(); account.assertCurrent(); },
+    readSessionMetadata: async ({ sessionId }, context) => {
+      try {
+        return (await readUiOwnedSessionForAction(account, { serverId: account.serverId, sessionId }, context)).metadata;
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'session_target_unavailable') return null;
+        throw error;
+      }
+    },
     rpc: ({ machineId, method, request, context, operationTimeoutMs }) => withActionAccountRequestSignal(account, context.signal, async signal => {
       // Personal discovery on a granted worker needs the requester's Account
       // custody. Own workers and Team compatibility retain their raw RPC path.

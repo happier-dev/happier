@@ -542,9 +542,17 @@ request-auth source cutover and other security retirement paths retain their
 interrupting behavior. Refresh and respawn diagnostics retain the caller's reason
 rather than labeling every planned replacement as a Connected Account switch.
 The development `session.runtime.refresh` Action reads the hosting Machine's
-current runner status and uses the banner's guarded `if_stale` request. Both
-surfaces wait under the caller lifetime while the daemon defers replacement;
-they do not impose a shorter client completion deadline.
+current runner status and defaults to the banner's guarded `if_stale` request.
+Its explicit `mode: 'force_current_cli'` uses the existing V2 exact-process
+restart for same-Session model changes and reviewed Provider binding recovery.
+The UI dispatches that same Action with the exact previous/next binding security
+confirmation when needed; spawn-time continuity remains its authority. The UI
+retains background-work confirmation, while a headless caller receives the
+daemon's typed busy refusal rather than silently consenting. All callers wait
+under their lifetime while the daemon defers replacement; they do not impose a
+shorter client completion deadline. The extended closed Action input requires
+matching 0.3 development Action hosts; existing stale-refresh inputs and V1/V2
+daemon requests are unchanged.
 Status reads preserve typed transport failures and reject mismatched Session or
 Machine identities as `partial_failure` with `invalid_response`. Only a missing
 daemon RPC method (or the daemon's explicit unsupported-version response) produces

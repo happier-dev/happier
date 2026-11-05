@@ -210,6 +210,22 @@ describe('resolveSessionViewConnectionStatus', () => {
             });
         });
 
+        it('keeps failed-turn news and queued input visible alongside specific Provider recovery', () => {
+            const status = resolveSessionViewConnectionStatus({
+                ...baseInput,
+                sessionStatusState: 'failed',
+                sessionStatusText: 'Error',
+                sessionUnservable: true,
+                providerBinding,
+                pendingQueue: { line: null, countText: '1 queued' },
+            });
+            expect(status).toMatchObject({
+                text: 'Error · 1 queued',
+                providerBindingAction: 'restart',
+                detail: providerBinding.detail,
+            });
+        });
+
         it.each(['permission_required', 'action_required'] as const)(
             'keeps a request visible alongside binding recovery (%s)',
             (state) => {

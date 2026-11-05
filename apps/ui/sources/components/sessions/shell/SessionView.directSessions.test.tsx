@@ -40,7 +40,7 @@ import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { TeamCredentialResourceCatalogEntryV1Schema, type TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS, type DaemonProviderBindingStatusResponseV1 } from '@happier-dev/protocol/rpc';
 import { ExecutionRunListResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { PENDING_INPUT_PROTOCOL_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import type { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/connectedServiceQuotaRecoveryCredits';
@@ -50,7 +50,7 @@ import type { sendVoiceSessionComposerText } from '@/voice/binding/sendVoiceSess
 import type { Socket } from 'socket.io-client';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture,
+import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture,
   createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
@@ -118,6 +118,8 @@ let connectedAccountProjection: ReturnType<typeof DaemonContributionRegistryProj
 let pendingProjectionReceipt: ReturnType<typeof createDeferred<ReturnType<typeof DaemonContributionRegistryProjectionDescribeResponseSchema.parse>>> | null = null;
 let modelTransitionReply: ((request: Extract<SessionModelTransitionRequestV1, { selection: unknown }>) =>
   SessionModelTransitionResultV1 | Promise<SessionModelTransitionResultV1>) | undefined;
+
+let providerBindingStatusReply: DaemonProviderBindingStatusResponseV1 | undefined;
 
 // These scenarios start from the runtime's published restart-required receipt.
 function requireModelRestartAtSocketBoundary() {
@@ -585,7 +587,8 @@ vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
   sessionUsageLimitConsumeResetCredit: (sessionId: string, opts?: unknown) =>
     sessionUsageLimitConsumeResetCreditSpy(sessionId, opts),
 }));
-vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
+vi.mock('@/sync/ops/sessionRunnerRestart', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/sessionRunnerRestart')>(),
   getSessionRunnerRuntimeStatus: (request: unknown) => getSessionRunnerRuntimeStatusSpy(request),
   getSessionRunnerRuntimeStatusSnapshot: async (request: unknown) => {
     const result = await getSessionRunnerRuntimeStatusSpy(request);
@@ -760,6 +763,16 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
       if (confirmedRestartUnsupported && method === RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND) {
         return { ok: false, error: 'RPC method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
       }
+      if (method === RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET || method === RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET) {
+        // The Action reads the exact runner through the real status owner and codec.
+        const { socketRpcCodec } = await import('@happier-dev/sync-client');
+        const request = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, rpc.params, rpc.method);
+        const status = await getSessionRunnerRuntimeStatusSpy({ machineId: rpc.method.slice(0, separator) });
+        const snapshot = status && typeof status === 'object' && 'state' in status
+          ? status : { state: status ?? storageState.sessions.s1.metadata[SESSION_RUNNER_RUNTIME_METADATA_KEY], runnerProcessIdentity: null };
+        const response = method === RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET ? { v: 2, ...snapshot } : snapshot.state;
+        return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, response, request.callId) };
+      }
       if (usageLimitBoundaryStatus && (method === SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW
         || method === RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW)) {
         result = usageLimitBoundaryStatus === 'cancelled' || usageLimitBoundaryStatus === 'not_found'
@@ -797,6 +810,8 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
         result = pendingProjectionReceipt ? await pendingProjectionReceipt.promise : connectedAccountProjection ?? DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
           protocolVersion: 1, projection: readyAgentInventory.projection,
         });
+      } else if (method === 'daemon.providers.binding.status') {
+        result = providerBindingStatusReply ?? { status: 'current' };
       } else if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) {
         const request = rpc.params as Readonly<{ agentTargetKey: string }>;
         result = providerModelProjectionState.value.error
@@ -2188,6 +2203,7 @@ describe('SessionView (direct sessions)', () => {
     modalConfirmSpy.mockResolvedValue(true);
     actionExecuteSpy.mockReset();
     modelTransitionReply = undefined;
+    providerBindingStatusReply = undefined;
     syncSubmitMessageSpy.mockReset();
     syncSubmitMessageSpy.mockImplementation(async (...args: unknown[]) => {
       const payload = args[0] as Readonly<{ localId: string }>;
@@ -5526,6 +5542,117 @@ describe('SessionView (direct sessions)', () => {
       runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
       serverId: 'server-route-1',
     });
+  });
+
+  function installBlockedProviderBindingFixture(latestTurnStatus: 'failed' | 'in_progress') {
+    featureEnabledState.providers = true;
+    const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+    const connectionId = ProviderConnectionIdSchema.parse('pc_launch');
+    storageState.sessions.s1 = { ...storageState.sessions.s1,
+      access: createSessionAccessFixture('owner'),
+      latestTurnStatus, latestTurnStatusObservedAt: Date.now(), pendingCount: 1, pendingBlockedCount: 1,
+      runtimeActivityState: 'idle', runtimeActivityActiveCount: 0,
+      runtimeActivityObservedAt: Date.now(), runtimeActivityRevision: 1,
+      lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'provider_binding_changed',
+        source: 'agent_session_error', occurredAt: Date.now(), agentId: 'codex' },
+      metadata: { ...metadata,
+        modelSelectionIntentV1: { v: 1, updatedAt: 11, selection: {
+          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'provider-model',
+        } },
+        providerBindingV1: {
+          v: 1, connectionId, contributionKey: null, connectionRevision: 1,
+          protocol: 'openai-responses', materialization: 'engineConfig',
+          compatibilityFingerprint: 'compatibility:v1:launch', bindingSecurityFingerprint: 'binding-security:v1:launch',
+          displaySnapshot: { providerName: 'Gateway', connectionName: 'Launch', connectionRole: 'named',
+            connectionDisplayNameMode: 'custom' },
+        },
+      },
+    };
+    // Home-owned unread failure evidence: the default shell fixture has no committed failure anchor.
+    storageState.sessions.s1.viewer = createSessionViewerFixture({
+      latestFailureSeq: 1, readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1 },
+      attention: { needsAttention: true, reasons: latestTurnStatus === 'failed' ? ['failed', 'pending_blocked'] : ['pending_blocked'],
+        primary: latestTurnStatus === 'failed' ? 'failed' : 'pending_blocked', presentation: 'full' },
+    });
+    storageState.sessionPending.s1 = { messages: [{
+      id: 'blocked-input', localId: 'blocked-input', text: 'Blocked input', createdAt: 1, updatedAt: 2,
+      source: 'server_pending', pendingDeliveryStatus: 'blocked',
+      pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance', rawRecord: {},
+    }], discarded: [] };
+    return connectionId;
+  }
+
+  it.each(['failed', 'in_progress'] as const)('offers Provider binding recovery after blocked input only when the turn is settled (%s)', async latestTurnStatus => {
+    const connectionId = installBlockedProviderBindingFixture(latestTurnStatus);
+    providerBindingStatusReply = { status: 'changed', nextBindingSecurityFingerprint: 'binding-security:v1:next' };
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await waitForHomeGovernance(() => expect(externalRpcRequests.some(request => request.method === 'daemon.providers.binding.status')).toBe(true));
+    await settleDirectSessionView();
+    if (latestTurnStatus === 'in_progress') {
+      expect(findAgentInput(screen).props.connectionStatus?.action?.label)
+        .not.toBe('settingsProviders.errors.actions.reviewAndRestart');
+      return;
+    }
+    const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
+    expect(getSessionStatus(storage.getState().sessions.s1).state).toBe('failed');
+    expect(findAgentInput(screen).props.connectionStatus?.action?.label)
+      .toBe('settingsProviders.errors.actions.reviewAndRestart');
+    const { t } = await import('@/text');
+    expect(findAgentInput(screen).props.connectionStatus.text)
+      .toBe(`${getSessionStatus(storage.getState().sessions.s1).statusText} · ${t('session.pendingMessages.indicator', { count: 1 })}`);
+    expect(storage.getState().sessionPending.s1.messages).toHaveLength(1);
+    await act(async () => { await findAgentInput(screen).props.connectionStatus.action.onPress(); });
+    expect(actionExecuteSpy).toHaveBeenCalledWith('session.runtime.refresh', expect.objectContaining({
+      sessionId: 's1', machineId: 'machine-1', mode: 'force_current_cli',
+      providerBindingSecurityChangeConfirmationV1: {
+        v: 1, sessionId: 's1', connectionId,
+        previousBindingSecurityFingerprint: 'binding-security:v1:launch',
+        nextBindingSecurityFingerprint: 'binding-security:v1:next',
+      },
+    }), expect.objectContaining({ surface: 'ui' }));
+  });
+
+  it('rechecks a mounted current Provider binding after a pushed binding refusal without a catalog change', async () => {
+    const connectionId = installBlockedProviderBindingFixture('failed');
+    const failedSession = createSessionFixture(storageState.sessions.s1);
+    const blockedPending = storageState.sessionPending.s1;
+    storageState.sessions.s1 = { ...failedSession, latestTurnStatus: 'completed', lastRuntimeIssue: null,
+      pendingCount: 0, pendingBlockedCount: 0, viewer: createSessionViewerFixture() };
+    storageState.sessionPending.s1 = { messages: [], discarded: [] };
+    providerBindingStatusReply = { status: 'current' };
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const bindingReads = () => externalRpcRequests.filter(request => request.method === 'daemon.providers.binding.status').length;
+    await waitForHomeGovernance(() => expect(bindingReads()).toBeGreaterThan(0));
+    await settleDirectSessionView();
+    const initialBindingReads = bindingReads();
+    expect(findAgentInput(screen).props.connectionStatus?.action?.label)
+      .not.toBe('settingsProviders.errors.actions.reviewAndRestart');
+
+    providerBindingStatusReply = { status: 'changed', nextBindingSecurityFingerprint: 'binding-security:v1:next' };
+    // Only the Session producer pushes new facts. No settings/catalog publication invalidates the read.
+    await act(async () => {
+      storage.getState().applySessions([{ ...storage.getState().sessions.s1,
+        latestTurnStatus: failedSession.latestTurnStatus, latestTurnStatusObservedAt: Date.now(),
+        lastRuntimeIssue: failedSession.lastRuntimeIssue, viewer: failedSession.viewer,
+        pendingCount: 1, pendingBlockedCount: 1,
+      }]);
+      storage.setState({ sessionPending: { ...storage.getState().sessionPending, s1: blockedPending } });
+    });
+    await settleDirectSessionView();
+    const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
+    expect(getSessionStatus(storage.getState().sessions.s1).state).toBe('failed');
+    expect(findAgentInput(screen).props.connectionStatus?.action?.label)
+      .toBe('settingsProviders.errors.actions.reviewAndRestart');
+    expect(bindingReads() - initialBindingReads).toBe(1);
+    await act(async () => { await findAgentInput(screen).props.connectionStatus.action.onPress(); });
+    expect(actionExecuteSpy).toHaveBeenCalledWith('session.runtime.refresh', expect.objectContaining({
+      sessionId: 's1', machineId: 'machine-1', mode: 'force_current_cli',
+      providerBindingSecurityChangeConfirmationV1: {
+        v: 1, sessionId: 's1', connectionId,
+        previousBindingSecurityFingerprint: 'binding-security:v1:launch',
+        nextBindingSecurityFingerprint: 'binding-security:v1:next',
+      },
+    }), expect.objectContaining({ surface: 'ui' }));
   });
 
   it('never reuses a cached Provider restart target after the control machine changes', async () => {

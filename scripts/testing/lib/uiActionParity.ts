@@ -11,7 +11,7 @@ type Setting = Readonly<{ anchor: string; surfaces?: Surfaces; storage?: Readonl
 type Site = Readonly<{ filePath: string; line: number }>;
 export type UiParityFinding = Site & Readonly<{
   code: 'unregistered_action' | 'agent_unavailable' | 'mcp_unavailable' | 'cli_command_missing'
-    | 'dynamic_action' | 'setting_unmapped' | 'dynamic_setting';
+    | 'dynamic_action' | 'setting_unmapped' | 'dynamic_setting' | 'direct_session_runner_restart';
   operation: string;
 }>;
 type Discovery = Readonly<{ agentIds?: ReadonlySet<string>; mcpIds?: ReadonlySet<string>;
@@ -634,6 +634,18 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       ts.forEachChild(node, collect);
     }
     collect(source);
+    const runnerRestartWriters = new Map<string, string>();
+    for (const statement of source.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) for (const binding of bindings.elements) {
+        const imported = binding.propertyName?.text ?? binding.name.text;
+        if (statement.moduleSpecifier.text === '@/sync/ops/sessionRunnerRestart'
+          && /^(restartSessionRunnerForProviderBindingChange|restartSessionRunnerOnCurrentRuntime)$/.test(imported)) {
+          runnerRestartWriters.set(binding.name.text, imported);
+        }
+      }
+    }
     const checked = new Set<number>();
     const checkedSettings = new Set<ts.Expression>();
     function delta(expression: ts.Expression, scope: string, seen = new Set<ts.Node>(), previous = new Set<Binding>()): void {
@@ -714,6 +726,9 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       }
       if (ts.isCallExpression(node)) {
         const called = name(node.expression);
+        const effectOwner = file.filePath.startsWith('apps/ui/sources/sync/ops/actions/');
+        const directRunnerRestart = !effectOwner && ts.isIdentifier(node.expression)
+          && runnerRestartWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
         const adapterArgument = ts.isIdentifier(node.expression) && !lookup(node.expression, node.expression.text)
           ? actionArgument(file.filePath, node.expression.text) : undefined;
         const first = node.arguments[adapterArgument ?? (/^executeOn(Machine|Session|Source)$/.test(called) ? 1 : 0)];
@@ -722,7 +737,10 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             ? lookup(node.expression, node.expression.expression.text) : undefined;
         const writer = callable?.writer ?? (ts.isPropertyAccessExpression(node.expression)
           && /^(applySettings|applyLocalSettings)$/.test(called) ? called === 'applyLocalSettings' ? 'local' : 'account' : undefined);
-        if (first && /^(useSettingMutable|useLocalSettingMutable)$/.test(called)) {
+        if (directRunnerRestart) {
+          findings.push({ ...location(node), code: 'direct_session_runner_restart',
+            operation: runnerRestartWriters.get((node.expression as ts.Identifier).text)! });
+        } else if (first && /^(useSettingMutable|useLocalSettingMutable)$/.test(called)) {
           // The tuple is also used as a reader. Its setter's live references above own mutation coverage.
         } else if (first && writer && (ts.isIdentifier(node.expression) || /^(setSetting|applySettings|applyLocalSettings)$/.test(called))) {
           const operand = unwrap(first);

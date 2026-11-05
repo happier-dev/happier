@@ -161,7 +161,9 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       if (change === 'missing runner birth replaced') childBirth++;
       const result = await ops.restartSessionRunnerForProviderBindingChange({ runtimeState: snapshot.state,
         runnerProcessIdentity: snapshot.runnerProcessIdentity, serverId: home.id,
-        launchBinding, nextBindingSecurityFingerprint: 'binding-security:v1:beta' });
+        providerBindingSecurityChangeConfirmationV1: { v: 1, sessionId: 's1', connectionId: launchBinding.connectionId,
+          previousBindingSecurityFingerprint: launchBinding.bindingSecurityFingerprint,
+          nextBindingSecurityFingerprint: 'binding-security:v1:beta' } });
       const succeeds = change === 'stable' || change === 'missing launcher birth' || change === 'missing runner birth';
       expect(result).toMatchObject(succeeds ? { ok: true, status: 'restarted' }
         : { ok: false, status: 'runner_identity_changed' });

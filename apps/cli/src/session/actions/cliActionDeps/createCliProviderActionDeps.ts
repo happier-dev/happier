@@ -11,6 +11,9 @@ import { createCliAccountProviderActionExecuteV1 } from '@/providers/connections
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 /** Provider Actions share admitted Account custody; only machine effects use exact-Machine RPC. */
 export function createCliProviderActionExecuteV1(params: Readonly<{
@@ -33,6 +36,13 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
       context.signal?.throwIfAborted();
       const active = params.operationContext ? params.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
       if (params.operationContext && !active || active && active.scopeKey !== scopeKey) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+    },
+    readSessionMetadata: async ({ sessionId }, context) => {
+      const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials,
+        idOrPrefix: sessionId, exact: true, signal: context.signal });
+      if (!target.ok || readSessionAccessProjectionRoleV1(target.rawSession) !== 'owner') return null;
+      return tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
+        accountEncryptionMode: target.accountEncryptionCurrentness.mode, rawSession: target.rawSession });
     },
     rpc: async ({ machineId, method, request, context, operationTimeoutMs }) => {
       if (params.operationContext && params.projectModelsForAccount

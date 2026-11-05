@@ -11,6 +11,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture, createSessionAccessFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -20,6 +21,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 // Only Socket transport is substituted; Action admission and scoped Machine routing stay real.
 const providerHarness = createProviderSettingsHarness({ machines: [] });
@@ -56,6 +58,41 @@ async function executeSourceVisibility(serverId: string, accountId: string, show
 }
 
 describe('Provider Account source visibility Action', () => {
+    it.each(['owner', 'view'] as const)('reads the %s Session binding through authenticated UI Action dispatch', async level => {
+        const machine = createMachineFixture({ id: 'session-machine', activeAt: Date.now() });
+        const { serverId, accountId } = await account.restore({ catalog: catalogFixture(), machines: [machine], currentAccount: true });
+        const launchBinding = { v: 1, connectionId: 'pc_a', contributionKey: null, connectionRevision: 1,
+            protocol: 'openai-responses', materialization: 'engineConfig', compatibilityFingerprint: 'compatible',
+            bindingSecurityFingerprint: 'old-ui-binding', displaySnapshot: { providerName: 'Provider', connectionName: 'Work',
+                connectionRole: 'named', connectionDisplayNameMode: 'custom' } } as const;
+        const selection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 5,
+            ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_a', modelId: 'model-a' } }).ref;
+        const baseSession = createSessionFixture();
+        if (!baseSession.metadata) throw new Error('Expected readable Session fixture metadata');
+        const session = createSessionFixture({ id: 'binding-session', ownerAccountId: level === 'owner' ? accountId : 'another-owner',
+            access: createSessionAccessFixture(level), metadata: { ...baseSession.metadata,
+                machineId: machine.id, flavor: 'codex', providerBindingV1: launchBinding,
+                modelSelectionIntentV1: { v: 1, updatedAt: 5, selection } } });
+        account.home.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+        const paired: unknown[] = [];
+        providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, request => {
+            paired.push(request.payload); return { status: 'changed', nextBindingSecurityFingerprint: 'new-ui-binding' };
+        });
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const result = await createDefaultActionExecutor().execute('providers.binding.status', {
+            machineId: machine.id, sessionId: session.id,
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId });
+        if (level === 'owner') {
+            expect(paired).toEqual([{ machineId: machine.id, agentTargetKey: selection.agentTargetKey,
+                selection: { v: 1, updatedAt: 5, ref: selection }, launchBinding }]);
+            expect(result).toEqual({ ok: true, result: { status: 'changed', nextBindingSecurityFingerprint: 'new-ui-binding',
+                providerBindingSecurityChangeConfirmationV1: { v: 1, sessionId: session.id, connectionId: 'pc_a',
+                    previousBindingSecurityFingerprint: 'old-ui-binding', nextBindingSecurityFingerprint: 'new-ui-binding' } } });
+        } else {
+            expect(result).toEqual({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' });
+            expect(paired).toEqual([]);
+        }
+    });
     it('carries requester Account custody for foreign-worker picker, current selection, source browse and refresh without raw catalog reads', async () => {
         const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const machine = createMachineFixture({ id: 'foreign-worker', activeAt: Date.now(),

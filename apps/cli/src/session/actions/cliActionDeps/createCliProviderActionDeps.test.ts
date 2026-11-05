@@ -22,11 +22,60 @@ import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountS
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createCliProviderActionExecuteV1 } from './createCliProviderActionDeps';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createCurrentSessionProjectionRecordFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 describe('Provider default preference Action at its Account Settings boundary', () => {
   const originalRequirement = configuration.clientEncryptionRequirement;
   const originalActiveServerDir = configuration.activeServerDir;
   let directory: string | undefined;
+  it.each(['owner', 'missing'] as const)('reads the %s Session binding through authenticated MCP Action dispatch', async scenario => {
+    const credentials = { token: 'binding-reader-token', encryption: null };
+    const launchBinding = { v: 1, connectionId: 'pc_work', contributionKey: null, connectionRevision: 3,
+      protocol: 'openai-responses', materialization: 'engineConfig', compatibilityFingerprint: 'compatible',
+      bindingSecurityFingerprint: 'old-cli-binding', displaySnapshot: { providerName: 'Provider', connectionName: 'Work',
+        connectionRole: 'named', connectionDisplayNameMode: 'custom' } } as const;
+    const selection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 5,
+      ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'model-a' } }).ref;
+    const metadata = { ...createTestMetadata({ machineId: 'machine-a' }), providerBindingV1: launchBinding,
+      modelSelectionIntentV1: { v: 1, updatedAt: 5, selection } };
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    if (!owner.ok) throw new Error('Expected valid owner metadata fixture');
+    const session = createCurrentSessionProjectionRecordFixture({ id: 'binding-session', encryptionMode: 'plain',
+      metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })), metadataLayoutVersion: 1, share: null,
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata),
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+    vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+      expect(options?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === '/v2/sessions/binding-session') return scenario === 'missing'
+        ? { status: 404, data: { error: 'Session not found' } } : { status: 200, data: V2SessionByIdResponseSchema.parse({ session }) };
+      throw new Error(`Unexpected binding Action HTTP read: ${path}`);
+    });
+    const paired: unknown[] = [];
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      providerActionExecute: createCliProviderActionExecuteV1({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+        callMachineAction: async input => { paired.push(input.request);
+          return { status: 'changed', nextBindingSecurityFingerprint: 'new-cli-binding' }; } }),
+    });
+    const result = await executor.execute('providers.binding.status', { machineId: 'machine-a', sessionId: session.id },
+      { surface: 'mcp', authority: 'account_automation', serverId: 'home' });
+    if (scenario === 'owner') {
+      expect(result).toEqual({ ok: true, result: { status: 'changed', nextBindingSecurityFingerprint: 'new-cli-binding',
+        providerBindingSecurityChangeConfirmationV1: { v: 1, sessionId: session.id, connectionId: 'pc_work',
+          previousBindingSecurityFingerprint: 'old-cli-binding', nextBindingSecurityFingerprint: 'new-cli-binding' } } });
+      expect(paired).toEqual([{ machineId: 'machine-a', agentTargetKey: selection.agentTargetKey,
+        selection: { v: 1, updatedAt: 5, ref: selection }, launchBinding }]);
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
+      expect(paired).toEqual([]);
+    }
+  });
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
