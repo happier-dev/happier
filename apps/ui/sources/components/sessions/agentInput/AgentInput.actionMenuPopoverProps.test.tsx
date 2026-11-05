@@ -408,6 +408,7 @@ describe('AgentInput (action menu popover props)', () => {
         await screen.pressByTestIdAsync('agent-input-action-menu-button');
         expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(true);
         await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(false);
         await screen.pressByTestIdAsync('agent-input-controls-toggle');
         expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(false);
     });

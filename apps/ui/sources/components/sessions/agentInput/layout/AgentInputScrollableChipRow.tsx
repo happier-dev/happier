@@ -104,6 +104,22 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
             if (node && typeof node.scrollLeft === 'number') {
                 node.scrollLeft = initialScrollOffsetRef.current;
             }
+        });
+
+        return () => cancelAnimationFrameSafe(animationFrameId);
+    }, [getScrollNode]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+
+        const requestAnimationFrameSafe: (cb: () => void) => any =
+            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
+            ((cb: () => void) => setTimeout(cb, 0));
+        const cancelAnimationFrameSafe: (id: any) => void =
+            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
+            ((id: any) => clearTimeout(id));
+
+        const animationFrameId = requestAnimationFrameSafe(() => {
             seedScrollMeasurements();
             reportWebScroll();
         });
