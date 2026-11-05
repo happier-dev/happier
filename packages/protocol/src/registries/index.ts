@@ -19,8 +19,8 @@ export { DeploymentTemplateDataV1Schema } from '../plugins/contributions/deploym
 
 export { DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 
-export { DeploymentTemplateV1 } from '../plugins/contributions/deploymentTemplates.js';
+export type { DeploymentTemplateV1 } from '../plugins/contributions/deploymentTemplates.js';
 
-export { DeploymentTemplateDataV1 } from '../plugins/contributions/deploymentTemplates.js';
+export type { DeploymentTemplateDataV1 } from '../plugins/contributions/deploymentTemplates.js';
 
-export { DeploymentTemplateSecretProfileV1 } from '../plugins/contributions/deploymentTemplates.js';
+export type { DeploymentTemplateSecretProfileV1 } from '../plugins/contributions/deploymentTemplates.js';
