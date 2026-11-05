@@ -82,6 +82,9 @@ export type InstallableCatalogEntry = Readonly<{
   kind: InstallableKind;
   capabilityId: z.infer<typeof InstallableCapabilityIdSchema>;
   sourceKind: InstallableDependencyDescriptor['source']['kind'];
+  display: InstallableDependencyDescriptor['display'];
+  description: InstallableDependencyDescriptor['description'];
+  ui?: InstallableDependencyDescriptor['ui'];
   defaultPolicy: InstallableDefaultPolicy;
   experimental: boolean;
 }>;
@@ -94,6 +97,9 @@ export function toInstallableCatalogEntry(
     kind: descriptor.kind,
     capabilityId: descriptor.capabilityId,
     sourceKind: descriptor.source.kind,
+    display: descriptor.display,
+    description: descriptor.description,
+    ...(descriptor.ui ? { ui: descriptor.ui } : {}),
     defaultPolicy: descriptor.defaultPolicy,
     experimental: descriptor.stability.experimental,
   });

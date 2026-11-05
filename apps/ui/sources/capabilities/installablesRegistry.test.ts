@@ -1,9 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { INSTALLABLES_CATALOG, type PluginProjectionV2 } from '@happier-dev/protocol';
+import {
+    AZ_INSTALLABLE_DESCRIPTOR,
+    COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR,
+    COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR,
+    INSTALLABLES_CATALOG,
+    LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR,
+    projectInstallableContribution,
+} from '@happier-dev/protocol/installables';
+import { type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getInstallablesRegistryEntries } from './installablesRegistry';
 
 describe('getInstallablesRegistryEntries', () => {
+    it.each([
+        AZ_INSTALLABLE_DESCRIPTOR,
+        COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR,
+        COMPUTER_CUA_DRIVER_INSTALLABLE_DESCRIPTOR,
+        LOCAL_VOICE_RUNTIME_INSTALLABLE_DESCRIPTOR,
+    ])('retains descriptor-owned presentation for $key in the catalog fallback', (descriptor) => {
+        const entry = getInstallablesRegistryEntries().find((candidate) => candidate.key === descriptor.key);
+        expect(entry).toMatchObject({
+            title: descriptor.display.name,
+            subtitle: descriptor.display.subtitle ?? descriptor.description,
+            iconName: descriptor.ui?.iconName ?? 'terminal',
+            setupUrl: descriptor.ui?.setupUrl ?? null,
+        });
+    });
+
+    it('uses the descriptor purpose when a projected tool has no separate subtitle', () => {
+        const descriptor = COMPUTER_AGENT_DESKTOP_INSTALLABLE_DESCRIPTOR;
+        const entries = getInstallablesRegistryEntries({ projectedInstallables: [projectInstallableContribution({
+            owner: { provenance: 'built_in', ownerId: 'happier.core' },
+            descriptor,
+        })] });
+        expect(entries[0]?.subtitle).toBe(descriptor.description);
+    });
+
     it.each(['local-embeddings', 'local-voice-runtime', 'difftastic'] as const)('exposes %s for offline preinstallation without version polling', (key) => {
         const entry = getInstallablesRegistryEntries().find((candidate) => candidate.key === key);
         expect(entry).toBeDefined();

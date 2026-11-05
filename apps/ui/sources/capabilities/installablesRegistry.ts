@@ -142,7 +142,7 @@ function buildGenericInstallableUi(
     return {
         enabledWhen: () => true,
         title: projected.display.name,
-        subtitle: projected.display.subtitle ?? null,
+        subtitle: projected.display.subtitle ?? projected.description ?? null,
         iconName: projected.ui?.iconName ?? 'terminal',
         setupUrl: projected.ui?.setupUrl ?? null,
         groupTitleKey: 'machine.tools.installablesTitle',
@@ -178,22 +178,21 @@ function buildGenericInstallableUi(
 function readInstallableProjectionInputs(
     params: InstallablesRegistryProjectionInput | undefined,
 ): readonly InstallableProjectionEntry[] {
-    const catalogEntries = INSTALLABLES_CATALOG.map((entry) => ({
-        id: entry.key,
-        key: entry.key,
-        capabilityId: entry.capabilityId,
-        sourceKind: entry.sourceKind,
-        display: {
-            name: entry.key,
-        },
-        defaultPolicy: entry.defaultPolicy,
-        experimental: entry.experimental,
-    }));
     const projectedInstallables = params?.projectedInstallables ?? readPluginProjectionInstallables(params?.pluginProjection);
     if (projectedInstallables) {
         return projectedInstallables;
     }
-    return catalogEntries;
+    return INSTALLABLES_CATALOG.map((entry) => ({
+        id: entry.key,
+        key: entry.key,
+        capabilityId: entry.capabilityId,
+        sourceKind: entry.sourceKind,
+        display: entry.display,
+        description: entry.description,
+        ...(entry.ui ? { ui: entry.ui } : {}),
+        defaultPolicy: entry.defaultPolicy,
+        experimental: entry.experimental,
+    }));
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
