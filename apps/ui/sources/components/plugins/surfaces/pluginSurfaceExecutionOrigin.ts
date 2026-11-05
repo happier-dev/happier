@@ -76,7 +76,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     includeMachineCandidates?: boolean;
     contextualTarget?: PluginExecutionOriginContextualTarget | null;
 }>) {
-    const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
+    const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier(params.pluginId);
     // Selection is plugin-scoped, just like the shell's Administration
     // reporter. The open page narrows only the selected producer's supply,
     // never the candidates or defaults used to choose that producer.

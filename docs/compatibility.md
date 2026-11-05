@@ -5369,3 +5369,18 @@ configured automatic startup without signing in: an enabled system unit, or
 an enabled user unit with observed linger. An enabled user unit without
 linger reports false. Other enablement states remain unknown because a
 dependency could still start the unit; no dependency graph is inferred.
+
+## Triage exact PR status lookup (unreleased 0.3)
+
+The closed V1 Session-relation result and Triage entry Action input accept optional
+`sourceInstanceRowId`, the private configured-source storage address selected by
+the relation owner. The PR Resource passes it into each fresh status admission;
+the address grants no authority and the current row must still match the requested
+stable UUID, source and active lifecycle. A missing address produces the existing
+unavailable result rather than a whole-inventory fallback.
+
+The relation producer, shared schemas, PR Resource and status Action load together.
+Older strict readers reject the new field; new readers accept its absence without
+inventing an address. This is an in-place development change with no persisted
+format change, migration or protocol epoch. UUID-only administration keeps its
+existing lifecycle-index lookup.

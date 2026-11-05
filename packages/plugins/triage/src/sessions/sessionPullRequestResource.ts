@@ -119,11 +119,11 @@ function resolveDemand(binding: Binding, relations: TriageReadSourceSessionLinks
     if (link.sourceInstanceId === undefined) return { failure: withSourceSetupRecovery(unavailable({
         class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired',
     }), relations, link.entryRef.source.pluginId) };
-    if (link.sourceInstanceRevision === undefined || link.locator === undefined) return null;
+    if (link.sourceInstanceRevision === undefined || link.sourceInstanceRowId === undefined || link.locator === undefined) return null;
     const input: TriageReobserveEntryActionInputV1 = { v: 1, entryRef: link.entryRef,
-        sourceInstanceId: link.sourceInstanceId, lastKnownLocator: link.locator };
+        sourceInstanceId: link.sourceInstanceId, sourceInstanceRowId: link.sourceInstanceRowId, lastKnownLocator: link.locator };
     // Storage revisions include label edits; the observed authority lifetime owns retirement.
-    const key = JSON.stringify([link.sourceInstanceId, link.entryRef.source.pluginId,
+    const key = JSON.stringify([link.sourceInstanceId, link.sourceInstanceRowId, link.entryRef.source.pluginId,
         link.entryRef.source.localId, link.entryRef.kindId, link.entryRef.collisionScope, link.entryRef.entryId, link.locator.webUrl]);
     return { key, input };
 }

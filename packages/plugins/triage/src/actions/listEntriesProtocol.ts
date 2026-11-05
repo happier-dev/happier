@@ -19,6 +19,7 @@ import {
     TriageEntryRefV1Schema,
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceFailureV1Schema,
+    TriageListInvocationErrorV1Schema,
     TriageSourceInstanceIdV1Schema,
     TriageScanContinuationV1Schema,
     TriageSourceScanEvidenceV1Schema,
@@ -70,12 +71,8 @@ const triageIdentifier = defineProtocolUtf8String({
 });
 export const TriageListKindIdV1Schema = triageIdentifier;
 
-/** Invocation diagnostics only; arbitrary exception messages/data never cross this wire. */
-export const TriageListInvocationErrorV1Schema = defineProtocolObject({
-    code: triageIdentifier,
-    retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
-}, { policy: 'closed' });
-export type TriageListInvocationErrorV1 = ReturnType<typeof TriageListInvocationErrorV1Schema.parse>;
+export { TriageListInvocationErrorV1Schema } from '@happier-dev/triage-protocol/v1';
+export type { TriageListInvocationErrorV1 } from '@happier-dev/triage-protocol/v1';
 
 const triageCollisionScope = defineProtocolUtf8String({
     maxUtf8Bytes: MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,

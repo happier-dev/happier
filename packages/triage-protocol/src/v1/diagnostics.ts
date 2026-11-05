@@ -43,3 +43,11 @@ export const TriageSourceFailureV1Schema = defineProtocolObject({
     retryNotBeforeMs: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
 }, { policy: 'closed' });
 export type TriageSourceFailureV1 = ReturnType<typeof TriageSourceFailureV1Schema.parse>;
+
+/** Invocation diagnostics only; arbitrary exception messages/data never cross this wire. */
+export const TriageListInvocationErrorV1Schema = defineProtocolObject({
+    code: TriageIdentifierV1ProtocolSchema,
+    retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+    requestId: TriageIdentifierV1ProtocolSchema.optional(),
+}, { policy: 'closed' });
+export type TriageListInvocationErrorV1 = ReturnType<typeof TriageListInvocationErrorV1Schema.parse>;

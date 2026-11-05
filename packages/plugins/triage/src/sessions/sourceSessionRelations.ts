@@ -1,8 +1,10 @@
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import {
     TriageSourceLinkSessionResultV1Schema,
     TriageSourceReadSessionLinksResultV1Schema,
+    isTriageSourceConnectedAccountInstanceV1,
     type TriageEntryRefV1,
     type TriageEntryLocatorV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -23,6 +25,7 @@ export type TriageSourceSessionLinkV1 = Readonly<{
     entryRef: TriageEntryRefV1; sessionId: string; linkedAtMs: number; displayPath: string;
     sourceInstanceId?: string;
     sourceInstanceRevision?: number;
+    sourceInstanceRowId?: string;
     locator?: TriageEntryLocatorV1;
 }>;
 export type TriageSessionRelationWriteV1 = Readonly<{
@@ -75,7 +78,7 @@ function corpusKindsFor(input: RelationSelection, scopes: readonly RelationScope
 /** One kind-aware relation decision for starts, Actions and all linked readers.
  * Only a definitively non-owned kind reaches the corpus relationship owner. */
 export function createTriageSourceSessionRelations(
-    context: Pick<TriageDataActionContext, 'signal'> & Readonly<{
+    context: Pick<TriageDataActionContext, 'signal' | 'sessionRelationsUpgrade'> & Readonly<{
         services: Pick<TriageDataActionContext['services'], 'actions' | 'targetedContributions'>;
     }>,
     collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
@@ -92,6 +95,32 @@ export function createTriageSourceSessionRelations(
     }
     // One invocation may link several attachments. Resolve its source/configured
     // view once; the host still validates each original operation handle at use.
+    const accountViews = new Map<string, Promise<PluginActionResultById['connectedServices.accounts.list']['accounts'] | undefined>>();
+    async function selectConfiguredInstance(instances: readonly CorpusSourceInstanceRowV1[]) {
+        if (instances.length < 2) return instances[0];
+        const host = instances[0]!.configured.localInstanceKey;
+        if (instances.some(instance => instance.configured.localInstanceKey !== host)) return undefined;
+        const identities = await Promise.all(instances.map(async instance => {
+            if (!isTriageSourceConnectedAccountInstanceV1(instance.configured)) return undefined;
+            const ref = instance.configured.binding.account;
+            const serviceKey = JSON.stringify([ref.service.pluginId, ref.service.localId]);
+            let accounts = accountViews.get(serviceKey);
+            if (accounts === undefined) {
+                // This existing host projection retains authenticated identity;
+                // choosing a relation never acquires a provider credential.
+                accounts = Promise.resolve().then(() => context.services.actions.execute('connectedServices.accounts.list', { service: ref.service }, options))
+                    .then(result => 'accounts' in result ? result.accounts : undefined, () => undefined);
+                accountViews.set(serviceKey, accounts);
+            }
+            return (await accounts)?.find(({ account }) => account.ref.accountId === ref.accountId
+                && account.ref.service.pluginId === ref.service.pluginId
+                && account.ref.service.localId === ref.service.localId)?.account.providerIdentity?.accountId;
+        }));
+        const identity = identities[0];
+        if (typeof identity !== 'string' || identity.length === 0 || identities.some(candidate => candidate !== identity)) return undefined;
+        return instances.reduce((selected, instance) => instance.configured.instance.sourceInstanceId < selected.configured.instance.sourceInstanceId
+            ? instance : selected);
+    }
     let view: Promise<Readonly<{
         sources: Awaited<ReturnType<typeof current>>;
         configured: Awaited<ReturnType<typeof readActiveConfiguredSourceRows>>;
@@ -142,6 +171,7 @@ export function createTriageSourceSessionRelations(
         async write(input: TriageSessionRelationWriteV1): Promise<Readonly<{ status: 'linked' | 'unlinked' | 'conflict' }>
             | Readonly<{ status: 'failed'; failure: PluginError }>> {
             try {
+                await context.sessionRelationsUpgrade?.ensure(context, collections);
                 const { sources, configured } = await readView();
                 const source = sources.get(renderSourceQualifiedId(input.entryRef.source));
                 const owner = await ownership(input.entryRef);
@@ -153,11 +183,12 @@ export function createTriageSourceSessionRelations(
                 const operation = source?.operations?.linkSession;
                 if (owner === 'source') {
                     if (operation === undefined || source.operations?.readSessionLinks === undefined) return failedRelationWrite('sessionLinksRolesUnsupported', false);
-                    if (instances.length !== 1) return failedRelationWrite(instances.length > 1
+                    const selected = await selectConfiguredInstance(instances);
+                    if (selected === undefined) return failedRelationWrite(instances.length > 1
                         ? 'sessionLinksSourceInstanceRequired' : 'sessionLinksSourceInstanceUnavailable', false);
                     const entry = input.entryRef;
                     const result = TriageSourceLinkSessionResultV1Schema.parse(await context.services.actions.executeAdmittedTargetedOperation(operation, {
-                        v: 1, instance: instances[0]!.configured,
+                        v: 1, instance: selected.configured,
                         localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId },
                         sessionId: input.sessionId, linked: input.linked,
                     }, options));
@@ -186,6 +217,7 @@ export function createTriageSourceSessionRelations(
             paged?: boolean; cursor?: string;
             /** Detail preparation requires an authoritative page and preserves the original transport refusal. */
             readFailure?: 'throw' }>, corpusRead?: () => Promise<readonly CorpusSessionLinkRowV1[]>): Promise<TriageReadSourceSessionLinksResultV1> {
+            await context.sessionRelationsUpgrade?.ensure(context, collections);
             const { sources, configured } = await readView();
             const links: TriageSourceSessionLinkV1[] = [];
             const lanes: TriageSourceSessionLinksLaneV1[] = [];
@@ -194,7 +226,9 @@ export function createTriageSourceSessionRelations(
             const corpusKindsBySource = corpusKindsFor(input, scopes, sources);
             const noSourceScopes = hasNoSessionSourceScopes(input, scopes, sources);
             const instanceRevisions = new Map(configured.records.map((record) => [record.value.configured.instance.sourceInstanceId, record.revision]));
+            const instancesById = new Map(configured.rows.map(row => [row.configured.instance.sourceInstanceId, row]));
             const linkIndexes = new Map<string, number>();
+            const duplicateInstances = new Map<number, Set<string>>();
             let nextCursor: string | undefined;
             let unknownCorpusCoverage = false;
             function addLink(link: TriageSourceSessionLinkV1) {
@@ -202,11 +236,17 @@ export function createTriageSourceSessionRelations(
                 const index = linkIndexes.get(key);
                 if (index === undefined) { linkIndexes.set(key, links.length); links.push(link); }
                 else if (links[index]!.sourceInstanceId !== link.sourceInstanceId) {
+                    const candidates = duplicateInstances.get(index) ?? new Set<string>();
+                    const existing = links[index]!.sourceInstanceId;
+                    if (existing !== undefined) candidates.add(existing);
+                    if (link.sourceInstanceId !== undefined) candidates.add(link.sourceInstanceId);
+                    duplicateInstances.set(index, candidates);
                     // The relationship is known, but no selected configured
                     // authority is established by an unscoped duplicate.
                     const unqualified = { ...links[index]! };
                     delete unqualified.sourceInstanceId;
                     delete unqualified.sourceInstanceRevision;
+                    delete unqualified.sourceInstanceRowId;
                     links[index] = unqualified;
                 }
             }
@@ -247,20 +287,32 @@ export function createTriageSourceSessionRelations(
                         lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
                         continue;
                     }
-                    lanes.push({ ...roleLane, health: result.kind === 'partial'
-                        ? { kind: 'partial', unavailableRefs: result.unavailableRefs.map(localRef => ({ source: lane.source, ...localRef })) }
-                        : { kind: 'complete' } });
-                    for (const link of result.links) {
-                        const entryRef = { source: row.configured.instance.source, ...link.localRef };
-                        addLink({ entryRef, sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
-                            sourceInstanceRevision: instanceRevisions.get(lane.sourceInstanceId),
-                            linkedAtMs: link.linkedAtMs, displayPath: link.displayPath,
-                            ...(link.locator === undefined ? {} : { locator: link.locator }) });
-                    }
+                    const pullRequestKinds = roleKinds.filter(kindId => source.descriptor.kinds.some(kind => kind.id === kindId
+                        && kind.workflowSubject === 'pullRequest'));
+                    const nativeLinks = result.links.map(link => ({
+                        entryRef: { source: row.configured.instance.source, ...link.localRef },
+                        sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
+                        sourceInstanceRevision: instanceRevisions.get(lane.sourceInstanceId),
+                        sourceInstanceRowId: row.instanceTag,
+                        linkedAtMs: link.linkedAtMs, displayPath: link.displayPath,
+                        ...(link.locator === undefined ? {} : { locator: link.locator }),
+                    }));
+                    const migrationIncomplete = pullRequestKinds.length > 0 && await context.sessionRelationsUpgrade?.reconcile({
+                        source: lane.source, kindIds: pullRequestKinds, sourceInstanceId: lane.sourceInstanceId,
+                        links: nativeLinks,
+                        entryRef: input.entryRef, sessionId: input.sessionId, collections, signal: context.signal,
+                    });
+                    lanes.push({ ...roleLane, health: migrationIncomplete
+                        ? { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksMigrationIncomplete' } }
+                        : result.kind === 'partial' ? { kind: 'partial', unavailableRefs: result.unavailableRefs.map(localRef => ({ source: lane.source, ...localRef })) }
+                            : { kind: 'complete' } });
+                    for (const link of nativeLinks) addLink(link);
                 } catch (error) {
                     if (input.readFailure === 'throw') throw isPluginError(error) ? error
                         : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
-                    const diagnostic = isPluginError(error) ? TriageListInvocationErrorV1Schema.safeParse({ code: error.code, retryable: error.retryable }) : null;
+                    const diagnostic = isPluginError(error) ? TriageListInvocationErrorV1Schema.safeParse({
+                        code: error.code, retryable: error.retryable,
+                    }) : null;
                     lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksReadFailed' },
                         ...(diagnostic?.success ? { invocationError: diagnostic.data } : {}),
                     } });
@@ -296,9 +348,14 @@ export function createTriageSourceSessionRelations(
                             const matchingLanes = corpusLanes.filter((lane) => renderSourceQualifiedId(lane.source) === renderSourceQualifiedId(link.entryRef.source)
                                 && lane.kindIds?.includes(link.entryRef.kindId));
                             if (matchingLanes.length === 0) unknownCorpusCoverage = true;
+                            const selected = await selectConfiguredInstance(matchingLanes.flatMap(lane => {
+                                const row = instancesById.get(lane.sourceInstanceId);
+                                return row === undefined ? [] : [row];
+                            }));
                             addLink({ entryRef: link.entryRef, sessionId: link.sessionId,
-                                ...(matchingLanes.length === 1 ? { sourceInstanceId: matchingLanes[0]!.sourceInstanceId,
-                                    sourceInstanceRevision: instanceRevisions.get(matchingLanes[0]!.sourceInstanceId) } : {}),
+                                ...(selected === undefined ? {} : { sourceInstanceId: selected.configured.instance.sourceInstanceId,
+                                    sourceInstanceRevision: instanceRevisions.get(selected.configured.instance.sourceInstanceId),
+                                    sourceInstanceRowId: selected.instanceTag }),
                                 linkedAtMs: link.linkedAtMs, displayPath: link.displayPathAtLink });
                         }
                         if (page.nextCursor !== undefined && seen.has(page.nextCursor)) throw new Error('triage:sessionLinks:cursorDidNotAdvance');
@@ -317,6 +374,14 @@ export function createTriageSourceSessionRelations(
                     for (const lane of corpusLanes) lanes[lanes.indexOf(lane)] = { ...lane,
                         health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksReadFailed' } } };
                 }
+            }
+            for (const [index, candidates] of duplicateInstances) {
+                const selected = await selectConfiguredInstance([...candidates].flatMap(id => {
+                    const row = instancesById.get(id);
+                    return row === undefined ? [] : [row];
+                }));
+                if (selected !== undefined) links[index] = { ...links[index]!, sourceInstanceId: selected.configured.instance.sourceInstanceId,
+                    sourceInstanceRevision: instanceRevisions.get(selected.configured.instance.sourceInstanceId), sourceInstanceRowId: selected.instanceTag };
             }
             const complete = lanes.filter((lane) => lane.kindIds !== undefined && lane.health.kind === 'complete').length;
             const completeEmpty = noSourceScopes && !unknownCorpusCoverage && nextCursor === undefined;
@@ -340,6 +405,7 @@ export function createTriageSourceSessionRelations(
     };
     return { ...relations,
         async readEntries(entries: readonly Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId?: string }>[]) {
+            await context.sessionRelationsUpgrade?.ensure(context, collections);
             const { sources } = await readView();
             const demands = await Promise.all(entries.map(async selection => ({ selection,
                 corpus: corpusKindsFor(selection, await readScopes(selection), sources).size > 0,

@@ -400,14 +400,25 @@ missing descriptor retains a source-wide diagnostic without asserting kind
 coverage. Prior source-wide replies are read as incomplete rather than guessing
 ownership from their rows. Healthy slices remain readable in a partial result,
 and incomplete coverage never becomes complete empty state. Role-produced links
-retain the admitted instance, its existing configuration revision and an optional
-source locator; consumers do not reconstruct native identity from display text.
+retain the admitted instance, its existing configuration revision, private exact
+configuration-row address and an optional source locator; consumers do not
+reconstruct native identity from display text. PR status admission reads that
+exact row afresh, checking its stable instance UUID, lifecycle and source ownership.
+Each refresh reads one configuration row independently of unrelated configured
+sources; it retains no authorization or configuration cache.
 An explicitly complete empty result with no lanes is valid only when both source
 inventories are empty and the exact Session's readable corpus query proves no
 retained relationships. Missing legacy lanes, unknown retained rows, unreadable
 corpus data and unfinished cursors do not establish that absence.
 The Session cockpit and picker consume the shared `session-links-v1` Resource,
-whose read delegates to that same Action. Its observation watches the exact
+whose read delegates to that same Action. Its typed projection keeps last-known
+links only for failed source/instance/kind slices, alongside current failure
+coverage, or for the exact unavailable entry references in a partial slice.
+Other readable entries still update and confirmed omissions are removed. A
+complete slice replaces its previous answer, including an empty
+answer; source-scope removal and Account, Session or executable custody
+retirement clear the corresponding baseline. Retention is shared by the cockpit
+and picker, rather than held in either consumer. Its observation watches the exact
 selected corpus relationship query, configured-source membership and admitted
 source roles with registered read observers. A snapshot-only source role keeps
 its existing manual-refresh behavior; it gains neither a polling loop nor a
@@ -419,12 +430,12 @@ and native relationships, verifies an already-native link's exact identity,
 and conditionally retires only the exact retained corpus revision. It invokes no
 relationship write Action or approval from a read. Non-PR rows remain at their
 existing owner. Missing or uncertain native proof retains the original PR row
-with incomplete coverage. Duplicate contraction belongs only to the activation's
-initializer, never ordinary read reconciliation.
-Later reads retain diagnostic coverage and may notice an already-removed corpus
-row, but do not retry CAS or import a missing relationship. Ordinary explicit linking retains
+with incomplete coverage. Later successful exact native proof feeds the same
+conditional contraction owner during scoped read reconciliation. Until that
+proof exists, later reads retain diagnostic coverage and the original row;
+they may also notice an explicit unlink's already-removed row. Ordinary explicit linking retains
 the source's existing Action authority. Retirement cancels and drains the pass.
-A caller-cancelled initialization is retried only by the next admitted demand,
+A failed or caller-cancelled initialization is retried only by the next admitted demand,
 using that demand's authority; an overlapping fresh demand waits for the cancelled
 pass to drain first. A successful pass stays memoized, and activation retirement
 never restarts it. Unavailable source authority retains explicit incomplete

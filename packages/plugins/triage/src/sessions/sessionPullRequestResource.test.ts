@@ -22,6 +22,7 @@ import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/
 import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME as runtime } from './sessionPullRequestResource.js';
 import { createTriageSourceSessionRelations } from './sourceSessionRelations.js';
+import { linkEntryToSession } from './entrySessionLinks.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { testkitConfiguredInstance, testkitReadOnlySourceSnapshot } from './testkit/entrySessionTestkit.test-support.js';
 
@@ -50,6 +51,7 @@ function metadata(revision = 1) {
 function relations(revision = 1) {
     return TriageReadSourceSessionLinksResultV1Schema.parse({ kind: 'complete', links: [{ entryRef,
         sessionId: 'session-a', sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, sourceInstanceRevision: revision,
+        sourceInstanceRowId: 'a'.repeat(43),
         locator, linkedAtMs: 1, displayPath: 'Display text is not a routing identity',
     }], lanes: [] });
 }
@@ -161,6 +163,21 @@ function boundary(settings: { nativeObserverUnavailable?: boolean; metadataObser
 }
 
 describe('the composed Session PR Resource', () => {
+    it('replaces the native demand when its configured-source row address changes', async () => {
+        const host = boundary();
+        try {
+            await host.read();
+            expect(host.input()).toMatchObject({ sourceInstanceRowId: 'a'.repeat(43) });
+            const next = relations(2);
+            host.setRelations({ ...next, links: next.links.map(link => ({ ...link, sourceInstanceRowId: 'b'.repeat(43) })) });
+            host.changed('relations');
+            await host.read();
+            expect(host.input()).toMatchObject({ sourceInstanceRowId: 'b'.repeat(43) });
+            expect(host.counts()).toEqual({ nativeReads: 2, metadataReads: 1, relationReads: 2 });
+            expect(host.nativeObservationCount()).toBe(2);
+        } finally { await host.dispose(); }
+    });
+
     it.each(['observation', 'relations'] as const)('retains the typed %s dependency refusal alongside the known linked PR', async stage => {
         let refused = true;
         const refuse = () => { throw new PluginError({ code: 'plugin_resource_not_found',
@@ -600,7 +617,8 @@ describe('the composed Session PR Resource', () => {
             expect(result.pullRequests[0]?.nativeStatus.kind === 'current' && result.pullRequests[0].nativeStatus.value)
                 .not.toHaveProperty('title');
             expect(host.counts()).toEqual({ nativeReads: 1, metadataReads: 1, relationReads: 1 });
-            expect(host.input()).toEqual({ v: 1, entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, lastKnownLocator: locator });
+            expect(host.input()).toEqual({ v: 1, entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                sourceInstanceRowId: 'a'.repeat(43), lastKnownLocator: locator });
         } finally { host.dispose(); }
     });
 
@@ -670,11 +688,23 @@ describe('the composed Session PR Resource', () => {
         }
     });
 
-    it('preserves the relation owner’s unselected source result without claiming the linked repository is missing', async () => {
+    it.each(['unknown', 'missing-second', 'unavailable', 'same', 'different', 'different-host', 'three-conflicting', 'native-connected', 'native-conflicting'] as const)(
+      'resolves overlapping source authority from retained provider identity (%s)', async identityCase => {
         const { collections, control } = createTestkitCorpusCollections();
         const first = testkitConfiguredInstance();
-        const second = { ...first, instance: { ...first.instance, sourceInstanceId: '22222222-2222-4222-8222-222222222222' } };
-        for (const [index, configured] of [first, second].entries()) control.sourceInstances.seed(toCorpusStoredValue({
+        const second = { ...first, binding: { ...first.binding, account: { ...first.binding.account, accountId: 'second' } },
+            localInstanceKey: identityCase === 'different-host' ? 'other-host' : first.localInstanceKey,
+            instance: { ...first.instance, sourceInstanceId: '00000000-0000-4000-8000-000000000000' } };
+        const third = { ...second, binding: { ...second.binding, account: { ...second.binding.account, accountId: 'third' } },
+            instance: { ...second.instance, sourceInstanceId: '33333333-3333-4333-8333-333333333333' } };
+        const native = { ...first, binding: { purpose: first.binding.purpose, source: 'native' as const,
+            service: first.binding.account.service } };
+        const instances = identityCase === 'native-connected' ? [native, second]
+            : identityCase === 'native-conflicting' ? [native, second, third]
+                : identityCase === 'three-conflicting' ? [first, second, third] : [first, second];
+        let accountReads = 0;
+        const writtenInstances: string[] = [];
+        for (const [index, configured] of instances.entries()) control.sourceInstances.seed(toCorpusStoredValue({
             instanceTag: `${index}${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
             sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
         }));
@@ -686,18 +716,51 @@ describe('the composed Session PR Resource', () => {
             }, { ...source, contributor: { pluginId: 'acme.other', contributionId: 'other' },
                 descriptor: { ...source.descriptor, displayName: 'Other source', settingsPageId: 'other-sources' },
             }] }), dispose() {} }) },
-            actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links: [{
-                localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
-                sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Same PR', locator,
-            }] }) },
+            actions: { execute: async () => {
+                accountReads++;
+                if (identityCase === 'unavailable') throw new PluginError({ code: 'unsupported_action' });
+                return { accounts: [first, second, third].slice(0, instances.length).map((instance, index) => ({
+                    account: { ref: instance.binding.account, ...(identityCase === 'unknown' || identityCase === 'missing-second' && index === 1 ? {} : {
+                        providerIdentity: { accountId: (identityCase === 'different' && index === 1) || index === 2 ? '456' : '123' },
+                    }) },
+                })) };
+            }, executeAdmittedTargetedOperation: async (handle: { role: string }, input: {
+                instance: { instance: { sourceInstanceId: string } };
+            }) => {
+                if (handle.role === 'linkSession') {
+                    writtenInstances.push(input.instance.instance.sourceInstanceId);
+                    return { status: 'linked' };
+                }
+                return { kind: 'complete', links: [{
+                    localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
+                    sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Same PR', locator,
+                }] };
+            } },
         } } as unknown as TriageDataActionContext; // Host contribution/Action transport fixture; domain decisions stay real.
         const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });
-        const admitted = await readRelations();
+        const owner = createTriageSourceSessionRelations(context, collections);
+        const admitted = await owner.read({ sessionId: 'session-a' });
         expect(admitted.links).toHaveLength(1);
-        expect(admitted.links[0]).not.toHaveProperty('sourceInstanceId');
+        if (identityCase === 'same' || identityCase === 'native-connected') expect(admitted.links[0]?.sourceInstanceId).toBe(
+            instances.map(instance => instance.instance.sourceInstanceId).sort()[0]);
+        else expect(admitted.links[0]).not.toHaveProperty('sourceInstanceId');
         expect(admitted.configureSources).toHaveLength(2);
+        const written = await owner.write({ entryRef, sessionId: 'session-a', linked: true });
+        if (identityCase === 'same') {
+            expect(written).toEqual({ status: 'linked' });
+            expect(writtenInstances).toEqual([admitted.links[0]!.sourceInstanceId]);
+        } else {
+            expect(written).toMatchObject({ status: 'failed', failure: { code: 'sessionLinksSourceInstanceRequired' } });
+            expect(writtenInstances).toEqual([]);
+        }
         const host = boundary({ readRelations });
         try {
+            if (identityCase === 'same' || identityCase === 'native-connected') {
+                expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ nativeStatus: { kind: 'current' } }] });
+                expect(host.counts().nativeReads).toBe(1);
+                expect(accountReads).toBe(2); // One service metadata listing per relation read; no provider identity request.
+                return;
+            }
             expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ link: { url }, nativeStatus: {
                 kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'sessionLinksSourceInstanceRequired' },
                 recovery: { kind: 'configureSources', offers: [{ destination: {
@@ -706,13 +769,56 @@ describe('the composed Session PR Resource', () => {
             } }] });
             expect(host.counts().nativeReads).toBe(0);
             expect(host.nativeObservationCount()).toBe(0);
-            control.sourceInstances.seed(toCorpusStoredValue({
-                instanceTag: `1${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired, configuredAtMs: 1,
-                sourceQualifiedId: `${second.instance.source.pluginId}/${second.instance.source.localId}`, configured: second,
+            for (const [index, instance] of instances.entries()) if (index > 0) control.sourceInstances.seed(toCorpusStoredValue({
+                instanceTag: `${index}${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired, configuredAtMs: 1,
+                sourceQualifiedId: `${instance.instance.source.pluginId}/${instance.instance.source.localId}`, configured: instance,
             }));
             host.changed('relations');
             expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ nativeStatus: { kind: 'current' } }] });
             expect(host.counts().nativeReads).toBe(1);
+        } finally { await host.dispose(); }
+    });
+
+    it('reads native PR63 status for a legacy unqualified relation through its connected source', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const first = testkitConfiguredInstance();
+        const connected = { ...first, instance: { ...first.instance,
+            source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' } }, localInstanceKey: 'github.com' };
+        const native = { ...connected, instance: { ...connected.instance,
+            sourceInstanceId: '00000000-0000-4000-8000-000000000000' },
+            binding: { purpose: connected.binding.purpose, source: 'native' as const, service: connected.binding.account.service } };
+        for (const [index, configured] of [native, connected].entries()) control.sourceInstances.seed(toCorpusStoredValue({
+            instanceTag: `${index}${'a'.repeat(42)}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+            sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`, configured,
+        }));
+        const pr63 = { ...entryRef, source: connected.instance.source, entryId: '63' };
+        const prUrl = 'https://github.com/example/repository/pull/63';
+        expect(await linkEntryToSession({ collections, entryRef: pr63, sessionId: 'session-a',
+            display: { locator: { ...locator, webUrl: prUrl }, scopeLabel: 'example/repository' }, nowMs: 1,
+        })).toMatchObject({ status: 'linked' });
+        let accountReads = 0;
+        const source = testkitReadOnlySourceSnapshot().contributions[0]!;
+        const context = { signal: new AbortController().signal, services: {
+            targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{ ...source,
+                contributor: { pluginId: connected.instance.source.pluginId, contributionId: connected.instance.source.localId },
+            }] }), dispose() {} }) },
+            actions: { async execute(actionId: string) {
+                expect(actionId).toBe('connectedServices.accounts.list');
+                accountReads++;
+                return { accounts: [{ account: { ref: connected.binding.account, providerIdentity: { accountId: '1729528' } } }] };
+            } },
+        } } as unknown as TriageDataActionContext; // Only host inventory/Action transports are replaced.
+        const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });
+        const admitted = await readRelations();
+        expect(admitted.links).toMatchObject([{ entryRef: pr63, sourceInstanceId: connected.instance.sourceInstanceId }]);
+        const host = boundary({ readRelations });
+        const watch = metadata();
+        if (watch.kind !== 'ready') throw new Error('Expected metadata fixture');
+        host.setMetadata({ ...watch, bindings: [{ ...watch.bindings[0]!, link: { ...watch.bindings[0]!.link, number: 63, url: prUrl } }] });
+        try {
+            expect(await host.read()).toMatchObject({ kind: 'ready', pullRequests: [{ nativeStatus: { kind: 'current' } }] });
+            expect(host.counts().nativeReads).toBe(1);
+            expect(accountReads).toBe(2); // One metadata listing per relation invocation; no native identity probe.
         } finally { await host.dispose(); }
     });
 
@@ -738,7 +844,8 @@ describe('the composed Session PR Resource', () => {
                 expect(recovered.kind === 'ready' && recovered.pullRequests[0]?.nativeStatus).toMatchObject({
                     kind: 'current', checkedAtMs: 100, value: { checks: { passed: 1 }, branch: { headRevision: 'sha-one' } },
                 });
-                expect(host.input()).toEqual({ v: 1, entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, lastKnownLocator: locator });
+                expect(host.input()).toEqual({ v: 1, entryRef, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                    sourceInstanceRowId: 'a'.repeat(43), lastKnownLocator: locator });
                 expect(host.counts()).toEqual({ metadataReads: 1, relationReads: 2, nativeReads: 1 });
             } finally { host.dispose(); }
         }

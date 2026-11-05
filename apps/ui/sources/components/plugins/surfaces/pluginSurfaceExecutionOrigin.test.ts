@@ -47,6 +47,42 @@ vi.mock('socket.io-client', async (importOriginal) => {
 describe('plugin surface execution requirement', () => {
     afterEach(async () => { await standardCleanup(); });
 
+    it('keeps the mounted wrapper quiet for unrelated Availability and cursor-only publications', async () => {
+        const scope = { serverId: 'surface-keyed-server', accountId: 'surface-keyed-account' };
+        storage.setState({ profileScope: scope, settingsScope: scope });
+        const materialization = { serverIdentityId: 'srv_fixture', machineId: 'machine-a', materializationId: 'surface-keyed',
+            pluginId: 'example.surface-keyed', version: '1.0.0', sourceClass: 'localPath' as const, portableRelease: false,
+            uiArtifacts: [], enabled: true, trustState: 'trusted' as const, observedAt: 1 };
+        const other = { ...materialization, pluginId: 'example.other', materializationId: 'surface-other' };
+        const snapshot = { availabilityCursor: 1, intentReads: [], snapshots: [], materializations: [materialization, other] };
+        replacePluginAccountAvailabilityProjection({ scope, snapshot });
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return usePluginSurfaceExecutionOrigin({ pluginId: materialization.pluginId,
+                projection: EMPTY_PLUGIN_UI_PROJECTION, enabled: false });
+        });
+        try {
+            await flushHookEffects();
+            const settledRenders = renders;
+            for (let cursor = 2; cursor <= 5; cursor++) {
+                await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: { ...snapshot,
+                    availabilityCursor: cursor,
+                    materializations: [{ ...materialization, observedAt: cursor }, { ...other, enabled: cursor % 2 === 0 }],
+                } }));
+                expect(renders - settledRenders).toBe(0);
+            }
+            await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: { ...snapshot,
+                availabilityCursor: 6, materializations: [{ ...materialization, enabled: false }, other],
+            } }));
+            expect(renders).toBeGreaterThan(settledRenders);
+            expect(hook.getCurrent().selection).toBeDefined();
+        } finally {
+            await hook.unmount();
+            clearPluginAccountAvailabilityProjection();
+        }
+    });
+
     it('binds through real Account and machine owners and rejects a replaced occurrence before rerender', async () => {
         const census = ['machine-source', 'machine-other-source'].map(id => createPlainMachineRowFixture({
             id, accountId: 'account-surface-source',

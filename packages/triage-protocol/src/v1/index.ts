@@ -303,3 +303,14 @@ export type {
     SessionPullRequestStatusResourceResultV1,
     SessionPullRequestNativeStatusV1,
 } from './sessionPullRequestStatus.js';
+
+export {
+    TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1,
+    TriageReadSourceSessionLinksInputV1Schema, TriageSourceSessionLinksLaneV1Schema,
+    TriageReadSourceSessionLinksResultV1Schema, TriageReadSourceSessionLinksActionResultV1Schema,
+    normalizeTriageSourceSessionLinksCoverageV1,
+} from './sessionRelations.js';
+export type { TriageReadSourceSessionLinksInputV1, TriageSourceSessionLinksLaneV1,
+    TriageReadSourceSessionLinksResultV1, TriageReadSourceSessionLinksActionResultV1 } from './sessionRelations.js';
+export { TriageListInvocationErrorV1Schema } from './diagnostics.js';
+export type { TriageListInvocationErrorV1 } from './diagnostics.js';

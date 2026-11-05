@@ -3,7 +3,7 @@ import { MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1, type TriageEntryRefV1 } from '
 
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import { CORPUS_SESSION_LINKS_INDEX_ID } from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
+import { fromCorpusStoredRow, type CorpusRowV1 } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag } from '../corpus/identity/tags.js';
 
@@ -46,15 +46,16 @@ export async function readTriageSessionLinksPageV1(
     cursor?: string;
   }> = {},
   options?: PluginCancellationOptions,
-): Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; nextCursor?: string }>> {
+): Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; records: readonly CorpusRowV1<CorpusSessionLinkRowV1>[]; nextCursor?: string }>> {
   const selection = await triageSessionLinksSelectionV1(collection, input.relation, options);
   const page = await collection.query({
     ...selection,
     limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
   }, options);
+  const records = Object.freeze(page.rows.map((row) => fromCorpusStoredRow<CorpusSessionLinkRowV1>(row)));
   return Object.freeze({
-    links: Object.freeze(page.rows.map((row) => fromCorpusStoredRow<CorpusSessionLinkRowV1>(row).value)),
+    links: Object.freeze(records.map(row => row.value)), records,
     ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
   });
 }

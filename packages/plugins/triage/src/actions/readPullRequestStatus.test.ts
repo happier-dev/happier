@@ -34,10 +34,18 @@ function nativeOperation(occurrenceId = 'selected-source-a') {
 }
 
 async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boolean; unsupported?: boolean; foreignCaller?: boolean; hostAgent?: boolean;
+    unrelatedSources?: number;
     replaceDuringRead?: boolean; removeDuringRead?: boolean; invalidateDuringRead?: boolean; unrelatedSourceChurnDuringRead?: boolean;
     removeSelectedDuringRead?: boolean; relabelDuringRead?: boolean; replaceBeforeWatch?: boolean; disposeNative?: () => Promise<void> }> = {}) {
     const { collections, control, watchableCollections } = createTestkitCorpusCollections();
     const configured = fixture.configuredInstance;
+    for (let index = 0; index < (options.unrelatedSources ?? 0); index++) {
+        control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: `A${String(index).padStart(42, '0')}`,
+            sourceQualifiedId: 'example.unrelated/source', lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1000,
+            configured: { ...configured, instance: { source: { pluginId: 'example.unrelated', localId: 'source' },
+                sourceInstanceId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` } },
+        }));
+    }
     const stored = toCorpusStoredValue({
         instanceTag: 'a'.repeat(43), sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}`,
         lifecycle: options.retired ? CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired : CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1000,
@@ -46,7 +54,12 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     });
     const seeded = control.sourceInstances.seed(stored);
     const controller = new AbortController();
+    let inventoryPages = 0;
     const sourceRows = { ...watchableCollections.sourceInstances,
+        query: (async (query, cancellation) => {
+            inventoryPages++;
+            return await watchableCollections.sourceInstances.query({ ...query, limit: 1 }, cancellation);
+        }) satisfies typeof watchableCollections.sourceInstances.query,
         watch: ((selection, listener) => {
             if (options.replaceBeforeWatch) control.sourceInstances.seed(toCorpusStoredValue({ ...stored,
                 configured: { ...configured, configuration: { ...configured.configuration, token: `${configured.configuration.token}-updated` } },
@@ -104,14 +117,32 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     } as unknown as TriageDataActionContext;
     const result = TriagePullRequestStatusResultV1Schema.parse(await createTriageReadPullRequestStatusActionHandler()({
         v: 1, entryRef: fixture.detailInput.observation.entryRef,
+        ...{ sourceInstanceRowId: stored.instanceTag },
         sourceInstanceId: configured.instance.sourceInstanceId, lastKnownLocator: fixture.getInput.lastKnownLocator,
     }, context));
     return { result, requests, disposed, context, observed, operationDisposed: () => operationDisposed,
         sourceInstances: watchableCollections.sourceInstances, sourceInstanceRow: stored, sourceInstanceRowId: seeded.rowId,
-        sourceGetCount: control.sourceInstances.getCallCount, abort: () => controller.abort() };
+        sourceGetCount: control.sourceInstances.getCallCount, inventoryPages: () => inventoryPages, abort: () => controller.abort() };
 }
 
 describe('the mounted PR-status action', () => {
+    it.each([0, 4])('reads one exact fresh row per PR refresh with %s unrelated configured-source pages', async unrelatedSources => {
+        const actual = await boundary({ unrelatedSources });
+        expect(actual.result).toEqual(status);
+        expect(actual.inventoryPages()).toBe(0);
+        expect(actual.sourceGetCount()).toBe(1);
+        await actual.sourceInstances.put(toCorpusStoredValue({ ...actual.sourceInstanceRow,
+            configured: { ...fixture.configuredInstance, configuration: { ...fixture.configuredInstance.configuration, token: 'new-token' } },
+        }), { expectedRevision: 1 });
+        const input = { v: 1 as const, entryRef: fixture.detailInput.observation.entryRef,
+            sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            sourceInstanceRowId: actual.sourceInstanceRowId };
+        expect(await createTriageReadPullRequestStatusActionHandler()(input, actual.context)).toEqual(status);
+        expect(actual.requests[1]).toMatchObject({ input: { instance: { configuration: { token: 'new-token' } } } });
+        expect(actual.inventoryPages()).toBe(0);
+        expect(actual.sourceGetCount()).toBe(2);
+    });
+
     it.each([false, true])('uses one exact admitted source operation with the existing configured get input (host agent: %s)', async (hostAgent) => {
         const actual = await boundary({ hostAgent });
         expect(actual.result).toEqual(status);
@@ -125,6 +156,7 @@ describe('the mounted PR-status action', () => {
         const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef,
             sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            sourceInstanceRowId: actual.sourceInstanceRowId,
         }, Object.assign(vi.fn(), { retire: vi.fn() }), actual.context);
         await observation.dispose();
     });
@@ -133,11 +165,24 @@ describe('the mounted PR-status action', () => {
         expect(actual.result.kind).toBe('unavailable');
         expect(actual.requests).toEqual([]);
     });
+    it.each(['missing', 'wrong-instance'] as const)('refuses a %s exact address without inventory fallback or provider dispatch', async kind => {
+        const actual = await boundary();
+        actual.requests.length = 0;
+        const result = await createTriageReadPullRequestStatusActionHandler()({ v: 1,
+            entryRef: fixture.detailInput.observation.entryRef,
+            sourceInstanceId: kind === 'wrong-instance' ? '00000000-0000-4000-8000-000000000002'
+                : fixture.configuredInstance.instance.sourceInstanceId,
+            ...(kind === 'missing' ? {} : { sourceInstanceRowId: actual.sourceInstanceRowId }),
+        }, actual.context);
+        expect(result.kind).toBe('unavailable');
+        expect(actual.inventoryPages()).toBe(0);
+        expect(actual.requests).toEqual([]);
+    });
     it.each([{ replaceDuringRead: true }, { removeDuringRead: true }, { invalidateDuringRead: true }, { removeSelectedDuringRead: true }])('finishes an admitted status read when source authority changes during the provider await: %j', async (options) => {
         const actual = await boundary(options);
         expect(actual.requests).toHaveLength(1);
         expect(actual.result).toEqual(status);
-        expect(actual.sourceGetCount()).toBe(0);
+        expect(actual.sourceGetCount()).toBe(1);
         expect(actual.disposed).toBe(true);
     });
     it('refuses the next status request after source removal without dispatching another native read', async () => {
@@ -146,6 +191,7 @@ describe('the mounted PR-status action', () => {
         const result = await createTriageReadPullRequestStatusActionHandler()({
             v: 1, entryRef: fixture.detailInput.observation.entryRef,
             sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
         }, actual.context);
         expect(result).toEqual({ kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'statusUnavailable' } });
         expect(actual.requests).toHaveLength(1);
@@ -165,12 +211,16 @@ describe('the mounted PR-status action', () => {
     it('attaches the exact source-native dependency without reading native status to observe it', async () => {
         const actual = await boundary();
         actual.requests.length = 0;
+        const admittedGets = actual.sourceGetCount();
         const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
             lastKnownLocator: fixture.getInput.lastKnownLocator,
         }, Object.assign(() => {}, { retire() {} }), actual.context);
         expect(actual.requests).toEqual([]);
         expect(actual.observed).toEqual([{ operation: nativeOperation(), input: fixture.getInput }]);
+        expect(actual.sourceGetCount() - admittedGets).toBe(1);
+        expect(actual.inventoryPages()).toBe(0);
         await observation.dispose();
         expect(actual.operationDisposed()).toBe(true);
     });
@@ -180,6 +230,7 @@ describe('the mounted PR-status action', () => {
         const actual = await boundary({ disposeNative: async () => { cleanupStarted = true; throw error; } });
         const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
         }, Object.assign(() => {}, { retire() {} }), actual.context);
         const cleanup = observation.dispose();
         expect(cleanupStarted).toBe(true);
@@ -191,6 +242,7 @@ describe('the mounted PR-status action', () => {
         const invalidate = Object.assign(vi.fn(), { retire: vi.fn(() => actual.abort()) });
         const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
         }, invalidate, actual.context);
         try {
             const getCount = actual.sourceGetCount();
@@ -218,6 +270,7 @@ describe('the mounted PR-status action', () => {
         const invalidate = Object.assign(vi.fn(), { retire: vi.fn(() => actual.abort()) });
         const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
         }, invalidate, actual.context);
         try {
             const getCount = actual.sourceGetCount();
@@ -233,15 +286,21 @@ describe('the mounted PR-status action', () => {
             expect(actual.requests).toEqual([]);
         } finally { await observation.dispose(); }
     });
-    it('retires a source replaced between query admission and exact row-watch attachment before native observation', async () => {
+    it('admits the latest configuration when it changes before exact row-watch attachment', async () => {
         const actual = await boundary({ replaceBeforeWatch: true });
         actual.requests.length = 0;
         const invalidate = Object.assign(vi.fn(), { retire: vi.fn(() => actual.abort()) });
-        await expect(createTriageReadPullRequestStatusObserver()({ v: 1,
+        const observation = await createTriageReadPullRequestStatusObserver()({ v: 1,
             entryRef: fixture.detailInput.observation.entryRef, sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
-        }, invalidate, actual.context)).rejects.toMatchObject({ name: 'AbortError' });
-        expect(invalidate.retire).toHaveBeenCalledOnce();
-        expect(actual.observed).toEqual([]);
+            ...{ sourceInstanceRowId: actual.sourceInstanceRowId },
+            lastKnownLocator: fixture.getInput.lastKnownLocator,
+        }, invalidate, actual.context);
+        expect(invalidate.retire).not.toHaveBeenCalled();
+        expect(actual.observed).toEqual([{ operation: nativeOperation(), input: { ...fixture.getInput,
+            instance: { ...fixture.configuredInstance, configuration: { ...fixture.configuredInstance.configuration,
+                token: `${fixture.configuredInstance.configuration.token}-updated` } },
+        } }]);
         expect(actual.requests).toEqual([]);
+        await observation.dispose();
     });
 });

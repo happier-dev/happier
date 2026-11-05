@@ -4,7 +4,7 @@ import type { TriageEntryLocatorV1, TriageEntryRefV1 } from '@happier-dev/triage
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import { putCorpusRowOnce } from '../corpus/collections/putRowOnce.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
+import { fromCorpusStoredRow, type CorpusRowV1 } from '../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { findTriageEntrySessionLinkV1 } from './readEntrySessionLinks.js';
@@ -143,6 +143,21 @@ async function writeEntrySessionLink(
  * fact refused for a reason retrying cannot resolve.
  */
 const COLLECTION_CONFLICT_CODE = 'plugin_collection_conflict';
+
+/** Contract only the exact row whose relationship was proven at its new owner. */
+export async function contractMigratedEntrySessionLink(input: Readonly<{
+    collections: LinkCollections;
+    retained: CorpusRowV1<CorpusSessionLinkRowV1>;
+    signal?: AbortSignal;
+}>): Promise<Readonly<{ status: 'unlinked' | 'conflict' | 'failed' }>> {
+    try {
+        await input.collections.sessionLinks.delete(input.retained.rowId, { expectedRevision: input.retained.revision,
+            ...(input.signal === undefined ? {} : { signal: input.signal }) });
+        return { status: 'unlinked' };
+    } catch (error) {
+        return { status: isPluginError(error) && error.code === COLLECTION_CONFLICT_CODE ? 'conflict' : 'failed' };
+    }
+}
 
 export type TriageUnlinkEntryFromSessionResultV1 =
     /** The relationship is gone, including when it already was. */

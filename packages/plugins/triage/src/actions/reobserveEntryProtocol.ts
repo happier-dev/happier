@@ -2,6 +2,7 @@ import {
   defineProtocolLiteral,
   defineProtocolObject,
   defineProtocolUnion,
+  TriageIdentifierV1ProtocolSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   TriageEntryLocatorV1Schema,
@@ -15,6 +16,8 @@ export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   entryRef: TriageEntryRefV1Schema,
   sourceInstanceId: TriageSourceInstanceIdV1Schema,
+  /** Private exact row address from source admission; never configuration authority. */
+  sourceInstanceRowId: TriageIdentifierV1ProtocolSchema.optional(),
   lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReobserveEntryActionInputV1 = ReturnType<

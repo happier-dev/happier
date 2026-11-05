@@ -158,8 +158,8 @@ export function advanceConfiguredSourceCollectionCursor(
     return nextCursor;
 }
 
-async function readRow(
-    sourceInstances: CorpusCollectionHandleV1,
+export async function readConfiguredSourceInstanceRow(
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'get'>,
     instanceTag: string,
     options?: PluginCancellationOptions,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
@@ -236,7 +236,7 @@ async function createInstance(
     options?: PluginCancellationOptions,
 ): Promise<CorpusSourceInstanceAdministrationResultV1> {
     const { sourceInstances } = input.collections;
-    const existing = await readRow(sourceInstances, instanceTag, options);
+    const existing = await readConfiguredSourceInstanceRow(sourceInstances, instanceTag, options);
     if (existing) {
         if (!configuredSourceInstanceIsOwnedBy(existing.value, input.source)) return INVALID_CALLER;
         return existing.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
@@ -251,7 +251,7 @@ async function createInstance(
         configuredAtMs: input.nowMs,
     }), 'absent', options);
     if (written) {
-        const committed = await readRow(sourceInstances, instanceTag, options);
+        const committed = await readConfiguredSourceInstanceRow(sourceInstances, instanceTag, options);
         return committed
             ? { kind: 'active', sourceInstanceId: committed.value.configured.instance.sourceInstanceId }
             : CONFLICT;
@@ -259,7 +259,7 @@ async function createInstance(
 
     // Another writer won the same tuple-addressed row. Re-read it and adopt the
     // winner's stable ref; the id this call minted is simply discarded.
-    const winner = await readRow(sourceInstances, instanceTag, options);
+    const winner = await readConfiguredSourceInstanceRow(sourceInstances, instanceTag, options);
     if (!winner || !configuredSourceInstanceIsOwnedBy(winner.value, input.source)) return CONFLICT;
     return winner.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active
         ? { kind: 'reused', sourceInstanceId: winner.value.configured.instance.sourceInstanceId }
@@ -296,7 +296,7 @@ async function reconfigureInstance(
         return written ? { kind: 'reconfigured', sourceInstanceId } : CONFLICT;
     }
 
-    const successor = await readRow(sourceInstances, nextInstanceTag, options);
+    const successor = await readConfiguredSourceInstanceRow(sourceInstances, nextInstanceTag, options);
     if (successor && !configuredSourceInstanceIsOwnedBy(successor.value, input.source)) return INVALID_CALLER;
     if (successor && successor.value.lifecycle !== CORPUS_SOURCE_INSTANCE_LIFECYCLE.active) return CONFLICT;
 

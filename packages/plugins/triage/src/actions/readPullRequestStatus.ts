@@ -9,7 +9,7 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../corpus/collections/defini
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { configuredSourceInstanceIsOwnedBy, readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { sameConfiguredSourceAuthority } from '../corpus/configuration/configuredSourceAuthority.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
@@ -19,17 +19,19 @@ import type { TriageReobserveEntryActionInputV1 } from './reobserveEntryProtocol
 
 async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionInputV1, context: TriageDataActionContext,
     observation: TargetedContributionObservation<TriageAdmittedSourceV1>) {
+    if (input.sourceInstanceRowId === undefined) return null;
     const options = { signal: context.signal };
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const [row, admitted] = await Promise.all([
-        findConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceId, options),
+        readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, options),
         observation.readCurrent(options),
     ]);
     throwIfAborted(context.signal);
     const configured = row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
     const source = indexTriageAdmittedSourcesV1(admitted.contributions).get(renderSourceQualifiedId(input.entryRef.source));
     const operation = source?.operations.readPullRequestStatus;
-    if (configured === null || row === null || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source) || operation === undefined
+    if (configured === null || row === null || configured.instance.sourceInstanceId !== input.sourceInstanceId
+        || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source) || operation === undefined
         || source?.descriptor.kinds.find(kind => kind.id === input.entryRef.kindId)?.workflowSubject !== 'pullRequest') return null;
     return { row, sourceInstances, operation, input: { v: 1 as const, instance: configured,
         localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
@@ -97,19 +99,24 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
         const onAbort = () => { void dispose().catch(() => {}); };
         context.signal.addEventListener('abort', onAbort, { once: true });
         try {
-            const source = await resolveConfiguredStatusSource(input, context, admitted);
-            if (source === null) throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'The configured PR source cannot be observed.' });
-            selectedIdentity = source.operation.identity;
             const rows = requireTriageAccountStorage(context).collection(CORPUS_SOURCE_INSTANCES_COLLECTION);
+            // Subscribe before admission starts its one exact read. Changes
+            // after admission use the same fresh authority comparison as before.
+            const resolving = Promise.resolve().then(() => resolveConfiguredStatusSource(input, context, admitted));
             const recheck = async () => {
+                const source = await resolving;
+                if (source === null) return;
                 const current = await rows.get(source.row.rowId, { signal: context.signal });
                 if (disposed || context.signal.aborted) return;
                 if (!sameConfiguredSourceAuthority(source.row.value, current === null ? null
                     : fromCorpusStoredRow<CorpusSourceInstanceRowV1>(current).value)) retire();
             };
-            configuredRow = rows.watch({ kind: 'row', rowId: source.row.rowId }, () => { void recheck().catch(retire); });
-            // Subscribe before the exact reread so a change after query admission cannot be lost.
-            await recheck();
+            if (input.sourceInstanceRowId !== undefined) {
+                configuredRow = rows.watch({ kind: 'row', rowId: input.sourceInstanceRowId }, () => { void recheck().catch(retire); });
+            }
+            const source = await resolving;
+            if (source === null) throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'The configured PR source cannot be observed.' });
+            selectedIdentity = source.operation.identity;
             throwIfAborted(context.signal);
             const attached = await context.services.actions.observeAdmittedTargetedOperation(source.operation, source.input, notify, { signal: context.signal });
             if (disposed || context.signal.aborted) await attached.dispose();
