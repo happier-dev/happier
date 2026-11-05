@@ -5,6 +5,7 @@ import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflo
 import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
 import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { projectConfirmedActionHttpRefusal } from './actionFailureEnvelope.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -98,7 +99,8 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     diagnostic.emit({ event: 'workflow_action_failure', errorCode: result.errorCode, originalCode,
       httpStatus, operation, durationMs });
   }
-  return result;
+  return result.errorCode === 'workflow_http_error'
+    ? projectConfirmedActionHttpRefusal(result, result.details.status) : result;
 }
 
 /** Request validation is not a failure to read private persisted content. */

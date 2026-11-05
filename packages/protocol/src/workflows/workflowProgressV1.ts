@@ -892,6 +892,7 @@ export const WorkflowActionFailureV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({
     ok: z.literal(false), errorCode: z.literal('workflow_http_error'), error: z.string().check(z.trim(), z.minLength(1)),
     details: WorkflowHttpErrorDetailsV1Schema,
+    effectAttempted: z.optional(z.boolean()),
   }),
   z.strictObject({
     ok: z.literal(false), errorCode: z.literal('workflow_conversation_unavailable'), error: z.string().check(z.trim(), z.minLength(1)),

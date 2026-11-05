@@ -119,11 +119,18 @@ describe('workflow Action refusal classification', () => {
   it('retains a closed HTTP refusal through the family and outer Action boundary', async () => {
     const details = { status: 400, code: 'FST_ERR_VALIDATION' };
     const error = Object.assign(new Error('Workflow request failed (HTTP 400; FST_ERR_VALIDATION)'), {
-      code: 'workflow_http_error', details,
+      code: 'workflow_http_error', details, response: { status: 400 },
     });
     const actions = createActionExecutor({ workflowAction: executor(false, error) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'api' }))
-      .resolves.toEqual({ ok: false, errorCode: 'workflow_http_error', error: error.message, details });
+      .resolves.toEqual({ ok: false, effectAttempted: false, errorCode: 'workflow_http_error', error: error.message, details });
+  });
+  it('does not infer no effect from a server failure or a lost response', () => {
+    for (const response of [{ status: 503 }, undefined]) {
+      const error = Object.assign(new Error('Workflow write receipt unavailable'), { code: 'workflow_http_error',
+        details: { status: 503 }, ...(response ? { response } : {}) });
+      expect(normalizeWorkflowActionThrownError(error)).not.toHaveProperty('effectAttempted');
+    }
   });
   it('keeps typed target diagnostics through the family and outer Action failure boundary', async () => {
     const details = { code: 'target_unavailable' as const, reason: 'agent_probe_failed' as const,
