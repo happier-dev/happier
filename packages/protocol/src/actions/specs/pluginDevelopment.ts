@@ -7,6 +7,8 @@ import { ManagedResourceDispositionV1Schema } from '../../machines/managed/manag
 import { z } from 'zod/mini';
 import { type ActionCliBindContext } from '../actionCliProjection.js';
 import { type PluginDevLoopActionIdV1 } from '../actionIds.js';
+import { PluginPublishInspectActionInputSchema, PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema,
+  PluginPublishStatusActionInputSchema, PluginPublicationActionOutputSchemas, pluginPublicationReviewedChildren } from './pluginPublication.js';
 
 
 /**
@@ -153,6 +155,10 @@ export const PluginDevLoopActionInputSchemas = {
   'plugins.dev.typecheck': PluginAuthorActionInputSchema,
   'plugins.dev.build': PluginAuthorActionInputSchema,
   'plugins.dev.test': PluginAuthorActionInputSchema,
+  'plugins.dev.publication.inspect': PluginPublishInspectActionInputSchema,
+  'plugins.dev.publication.prepare': PluginPublishPrepareActionInputSchema,
+  'plugins.dev.publish': PluginPublishActionInputSchema,
+  'plugins.dev.publication.status': PluginPublishStatusActionInputSchema,
   'plugins.doctor': PluginDoctorActionInputSchema,
   'plugins.pack': PluginPackActionInputSchema,
   'plugins.reload': PluginReloadActionInputSchema,
@@ -228,6 +234,30 @@ export const PluginDevLoopActionOutputSchema = lazyZodSchema(() => z.union([
   PluginDevLoopOrdinaryActionOutputSchema,
 ]));
 
+// Keep the schema projection statically discoverable by the public SDK owner.
+export const PluginDevLoopActionOutputSchemas = {
+  'plugins.scaffold': PluginDevLoopActionOutputSchema,
+  'plugins.install': PluginDevLoopActionOutputSchema,
+  'plugins.uninstall': PluginDevLoopActionOutputSchema,
+  'plugins.enable': PluginDevLoopActionOutputSchema,
+  'plugins.disable': PluginDevLoopActionOutputSchema,
+  'plugins.rollback': PluginDevLoopActionOutputSchema,
+  'plugins.trust.forget': PluginDevLoopActionOutputSchema,
+  'plugins.update_policy.set': PluginDevLoopActionOutputSchema,
+  'plugins.dev.submit': PluginDevLoopActionOutputSchema,
+  'plugins.dev.unregister': PluginDevLoopActionOutputSchema,
+  'plugins.dev.install': PluginDevLoopActionOutputSchema,
+  'plugins.dev.typecheck': PluginDevLoopActionOutputSchema,
+  'plugins.dev.build': PluginDevLoopActionOutputSchema,
+  'plugins.dev.test': PluginDevLoopActionOutputSchema,
+  ...PluginPublicationActionOutputSchemas,
+  'plugins.doctor': PluginDevLoopActionOutputSchema,
+  'plugins.pack': PluginDevLoopActionOutputSchema,
+  'plugins.reload': PluginDevLoopActionOutputSchema,
+  'plugins.list': PluginDevLoopActionOutputSchema,
+  'plugins.change.status': PluginDevLoopActionOutputSchema,
+} as const satisfies Readonly<Record<PluginDevLoopActionIdV1, z.ZodMiniType>>;
+
 export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Scaffold plugin',
   'plugins.install': 'Install plugin',
@@ -243,6 +273,10 @@ export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionI
   'plugins.dev.typecheck': 'Typecheck plugin',
   'plugins.dev.build': 'Build plugin',
   'plugins.dev.test': 'Test plugin',
+  'plugins.dev.publication.inspect': 'Inspect plugin publication',
+  'plugins.dev.publication.prepare': 'Prepare plugin publication',
+  'plugins.dev.publish': 'Publish plugin',
+  'plugins.dev.publication.status': 'Check plugin publication',
   'plugins.doctor': 'Diagnose plugin',
   'plugins.pack': 'Pack plugin',
   'plugins.reload': 'Reload plugin',
@@ -265,6 +299,10 @@ export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopA
   'plugins.dev.typecheck': 'Run the managed TypeScript check for an external plugin-author source.',
   'plugins.dev.build': 'Build an external plugin-author source through the managed runtime.',
   'plugins.dev.test': 'Run the external plugin-author test command through the managed runtime.',
+  'plugins.dev.publication.inspect': 'Read the selected project, public registry profiles and published version history.',
+  'plugins.dev.publication.prepare': 'Prepare the reviewed plugin metadata and archive for publication.',
+  'plugins.dev.publish': 'Publish a reviewed plugin archive publicly to npm and perform explicitly selected GitHub effects.',
+  'plugins.dev.publication.status': 'Check one exact package version and archive integrity without uploading or retrying.',
   'plugins.doctor': 'Evaluate and diagnose an external plugin-author source.',
   'plugins.pack': 'Validate and package a local plugin into an installable archive.',
   'plugins.reload': 'Load a plugin you are developing again, so your latest changes take effect.',
@@ -287,6 +325,7 @@ export const PLUGIN_DEV_LOOP_APPROVAL_SUMMARIES: Readonly<Partial<Record<PluginD
   'plugins.dev.typecheck': (subject) => `Typecheck the plugin in ${subject}`,
   'plugins.dev.build': (subject) => `Build the plugin in ${subject}`,
   'plugins.dev.test': (subject) => `Run the tests of the plugin in ${subject}`,
+  'plugins.dev.publish': (subject) => `Publish the reviewed plugin in ${subject} publicly to npm and perform the selected GitHub effects`,
   'plugins.doctor': (subject) => `Diagnose the plugin in ${subject}`,
   'plugins.pack': (subject) => `Package the plugin in ${subject} into an installable archive`,
   'plugins.reload': (subject) => `Reload ${subject} so its latest changes take effect`,
@@ -304,7 +343,10 @@ export function readPluginDevLoopApprovalSubject(input: unknown): string | null 
 
 export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): PreNormalizedActionSpec {
   const describeApproval = PLUGIN_DEV_LOOP_APPROVAL_SUMMARIES[actionId];
-  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status';
+  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status'
+    || actionId === 'plugins.dev.publication.inspect' || actionId === 'plugins.dev.publication.status';
+  const isPublication = actionId === 'plugins.dev.publish' || actionId.startsWith('plugins.dev.publication.');
+  const isPreparation = actionId === 'plugins.dev.publication.prepare';
   const isLifecycle = actionId === 'plugins.enable' || actionId === 'plugins.disable' || actionId === 'plugins.rollback'
     || actionId === 'plugins.trust.forget' || actionId === 'plugins.update_policy.set';
   const isInspectorUiAction = actionId === 'plugins.list'
@@ -317,7 +359,8 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
     || actionId === 'plugins.dev.submit'
     || actionId === 'plugins.dev.unregister'
     || actionId === 'plugins.dev.test'
-    || actionId === 'plugins.pack';
+    || actionId === 'plugins.pack'
+    || isPublication;
   const inputSchema = PluginDevLoopActionInputSchemas[actionId];
 
   return {
@@ -339,7 +382,7 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
       const subject = readPluginDevLoopApprovalSubject(input);
       return subject ? describeApproval(subject) : null;
     } } } : {}),
-    safety: isRead ? 'safe' : 'danger',
+    safety: isRead || isPreparation ? 'safe' : 'danger',
     placements: [],
     bindings: {
       mcpToolName: actionId.replaceAll('.', '_'),
@@ -354,6 +397,9 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
       rpc: false,
     },
     sideEffectClass: actionId === 'plugins.uninstall' || actionId === 'plugins.trust.forget' ? 'danger' : isRead ? 'read' : 'write',
+    ...(isPreparation ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
+    ...(actionId === 'plugins.dev.publish' ? { approvalPolicy: { agentDefault: 'egress' as const, uiConfirmation: 'policy' as const }, irreversible: true as const } : {}),
+    ...(actionId === 'plugins.dev.publish' ? { hostReviewedChildren: pluginPublicationReviewedChildren } : {}),
     ...(actionId === 'plugins.reload' || actionId === 'plugins.scaffold' || isLifecycle && actionId !== 'plugins.trust.forget'
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     ...(actionId === 'plugins.uninstall' || actionId === 'plugins.trust.forget' ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
@@ -425,7 +471,7 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
         flagAliases: [{ path: 'machineId', aliases: ['--machine'] }],
       },
     } : {}),
-    outputSchema: PluginDevLoopActionOutputSchema,
+    outputSchema: PluginDevLoopActionOutputSchemas[actionId],
     inputSchema,
     inputHints: { fields: PLUGIN_DEVELOPMENT_INPUT_FIELDS[actionId] },
   };

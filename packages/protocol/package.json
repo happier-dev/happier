@@ -2165,6 +2165,11 @@
       "types": "./dist/actions/specs/pluginSessionHookInputHints.d.ts",
       "default": "./dist/actions/specs/pluginSessionHookInputHints.js"
     },
+    "./actions/specs/pluginPublication": {
+      "happier-source": "./src/actions/specs/pluginPublication.ts",
+      "types": "./dist/actions/specs/pluginPublication.d.ts",
+      "default": "./dist/actions/specs/pluginPublication.js"
+    },
     "./actions/specs/pluginSessionHooks": {
       "happier-source": "./src/actions/specs/pluginSessionHooks.ts",
       "types": "./dist/actions/specs/pluginSessionHooks.d.ts",

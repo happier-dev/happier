@@ -341,7 +341,8 @@ import { createAutomationEventActionSpec, createAutomationConversationActionSpec
 import { AUTOMATION_OCCURRENCE_ACTION_SPECS } from './specs/occurrences.js';
 import { AutomationOccurrenceInputSchemas, AutomationOccurrenceOutputSchemas, type AutomationOccurrenceActionId } from '../automations/occurrenceActions.js';
 import { PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 } from './specs/pluginSessionHooks.js';
-import { PluginDevLoopActionInputSchemas, PluginDevLoopActionOutputSchema, createPluginDevLoopActionSpec } from './specs/pluginDevelopment.js';
+import { PluginDevLoopActionInputSchemas, PluginDevLoopActionOutputSchemas, createPluginDevLoopActionSpec } from './specs/pluginDevelopment.js';
+export * from './specs/pluginPublication.js';
 export { PluginScaffoldUiModeSchema, type PluginScaffoldUiMode, DEFAULT_PLUGIN_SCAFFOLD_UI_MODE, PluginScaffoldTemplateSchema, type PluginScaffoldTemplate } from './specs/pluginDevelopment.js';
 import { SessionSendMessagePluginInputV1Schema, SESSION_MESSAGE_ACTION_SPECS } from './specs/session/messages.js';
 export { SessionSendMessageInputSchema, type SessionMessageSendAuthoredInput } from './specs/session/messages.js';
@@ -1418,7 +1419,7 @@ type PluginDevLoopActionSpecDefinition = {
   [TActionId in PluginDevLoopActionIdV1]: CanonicalActionSchemaDefinition<
     TActionId,
     (typeof PluginDevLoopActionInputSchemas)[TActionId],
-    typeof PluginDevLoopActionOutputSchema
+    (typeof PluginDevLoopActionOutputSchemas)[TActionId]
   > & (TActionId extends 'plugins.install'
     ? Readonly<{ surfaces: Readonly<{ api: false }> }> : unknown);
 }[PluginDevLoopActionIdV1];

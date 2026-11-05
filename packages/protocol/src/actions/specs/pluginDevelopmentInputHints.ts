@@ -11,6 +11,8 @@ const scope = { path: 'scope', title: 'Scope', widget: 'select', options: [
   { value: 'machine', label: 'This Machine' }, { value: 'account', label: 'Account' },
 ] } as const;
 const development = [root, registry];
+const publicationSource = [{ ...root, required: false },
+  { path: 'botTemplate', title: 'Reviewed Bot template draft and release projection', widget: 'json' }] as const;
 
 export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
   'plugins.scaffold': [
@@ -44,6 +46,16 @@ export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
   'plugins.dev.typecheck': development,
   'plugins.dev.build': development,
   'plugins.dev.test': development,
+  'plugins.dev.publication.inspect': [...publicationSource, machine, { path: 'profileId', title: 'npm profile', widget: 'text' }, { path: 'packageName', title: 'Package', widget: 'text' }, { path: 'cursor', title: 'Version page', widget: 'text' },
+    { path: 'includeGithub', title: 'Inspect GitHub publication choices', widget: 'boolean' }],
+  'plugins.dev.publication.prepare': [...publicationSource, machine, { path: 'profileId', title: 'npm profile', widget: 'text' }, { path: 'publication', title: 'Reviewed publication metadata', widget: 'json' }],
+  'plugins.dev.publish': [...publicationSource, machine, { path: 'profileId', title: 'npm profile', widget: 'text' }, { path: 'publication', title: 'Reviewed publication metadata', widget: 'json' },
+    { path: 'access', title: 'Access', widget: 'text', required: true }, { path: 'mode', title: 'Publication mode', widget: 'text', required: true },
+    { path: 'expectedArchiveIntegrity', title: 'Reviewed archive integrity', widget: 'text' }, { path: 'github', title: 'Selected GitHub effects', widget: 'json' },
+    { path: 'githubOnly', title: 'Retry GitHub only', widget: 'boolean' }],
+  'plugins.dev.publication.status': [machine, { path: 'profileId', title: 'npm profile', widget: 'text', required: true },
+    { path: 'packageName', title: 'Package', widget: 'text', required: true }, { path: 'version', title: 'Version', widget: 'text', required: true },
+    { path: 'integrity', title: 'Archive integrity', widget: 'text', required: true }],
   'plugins.doctor': [locator],
   'plugins.pack': [locator, { path: 'outPath', title: 'Archive output path', widget: 'text' }, registry],
   'plugins.reload': [plugin],
