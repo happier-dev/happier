@@ -1,4 +1,4 @@
-import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { createRpcCallError } from '../rpc/errors.js';
@@ -166,6 +166,15 @@ export function createProviderActionExecuteV1(host: Readonly<{
         ? createProviderErrorV1('provider_rpc_mutation_outcome_unknown', errorContext)
         : providerErrorFromRpcFailure(caught, errorContext);
       return { ok: false, errorCode: error.code, error: error.code, details: error };
+    }
+    // Forwarded Actions may await approval rather than carry Provider output.
+    // Keep only this invocation's receipt for the existing Action continuation.
+    if (readRecord(result).kind === 'approval_request_created') {
+      const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+      if (pending.success && pending.data.actionId === request.actionId) {
+        host.assertCurrent(context);
+        return { ok: true, result: pending.data };
+      }
     }
     const parsed = schema.safeParse(result);
     // A different successful operation is not an acknowledgement of this request.

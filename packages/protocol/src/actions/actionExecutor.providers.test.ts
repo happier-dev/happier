@@ -3,6 +3,7 @@ import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { createProviderActionExecuteV1 } from '../providers/executeProviderActionV1.js';
+import { parseProviderActionRequestV1 } from '../providers/providerActionsV1.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
 import { applyProviderDefaultModelSelectionV1, SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
 import { createAccountProviderActionExecuteV1 } from '../providers/connections/accountProviderActionV1.js';
@@ -18,6 +19,53 @@ import { DaemonProviderConnectionMutationResponseV1Schema } from '../rpc/provide
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
 
 describe('Provider Settings Actions', () => {
+  it('preserves a forwarded refresh approval before parsing Provider output', async () => {
+    const input = { machineId: 'hub', agentTargetKey: 'agent:happier.agent.codex/codex',
+      forceRefresh: true as const };
+    const invocation = { ...context, serverId: 'test-home', machineId: 'hub',
+      actionRequestId: 'refresh-request', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'providers.models.refresh': { approvalRequiredSurfaces: ['ui'] } },
+      }) };
+    const receiver = createActionExecutor({
+      approvalsCreate: async ({ request }) => {
+        ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'refresh-approval' };
+      },
+      providerActionExecute: async () => { throw new Error('Effect awaits approval'); },
+    });
+    const produced = await receiver.execute('providers.models.refresh', input, invocation);
+    expect(produced).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    if (!produced.ok) throw new Error('Expected real pending producer');
+    const forward = createProviderActionExecuteV1({
+      assertCurrent() {}, rpc: async () => produced.result,
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    const request = parseProviderActionRequestV1('providers.models.refresh', input);
+    expect(await forward(request, invocation)).toEqual(produced);
+  });
+
+  it.each([
+    ['providers.probe', { connectionId: 'gateway', machineId: 'hub' }],
+    ['providers.models.load', { action: 'load', connectionId: 'gateway', machineId: 'hub', modelId: 'model' }],
+    ['providers.connections.enabled.set', { action: 'setEnabled', connectionId: 'gateway', machineId: 'hub', enabled: true, scope: 'machine' }],
+  ] as const)('preserves a forwarded %s approval without executing its effect', async (actionId, input) => {
+    const invocation = { ...context, serverId: 'test-home', machineId: 'hub', actionRequestId: 'forward-request' };
+    const receiver = createActionExecutor({
+      approvalsCreate: async ({ request }) => {
+        ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'forward-approval' };
+      },
+      providerActionExecute: async () => { throw new Error('Effect awaits approval'); },
+    });
+    const produced = await receiver.execute(actionId, input, invocation);
+    expect(produced).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+    if (!produced.ok) throw new Error('Expected real pending producer');
+    const forward = createProviderActionExecuteV1({ assertCurrent() {}, rpc: async () => produced.result,
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    expect(await forward(parseProviderActionRequestV1(actionId, input), invocation)).toEqual(produced);
+  });
+
   it.each([
     ['MACHINE_RPC_TIMEOUT', 'agent_timeout'],
     ['RPC_METHOD_NOT_AVAILABLE', 'agent_unavailable'],

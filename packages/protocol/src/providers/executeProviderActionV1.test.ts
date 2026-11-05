@@ -5,6 +5,9 @@ import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../sessions/cont
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { createProviderErrorV1 } from './errors.js';
+import { createActionExecutor } from '../actions/actionExecutor.js';
+import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
+import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -59,7 +62,35 @@ describe('Session-addressed Provider binding status', () => {
     expect(paired).toBe(false);
   });
 });
+
 describe('shared Provider Action recipient catalog admission', () => {
+  it.each(['different-action', 'malformed', 'retired'] as const)('refuses a %s forwarded approval', async scenario => {
+    const input = { machineId: 'hub', agentTargetKey, forceRefresh: true as const };
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'test-home', machineId: 'hub', actionRequestId: 'refresh-request',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'providers.models.refresh': { approvalRequiredSurfaces: ['ui'] } },
+      }) } as const;
+    const receiver = createActionExecutor({ approvalsCreate: async ({ request }) => {
+      ApprovalRequestV2Schema.parse(request);
+      return { artifactId: 'refresh-approval' };
+    } });
+    const produced = await receiver.execute('providers.models.refresh', input, context);
+    if (!produced.ok || typeof produced.result !== 'object' || !produced.result) throw new Error('Expected pending producer');
+    let current = true;
+    const forward = createProviderActionExecuteV1({ assertCurrent() {
+      if (!current) throw Object.assign(new Error('Account retired'), { code: 'scope-retired' });
+    }, rpc: async () => {
+      if (scenario === 'retired') current = false;
+      return { ...produced.result, ...(scenario === 'different-action' ? { actionId: 'providers.probe' } : {}),
+        ...(scenario === 'malformed' ? { artifactId: '' } : {}) };
+    }, setDefault: async () => ({ status: 'unchanged' }),
+    });
+    const result = forward(parseProviderActionRequestV1('providers.models.refresh', input), context);
+    if (scenario === 'retired') await expect(result).rejects.toMatchObject({ code: 'scope-retired' });
+    else expect(await result).toMatchObject({ ok: false, errorCode: 'provider_rpc_response_invalid' });
+  });
+
   it('routes usage refresh separately from model discovery and admits typed source refusals', async () => {
     const error = createProviderErrorV1('provider_endpoint_rate_limited', { connectionId: 'pc_1', machineId: 'machine-a' });
     const reply = { status: 'success', sources: [{ sourceId: 'credits', status: 'not_configured' },
