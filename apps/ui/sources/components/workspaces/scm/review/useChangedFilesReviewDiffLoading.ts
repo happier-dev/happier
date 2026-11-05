@@ -379,7 +379,7 @@ export function useChangedFilesReviewDiffLoading(input: {
             retryDiffRef.current = null;
             contextRead.abort();
         };
-    }, [diffArea, diffCache, isRepo, hasScopedDiffs, sessionId, reviewScopeKey, snapshotSignature, refreshToken,
+    }, [diffArea, diffCache, isRepo, hasScopedDiffs, findContext, sessionId, reviewScopeKey, snapshotSignature, refreshToken,
         serverId, machineId, rootPath, diffStateSource, setLoadedDiff]);
 
     React.useEffect(() => scheduleRef.current?.(), [
