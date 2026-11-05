@@ -2739,7 +2739,15 @@ export class SessionDraftRepository {
             .map((replica) => replica.address)
             .filter((address) => !listedAddresses.has(canonicalSessionDraftAddressV2(address)));
         const missingReads = await Promise.all(localAddressesMissingFromActiveList.map(async (address) => {
-            const response = await params.runtime.transport.read(address);
+            // A complete active census includes every Account-owned draft.
+            // Its absence reconciles clean replicas without one exact read per
+            // remotely removed row. Session drafts can be access-filtered, and
+            // local edits still need the exact remote revision for rebasing.
+            const response: SessionDraftReadResponseV2 = isAccountOwnedDraftAddressV2(address)
+                && this.isSessionDraftRemoteAcknowledged(scope, address)
+                && !hasLocalInstructionsAuthoring(this.readReplica(scope, address)?.localSupplement)
+                ? { status: 'absent' }
+                : await params.runtime.transport.read(address);
             return { address, response };
         }));
         if (!params.isCurrent()) return;
