@@ -31,6 +31,8 @@ function buildPlanned(partial: {
 }): ExtendedPlannedChangeActions {
     return {
         changes: partial.changes ?? [],
+        machineResourcesAffect: planSyncActionsFromChanges(partial.changes ?? []).machineResourcesAffect,
+        managedMachineInventoryAffect: planSyncActionsFromChanges(partial.changes ?? []).managedMachineInventoryAffect,
         workflowRunIdsToRefresh: partial.workflowRunIdsToRefresh ?? [],
         sessionIdsToCatchUp: partial.sessionIdsToCatchUp ?? [],
         sessionRowRefreshIds: partial.sessionRowRefreshIds ?? [],

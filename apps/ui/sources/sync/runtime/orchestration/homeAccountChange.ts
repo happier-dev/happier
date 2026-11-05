@@ -4,7 +4,7 @@ import {
     type HomeCredentialMutationEvent,
 } from '@/auth/storage/tokenStorage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { plannedChangesAffectProfileCatalog, plannedChangesAffectUsageQuery, plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
+import { accountChangeKindsAffectMachineResources, accountChangeKindsAffectManagedMachineInventory, plannedChangesAffectProfileCatalog, plannedChangesAffectUsageQuery, plannedSessionReadinessChanges, planSessionReadinessWake, type SessionReadinessChanges, accountChangeKindsAffectWorkflowTriggers, accountChangeKindsAffectWorkflowDefinitions, planSyncActionsFromChanges, plannedChangesAffectSessionListQuery, plannedChangesAffectWorkflowTriggers, plannedChangesAffectWorkflowDefinitions } from './changesPlanner';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
@@ -50,6 +50,9 @@ export type HomeAccountChangeEvent = Readonly<{
     workflowTriggersAffect?: boolean;
     /** The canonical planner's saved definition/source query decision. */
     workflowDefinitionsAffect?: boolean;
+    /** Canonical Machine/Preset routing; absent content-free wakes remain conservative. */
+    machineResourcesAffect?: boolean;
+    managedMachineInventoryAffect?: boolean;
     /** An acknowledged local Artifact deletion; no private content or replay guarantee. */
     deletedArtifactIds?: readonly string[];
 }>;
@@ -69,6 +72,9 @@ type HomeAccountChangeDetails = Readonly<{
     usageQueryAffects?: boolean;
     workflowTriggersAffect?: boolean;
     workflowDefinitionsAffect?: boolean;
+    /** Canonical Machine/Preset routing; absent content-free wakes remain conservative. */
+    machineResourcesAffect?: boolean;
+    managedMachineInventoryAffect?: boolean;
     deletedArtifactIds?: readonly string[];
 }>;
 
@@ -264,6 +270,10 @@ export function publishHomeAccountChangeForRouting(
             || details.changeKinds.length === 0
             || details.changeKinds.some(kind => kind === 'account' || !ChangeKindSchema.safeParse(kind).success)),
         ...(usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
+        machineResourcesAffect: details?.source === 'connected' || details?.source === 'snapshot'
+            || (details?.machineResourcesAffect ?? accountChangeKindsAffectMachineResources(details?.changeKinds, entityIds)),
+        managedMachineInventoryAffect: details?.source === 'connected' || details?.source === 'snapshot'
+            || (details?.managedMachineInventoryAffect ?? accountChangeKindsAffectManagedMachineInventory(details?.changeKinds, entityIds)),
         workflowTriggersAffect: !disclosureOnly && (details?.source === 'connected' || coarse
             || (workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds))),
         workflowDefinitionsAffect: details?.source === 'connected' || details?.source === 'snapshot'

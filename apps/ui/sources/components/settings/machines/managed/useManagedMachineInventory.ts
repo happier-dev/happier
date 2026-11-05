@@ -7,7 +7,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeStates, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { isArtifactOnlyHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
@@ -145,7 +145,8 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
             })();
     };
     const unsubscribe = subscribeHomeAccountChange(event => {
-        if (isArtifactOnlyHomeAccountChange(event) || awaitingApproval) return;
+        const affectsQuery = managedId ? event.machineResourcesAffect : event.managedMachineInventoryAffect;
+        if (affectsQuery === false || awaitingApproval) return;
         if ((resolveServerProfileScopeIdForIdentifier(event.serverId) || event.serverId) === serverId) refresh();
     });
     const dispose = () => {

@@ -103,6 +103,10 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
 
 export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
+    /** The existing planner owns resource invalidation alongside its domain routing. */
+    machineResourcesAffect: boolean;
+    /** Retained list rows do not depend on controller Machine presence or detail. */
+    managedMachineInventoryAffect: boolean;
     workflowRunIdsToRefresh: string[];
     sessionIdsToCatchUp: string[];
     /**
@@ -163,6 +167,38 @@ const knownChangeKinds = new Set<string>(ChangeKindSchema.options);
 
 function isKnownChangeKind(kind: string): kind is ChangeKind {
     return knownChangeKinds.has(kind);
+}
+
+/** Machine/Preset readers consume resource, source and authority changes, never unrelated content. */
+export function accountChangeKindsAffectMachineResources(
+    changeKinds: readonly string[] | undefined,
+    entityIds: readonly string[] | undefined,
+): boolean {
+    if (changeKinds?.length && changeKinds.every(kind => kind === 'account') && entityIds?.length) {
+        return plannedChangesAffectMachineResources(planSyncActionsFromChanges(entityIds.map(entityId => ({
+            kind: 'account', entityId, cursor: 0, changedAt: 0,
+        }))));
+    }
+    return changeKinds === undefined || changeKinds.length === 0 || changeKinds.some(kind => !isKnownChangeKind(kind)
+        || kind === 'account' || isMachineProjectionChangeKindV1(kind) || kind === 'machinePool'
+        || kind === 'pluginDomain' || kind === 'savedSecretResource');
+}
+
+/** Detailed pages retain each entity's kind, so unrelated mixed pages can stay quiet too. */
+export function plannedChangesAffectMachineResources(planned: PlannedChangeActions): boolean {
+    return planned.unsupportedChanges.length > 0 || planned.machineResourcesAffect;
+}
+
+export function accountChangeKindsAffectManagedMachineInventory(
+    changeKinds: readonly string[] | undefined,
+    entityIds: readonly string[] | undefined,
+): boolean {
+    if (changeKinds?.length && changeKinds.every(kind => kind === 'machine')) return false;
+    return accountChangeKindsAffectMachineResources(changeKinds?.filter(kind => kind !== 'machine'), entityIds);
+}
+
+export function plannedChangesAffectManagedMachineInventory(planned: PlannedChangeActions): boolean {
+    return planned.unsupportedChanges.length > 0 || planned.managedMachineInventoryAffect;
 }
 
 function hasPendingHint(change: ApiChangeEntry): boolean {
@@ -454,6 +490,8 @@ export function planSyncActionsFromChanges(
     let organizationIncludeTags = false;
     let organizationIncludeLabels = false;
     let invalidateMachines = false;
+    let machineResourcesAffect = false;
+    let managedMachineInventoryAffect = false;
     let invalidateMachinePools = false;
     let invalidateArtifacts = false;
     let invalidateSettings = false;
@@ -480,6 +518,11 @@ export function planSyncActionsFromChanges(
                 entityId: String(change.entityId ?? ''),
             });
             continue;
+        }
+
+        if (kind !== 'account' && accountChangeKindsAffectMachineResources([kind], [change.entityId])) {
+            machineResourcesAffect = true;
+            if (kind !== 'machine') managedMachineInventoryAffect = true;
         }
 
         // Reserved row hints are admitted before any generic Account refresh privilege.
@@ -569,11 +612,15 @@ export function planSyncActionsFromChanges(
             }
             if (changeRequiresSavedSecretCatalogRefresh(change)) {
                 invalidateSavedSecretResources = true;
+                machineResourcesAffect = true;
+                managedMachineInventoryAffect = true;
             }
             if (change.entityId !== 'self' && readConnectedServicesAccountChangeV1(change)) {
                 // The Account profile owns Connected Service status and descriptors;
                 // these dedicated rows do not change encrypted Account settings.
                 invalidateProfile = true;
+                machineResourcesAffect = true;
+                managedMachineInventoryAffect = true;
                 continue;
             }
             if (change.entityId.startsWith('workflow-run:')) {
@@ -593,6 +640,10 @@ export function planSyncActionsFromChanges(
                 // Scoped snapshot materialization consumes these stable entity
                 // IDs before the cursor advances. Usage observations likewise
                 // wake Usage, not Account profile or encrypted Settings readers.
+                if (change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) {
+                    machineResourcesAffect = true;
+                    managedMachineInventoryAffect = true;
+                }
                 // Team and Group membership are also authorization inputs for
                 // shared Saved Secrets, so retire material at this same wake
                 // and let the catalog owner re-observe current grants.
@@ -628,6 +679,8 @@ export function planSyncActionsFromChanges(
                 continue;
             }
             invalidateSettings = true;
+            machineResourcesAffect = true;
+            managedMachineInventoryAffect = true;
             invalidateProfile = true;
             continue;
         }
@@ -704,6 +757,8 @@ export function planSyncActionsFromChanges(
 
     return {
         changes: [...changes],
+        machineResourcesAffect,
+        managedMachineInventoryAffect,
         workflowRunIdsToRefresh: [...workflowRunIdsToRefresh].sort(),
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
         sessionRowRefreshIds: invalidateSessions ? [] : Array.from(sessionRowRefreshIds).sort(),

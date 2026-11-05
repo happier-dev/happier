@@ -5,7 +5,7 @@ import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plug
 
 import { getServerProfileById, areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeStates, useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { isArtifactOnlyHomeAccountChange, publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions } from './machinePresetCollectionClient';
@@ -96,7 +96,7 @@ export function useMachinePresetQuery<T>(input: Readonly<{
         return () => { controller.abort(); retirement.dispose(); if (approvalRead.current?.controller === controller) approvalRead.current = null; };
     }, [binding, read, presetId, queryKey, withdraw, revision, refreshRevision]);
     React.useEffect(() => subscribeHomeAccountChange(event => {
-        if (isArtifactOnlyHomeAccountChange(event)) return;
+        if (event.machineResourcesAffect === false) return;
         if (!presetId || !areServerProfileIdentifiersEquivalent(serverId, event.serverId)) return;
         // This read has not executed yet: its post-decision result satisfies preceding wakes.
         if (approvalRead.current?.controller === pendingRead.current && approvalRead.current && !approvalRead.current.controller.signal.aborted) return;
@@ -275,7 +275,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         refreshTargets.current.clear();
     }, [accountScopes, bindings, refreshRevision]);
     React.useEffect(() => subscribeHomeAccountChange(event => {
-        if (isArtifactOnlyHomeAccountChange(event)) return;
+        if (event.machineResourcesAffect === false) return;
         const serverId = [...bindings.keys()].find(id => areServerProfileIdentifiersEquivalent(id, event.serverId));
         if (!serverId || reads.current.get(serverId)?.awaitingApproval) return;
         refreshTargets.current.add(serverId);
