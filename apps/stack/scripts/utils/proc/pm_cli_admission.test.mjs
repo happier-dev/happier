@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, watch } from 'node:fs';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { withWorkspaceBundleLock } from '../../../../../scripts/workspaces/workspaceBundleLock.mjs';
-import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 import { readHappyCliRuntimeInputFreshness } from './cli_runtime_inputs.mjs';
@@ -22,11 +22,13 @@ test('Stack CLI readiness jointly admits its complete locked publication transac
   await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
   await writeFile(join(root, 'pnpm-lock.yaml'), '# fixture\n');
   for (const name of ['cli', 'ui', 'server']) await writeFile(join(root, 'apps', name, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`, packageManager: 'pnpm@12.14.0' }));
-  const { admissionRoot } = await installNativeAdmissionFixture({ root });
-  await Promise.all(['owners', 'waiters'].map(path => mkdir(join(admissionRoot, path), { recursive: true })));
+  const native = await installNativeAdmissionFixture({ root });
+  const { admissionRoot } = native;
   const memoryPath = join(root, 'memory');
   const observedPath = join(root, 'compiler-boundary.json');
   await writeFile(memoryPath, '1 73400320\n');
+  const pressure = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: 73400320, availableKiB: 1 });
+  assert.equal((await native.brokerStatus()).activeCount, 1);
   writeFakeBin({ root, name: 'awk', content: '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $1, $2}\' "$FIXTURE_MEMORY" ;; *) exec /usr/bin/awk "$@" ;; esac\n' });
   writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   writeFakeBin({ root, name: 'sleep', content: '#!/bin/sh\nexec /bin/sleep 0.02\n' });
@@ -41,7 +43,8 @@ if (process.argv.includes('install')) {
 }
 if (process.argv.includes('--version')) console.log('12.14.0');
 else if (process.argv.includes('build:prepared')) {
-  writeFileSync(process.env.FIXTURE_OBSERVED, JSON.stringify({ token: process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN,
+  const { requestAdmissionSample } = await import(${JSON.stringify(pathToFileURL(native.admissionClientPath).href)});
+  writeFileSync(process.env.FIXTURE_OBSERVED, JSON.stringify({ admitted: (await requestAdmissionSample(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT)).activeCount === 1,
     leases: JSON.parse(process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]'), held: process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD }));
   console.error('fixture CLI compiler diagnostic'); process.exitCode = 7;
 }
@@ -77,30 +80,32 @@ else if (process.argv.includes('build:prepared')) {
     const cleanup = () => { watchers.forEach(watcher => watcher.close()); child.stderr.off('data', check); child.off('close', failed); };
     const failed = () => { cleanup(); reject(new Error(`Readiness exited before expected admission state: ${stdout}\n${stderr}`)); };
     const check = async () => { if (checking) return; checking = true; try { if (await condition()) { cleanup(); resolveReady(); } } catch (error) { cleanup(); reject(error); } finally { checking = false; } };
-    const watchers = [dirname(lockPath), admissionRoot, join(admissionRoot, 'waiters')].map(path => watch(path, check));
+    const watchers = [dirname(lockPath), admissionRoot].map(path => watch(path, check));
     child.stderr.on('data', check); child.once('close', failed); void check();
   });
   try {
-    await waitFor(async () => stderr.includes('workspace-lease-busy') && (await readdir(join(admissionRoot, 'waiters'))).length === 1);
+    await waitFor(async () => (await native.brokerStatus()).waitingCount === 1);
     assert.equal(existsSync(`${lockPath}.priority-claim`), false,
       'an unreserved joint-admission waiter must not retain a publication claim');
-    assert.equal((await readdir(join(admissionRoot, 'waiters'))).length, 1, 'B wait belongs to unreserved joint producer, not a parent publication lock');
-    assert.deepEqual(await readdir(join(admissionRoot, 'owners')), []);
+    const blocked = await native.brokerStatus();
+    assert.equal(blocked.waitingCount, 1, 'B wait belongs to unreserved joint producer, not a parent publication lock');
+    assert.equal(blocked.activeCount, 1, 'only the pressure holder is admitted');
     release(); await holder;
-    await waitFor(() => stderr.includes('waiting for heavyweight admission'));
+    await waitFor(async () => (await native.brokerStatus()).waitingCount === 1);
     assert.equal(existsSync(lockPath), false, 'capacity waiter must release B');
     assert.equal(existsSync(observedPath), false);
-    await withWorkspaceBundleLock(() => writeFile(memoryPath, '31457280 73400320\n'), { lockPath });
+    await pressure.release(() => withWorkspaceBundleLock(() => writeFile(memoryPath, '31457280 73400320\n'), { lockPath }));
     assert.deepEqual(await exited, { status: 7, signal: null }, stderr);
   const { message, ...failure } = JSON.parse(stdout.trim().split('\n').at(-1));
     assert.deepEqual(failure, { code: 'EEXIT', exitCode: 7, signal: null, diagnostic: true });
     assert.match(message, /fixture CLI compiler diagnostic/);
     const observed = JSON.parse(await readFile(observedPath, 'utf8'));
-    assert.match(observed.token, /^\d+:\d+$/);
+    assert.equal(observed.admitted, true, 'the compiler runs under its real admitted broker slot');
     assert.ok(observed.leases.some(value => JSON.parse(value).path === lockPath));
     assert.equal(existsSync(lockPath), false);
-    assert.deepEqual(await readdir(join(admissionRoot, 'owners')), []);
-    assert.deepEqual(await readdir(join(admissionRoot, 'waiters')), []);
+    const finished = await native.brokerStatus();
+    assert.equal(finished.activeCount, 0);
+    assert.equal(finished.waitingCount, 0);
     // Reusing a valid warm CLI is metadata-only and must stay usable even
     // while this physical worker cannot admit a compiler envelope.
     await mkdir(join(cliDir, 'dist'), { recursive: true });
@@ -119,7 +124,8 @@ else if (process.argv.includes('build:prepared')) {
     t.after(async () => { if (warm.exitCode === null && warm.signalCode === null) process.kill(-warm.pid, 'SIGTERM'); await warmExited; });
     assert.deepEqual(await warmExited, { status: 0, signal: null }, warmErr);
     assert.deepEqual(JSON.parse(warmOut), { built: false, current: true, reason: 'up_to_date' });
-    assert.deepEqual(await readdir(join(admissionRoot, 'owners')), []);
-    assert.deepEqual(await readdir(join(admissionRoot, 'waiters')), []);
+    const warmFinished = await native.brokerStatus();
+    assert.equal(warmFinished.activeCount, 0);
+    assert.equal(warmFinished.waitingCount, 0);
   } finally { release(); await holder; }
 });
