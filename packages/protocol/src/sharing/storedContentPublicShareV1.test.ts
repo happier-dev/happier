@@ -4,6 +4,11 @@ import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMat
   StoredContentPublicShareReadResponseV1Schema } from './storedContentPublicShareV1.js';
 
 describe('stored-content fragment capabilities', () => {
+  it('preserves a self-hosted Home UI path when issuing a signed-in Artifact link', () => {
+    expect(buildStoredContentPublicShareUrlV1({ origin: 'https://home.example/ui/', lookupId: 'lookup', secret: 'secret', audience: 'signed_in',
+      shareableServerUrl: 'https://home.example/api' }))
+      .toBe('https://home.example/ui/share/artifact/lookup?server=https%3A%2F%2Fhome.example%2Fapi#k=secret');
+  });
   it('preserves the explicitly confirmed network-off publication policy and opens predecessor reads with the original policy', () => {
     const request = { subject: { kind: 'session', id: 's' }, lookupId: 'lookup', keyDerivation: 'fragment_v1', networkOff: true };
     expect(StoredContentPublicShareCreateRequestV1Schema.parse(request)).toMatchObject({ networkOff: true });

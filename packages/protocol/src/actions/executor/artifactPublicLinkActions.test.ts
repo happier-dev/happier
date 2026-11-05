@@ -1,3 +1,4 @@
+import { ArtifactActionInputSchemasV1 } from '../../artifacts/artifactActionsV1.js';
 import { sealPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBindingV1.js';
@@ -12,6 +13,14 @@ const publicShare = StoredContentPublicShareV1Schema.parse({ id: 'share-1', subj
   maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' });
 
 describe('keyholding Artifact public-link Actions', () => {
+  it('refuses signed-in publication without transient delivery before any host effects', async () => {
+    const effects: unknown[] = [];
+    const execute = createArtifactPublicLinkActionsV1({ read: async () => { effects.push('read'); return null; },
+      randomBytes: length => new Uint8Array(length), request: async request => { effects.push(request); return {}; } });
+    await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact', audience: 'signed_in' } }))
+      .rejects.toMatchObject({ code: 'unsupported_action' });
+    expect(effects).toEqual([]);
+  });
   it('rejects private or malformed opened template bytes before granting access or presenting them', async () => {
     const requests: string[] = [], opened: unknown[] = [];
     const execute = createArtifactSignedInLinkJoinActionV1({ consumeSecret: async () => 'a'.repeat(43),
@@ -29,6 +38,16 @@ describe('keyholding Artifact public-link Actions', () => {
     await expect(execute({ input: { lookupId: 'lookup' } })).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
     expect(requests).toEqual(['GET']);
     expect(opened).toEqual([]);
+  });
+  it('rejects anonymous-only settings on a signed-in link before any host effects', async () => {
+    const effects: unknown[] = [];
+    const execute = createArtifactPublicLinkActionsV1({ read: async () => { effects.push('read'); return null; },
+      randomBytes: length => new Uint8Array(length), request: async request => { effects.push(request); return {}; } });
+    for (const option of [{ expiresAt: 100 }, { maxUses: 1 }, { isConsentRequired: true }, { networkOff: false }]) {
+      await expect(execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', audience: 'signed_in', ...option } })).rejects.toThrow();
+    }
+    expect(effects).toEqual([]);
+    expect(ArtifactActionInputSchemasV1['artifact.public_link.audit'].safeParse({ artifactId: 'artifact-1', shareId: 'artifact-1', audience: 'signed_in' }).success).toBe(false);
   });
   it.each(['known', 'wrong_account', 'substituted_key'] as const)('binds the encrypted join envelope to local Account custody (%s)', async identity => {
     const signingSecret = new Uint8Array(32).fill(3);
@@ -89,6 +108,53 @@ describe('keyholding Artifact public-link Actions', () => {
     expect(requests).toHaveLength(1);
     expect(JSON.stringify(requests)).not.toContain(secret);
     expect(opened).toEqual([{ artifact, source: { authorAccountId: 'author', artifactId: 'artifact-1' }, follow: false, followUnavailableReason: 'plain_account' }]);
+  });
+  it('creates and manages signed-in links independently of anonymous publications', async () => {
+    const requests: Array<{ method: string; path: string; body?: unknown }> = [];
+    const issued: ArtifactPublicLinkIssuedV1[] = [];
+    const signedIn = { ...publicShare, id: 'artifact-1', audience: 'signed_in' };
+    let materialCounter = 1;
+    const execute = createArtifactPublicLinkActionsV1({
+      onPublicLinkIssued: link => { issued.push(link); },
+      shareableServerUrl: 'https://api.home.example.test/prefix',
+      read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: {}, encryptionMode: 'plain', dataKey: null }),
+      randomBytes: length => new Uint8Array(length).fill(materialCounter++), request: async request => {
+        requests.push(request);
+        return request.method === 'GET' ? { publicShares: [signedIn] }
+          : request.method === 'POST' ? { publicShare: signedIn, viewerOrigin: 'https://home.example.test/ui' } : { success: true };
+      },
+    });
+    const created = await execute({ actionId: 'artifact.public_link.create', input: { artifactId: 'artifact-1', audience: 'signed_in' } });
+    expect(created).toMatchObject({ publicShare: signedIn, url: expect.not.stringContaining('#') });
+    const issuedUrl = new URL(issued[0]!.url);
+    expect(issuedUrl.pathname).toBe(`/ui/share/artifact/${issued[0]!.lookupId}`);
+    expect(issuedUrl.searchParams.get('server')).toBe('https://api.home.example.test/prefix');
+    expect(issuedUrl.hash).toBe(`#k=${issued[0]!.secret}`);
+    expect(JSON.stringify(created)).not.toContain(issued[0]!.secret);
+    expect(requests[0]).toMatchObject({ path: '/v1/artifact-signed-in-links', body: { artifactId: 'artifact-1' } });
+    expect(requests[0]!.body).not.toHaveProperty('subject');
+    await expect(execute({ actionId: 'artifact.public_link.list', input: { artifactId: 'artifact-1', audience: 'signed_in' } }))
+      .resolves.toEqual({ publicShares: [signedIn] });
+    await execute({ actionId: 'artifact.public_link.revoke', input: { artifactId: 'artifact-1', shareId: 'artifact-1', audience: 'signed_in' } });
+    expect(requests.at(-1)).toMatchObject({ method: 'DELETE', path: '/v1/artifact-signed-in-links/artifact-1' });
+  });
+  it.each(['plain', 'e2ee'] as const)('preserves a current %s link without delivering unused fresh bearer material', async encryptionMode => {
+    const signedIn = { ...publicShare, id: 'artifact-1', audience: 'signed_in' };
+    const issued: ArtifactPublicLinkIssuedV1[] = [];
+    const requests: unknown[] = [];
+    const execute = createArtifactPublicLinkActionsV1({ onPublicLinkIssued: link => { issued.push(link); },
+      read: async () => ({ artifactId: 'artifact-1', access: 'owner', header: {}, encryptionMode,
+        dataKey: encryptionMode === 'plain' ? null : new Uint8Array(32).fill(8) }),
+      randomBytes: length => new Uint8Array(length).fill(3), request: async request => {
+        requests.push(request);
+        return { publicShare: signedIn, viewerOrigin: 'https://home.example.test', created: false };
+      } });
+    await expect(execute({ actionId: 'artifact.public_link.create',
+      input: { artifactId: 'artifact-1', audience: 'signed_in', preserveExisting: true } }))
+      .resolves.toEqual({ publicShare: signedIn });
+    expect(requests).toEqual([expect.objectContaining({ method: 'POST', path: '/v1/artifact-signed-in-links',
+      body: expect.objectContaining({ artifactId: 'artifact-1', preserveExisting: true }) })]);
+    expect(issued).toEqual([]);
   });
   it('lets owners revoke existing layout publications after new publication admission is disabled', async () => {
     const requests: string[] = [];

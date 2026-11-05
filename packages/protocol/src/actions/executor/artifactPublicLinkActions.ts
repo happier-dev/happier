@@ -3,7 +3,7 @@ import { computeContentPublicKeyFingerprint } from '../../machines/identity/cont
 import { prepareResourceRecipientKeyEnvelopesV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, ArtifactDocumentV1Schema, ArtifactSignedInLinkJoinReadV1Schema, ArtifactSignedInLinkJoinCommitInputV1Schema, ArtifactSignedInLinkJoinCommitResultV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '../../artifacts/artifactActionsV1.js';
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, ArtifactDocumentV1Schema, ArtifactSignedInLinkCreateRequestV1Schema, ArtifactSignedInLinkEnsureResponseV1Schema, ArtifactSignedInLinkJoinReadV1Schema, ArtifactSignedInLinkJoinCommitInputV1Schema, ArtifactSignedInLinkJoinCommitResultV1Schema, type ArtifactSignedInLinkJoinReadV1 } from '../../artifacts/artifactActionsV1.js';
 import { getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
 import { sealPublicShareDataKeyV1, openPublicShareDataKeyV1 } from '../../crypto/publicShareEncryptedDataKeyEnvelopeV0.js';
 import { buildStoredContentPublicShareUrlV1, generateStoredContentPublicShareMaterialV1,
@@ -90,11 +90,13 @@ export function createArtifactSignedInLinkJoinActionV1(params: Readonly<{
 /** The authenticated publication-list transport shared by management and audience admission. */
 export async function readArtifactPublicLinksV1(params: Readonly<{
   artifactId: string;
+  audience?: 'anonymous' | 'signed_in';
   request: (request: ArtifactPublicLinkRequestV1) => Promise<unknown>;
   signal?: AbortSignal;
 }>) {
   params.signal?.throwIfAborted();
-  const path = `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: params.artifactId })}`;
+  const path = params.audience === 'signed_in' ? `/v1/artifact-signed-in-links?${new URLSearchParams({ artifactId: params.artifactId })}`
+    : `/v1/public-shares?${new URLSearchParams({ subjectKind: 'artifact', subjectId: params.artifactId })}`;
   const result = StoredContentPublicSharesListResponseV1Schema.parse(await params.request({ method: 'GET', path, signal: params.signal }));
   params.signal?.throwIfAborted();
   if (result.publicShares.some(row => row.subject.kind !== 'artifact' || row.subject.id !== params.artifactId)) {
@@ -109,45 +111,61 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
   request: (request: ArtifactPublicLinkRequestV1) => Promise<unknown>;
   randomBytes: (length: number) => Uint8Array;
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
+  shareableServerUrl?: string | null;
 }>) {
   return async (args: Readonly<{ actionId: ArtifactPublicLinkActionIdV1; input: unknown; signal?: AbortSignal }>): Promise<unknown> => {
     args.signal?.throwIfAborted();
     const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
+    const audience = 'audience' in input ? input.audience ?? 'anonymous' : 'anonymous';
+    if (args.actionId === 'artifact.public_link.create' && audience === 'signed_in' && !params.onPublicLinkIssued) {
+      throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+    }
     const resource = await params.read(input.artifactId, args.signal);
     args.signal?.throwIfAborted();
     if (!resource || resource.artifactId !== input.artifactId) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
     if (resource.access !== 'owner') throw Object.assign(new Error('artifact_access_forbidden'), { code: 'artifact_access_forbidden' });
     // Existing publications must remain revocable even if the current kind no longer admits new links.
-    if (args.actionId === 'artifact.public_link.create' && !getArtifactUseTargetV1(resource).publicLinkAllowed) {
+    if (args.actionId === 'artifact.public_link.create' && !getArtifactUseTargetV1(resource, audience).publicLinkAllowed) {
       throw Object.assign(new Error('artifact_kind_not_shareable'), { code: 'artifact_kind_not_shareable' });
     }
     if (args.actionId === 'artifact.public_link.list') {
-      return readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, signal: args.signal });
+      return readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, audience, signal: args.signal });
     }
     if (args.actionId === 'artifact.public_link.revoke' || args.actionId === 'artifact.public_link.audit') {
       const revoke = ArtifactActionInputSchemasV1[args.actionId].parse(input);
-      const owned = await readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, signal: args.signal });
+      const owned = await readArtifactPublicLinksV1({ ...params, artifactId: input.artifactId, audience, signal: args.signal });
       if (!owned.publicShares.some(row => row.id === revoke.shareId && row.subject.kind === 'artifact' && row.subject.id === input.artifactId)) throw Object.assign(new Error('public_share_not_found'), { code: 'public_share_not_found' });
       if (args.actionId === 'artifact.public_link.audit') {
         const result = await params.request({ method: 'GET', path: `/v1/public-shares/${encodeURIComponent(revoke.shareId)}/access-log`, signal: args.signal });
         args.signal?.throwIfAborted();
         return ArtifactActionOutputSchemasV1[args.actionId].parse(result);
       }
-      await params.request({ method: 'DELETE', path: `/v1/public-shares/${encodeURIComponent(revoke.shareId)}`, signal: args.signal });
+      await params.request({ method: 'DELETE', path: audience === 'signed_in' ? `/v1/artifact-signed-in-links/${encodeURIComponent(input.artifactId)}`
+        : `/v1/public-shares/${encodeURIComponent(revoke.shareId)}`, signal: args.signal });
       return { artifactId: input.artifactId, shareId: revoke.shareId, revoked: true };
     }
     const create = ArtifactActionInputSchemasV1['artifact.public_link.create'].parse(input);
     if ((resource.encryptionMode === 'e2ee') !== (resource.dataKey !== null)) throw Object.assign(new Error('artifact_encryption_material_unavailable'), { code: 'artifact_encryption_material_unavailable' });
     const material = generateStoredContentPublicShareMaterialV1(params.randomBytes);
-    const body = StoredContentPublicShareCreateRequestV1Schema.parse({ subject: { kind: 'artifact', id: create.artifactId },
+    const encryptedDataKey = resource.dataKey === null ? undefined : sealPublicShareDataKeyV1({ dataKey: resource.dataKey, secret: material.secret, randomBytes: params.randomBytes });
+    const body = audience === 'signed_in' ? ArtifactSignedInLinkCreateRequestV1Schema.parse({ artifactId: create.artifactId,
+      lookupId: material.lookupId, ...(encryptedDataKey === undefined ? {} : { encryptedDataKey }),
+      ...(create.preserveExisting ? { preserveExisting: true } : {}) })
+      : StoredContentPublicShareCreateRequestV1Schema.parse({ subject: { kind: 'artifact', id: create.artifactId },
       lookupId: material.lookupId, keyDerivation: 'fragment_v1',
-      ...(resource.dataKey === null ? {} : { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: resource.dataKey, secret: material.secret, randomBytes: params.randomBytes }) }),
+      ...(encryptedDataKey === undefined ? {} : { encryptedDataKey }),
       ...(create.expiresAt === undefined ? {} : { expiresAt: create.expiresAt }),
       ...(create.maxUses === undefined ? {} : { maxUses: create.maxUses }),
       ...(create.isConsentRequired === undefined ? {} : { isConsentRequired: create.isConsentRequired }) });
-    const result = StoredContentPublicShareCreateResponseV1Schema.parse(await params.request({ method: 'POST', path: '/v1/public-shares', body, signal: args.signal }));
+    const response = await params.request({ method: 'POST',
+      path: audience === 'signed_in' ? '/v1/artifact-signed-in-links' : '/v1/public-shares', body, signal: args.signal });
+    const result = (create.preserveExisting ? ArtifactSignedInLinkEnsureResponseV1Schema : StoredContentPublicShareCreateResponseV1Schema).parse(response);
     if (result.publicShare.subject.kind !== 'artifact' || result.publicShare.subject.id !== create.artifactId || result.publicShare.keyDerivation !== 'fragment_v1') throw Object.assign(new Error('public_share_subject_mismatch'), { code: 'public_share_subject_mismatch' });
-    const url = buildStoredContentPublicShareUrlV1({ ...material, origin: result.viewerOrigin });
+    if (audience === 'signed_in' && result.publicShare.audience !== 'signed_in') throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
+    // The server retained the current bearer; generated material was never published.
+    if ('created' in result && !result.created) return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare });
+    const url = buildStoredContentPublicShareUrlV1({ ...material, origin: result.viewerOrigin,
+      ...(audience === 'signed_in' ? { audience, shareableServerUrl: params.shareableServerUrl } : {}) });
     try {
       await params.onPublicLinkIssued?.({ ...material, shareId: result.publicShare.id, url });
     } catch {
@@ -155,6 +173,7 @@ export function createArtifactPublicLinkActionsV1(params: Readonly<{
       throw Object.assign(new Error('outcome_unknown'), { code: 'outcome_unknown' });
     }
     args.signal?.throwIfAborted();
-    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare, url });
+    const resultUrl = audience === 'signed_in' ? url.slice(0, url.indexOf('#')) : url;
+    return ArtifactActionOutputSchemasV1[args.actionId].parse({ publicShare: result.publicShare, url: resultUrl });
   };
 }

@@ -29,6 +29,7 @@ export type StoredContentPublicShareCreateRequestV1 = z.infer<typeof StoredConte
 
 export const StoredContentPublicShareV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), subject: StoredContentPublicShareSubjectV1Schema,
+  audience: z.optional(z.literal('signed_in')),
   expiresAt: z.nullable(z.number().check(z.int(), z.nonnegative())), maxUses: z.nullable(z.number().check(z.int(), z.positive())),
   useCount: z.number().check(z.int(), z.nonnegative()), isConsentRequired: z.boolean(), networkOff: z._default(z.boolean(), false),
   createdAt: z.number().check(z.int(), z.nonnegative()), updatedAt: z.number().check(z.int(), z.nonnegative()),
@@ -114,12 +115,25 @@ export function generateStoredContentPublicShareMaterialV1(randomBytes: (length:
   return { lookupId: encodeBase64(lookup, 'base64url'), secret: encodeBase64(secret, 'base64url') };
 }
 
-export function buildStoredContentPublicShareUrlV1(params: Readonly<{ origin: string; lookupId: string; secret: string }>): string {
+/** Hosts supply their existing shareable Home URL projection; construction preserves UI prefixes. */
+export function buildPublicShareApplicationUrlV1(params: Readonly<{
+  applicationBaseUrl: string; token: string; serverUrl?: string | null; kind?: 'artifact';
+}>): string {
+  const base = params.applicationBaseUrl.replace(/\/+$/, '');
+  const path = `${base}/share/${params.kind === 'artifact' ? 'artifact/' : ''}${encodeURIComponent(params.token)}`;
+  return params.serverUrl ? `${path}?${new URLSearchParams({ server: params.serverUrl }).toString()}` : path;
+}
+
+export function buildStoredContentPublicShareUrlV1(params: Readonly<{
+  origin: string; lookupId: string; secret: string; audience?: 'signed_in'; shareableServerUrl?: string | null;
+}>): string {
   const origin = new URL(params.origin);
   if (origin.protocol !== 'https:' && origin.protocol !== 'http:') throw new Error('Invalid public-share origin');
-  if (origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('Invalid public-share origin');
+  if (origin.username || origin.password || (params.audience !== 'signed_in' && origin.pathname !== '/') || origin.search || origin.hash) throw new Error('Invalid public-share origin');
   if (!params.lookupId || !params.secret) throw new Error('Public-share material is required');
-  return `${origin.origin}/s/${encodeURIComponent(params.lookupId)}#${new URLSearchParams({ k: params.secret }).toString()}`;
+  const url = params.audience === 'signed_in' ? buildPublicShareApplicationUrlV1({ applicationBaseUrl: origin.toString(),
+    token: params.lookupId, kind: 'artifact', serverUrl: params.shareableServerUrl }) : `${origin.origin}/s/${encodeURIComponent(params.lookupId)}`;
+  return `${url}#${new URLSearchParams({ k: params.secret }).toString()}`;
 }
 
 /** Malformed or absent fragment material is unusable, never a legacy lookup fallback. */

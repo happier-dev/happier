@@ -28,11 +28,17 @@ export type ArtifactPublicAudienceV1 = z.output<typeof ArtifactPublicAudienceV1R
 export const ArtifactHeaderMetadataV1Schema = lazyZodSchema(() => z.record(z.string(), StrictJsonValueSchema));
 
 const subject = z.strictObject({ artifactId: z.string().check(z.minLength(1)) });
+const linkAudience = { audience: z.optional(z.enum(['anonymous', 'signed_in'])) };
+export const ArtifactPublicLinkListInputV1Schema = z.strictObject({ ...subject.shape, ...linkAudience });
 const acknowledgement = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { revision: ArtifactRevisionV1Schema }));
-export const ArtifactPublicLinkCreateInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, lazyZodSchema(() => z.pick(StoredContentPublicShareCreateRequestV1Schema, {
+export const ArtifactPublicLinkCreateInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { ...lazyZodSchema(() => z.pick(StoredContentPublicShareCreateRequestV1Schema, {
   expiresAt: true, maxUses: true, isConsentRequired: true,
-})).shape));
-export const ArtifactPublicLinkRevokeInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)) }));
+})).shape, preserveExisting: z.optional(z.literal(true)), ...linkAudience })).check(
+  z.refine(value => value.preserveExisting === undefined || value.audience === 'signed_in',
+    { message: 'Only signed-in links support preserving an existing publication' }), z.refine(value => value.audience !== 'signed_in'
+  || value.expiresAt === undefined && value.maxUses === undefined && value.isConsentRequired === undefined,
+  { message: 'Signed-in links do not accept anonymous publication settings' }));
+export const ArtifactPublicLinkRevokeInputV1Schema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(subject, { shareId: z.string().check(z.minLength(1)), ...linkAudience }));
 export const ArtifactSignedInLinkCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   artifactId: z.string().check(z.minLength(1)), lookupId: z.string().check(z.minLength(1)),
   encryptedDataKey: z.optional(z.string().check(z.minLength(1))), preserveExisting: z.optional(z.literal(true)),
@@ -138,9 +144,9 @@ export const ArtifactActionInputSchemasV1 = {
   'artifact.storage.usage': z.strictObject({}),
   'artifact.public_link.create': ArtifactPublicLinkCreateInputV1Schema,
   'artifact.public_link.join': z.strictObject({ lookupId: z.string().check(z.minLength(1)) }),
-  'artifact.public_link.list': subject,
+  'artifact.public_link.list': ArtifactPublicLinkListInputV1Schema,
   'artifact.public_link.revoke': ArtifactPublicLinkRevokeInputV1Schema,
-  'artifact.public_link.audit': ArtifactPublicLinkRevokeInputV1Schema,
+  'artifact.public_link.audit': z.strictObject({ ...subject.shape, shareId: z.string().check(z.minLength(1)) }),
 } as const;
 export const ArtifactActionOutputSchemasV1 = {
   'artifact.create': acknowledgement,
