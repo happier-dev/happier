@@ -135,7 +135,7 @@ const paperLightSeed = {
     'surface.pressed': '#D8D8D0',
     'effect.surfaceHighlight': 'transparent',
     'text.primary': '#1C1C1C',
-    'text.secondary': '#444444',
+    'text.secondary': '#555555',
     'text.tertiary': '#666666',
     'text.link': '#5C84C4',
     'text.destructive': '#B64A4A',
@@ -156,7 +156,7 @@ const paperLightSeed = {
     'state.info.foreground': '#5C84C4',
     'state.info.background': 'rgba(92,132,196,0.08)',
     'state.info.border': 'rgba(92,132,196,0.20)',
-    'state.neutral.foreground': '#444444',
+    'state.neutral.foreground': '#555555',
     'state.neutral.background': 'rgba(68,68,68,0.07)',
     'state.neutral.border': 'rgba(68,68,68,0.14)',
     'control.input.background': '#FFFFFF',
@@ -170,18 +170,18 @@ const paperLightSeed = {
     'control.segmentedControl.activeBackground': '#E6E6DF',
     'control.switch.track.active': '#5C84C4',
     'control.switch.track.inactive': '#D8D8D0',
-    'control.switch.thumb.inactive': '#444444',
+    'control.switch.thumb.inactive': '#555555',
     'control.radio.active': '#5C84C4',
     'control.radio.inactive': '#666666',
     'control.permissionButton.allowAll.background': 'rgba(92,132,196,0.08)',
     'control.permissionButton.allowAll.foreground': '#5C84C4',
     'control.permissionButton.inactive.background': '#F0F0EA',
     'control.permissionButton.inactive.border': 'rgba(68,68,68,0.12)',
-    'control.permissionButton.inactive.foreground': '#444444',
+    'control.permissionButton.inactive.foreground': '#555555',
     'control.permissionButton.selected.background': '#E6E6DF',
     'control.permissionButton.selected.border': 'rgba(68,68,68,0.20)',
     'message.user.background': '#F0F0EA',
-    'message.event.foreground': '#444444',
+    'message.event.foreground': '#555555',
     'syntax.keyword': '#7A54B6',
     'syntax.string': '#4E8B66',
     'syntax.comment': '#777777',
@@ -199,9 +199,9 @@ const graphiteDarkSeed = {
     'surface.pressed': '#333333',
     'effect.surfaceHighlight': 'transparent',
     'text.primary': '#EAEAEA',
-    'text.secondary': '#ACACAC',
+    'text.secondary': '#A0A0A0',
     'text.tertiary': '#8E8E8E',
-    'text.link': '#ACACAC',
+    'text.link': '#8FB3D9',
     'text.destructive': '#C36A5A',
     'text.placeholder': '#8E8E8E',
     'text.disabled': '#767676',
@@ -220,7 +220,7 @@ const graphiteDarkSeed = {
     'state.info.foreground': '#A8A8A8',
     'state.info.background': 'rgba(168,168,168,0.08)',
     'state.info.border': 'rgba(168,168,168,0.18)',
-    'state.neutral.foreground': '#ACACAC',
+    'state.neutral.foreground': '#A0A0A0',
     'state.neutral.background': 'rgba(172,172,172,0.06)',
     'state.neutral.border': 'rgba(172,172,172,0.12)',
     'control.input.background': '#191919',
@@ -234,18 +234,18 @@ const graphiteDarkSeed = {
     'control.segmentedControl.activeBackground': '#2A2A2A',
     'control.switch.track.active': '#A8A8A8',
     'control.switch.track.inactive': '#333333',
-    'control.switch.thumb.inactive': '#ACACAC',
+    'control.switch.thumb.inactive': '#A0A0A0',
     'control.radio.active': '#EAEAEA',
     'control.radio.inactive': '#8E8E8E',
     'control.permissionButton.allowAll.background': 'rgba(168,168,168,0.08)',
     'control.permissionButton.allowAll.foreground': '#A8A8A8',
     'control.permissionButton.inactive.background': '#161616',
     'control.permissionButton.inactive.border': 'rgba(255,255,255,0.055)',
-    'control.permissionButton.inactive.foreground': '#ACACAC',
+    'control.permissionButton.inactive.foreground': '#A0A0A0',
     'control.permissionButton.selected.background': '#2A2A2A',
     'control.permissionButton.selected.border': 'rgba(255,255,255,0.085)',
     'message.user.background': '#222222',
-    'message.event.foreground': '#ACACAC',
+    'message.event.foreground': '#A0A0A0',
     'syntax.keyword': '#A8A8A8',
     'syntax.string': '#B7B7B7',
     'syntax.comment': '#8E8E8E',
@@ -448,7 +448,7 @@ describe('built-in theme profiles', () => {
             'background.canvas': '#11111B',
             'surface.base': '#1E1E2E',
             'text.primary': '#CDD6F4',
-            'text.secondary': '#BAC2DE',
+            'text.secondary': '#A6ADC8',
             'state.active.foreground': '#89B4FA',
             'syntax.keyword': '#CBA6F7',
         });
@@ -456,7 +456,7 @@ describe('built-in theme profiles', () => {
             'background.canvas': '#EFF1F5',
             'surface.base': '#FFFFFF',
             'text.primary': '#4C4F69',
-            'text.secondary': '#5C5F77',
+            'text.secondary': '#696C82',
             'state.active.foreground': '#1E66F5',
             'syntax.keyword': '#8839EF',
         });
@@ -521,6 +521,41 @@ describe('built-in theme profiles', () => {
 
             expect(effective.colors.feed.card.background).toBe(effective.colors.surface.elevated);
         }
+    });
+
+    it('keeps secondary text a readable step below primary in every built-in theme', () => {
+        const luminance = (hex: string) => {
+            const value = Number.parseInt(hex.slice(1, 7), 16);
+            const channel = (raw: number) => {
+                const c = raw / 255;
+                return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+            };
+            return 0.2126 * channel((value >> 16) & 255) + 0.7152 * channel((value >> 8) & 255) + 0.0722 * channel(value & 255);
+        };
+        const contrast = (a: string, b: string) => {
+            const [low, high] = [luminance(a), luminance(b)].sort((x, y) => x - y);
+            return (high + 0.05) / (low + 0.05);
+        };
+        // Tokyo Night keeps its published #787C99 (4.18:1), which predates this floor.
+        const belowReadableFloor = new Set(['tokyoNight']);
+
+        const collapsed = BUILT_IN_THEME_PROFILES.flatMap(({ presetId, preferredMode, profile }) => {
+            const { colors } = resolveThemeProfile({ mode: preferredMode, profile });
+            const tierGap = contrast(colors.text.primary, colors.text.secondary);
+            const readable = contrast(colors.text.secondary, colors.background.canvas);
+            return tierGap < 1.4 || (readable < 4.5 && !belowReadableFloor.has(presetId)) ? [presetId] : [];
+        });
+
+        expect(collapsed).toEqual([]);
+    });
+
+    it('gives the unread mark an ink of its own in every built-in theme', () => {
+        const unmarked = BUILT_IN_THEME_PROFILES.flatMap(({ presetId, preferredMode, profile }) => {
+            const { colors } = resolveThemeProfile({ mode: preferredMode, profile });
+            return colors.text.link === colors.text.secondary ? [presetId] : [];
+        });
+
+        expect(unmarked).toEqual([]);
     });
 
     it('resets a token in a built-in clone back to canonical base, not the preset value', () => {
