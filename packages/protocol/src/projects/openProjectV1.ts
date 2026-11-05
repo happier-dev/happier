@@ -1,5 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import type { ActionExecuteFailure } from '../actions/executor/types.js';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
@@ -56,6 +58,14 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
 })));
 export type OpenProjectInputV1 = z.infer<typeof OpenProjectInputV1Schema>;
 
+export const OpenProjectRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('refused'), code: IdSchema,
+  effectAttempted: z.optional(z.boolean()),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
+  retryNotBeforeMs: ScmRepositoryProvisioningFailureResponseSchema.shape.retryNotBeforeMs,
+  remediation: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(ScmRepositoryProvisioningRemediationSchema)),
+}));
+
 export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('opened'), workspace: WorkspaceAddressV1Schema, directory: PathSchema,
@@ -63,13 +73,17 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
     facts: z.optional(WorkspaceProjectFactsV1Schema),
   }),
   z.strictObject({ kind: z.literal('ambiguous'), candidates: z.array(WorkspaceRefV1WriteSchema) }),
-  z.strictObject({ kind: z.literal('refused'), code: IdSchema,
-    retryNotBeforeMs: ScmRepositoryProvisioningFailureResponseSchema.shape.retryNotBeforeMs,
-    remediation: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(ScmRepositoryProvisioningRemediationSchema)),
-  }),
+  OpenProjectRefusalV1Schema,
   z.strictObject({ kind: z.literal('outcomeUnknown'), operationId: z.optional(IdSchema) }),
 ]));
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;
+
+/** Settlement and operation history consume the same finite Open refusal. */
+export function projectOpenProjectRefusalV1(result: z.infer<typeof OpenProjectRefusalV1Schema>): ActionExecuteFailure {
+  return { ok: false, errorCode: result.code, error: result.code, details: result,
+    ...(result.effectAttempted !== undefined ? { effectAttempted: result.effectAttempted } : {}),
+    ...(result.failureCause ? { failureCause: result.failureCause } : {}) };
+}
 
 /** Private source-host acknowledgement; target Open still validates and accepts its local directory. */
 export const ProjectOpenSyncMaterializationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
