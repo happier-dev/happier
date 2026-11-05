@@ -22,7 +22,7 @@ function Editor(props: Readonly<{
         presets: [], presetOpen: false, credentialStyles: [], credentialOpen: false,
         invalidField: null, localEndpoint: null, enableAfterSaving: false,
         draftRequiresApiKey: draft.advanced ? draft.endpoints.some(endpoint => endpoint.enabled && endpoint.requiresApiKey) : draft.requiresApiKey,
-        secretSelected: false, savedSecretSelectionEnabled: true, pastedKey: '',
+        secretSelected: false, savedSecretSelectionEnabled: true,
         manualModelsError: null, draftHasProbe: true, probeState: 'idle', savePending: false,
         error: null, probeError: null, secondaryTextColor: '#777',
         nameFieldRef: fieldRef, baseUrlFieldRef: fieldRef, manualModelsFieldRef: fieldRef,
@@ -32,7 +32,7 @@ function Editor(props: Readonly<{
         onNameChange: name => setDraft(current => ({ ...current, name })),
         onBaseUrlChange: baseUrl => setDraft(current => ({ ...current, baseUrl })),
         onManualModelsChange: manualModelsText => setDraft(current => ({ ...current, manualModelsText })),
-        onEnableAfterSavingChange: () => {}, onPickSecret: () => {}, onPastedKeyChange: () => {}, onReviewConnection: () => {},
+        onEnableAfterSavingChange: () => {}, onPickSecret: () => {}, onReviewConnection: () => {},
         onTest: () => {}, onSave: () => props.onSave(draft), onDiscard: props.onDiscard ?? (() => {}),
     }} />;
 }

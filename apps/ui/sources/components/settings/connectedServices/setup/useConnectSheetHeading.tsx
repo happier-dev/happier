@@ -21,6 +21,7 @@ export function useConnectSheetHeading(
 ) {
   const { setChrome } = props;
   const bodyScroll = heading.bodyScroll ?? 'auto';
+  const anchor = props.request.anchor;
   const leadingRef = React.useRef(heading.leading);
   leadingRef.current = heading.leading;
   React.useLayoutEffect(() => {
@@ -29,11 +30,12 @@ export function useConnectSheetHeading(
         title: heading.title,
         subtitle: heading.subtitle,
         testID: 'connect-sheet',
+        anchor,
       }),
       leading: leadingRef.current,
       ...(heading.actions ? { actions: heading.actions } : {}),
       // A sign-in's steps can outgrow the window: the body scrolls under the band (Share's list scrolls itself).
       bodyScroll,
     });
-  }, [bodyScroll, heading.actions, heading.leadingKey, heading.subtitle, heading.title, setChrome]);
+  }, [anchor, bodyScroll, heading.actions, heading.leadingKey, heading.subtitle, heading.title, setChrome]);
 }

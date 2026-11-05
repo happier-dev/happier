@@ -36,8 +36,6 @@ export type CustomProviderAuthoringViewModel = Readonly<{
     secretSelected: boolean;
     selectedSecretName?: string | null;
     savedSecretSelectionEnabled: boolean;
-    /** A key typed into the sheet, saved as a Saved Secret when the provider is saved. */
-    pastedKey: string;
     manualModelsError: string | null;
     draftHasProbe: boolean;
     /**
@@ -68,8 +66,7 @@ export type CustomProviderAuthoringViewActions = Readonly<{
     onBaseUrlChange: (baseUrl: string) => void;
     onManualModelsChange: (text: string) => void;
     onEnableAfterSavingChange: (enabled: boolean) => void;
-    onPickSecret: () => void;
-    onPastedKeyChange: (value: string) => void;
+    onPickSecret: (event?: unknown) => void;
     onReviewConnection: () => void;
     onTest: () => void;
     onSave: () => void;
@@ -350,17 +347,10 @@ function CustomProviderKeyEntry(props: Readonly<{
     return (
         <ProviderKeyEntryItem
             description={t('settingsProviders.detail.apiKeyFooter')}
-            placeholder={t('settingsProvidersCollection.addKeyPlaceholder', {
-                provider: model.draft.name.trim() || t('settingsProviders.authoring.providerTitle'),
-            })}
-            pastedKey={model.pastedKey}
-            onPastedKeyChange={actions.onPastedKeyChange}
-            onSubmit={actions.onSave}
             secretSelected={model.secretSelected}
             selectedSecretName={model.selectedSecretName}
             savedSecretSelectionEnabled={model.savedSecretSelectionEnabled}
             onPickSecret={actions.onPickSecret}
-            savePending={model.savePending}
         />
     );
 }

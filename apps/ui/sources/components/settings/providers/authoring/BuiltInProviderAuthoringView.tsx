@@ -47,9 +47,6 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
     endpointValues: Readonly<Record<string, string>>;
     secretSelected: boolean;
     selectedSecretName?: string | null;
-    /** The key typed into the sheet; Connect saves it as a Saved Secret first. */
-    pastedKey: string;
-    onPastedKeyChange: (value: string) => void;
     savedSecretSelectionEnabled: boolean;
     preview: DaemonProviderContributionAuthoringPreviewV1 | null;
     previewLoading: boolean;
@@ -60,7 +57,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
     errorRetry?: () => void | Promise<void>;
     secondaryTextColor: string;
     warningColor: string;
-    onPickSecret: () => void;
+    onPickSecret: (event?: unknown) => void;
     onChooseCandidate: (candidateId: string) => void;
     onEndpointChange: (endpointTemplateId: string, baseUrl: string) => void;
     onSave: () => void;
@@ -68,7 +65,7 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const connectBlocked = Boolean(props.previewCredential?.required && (!props.savedSecretSelectionEnabled
-        || (!props.secretSelected && props.pastedKey.trim() === '')));
+        || !props.secretSelected));
     const waitingForApproval = Boolean(props.pendingApproval);
     // Connect acts only on a reviewed destination, even for a stale callback or Enter in the key field.
     const connect = () => {
@@ -136,24 +133,16 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                     : undefined}
             >
                 {props.previewCredential ? (
-                    // PA1: the key is typed where it is asked for and becomes a Saved Secret on Connect.
+                    // PA1: the key is asked for where it is needed; Add key opens the Connect sheet at the button.
                     <ProviderKeyEntryItem
                         description={props.previewCredential.required
                             ? t('settingsProvidersCollection.addKeyDescription')
                             : t('settingsProviders.authoring.apiKeyOptionalDescription')}
-                        placeholder={t('settingsProvidersCollection.addKeyPlaceholder', {
-                            provider: props.providerName ?? t('settingsProviders.authoring.providerTitle'),
-                        })}
-                        pastedKey={props.pastedKey}
-                        onPastedKeyChange={props.onPastedKeyChange}
-                        onSubmit={connect}
                         keyUrl={props.keyUrl}
                         secretSelected={props.secretSelected}
                         selectedSecretName={props.selectedSecretName}
                         savedSecretSelectionEnabled={props.savedSecretSelectionEnabled}
                         onPickSecret={props.onPickSecret}
-                        savePending={props.savePending}
-                        autoFocus
                     />
                 ) : null}
                 {props.nameField}

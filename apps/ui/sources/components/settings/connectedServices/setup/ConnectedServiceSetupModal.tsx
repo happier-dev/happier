@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import * as React from 'react';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -31,6 +32,7 @@ export type ConnectSheetAccountRequest = Readonly<{
     purpose?: QualifiedConnectedAccountPurposeV1;
     account?: QualifiedConnectedAccountRef;
     intent?: 'add' | 'reconnect';
+    anchor?: PopoverAnchor;
     purposeRequest?: ConnectedAccountPurposeSetupRequest;
     /** Resource consumers keep their existing purpose-default writer; inline callers own the returned account. */
     purposeSettlement?: 'resourceDefault';
@@ -42,6 +44,7 @@ export type ConnectSheetKeyRequest = Readonly<{
     scope?: AccountSettingsScope | null;
     current?: string;
     bindingTarget?: ConnectSheetKeyBindingTarget;
+    anchor?: PopoverAnchor;
 }>;
 export type ConnectSheetRequest = ConnectSheetAccountRequest | ConnectSheetKeyRequest;
 export type ConnectSheetResult = ConnectSheetAccountResult | ConnectSheetKeyResult;
@@ -78,7 +81,7 @@ export function presentConnectSheet(request: ConnectSheetRequest): Promise<Conne
             onHostUnmount: () => finish({ kind: 'dismissed' }),
             props: { request: capturedRequest, onResult: finish },
             chrome: createAnchoredSheetChrome({ title: t('settings.connectedServices'),
-                testID: 'connect-sheet' }),
+                testID: 'connect-sheet', anchor: request.anchor }),
             closeOnBackdrop: true,
         });
         if (!modalId) finish({ kind: 'dismissed' });

@@ -39,7 +39,7 @@ describe('BuiltInProviderAuthoringView', () => {
             navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
             <BuiltInProviderAuthoringView machineId="machine-a" currentMachineName="Mac" providerName="Provider"
                 icon={null} provenance="first_party" previewCredential={null} endpointTemplates={[]} endpointValues={{}}
-                secretSelected={false} pastedKey="" onPastedKeyChange={() => {}} savedSecretSelectionEnabled preview={null} previewLoading={false}
+                secretSelected={false} savedSecretSelectionEnabled preview={null} previewLoading={false}
                 savePending={false} error={null} secondaryTextColor="#777" warningColor="#b70"
                 onPickSecret={() => {}} onChooseCandidate={() => {}} onEndpointChange={() => {}}
                 onSave={() => {}} onDiscard={discard} />
@@ -63,7 +63,7 @@ describe('BuiltInProviderAuthoringView', () => {
             previewCredential={null}
             endpointTemplates={[]}
             endpointValues={{}}
-            secretSelected={false} pastedKey="" onPastedKeyChange={() => {}}
+            secretSelected={false}
             savedSecretSelectionEnabled
                 preview={null}
                 previewLoading
@@ -111,7 +111,7 @@ describe('BuiltInProviderAuthoringView', () => {
                     { id: 'responses', protocol: 'openai-responses' },
                 ]}
                 endpointValues={{ acme: 'https://api.acme.example/v1' }}
-                secretSelected={false} pastedKey="" onPastedKeyChange={() => {}}
+                secretSelected={false}
             savedSecretSelectionEnabled
                 preview={null}
                 previewLoading={false}
@@ -151,8 +151,6 @@ describe('BuiltInProviderAuthoringView', () => {
                 endpointTemplates={[{ id: 'chat', protocol: 'openai-chat' }]}
                 endpointValues={{}}
                 secretSelected
-                pastedKey=""
-                onPastedKeyChange={() => {}}
                 savedSecretSelectionEnabled
                 preview={null}
                 previewLoading={false}
@@ -195,7 +193,7 @@ describe('BuiltInProviderAuthoringView', () => {
                 previewCredential={{ required: false }}
                 endpointTemplates={[]}
                 endpointValues={{}}
-                secretSelected={false} pastedKey="" onPastedKeyChange={() => {}}
+                secretSelected={false}
             savedSecretSelectionEnabled
                 preview={{
                     status: 'selection_required',
@@ -255,8 +253,6 @@ describe('BuiltInProviderAuthoringView', () => {
                 endpointTemplates={[]}
                 endpointValues={{}}
                 secretSelected
-                pastedKey=""
-                onPastedKeyChange={() => {}}
                 savedSecretSelectionEnabled
                 preview={{
                     status: 'resolved',

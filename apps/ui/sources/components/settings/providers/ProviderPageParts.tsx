@@ -17,7 +17,7 @@ export function ProviderSavedSecretControl(props: Readonly<{
     saved: boolean;
     selectedName?: string | null;
     disabled: boolean;
-    onChoose: () => void;
+    onChoose: (event?: unknown) => void;
 }>) {
     return (
         <View style={stylesheet.secretControl}>
