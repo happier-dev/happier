@@ -78,7 +78,7 @@ export function WorkflowNumberField(props: Readonly<{
                 <Text style={workflowEditorStyles.metaText}>{props.label}</Text>
                 <TextInput
                     testID={props.testID}
-                    style={workflowEditorStyles.inlineValue}
+                    style={[workflowEditorStyles.inlineValue, workflowEditorStyles.numberValue]}
                     value={text}
                     keyboardType="number-pad"
                     accessibilityLabel={props.accessibilityLabel ?? props.label}

@@ -582,4 +582,9 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexBasis: 160,
         maxWidth: '100%',
     },
+    /** A count is a few digits: the field sizes to them instead of stretching across the row. */
+    numberValue: {
+        flexGrow: 0,
+        flexBasis: 'auto',
+    },
 }));
