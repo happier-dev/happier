@@ -35,9 +35,12 @@ describe('workflow step label', () => {
     expect(formatWorkflowStepSessionTitle({ step: named, stepOrdinal: '3' })).toBe(`3 · ${name}`);
   });
 
-  it('leaves an unnamed step untitled so Session defaults apply', () => {
-    const unnamed = { ...step, document: { ...step.document, text: 'A prompt is not an authored name' } };
-    expect(formatWorkflowStepSessionTitle({ step: unnamed, stepOrdinal: '1' })).toBeNull();
+  it('names an unnamed step Session from its prompt and ordinal instead of the project folder (FIN M3)', () => {
+    const unnamed = { ...step, document: { ...step.document, text: '\n Inspect the parser\nKeep the details' } };
+    expect(formatWorkflowStepSessionTitle({ step: unnamed, stepOrdinal: '1' })).toBe('1 · Inspect the parser');
+    expect(formatWorkflowStepSessionTitle({ step: unnamed, stepOrdinal: '1', item: { value: 'alpha', position: 1 } }))
+      .toBe('1 · Inspect the parser · alpha');
+    expect(formatWorkflowStepSessionTitle({ step, stepOrdinal: '1' })).toBeNull();
   });
 
   it('labels per-item Sessions from scalar values or the canonical occurrence position', () => {

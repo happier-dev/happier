@@ -1211,7 +1211,7 @@ describe('workflow Session step executor', () => {
     expect(admittedDepth).toBe(4);
   });
 
-  it('titles only freshly created named step Sessions with the authored name and frozen sibling ordinal', async () => {
+  it('titles freshly created step Sessions with the authored name or prompt and frozen ordinal (FIN M3)', async () => {
     // The real creator forwards the title to the process-launch boundary.
     const launches = installSessionCreationTransport();
     const createFreshConversation = createProductionFreshWorkflowSessionConversation({
@@ -1255,7 +1255,7 @@ describe('workflow Session step executor', () => {
     const { name: _name, ...unnamedStep } = fresh.step;
     const empty = { ...scalarItem, invocation: { ...fresh.invocation, logicalInvocationRecordId: 'logical-unnamed' }, step: unnamedStep };
     await conversations.materialize(await conversations.prepare(empty), empty);
-    expect(launches.at(-1)).not.toHaveProperty('initialTitle');
+    expect(launches.at(-1)).toMatchObject({ initialTitle: '3 · A different prompt · parser.ts' });
     const shared = { ...fresh, execution: { ...fresh.execution, conversation: { kind: 'shared_run' as const } } };
     expect(launches).toHaveLength(4);
     await conversations.materialize(await conversations.prepare(shared), shared);

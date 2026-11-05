@@ -118,14 +118,14 @@ export function workflowBlockOrdinalV1(blocks: readonly WorkflowBlock[], blockId
   return listWorkflowBlockOrdinalsV1(blocks).get(blockId) ?? null;
 }
 
-/** Only independently authored names become creation titles; Session defaults own unnamed steps. */
+/** Fresh step Sessions keep the step's name or prompt and its visible ordinal. */
 export function formatWorkflowStepSessionTitle(params: Readonly<{
   step: WorkflowStep;
   /** The step's visible ordinal from `workflowBlockOrdinalV1`, exactly as its heading and map node show it. */
   stepOrdinal: string;
   item?: Readonly<{ value: JsonValue; position: number }>;
 }>): string | null {
-  const name = params.step.name?.trim();
+  const name = params.step.name?.trim() || workflowStepPromptLabel(params.step);
   if (!name) return null;
   const title = `${params.stepOrdinal} · ${name}`;
   if (!params.item) return title;
