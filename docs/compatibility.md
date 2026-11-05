@@ -281,6 +281,22 @@ native code through OTA. Remove the guard only when no supported binary eligible
 for these updates can lack the SDK. Native renderer fixes and app-link entitlement
 changes still require a native app build.
 
+### Android device CA trust (development)
+
+Android native builds from development source opt into both the platform system
+and user-installed CA stores through the Expo network-security configuration
+plugin. HTTP and WebSocket clients retain platform certificate-chain and hostname
+verification. The configuration consumes the same resolved cleartext setting as
+Expo build properties because Android gives network-security configuration
+precedence over the manifest's cleartext flag.
+
+Older installed binaries retain their original trust policy; neither a server
+update nor an OTA JavaScript update changes their native CA trust. A new native
+Android build is required. This introduces no JavaScript/native API requirement
+or relay protocol change, and does not change iOS, web, or desktop trust policy.
+Published release availability and device-level TLS confirmation remain separate
+from source validation.
+
 ### Android file actions native runtime (development)
 
 The development UI's Android Save As, Open With, and Share actions require the
