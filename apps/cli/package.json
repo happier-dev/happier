@@ -112,6 +112,7 @@
     "@happier-dev/channels-protocol",
     "@happier-dev/email-transports-protocol",
     "@happier-dev/connection-supervisor",
+    "@happier-dev/forge-ci",
     "@happier-dev/sync-client",
     "@happier-dev/iroh-native",
     "@happier-dev/plugin-sdk",
