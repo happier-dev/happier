@@ -91,6 +91,36 @@ const changedFile = { path: 'src/changed.ts', changeKind: 'modified', binary: fa
     evidence: { state: 'available', unifiedDiff: 'diff --git a/src/changed.ts b/src/changed.ts\n--- a/src/changed.ts\n+++ b/src/changed.ts\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] } as const;
 
 describe('Files reads the canonical captured comparison through authenticated RPC', () => {
+    it('keeps captured hydration from replacing unchanged review rows or the pending-read fetcher', async () => {
+        const prior = await mount({ kind: 'session' }, false);
+        await prior.unmount();
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const { CapturedComparisonFilesView } = await import('./CapturedComparisonFilesView');
+        const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
+        const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
+        const { retainCapturedScmFile } = await import('@/sync/ops/scmDiffSummary/generate');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const comparison = ScmComparisonSchema.parse({ id: 'a'.repeat(64), source: { kind: 'session', sessionId },
+            repository: { rootPath: '/repo/exact' }, endpoints: {}, inventory: { state: 'complete', reasons: [],
+                files: ['a.ts', 'b.ts', 'c.ts'].map(path => ({ ...changedFile, path, linesAdded: 1, linesRemoved: 1,
+                    evidence: { state: 'deferred', reason: 'Captured evidence loads on demand.' } })) } });
+        const screen = await renderScreen(React.createElement(KeyboardShortcutProvider, null,
+            React.createElement(CapturedComparisonFilesView, { comparison, sessionId, serverId, maxFiles: 1, maxChangedLines: 100 })));
+        const before = screen.findByType(ChangedFilesReview).props;
+        const scope = await renderHook(() => useServerCredentialAccountScopeBinding(serverId));
+        await vi.waitFor(() => expect(scope.getCurrent().binding).toBeTruthy());
+        const binding = scope.getCurrent().binding!;
+        const evidenceKey = JSON.stringify([serverId, 'captured-account', sessionId, undefined, '/repo/exact', comparison.id]);
+        await act(async () => retainCapturedScmFile(binding, { sessionId, cwd: '/repo/exact' }, evidenceKey,
+            { ...comparison.inventory.files[0]!, evidence: changedFile.evidence }));
+        const after = screen.findByType(ChangedFilesReview).props;
+        expect(after.providerDiffByPath.get('a.ts')).toBe(changedFile.evidence.unifiedDiff);
+        expect(after.fetchUnifiedDiffForPath).toBe(before.fetchUnifiedDiffForPath);
+        expect(after.allRepositoryChangedFiles).toBe(before.allRepositoryChangedFiles);
+        expect(after.snapshot).toBe(before.snapshot);
+        expect(after.initialCollapsedPaths).toBe(before.initialCollapsedPaths);
+    });
     it.each(['phone resize', 'Home return'] as const)('retains paged evidence and recovery across %s', async (transition) => {
         const source = { kind: 'session' as const };
         const comparison = ScmComparisonSchema.parse({ id: '1'.repeat(64), source: { ...source, sessionId: 'capture-session' },

@@ -6,7 +6,7 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 export type ScmReviewUnifiedDiffFetchResult =
     | Readonly<{ success: true; diff: string }>
-    | Readonly<{ success: false; error: string }>;
+    | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 export type ScmReviewUnifiedDiffFetcher = (input: Readonly<{
     snapshotSignature?: string | null;
@@ -16,4 +16,5 @@ export type ScmReviewUnifiedDiffFetcher = (input: Readonly<{
     file: ScmFileStatus | null;
     normalizeError: (input: unknown) => string;
     fallbackError: string;
+    signal?: AbortSignal;
 }>) => Promise<ScmReviewUnifiedDiffFetchResult>;

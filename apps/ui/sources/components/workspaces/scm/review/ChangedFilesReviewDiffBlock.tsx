@@ -49,6 +49,7 @@ export type ReviewDiffState = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'error';
     diff: string;
     error: string | null;
+    errorCode?: string;
     /** Loaded: a new file with no bytes. */
     emptyFile?: boolean;
     /** Find-only bytes of this patch's before revision; never working-tree substitution. */

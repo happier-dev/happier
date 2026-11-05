@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ScmComparisonFile, ScmDiffArea } from '@happier-dev/protocol';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
@@ -105,10 +106,12 @@ export function useChangedFilesReviewDiffLoading(input: {
         diffStateSourceRef.current = createChangedFilesReviewDiffStateSource();
     }
     const diffStateSource = diffStateSourceRef.current;
+    const retryDiffRef = React.useRef<((path: string) => void) | null>(null);
+    const retryDiff = React.useCallback((path: string) => retryDiffRef.current?.(path), []);
     const setLoadedDiff = React.useCallback((path: string, diff: string, emptyFile = false) => {
         diffStateSource.updateDiffState(path, previous => {
             // Revalidation must not discard Find's already-loaded revision corpus.
-            if (previous.status === 'loaded' && previous.diff === diff && Boolean(previous.emptyFile) === emptyFile) return previous;
+            if (previous.status === 'loaded' && previous.diff === diff && previous.error === null && Boolean(previous.emptyFile) === emptyFile) return previous;
             return { status: 'loaded', diff, error: null, ...(emptyFile ? { emptyFile: true } : {}) };
         });
     }, [diffStateSource]);
@@ -143,6 +146,9 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [minRefetchMs]);
 
     const hasScopedDiffs = providerDiffByPath != null;
+    const latestRef = React.useRef({ input, fileStatusByPath, minRefetchMsResolved });
+    latestRef.current = { input, fileStatusByPath, minRefetchMsResolved };
+    const scheduleRef = React.useRef<(() => void) | null>(null);
     React.useEffect(() => {
         diffStateSource.reset();
         lastFetchAtMsByPathRef.current = {};
@@ -183,16 +189,21 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [diffStateSource, setLoadedDiff, fallbackError, providerDiffByPath, requestedPathsKey, reviewFiles, selectedPath, tooLarge, findContext]);
 
     React.useEffect(() => {
-        if (!sessionId && !fetchUnifiedDiffForPath && !providerDiffByPath) return;
         if (!isRepo) return;
-        if (reviewFiles.length === 0) return;
-
         let cancelled = false;
         const contextRead = new AbortController();
-        const inFlightPaths = new Set<string>();
-        inFlightPathsRef.current = inFlightPaths;
+        const inFlightPaths = inFlightPathsRef.current;
+        const failDiff = (path: string, error: string, errorCode = 'COMMAND_FAILED') => {
+            lastFetchAtMsByPathRef.current[path] = Date.now();
+            diffStateSource.updateDiffState(path, previous => previous.status === 'loaded'
+                ? { ...previous, error, errorCode } : { status: 'error', diff: '', error, errorCode });
+        };
 
         const ensureFindContext = async (path: string, next?: Readonly<{ diff: string; emptyFile?: true }>) => {
+            const { input, fileStatusByPath } = latestRef.current;
+            const findContext = input.findContext === true;
+            const comparisonFiles = input.comparisonFiles;
+            const { machineId, rootPath } = input.workspaceScope ?? {};
             const previous = diffStateSource.getDiffState(path);
             const state = next ? { status: 'loaded' as const, error: null, ...next } : previous;
             if (!findContext || state.status !== 'loaded' || (!next && previous.context && previous.context.status !== 'loading') || !state.diff) {
@@ -219,12 +230,14 @@ export function useChangedFilesReviewDiffLoading(input: {
                     if (read.success && !read.bytes.includes(0)) baseText = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes);
                 }
             } catch { /* The patch remains searchable; unreadable context is partial coverage. */ }
-            if (cancelled) return;
+            if (cancelled || latestRef.current.input.findContext !== true) return;
             diffStateSource.updateDiffState(path, current => current.diff !== (retainCorpus ? previous.diff : state.diff) ? current : { ...state,
                 context: baseText === null ? { status: 'unavailable' } : { status: 'loaded', baseText } });
         };
 
         const loadDiff = async (path: string) => {
+            const { input, fileStatusByPath, minRefetchMsResolved } = latestRef.current;
+            const { providerDiffByPath, fetchUnifiedDiffForPath, normalizeError, fallbackError } = input;
             const existing = diffStateSource.getDiffState(path);
             const providerDiff = providerDiffByPath?.get(path);
             const nowMs = Date.now();
@@ -263,7 +276,7 @@ export function useChangedFilesReviewDiffLoading(input: {
 
             diffStateSource.updateDiffState(path, (prev) => {
                 // Stale-while-revalidate: keep already-loaded diffs visible while we refresh in the background.
-                if (prev?.status === 'loaded' && prev.diff) {
+                if (prev?.status === 'loaded') {
                     return prev;
                 }
                 return { status: 'loading', diff: '', error: null };
@@ -279,6 +292,7 @@ export function useChangedFilesReviewDiffLoading(input: {
                         fallbackError,
                         snapshotSignature,
                         diffCache,
+                        signal: contextRead.signal,
                     })
                     : await fetchSessionUnifiedDiffForPath({
                         sessionId,
@@ -292,13 +306,13 @@ export function useChangedFilesReviewDiffLoading(input: {
                     });
                 if (cancelled) return;
                 if (!response.success) {
-                    lastFetchAtMsByPathRef.current[path] = Date.now();
-                    diffStateSource.updateDiffState(path, (prev) => {
-                        if (prev?.status === 'loaded' && prev.diff) {
-                            return prev;
-                        }
-                        return { status: 'error', diff: '', error: response.error };
-                    });
+                    const errorCode = 'errorCode' in response && typeof response.errorCode === 'string' ? response.errorCode : undefined;
+                    if (errorCode === 'COMMAND_CANCELLED') {
+                        diffStateSource.updateDiffState(path, previous => previous.status === 'loaded'
+                            ? previous : { status: 'idle', diff: '', error: null });
+                        return;
+                    }
+                    failDiff(path, response.error.trim() ? response.error : fallbackError, errorCode);
                     return;
                 }
 
@@ -310,53 +324,64 @@ export function useChangedFilesReviewDiffLoading(input: {
             } catch (err) {
                 if (cancelled) return;
                 const normalized = normalizeError(err);
-                diffStateSource.updateDiffState(path, (prev) => {
-                    if (prev?.status === 'loaded' && prev.diff) {
-                        return prev;
-                    }
-                    return {
-                        status: 'error',
-                        diff: '',
-                        error: (typeof normalized === 'string' && normalized.trim()) ? normalized : fallbackError,
-                    };
-                });
-                lastFetchAtMsByPathRef.current[path] = Date.now();
+                failDiff(path, (typeof normalized === 'string' && normalized.trim()) ? normalized : fallbackError, readRpcErrorCode(err));
             } finally {
                 inFlightPaths.delete(path);
             }
         };
 
-        const run = async () => {
+        const retry = (path: string) => {
+            delete lastFetchAtMsByPathRef.current[path];
+            void loadDiff(path);
+        };
+        retryDiffRef.current = retry;
+
+        // Hydration and viewport changes update demand, not the lifetime of admitted
+        // reads. One queue owns concurrency and never starts a path already in flight.
+        let queue: string[] = [];
+        let activeWorkers = 0;
+        const run = () => {
+            const current = latestRef.current.input;
             const uniquePaths = resolveReviewDiffPathsToEnsure({
                 requestedPaths: requestedPathsNormalizedRef.current,
-                tooLarge,
-                selectedPath,
-                reviewFiles,
+                tooLarge: current.tooLarge,
+                selectedPath: current.selectedPath,
+                reviewFiles: current.reviewFiles,
             });
 
             const resolvedConcurrency = (() => {
-                const raw = typeof maxConcurrency === 'number' && Number.isFinite(maxConcurrency) ? maxConcurrency : 1;
+                const raw = typeof current.maxConcurrency === 'number' && Number.isFinite(current.maxConcurrency) ? current.maxConcurrency : 1;
                 return Math.max(1, Math.floor(raw));
             })();
 
-            const queue = uniquePaths.slice();
-            const workerCount = Math.min(resolvedConcurrency, queue.length);
-            const workers = Array.from({ length: workerCount }, async () => {
-                while (!cancelled) {
-                    const next = queue.shift();
-                    if (!next) return;
-                    await loadDiff(next);
+            queue = uniquePaths.filter(path => !inFlightPaths.has(path));
+            const worker = async () => {
+                activeWorkers++;
+                try {
+                    while (!cancelled) {
+                        const next = queue.shift();
+                        if (!next) return;
+                        await loadDiff(next);
+                    }
+                } finally {
+                    activeWorkers--;
                 }
-            });
-            await Promise.all(workers);
+            };
+            while (activeWorkers < resolvedConcurrency && queue.length > 0) void worker();
         };
 
+        scheduleRef.current = run;
         run();
         return () => {
             cancelled = true;
+            scheduleRef.current = null;
+            retryDiffRef.current = null;
             contextRead.abort();
         };
-    }, [
+    }, [diffArea, diffCache, isRepo, hasScopedDiffs, sessionId, reviewScopeKey, snapshotSignature, refreshToken,
+        serverId, machineId, rootPath, diffStateSource, setLoadedDiff]);
+
+    React.useEffect(() => scheduleRef.current?.(), [
         diffArea,
         diffCache,
         setLoadedDiff,
@@ -365,6 +390,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         fetchUnifiedDiffForPath,
         isRepo,
         minRefetchMsResolved,
+        maxConcurrency,
         normalizeError,
         refreshToken,
         requestedPathsKey,
@@ -380,5 +406,6 @@ export function useChangedFilesReviewDiffLoading(input: {
 
     return {
         diffStateSource,
+        retryDiff,
     };
 }

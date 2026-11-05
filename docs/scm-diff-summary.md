@@ -15,6 +15,14 @@ fall back, and another Session's private capture is never searched. Investigatio
 uses the retained pins from the actual capture namespace. Explicit deletion keeps
 its original namespace rather than deleting a Machine capture through a Session.
 
+Captured Review keeps its existing read queue across neighboring file hydration
+and visibility changes. Pending reads are reused, and queued files that leave
+the requested rows do not start. Retiring the comparison aborts its captured
+reads; an intended abort settles as `COMMAND_CANCELLED` without failure
+diagnostics. Real failures preserve the transport's typed error code through the
+SCM Action and captured-file reader. Exception observers use `readRpcErrorCode`
+to read `RpcError.rpcErrorCode`, rather than assuming an exception's `code` field.
+
 ### Pull request description drafts (unreleased 0.3)
 
 `scm.diffSummary.draftPullRequest` requests a summary whose `suggestedPrBody` is
