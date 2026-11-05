@@ -1,16 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
   AgentProviderBindingMaterializationV1,
 } from '@happier-dev/protocol';
 import {
   ProviderConnectionIdSchema,
+  setProviderExperimentalConfirmationV1,
+  ProviderSettingsV1Schema,
+  ProviderContributionV1Schema,
+  encryptSecretStringV1,
+  DEFAULT_PROVIDER_SETTINGS_V1,
+  accountSettingsParse,
   ProviderCredentialTransportV1Schema,
   SessionModelSelectionV1Schema,
   createProviderErrorV1,
 } from '@happier-dev/protocol';
 
 import type { ProviderSpawnAuthorization } from './resolve';
+import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { resolveProviderConnectionForMachine } from '../registry';
+import { resolveProviderModelCompatibility } from '../catalog/compatibility';
+import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 import {
   createProviderSpawnAuthorizationAttempt,
   createRuntimeProviderSpawnAuthorizationAttempt,
@@ -179,6 +191,74 @@ function managedCurrentnessBasis(
 }
 
 describe('provider spawn authorization lifecycle', () => {
+  it.each(['apiKey', 'none'] as const)('admits and materializes a %s Provider through the real Agent adapter', async (credentialKind) => {
+    const pluginId = 'example.spawn-count';
+    const contributionKey = `${pluginId}/gateway`;
+    const definition = ProviderContributionV1Schema.parse({
+      v: 1, id: 'gateway', name: 'Gateway', kind: 'cloud',
+      endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://gateway.example/v1',
+        capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
+      ...(credentialKind === 'apiKey' ? { credential: { kind: 'apiKey', required: true, transports: [transport] } } : {}),
+      catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'model-a', name: 'Model A' }] },
+    });
+    const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: { providers: [definition] } }),
+        files: { 'daemon.mjs': 'export function activate() {}' } }],
+      runtimeOptions: { pluginIds: [pluginId, 'happier.agent.codex'] },
+    });
+    onTestFinished(() => runtime.dispose());
+    const initial = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
+      v: 1, id: connectionId, source: { kind: 'contribution', contributionKey }, role: 'default',
+      displayName: 'Gateway', displayNameMode: 'automatic', revision: 1, createdAt: 1, updatedAt: 1,
+    }] });
+    const connection = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+      providerSettings: initial, registry: runtime.registry.contributes,
+      dnsEvidenceByEndpointUrl: new Map([['https://gateway.example/v1', ['8.8.8.8']]]) });
+    expect(connection).toMatchObject({ status: 'resolved' });
+    if (connection.status !== 'resolved') throw new Error('Expected external fixture connection');
+    const granted = ProviderSettingsV1Schema.parse({ ...initial,
+      accountGrants: [{ v: 1, connectionId, confirmedAt: 1,
+        connectionSecurityFingerprint: connection.record.connectionSecurityFingerprint }],
+      ...(credentialKind === 'apiKey' ? { secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: 'secret-a' } } } } : {}),
+    });
+    const adapter = readLeasedAgentProviderBindingAdapter({ lease: runtime.lease, agentId: 'codex' });
+    if (!adapter || !('staticModels' in definition.catalog)) throw new Error('Expected real Agent adapter and static Provider model');
+    const model = definition.catalog.staticModels[0]!;
+    const compatibility = resolveProviderModelCompatibility({ record: connection.record, providerSettings: granted,
+      agentTargetKey: 'agent:happier.agent.codex/codex', support: adapter.support,
+      adapterVersion: adapter.adapter.adapterVersion, model });
+    if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental external Provider pairing');
+    const settings = setProviderExperimentalConfirmationV1(granted, { connectionId,
+      agentTargetKey: 'agent:happier.agent.codex/codex',
+      modelId: compatibility.result.confirmationScope.kind === 'model' ? model.id : null,
+      compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 });
+    const snapshot: ActiveAccountSettingsSnapshot = {
+      source: 'network', settings: accountSettingsParse({ secrets: credentialKind === 'apiKey' ? [{ id: 'secret-a', name: 'Fixture key', encryptedValue: {
+        _isSecretValue: true, encryptedValue: encryptSecretStringV1('fixture-key', new Uint8Array(32).fill(5),
+          length => new Uint8Array(length).fill(2)),
+      } }] : [] }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [new Uint8Array(32).fill(5)], scopeKey: 'spawn-count-account',
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
+    };
+    const result = await createRuntimeProviderSpawnAuthorizationAttempt({
+      selection: SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 1, ref: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a',
+      } }), machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+      lease: runtime.lease, getAccountSettingsSnapshot: () => snapshot,
+      materializationBaseDir: '/unused', sessionId: 'spawn-count', resolveAddresses: async () => ['8.8.8.8'],
+    });
+    expect(result.ok, result.ok ? undefined : result.error.code).toBe(true);
+    if (result.ok) {
+      try {
+        if (!('materializeAfterHooks' in result.attempt)) throw new Error('Expected external Provider attempt');
+        const materialized = await result.attempt.materializeAfterHooks();
+        expect(materialized.ok, materialized.ok ? undefined : materialized.error.code).toBe(true);
+        if (materialized.ok) expect(materialized.materialization.launchMaterialization.kind).toBe('engineConfig');
+      } finally {
+        result.attempt.cleanupOnFailure();
+      }
+    }
+  });
+
   it('does not latch a pre-adoption retained check and ignores desired Q after exact custody binds', () => {
     let desiredCurrent = true;
     let retainedPolicyCurrent = true;

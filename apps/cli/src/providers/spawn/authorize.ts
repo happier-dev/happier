@@ -1043,7 +1043,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         : admissionLifetime),
       resolveCredential: () => {
         const snapshot = getAccountSettingsSnapshot();
-        if (!snapshot || !savedSecretMaterializer) {
+        if (!snapshot) {
           return {
             ok: false,
             error: createProviderErrorV1('provider_authorization_changed', {
@@ -1057,7 +1057,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           accountSettings: snapshot.settings,
           savedSecretResources: snapshot.savedSecretResources,
           settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
-          savedSecretMaterializer,
+          savedSecretMaterializer: savedSecretMaterializer ?? null,
           connectionId: initial.authorization.ticket.connectionId,
           machineId: input.machineId,
         });
