@@ -335,6 +335,7 @@ import {
   sendSessionMessageWithServerScope,
   projectServerScopedSessionSendMessageResult,
 } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
+import { importBrowserProfileLoginsInContext } from './browserProfileLoginsImport';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createUiSessionSpawnNewDirectoryApprovalPreflight, dispatchSessionSpawnNewWithManagerPreparation } from './sessionSpawnNewAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -1073,6 +1074,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const scmActionExecute = opts?.scmActionExecute ?? createUiScmAction(accountContext, { onDispatched: opts?.onScmDispatched });
   const publicProfileHome = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction;
   let deps: ActionExecutorDeps = {
+    browserProfileLoginsImport: ({ input, context }) => importBrowserProfileLoginsInContext(accountContext ?? null, input,
+      call => actionMachineRpc({ serverId: accountContext?.serverId, accountId: accountContext?.accountId,
+        machineId: call.machineId, method: call.method, payload: call.input,
+        signal: context.signal, operationTimeoutMs: null }), context.signal),
     buildApprovalPreview: async ({ actionId, input, context, defaultPreview }) => {
       if (actionId !== 'session.spawn_new' || !accountContext || !machineAccessAction) return defaultPreview;
       const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);
