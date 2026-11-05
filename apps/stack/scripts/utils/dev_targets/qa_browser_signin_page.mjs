@@ -78,7 +78,7 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
 }
 
 
-const failure = reason => Object.assign(new Error(reason), { reason });
+const failure = (reason, detail) => Object.assign(new Error(reason), { reason, detail });
 
 async function connectPage(endpoint, WebSocketImpl, onEvent) {
   const socket = new WebSocketImpl(endpoint);
@@ -196,7 +196,12 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
         }
         const request = profileRequests.get(params?.requestId);
         if (request && message.method === 'Network.loadingFinished') { request.finished = true; resolveProfile(); }
-        if (request && message.method === 'Network.loadingFailed') { request.failed = true; resolveProfile(); }
+        if (request && message.method === 'Network.loadingFailed') {
+          // An aborted startup fetch is not the profile the Account page loaded.
+          // Keep observing the app's surviving request, without issuing our own.
+          if (params.canceled === true) profileRequests.delete(params.requestId);
+          else { request.failed = true; resolveProfile(); }
+        }
       }
     });
     const restored = (async () => {
@@ -239,20 +244,24 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       observingAccount = true;
       profileLoaded = Promise.withResolvers();
       await navigate('/settings/account');
-      if (await step('account') !== 'account') throw failure('account_unavailable');
+      if (await step('account') !== 'account') throw failure('account_unavailable', 'account_page_unavailable');
       // The current UI mounts its identity header without an Account-id row.
       // Observe the profile this main-frame navigation loaded; do not inspect
       // credential storage or infer identity from an editable display name.
       const profileRequest = await profileLoaded.promise;
-      if (profileRequest.failed || profileRequest.status !== 200) throw failure('account_unavailable');
-      let accountIdPrefix;
+      if (profileRequest.failed) throw failure('account_unavailable', 'profile_load_failed');
+      if (profileRequest.status !== 200) throw Object.assign(failure('account_unavailable', 'profile_http_status'), { status: profileRequest.status });
+      let response;
       try {
-        const response = await client.send('Network.getResponseBody', { requestId: profileRequest.requestId });
+        response = await client.send('Network.getResponseBody', { requestId: profileRequest.requestId });
+      } catch { throw failure('account_unavailable', 'profile_body_unavailable'); }
+      let profile;
+      try {
         const body = response.base64Encoded ? Buffer.from(response.body, 'base64').toString('utf8') : response.body;
-        const profile = JSON.parse(body);
-        if (typeof profile?.id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(profile.id)) throw failure('account_unavailable');
-        accountIdPrefix = profile.id.slice(0, 8);
-      } catch { throw failure('account_unavailable'); }
+        profile = JSON.parse(body);
+      } catch { throw failure('account_unavailable', 'profile_json_invalid'); }
+      if (typeof profile?.id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(profile.id)) throw failure('account_unavailable', 'profile_id_invalid');
+      const accountIdPrefix = profile.id.slice(0, 8);
       observingAccount = false;
       await navigate('/');
       if (await step('home') !== 'home') throw failure('home_unavailable');
@@ -264,6 +273,13 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     // reason vocabulary can cross this boundary; never return exception text.
     const reasons = ['invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
       'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required'];
-    return { ok: false, reason: reasons.includes(error?.reason) ? error.reason : 'browser_unavailable' };
+    const result = { ok: false, reason: reasons.includes(error?.reason) ? error.reason : 'browser_unavailable' };
+    const details = ['account_page_unavailable', 'profile_load_failed', 'profile_http_status',
+      'profile_body_unavailable', 'profile_json_invalid', 'profile_id_invalid'];
+    if (result.reason === 'account_unavailable' && details.includes(error.detail)) {
+      result.detail = error.detail;
+      if (error.detail === 'profile_http_status' && Number.isInteger(error.status)) result.status = error.status;
+    }
+    return result;
   } finally { key = ''; client?.close(); }
 }

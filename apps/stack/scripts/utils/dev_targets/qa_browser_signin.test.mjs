@@ -109,7 +109,7 @@ test('restores normally when there is no Home alias warning', async () => {
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, status = 200, failed = false } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -119,25 +119,43 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, status = 20
       const { id, method, params } = JSON.parse(raw);
       queueMicrotask(() => {
         const loaderId = `document-${this.navigations + 1}`;
+        if (method === 'Network.getResponseBody' && bodyUnavailable) {
+          this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
+          return;
+        }
         this.message({ id, result: method === 'Page.navigate'
           ? { frameId: 'main', loaderId }
           : method === 'Runtime.callFunctionOn'
-            ? { result: { value: params.arguments[0].value === 'account' ? 'account' : 'home' } }
+            ? { result: { value: params.arguments[0].value === 'account' ? (accountReady ? 'account' : 'account_unavailable') : 'home' } }
             : method === 'Network.getResponseBody'
-              ? { body: JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
+              ? { body: malformed ? '{' : JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
         if (method !== 'Page.navigate') return;
         this.navigations++;
         this.message({ method: 'Runtime.executionContextCreated', params: {
           context: { id: 42, auxData: { isDefault: true, frameId: 'main' } },
         } });
         if (new URL(params.url).pathname === '/settings/account') {
+          // Observed live: HTTP 200, then canceled before body completion;
+          // the app issues a surviving GET in the same frame and loader.
+          if (cancelledFirst) {
+            this.message({ method: 'Network.requestWillBeSent', params: { requestId: 'canceled-profile', frameId: 'main', loaderId,
+              request: { method: 'GET', url: `${canonicalServerUrl}/v1/account/profile` },
+            } });
+            this.message({ method: 'Network.responseReceived', params: { requestId: 'canceled-profile', frameId: 'main', loaderId, type: 'Fetch',
+              response: { url: `${canonicalServerUrl}/v1/account/profile`, status: 200 },
+            } });
+            this.message({ method: 'Network.loadingFailed', params: { requestId: 'canceled-profile', canceled: true } });
+          }
           for (const [requestId, url, frame, loader] of [
             ['previous', canonicalServerUrl, 'main', 'previous'],
             ['foreign', 'https://other-home.invalid', 'main', loaderId],
             ['iframe', canonicalServerUrl, 'child', loaderId],
             ['profile', canonicalServerUrl, 'main', loaderId],
           ]) {
-            this.message({ method: 'Network.responseReceived', params: { requestId, frameId: frame, loaderId: loader,
+            this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
+              request: { method: 'GET', url: `${url}/v1/account/profile` },
+            } });
+            this.message({ method: 'Network.responseReceived', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
               response: { url: `${url}/v1/account/profile`, status: requestId === 'profile' ? status : 200 },
             } });
             this.message({ method: failed && requestId === 'profile' ? 'Network.loadingFailed' : 'Network.loadingFinished',
@@ -163,12 +181,21 @@ test('reads Account identity only from this main-frame navigation and Home profi
   assert.deepEqual(await profileSignin(), { ok: true, accountIdPrefix: 'account-' });
 });
 
-for (const [name, options] of [
-  ['missing Account id', { profile: {} }],
-  ['unsuccessful profile response', { status: 503 }],
-  ['failed profile load', { failed: true }],
+test('reads the surviving profile GET after an HTTP 200 request is canceled in the same document', async () => {
+  assert.deepEqual(await profileSignin({ cancelledFirst: true }), { ok: true, accountIdPrefix: 'account-' });
+});
+
+for (const [name, options, detail] of [
+  ['missing Account id', { profile: {} }, 'profile_id_invalid'],
+  ['unsuccessful profile response', { status: 503 }, 'profile_http_status'],
+  ['failed profile load', { failed: true }, 'profile_load_failed'],
+  ['unavailable response body', { bodyUnavailable: true }, 'profile_body_unavailable'],
+  ['invalid response JSON', { malformed: true }, 'profile_json_invalid'],
+  ['unavailable Account page', { accountReady: false }, 'account_page_unavailable'],
 ]) {
-  test(`refuses Account identity from ${name}`, async () => {
-    assert.deepEqual(await profileSignin(options), { ok: false, reason: 'account_unavailable' });
+  test(`attributes Account identity failure from ${name}`, async () => {
+    const expected = { ok: false, reason: 'account_unavailable', detail };
+    if (detail === 'profile_http_status') expected.status = 503;
+    assert.deepEqual(await profileSignin(options), expected);
   });
 }
