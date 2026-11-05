@@ -229,10 +229,18 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
               'GitHub CLI credentials are unavailable. Install gh and sign in with gh auth login on this machine.',
             ) };
           }
-          // Import is local-only. The existing attempt owner assigns the opaque
-          // Account id and seals the credential; ordinary status/use verifies it.
+          const identity = await confirmGithubIdentity(native.token, context, options);
+          if (identity.status !== 'confirmed') return identity;
           await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, native.token, options);
-          return { status: 'connected', displayName: 'GitHub CLI login', scopes: [] };
+          return {
+            status: 'connected',
+            providerIdentity: {
+              accountId: identity.providerAccountId,
+              ...(identity.email ? { email: identity.email } : {}),
+            },
+            displayName: identity.displayName,
+            scopes: identity.scopes,
+          };
         },
       },
     },

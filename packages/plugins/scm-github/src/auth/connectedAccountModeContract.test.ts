@@ -57,9 +57,10 @@ describe('GitHub CLI login import', () => {
         if (scenario === 'cancelled') {
           await expect(result).rejects.toMatchObject({ name: 'AbortError' });
         } else if (scenario === 'connected') {
-          await expect(result).resolves.toEqual({ status: 'connected', displayName: 'GitHub CLI login', scopes: [] });
+          await expect(result).resolves.toEqual({ status: 'connected',
+            providerIdentity: { accountId: '12345' }, displayName: 'octocat', scopes: [] });
           expect(values).toEqual(new Map([['token', 'fixture-native-token']]));
-          expect(requests).toEqual([]);
+          expect(requests).toEqual(['https://api.github.com/user']);
           expect(command).toHaveBeenCalledTimes(1);
         } else {
           await expect(result).resolves.toMatchObject({ status: 'unavailable', diagnostic: { code: 'github_import_credentials_unavailable' } });
