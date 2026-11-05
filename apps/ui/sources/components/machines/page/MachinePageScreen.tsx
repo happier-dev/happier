@@ -168,7 +168,7 @@ export function MachinePageScreen() {
                     <SegmentedTabBar<MachinePageTabId>
                         role="tablist"
                         segmentSizing="content"
-                        tabs={MACHINE_PAGE_TABS.map(entry => ({ id: entry.id, label: t(entry.titleKey) }))}
+                        tabs={MACHINE_PAGE_TABS.map(entry => ({ id: entry.id, label: 'label' in entry && typeof entry.label === 'string' ? entry.label : t(entry.titleKey) }))}
                         activeTabId={tab.entry.id}
                         onSelectTab={selectTab}
                         accessibilityLabel={target.machineName}
