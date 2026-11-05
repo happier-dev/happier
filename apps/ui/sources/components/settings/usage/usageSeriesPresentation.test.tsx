@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { StackedSeriesChart, type HappierSeries } from '@happier-dev/plugin-ui/presentation';
 import { pressTestInstance, renderScreen } from '@/dev/testkit';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { lightTheme } from '@/theme';
@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSeriesFrame, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens, type UsageSeriesChoice } from './usageSeriesPresentation';
 import type { UsageAnalyticsCoverage } from '@happier-dev/protocol';
+import { ScrubLens, type ScrubLensContent } from './UsageScrubLens';
 
 const coverage = (startMs: number, endMs: number, complete: boolean): UsageAnalyticsCoverage => ({
     status: complete ? 'complete' : 'partial', reasons: complete ? [] : ['incomplete_history'], sources: [],
@@ -19,10 +20,11 @@ const lensSeries = [
     { id: 'claude', label: 'Claude Code', color: '#111', points: [{ id: 'mon', x: 1, label: 'Mon', y: 1200 }, { id: 'tue', x: 2, label: 'Tue', y: 300 }] },
     { id: 'codex', label: 'Codex', color: '#222', points: [{ id: 'mon', x: 1, label: 'Mon', y: 800 }, { id: 'tue', x: 2, label: 'Tue', y: null }] },
 ];
-function LensChart(props: Readonly<{ choice?: (seriesId: string) => UsageSeriesChoice | null }>) {
-    const lens = useUsageSeriesLens({ series: lensSeries, format: (value) => `${value} tok`, accentColor: lightTheme.colors.text.primary,
+function LensChart(props: Readonly<{ series?: readonly HappierSeries[]; choice?: (seriesId: string) => UsageSeriesChoice | null }>) {
+    const series = props.series ?? lensSeries;
+    const lens = useUsageSeriesLens({ series, format: (value) => `${value} tok`, accentColor: lightTheme.colors.text.primary,
         footer: 'API-equivalent', testID: 'lens', ...(props.choice ? { choice: props.choice } : {}) });
-    return <StackedSeriesChart theme={projectPluginUiTheme(lightTheme)} label="Tokens" series={lensSeries} variant="bar" size="full"
+    return <StackedSeriesChart theme={projectPluginUiTheme(lightTheme)} label="Tokens" series={series} variant="bar" size="full"
         width={320} showReadout={false} testID="chart" {...lens} />;
 }
 type StubGesture = Readonly<{ __handlers: Record<string, (event: { x: number }) => void>; __config: Record<string, unknown> }>;
@@ -75,6 +77,34 @@ describe('the all-series lens', () => {
 });
 
 describe('usage projection into the shared series renderer', () => {
+    it.each(['tokens', 'cost'] as const)('combines repeated engine source partitions with unique stable lens keys for %s', async (metric) => {
+        const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
+        const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD' };
+        // These distinct raw sources can share a title (native/runtime both say Usage).
+        const sources = ['claude-assistant-usage', 'claude-sdk-result', 'native', 'runtime'].map(source => ({
+            source, path: 'unknown' as const, execution: 'unknown' as const, eventCount: 1, tokens, cost,
+        }));
+        const leaders = ['claude:local', 'claude:remote', 'codex:local'].map(key => ({ key, eventCount: 4,
+            tokens: { ...tokens, input: 20, total: 20 }, cost: { ...cost, estimatedUsd: 36 }, sources }));
+        const project = (entries: typeof leaders) => usageSourceTimelineSeries({
+            timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: entries }], range: null, metric, costMode: 'auto',
+            costSelection: { kind: 'estimated', currency: 'USD', mode: 'auto' },
+            dimensionKey: key => key.split(':')[0]!, label: key => key, color: () => 'ink', bucketLabel: String,
+        });
+        const series = project(leaders);
+        const claude = series.find(entry => entry.id === 'claude')!;
+        const screen = await renderScreen(<LensChart series={series} />);
+        const rows: ScrubLensContent['rows'] = screen.findByType(ScrubLens).props.resolveContent(0)!.rows;
+        expect(new Set(rows.map(row => row.id ?? row.label)).size).toBe(rows.length);
+        expect(rows.every(row => row.id !== undefined)).toBe(true);
+        expect(claude.sourceDetails?.['0']).toHaveLength(sources.length);
+        expect(claude.sourceDetails?.['0']?.map(part => part.value)).toEqual(sources.map(() => metric === 'tokens' ? 10 : 18));
+        const before = rows.map(row => ({ id: row.id, label: row.label, value: row.value }));
+        await screen.update(<LensChart series={project([...leaders].reverse())} />);
+        const nextRows: ScrubLensContent['rows'] = screen.findByType(ScrubLens).props.resolveContent(0)!.rows;
+        expect(nextRows.map(row => ({ id: row.id, label: row.label, value: row.value })))
+            .toEqual(expect.arrayContaining(before));
+    });
     it('retains known cost from older unpartitioned buckets beside source-partitioned buckets', () => {
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
         const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };

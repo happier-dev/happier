@@ -154,8 +154,9 @@ export function usageMixSeries(mix: UsageCalendarMix, label: (value: string) => 
     })) }));
 }
 
+type UsageSourceDetail = Readonly<{ id: string; label: string; execution: 'happier' | 'outside' | 'unknown'; value: number | null }>;
 export type UsageSourceSeries = HappierSeries & Readonly<{ dimensionKey: string;
-    sourceDetails?: Readonly<Record<string, readonly Readonly<{ label: string; execution: 'happier' | 'outside' | 'unknown'; value: number | null }>[]>>;
+    sourceDetails?: Readonly<Record<string, readonly UsageSourceDetail[]>>;
 }>;
 
 /** Present the producer's partitions; execution placement is never inferred from a source name. */
@@ -173,7 +174,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
 }>): readonly UsageSourceSeries[] {
     const timeline = input.timeline ?? [];
     const parts = new Map<string, { key: string; label: string; values: Map<number, number | null>; allOutside: boolean;
-        details: Record<string, { label: string; execution: 'happier' | 'outside' | 'unknown'; value: number | null }[]> }>();
+        details: Record<string, Map<string, UsageSourceDetail>> }>();
     for (const bucket of timeline) for (const leader of bucket.leaders) {
         if (input.metric === 'tokens' && !leader.sources?.length) continue;
         const key = input.dimensionKey(leader.key);
@@ -200,10 +201,15 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 const previous = entry.values.get(bucket.bucketStartMs);
                 entry.values.set(bucket.bucketStartMs, value === null || previous === null ? null : (previous ?? 0) + value);
             }
-            const details = entry.details[String(bucket.bucketStartMs)] ?? [];
+            const details = entry.details[String(bucket.bucketStartMs)] ?? new Map<string, UsageSourceDetail>();
             const basisLabel = input.metric === 'cost' && input.costSelection !== undefined
                 ? usagePageCostRow(part.cost, input.costSelection)?.label : undefined;
-            details.push({ label: [execution, usageSourceTitle(part.source), basisLabel].filter(Boolean).join(' · '), execution: part.execution, value });
+            // Engine leaders collapse into one dimension: their matching source partitions must
+            // collapse too. Raw identity keeps equal translated titles and other Agents distinct.
+            const id = JSON.stringify([key, part.source, part.path, part.execution]);
+            const previous = details.get(id);
+            details.set(id, { id, label: [execution, usageSourceTitle(part.source), basisLabel].filter(Boolean).join(' · '),
+                execution: part.execution, value: value === null || previous?.value === null ? null : (previous?.value ?? 0) + value });
             entry.details[String(bucket.bucketStartMs)] = details;
         }
         parts.set(key, entry);
@@ -213,7 +219,8 @@ export function usageSourceTimelineSeries(input: Readonly<{
     const buckets = new Map(timeline.map(bucket => [bucket.bucketStartMs, bucket]));
     const dimensionIndexes = new Map<string, number>();
     for (const entry of parts.values()) if (!dimensionIndexes.has(entry.key)) dimensionIndexes.set(entry.key, dimensionIndexes.size);
-    return [...parts].map(([id, entry]) => ({ id, dimensionKey: entry.key, label: entry.label, sourceDetails: entry.details,
+    return [...parts].map(([id, entry]) => ({ id, dimensionKey: entry.key, label: entry.label,
+        sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()]])),
         color: input.color(dimensionIndexes.get(entry.key)!, entry.key),
         ...(entry.allOutside ? { fillPattern: 'hatch' as const } : {}),
         points: starts.map(startMs => {
@@ -301,7 +308,7 @@ export function useUsageSeriesLens(input: Readonly<{
                     value: entry.value === null ? t('common.unavailable') : format(entry.value),
                     ...(chosen ? chosen : {}) };
                 const details = (series.find(part => part.id === entry.seriesId) as UsageSourceSeries | undefined)?.sourceDetails?.[bucket.id] ?? [];
-                return [parent, ...details.map(part => ({ label: part.label,
+                return [parent, ...details.map(part => ({ id: part.id, label: part.label,
                     value: part.value === null ? t('common.unavailable') : format(part.value) }))];
             });
             return { title: pointTitle ? pointTitle(bucket) : bucket.label, rows, ...(footer ? { footer } : {}),
