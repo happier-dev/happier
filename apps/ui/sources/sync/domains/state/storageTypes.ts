@@ -209,6 +209,14 @@ export interface PendingMessage extends TranscriptAccountActorMetadata {
     updatedAt: number;
     source?: 'local_outbound' | 'server_pending';
     deliveryStatus?: 'queued' | 'accepted';
+    /**
+     * Local display only: a new Session's launch owns this first message until its terminal result.
+     * No Message writer (send, retry, edit, remove, reorder) may act on it; `failed` keeps the text visible
+     * with the launch's typed reason and the persisted New Session draft that still holds the input;
+     * `unresolved` means the launch's terminal wait ended without a known outcome (the input may have been accepted).
+     */
+    pendingLaunch?: Readonly<{ state: 'starting' }> | Readonly<{ state: 'unresolved' }>
+        | Readonly<{ state: 'failed'; message: string; draftId: string | null }>;
     /** Durable-outbox authority for local outbound rows; never inferred from the active server. */
     pendingOutboxScope?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
     /** Durable local outbox operation; `cancel` must never be presented or retried as a send. */
