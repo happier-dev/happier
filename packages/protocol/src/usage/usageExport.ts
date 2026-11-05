@@ -4,7 +4,8 @@ import { encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../crypto/
 import { UsageQuerySchema, normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageQueryAccountingSchema } from './usageAnalyticsContracts.js';
 
-export const UsageExportFieldSchema = lazyZodSchema(() => z.keyof(z.omit(UsageAnalyticsQueryResponseSchema, { v: true })));
+export const UsageExportFieldSchema = lazyZodSchema(() => z.keyof(z.omit(UsageAnalyticsQueryResponseSchema,
+  { v: true, summary: true, sessionIds: true, sessionMembership: true })));
 export const UsageExportInputSchema = lazyZodSchema(() => z.strictObject({
   query: UsageQuerySchema, format: z.enum(['json', 'csv', 'text']), fields: z.array(UsageExportFieldSchema).check(z.minLength(1)),
 }));

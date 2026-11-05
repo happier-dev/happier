@@ -51,6 +51,9 @@ describe('authorized selected-field usage file bytes', () => {
     }
   });
   it('rejects forged authority, unknown sections, destination effects and unsafe file paths', () => {
+    for (const field of ['summary', 'sessionIds', 'sessionMembership']) {
+      expect(UsageExportInputSchema.safeParse({ query, format: 'json', fields: [field] }).success).toBe(false);
+    }
     expect(UsageExportInputSchema.safeParse({ query, format: 'json', fields: ['credentials'] }).success).toBe(false);
     expect(UsageExportInputSchema.safeParse({ query, format: 'json', fields: ['totals'], destination: 'upload' }).success).toBe(false);
     const file = buildUsageFileResult({ query, format: 'json', fields: ['totals'] }, response, 100);
