@@ -465,7 +465,9 @@ async function executeVoiceAccountOperation(input: Readonly<{
                     headers,
                     secretHeaderNames: Object.freeze(Object.keys(headers)),
                 }));
-                assertActive(input.authority);
+                // Finite admitted HTTP completes; Account lifetime is enforced
+                // by the credential resolver or the host publishing its result.
+                if (input.authority.isCancelled()) throw cancelled();
                 const responseDiagnostic = responseContractDiagnostic({
                     operationPurpose: operation.purpose,
                     declaredContentTypes: operation.response.contentTypes,

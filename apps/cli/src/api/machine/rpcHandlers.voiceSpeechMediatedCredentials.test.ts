@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as undici from 'undici';
 
 import {
   accountSettingsParse,
@@ -20,8 +21,18 @@ import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurpose
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+// Genuine network boundary; retain Undici's real Agent and TLS adapters.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: vi.fn(runtime.fetch) };
+});
+
 const transportMocks = { request: vi.fn<typeof globalThis.fetch>() };
-beforeEach(() => { vi.stubGlobal('fetch', transportMocks.request); });
+beforeEach(() => {
+  vi.stubGlobal('fetch', transportMocks.request);
+  // Node uses Undici fetch; the global stub covers Bun.
+  vi.mocked(undici.fetch).mockImplementation(transportMocks.request as unknown as typeof undici.fetch);
+});
 
 import { registerMachineVoiceSpeechRpcHandlers } from './rpcHandlers.voiceSpeech';
 
@@ -574,6 +585,54 @@ describe('daemon speech host-mediated Voice Account operations', () => {
     expect(observedCode).toBe('plugin_voice_credential_unavailable');
     expect(transportMocks.request).not.toHaveBeenCalled();
     await registration.dispose();
+  });
+
+  it('publishes an admitted mediated catalog receipt after source withdrawal and refuses fresh acquisition', async () => {
+    transportMocks.request.mockReset();
+    const manifest = mediatedOnlySpeechManifest();
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('fixture');
+    const selected = accountSnapshot({ contribution });
+    const cleared = accountSnapshot({ contribution, credentialSource: 'none', settingsVersion: 2 });
+    let current = selected;
+    transportMocks.request.mockImplementationOnce(async () => {
+      current = cleared;
+      return jsonResponse({ models: [{ id: 'retained-model', name: 'Retained model' }] });
+    });
+    let nextAcquisitionCode: unknown;
+    const { handlers, registration } = await registerCatalog({
+      manifest,
+      readSnapshot: () => current,
+      list: async (_request, context) => {
+        const result = await context.credentials.mediated!.request({
+          operationId: 'list-models', parameters: {}, signal: context.signal,
+        });
+        try {
+          await context.credentials.mediated!.request({
+            operationId: 'list-models', parameters: {}, signal: context.signal,
+          });
+        } catch (error) {
+          nextAcquisitionCode = (error as Readonly<{ code?: unknown }>).code;
+        }
+        const decoded = JSON.parse(new TextDecoder().decode(result.body)) as Readonly<{
+          models: readonly Readonly<{ id: string; name: string }>[];
+        }>;
+        return decoded.models.map(model => ({ ...model, metadata: {} }));
+      },
+    });
+    try {
+      const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+        target, catalog: 'models',
+      });
+      expect(transportMocks.request).toHaveBeenCalledOnce();
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true, items: [{ id: 'retained-model', name: 'Retained model' }] });
+      expect(nextAcquisitionCode).toBe('plugin_voice_credential_unavailable');
+      await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+        target, catalog: 'models',
+      })).resolves.toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
+    } finally {
+      await registration.dispose();
+    }
   });
 
   it('keeps a mediated operation current across an unrelated Account Settings update', async () => {

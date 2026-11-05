@@ -163,6 +163,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           throw error;
         });
         signal.throwIfAborted();
+        if (!isAccountCurrent()) return failure(null);
         return DaemonVoiceClientAccountOperationResponseV1Schema.parse({
           ok: true,
           response: {
