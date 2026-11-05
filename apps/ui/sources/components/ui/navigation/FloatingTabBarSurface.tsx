@@ -35,10 +35,6 @@ const PILL_PADDING_HORIZONTAL = 2;
 // bar by roughly this much, and it matches the widest tab gap so the two capsules read as one
 // system rather than as one control cut in half.
 const ACCESSORY_GAP = 8;
-// Extra breathing room at the row's edges, on top of `FLOATING_SIDE_GUTTER`. Applied to BOTH
-// sides, never just the trailing one: the leading spacer mirrors the accessory to keep the bar
-// centred, so an asymmetric inset would walk the bar off-centre by exactly this much.
-const ACCESSORY_EDGE_INSET = 8;
 
 /**
  * How many tab slots of `tabMinWidth` the floating capsule holds on this window: the window less
@@ -53,6 +49,23 @@ export function resolveFloatingTabBarSlotCount(input: Readonly<{
 }>): number {
     const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth) - PILL_PADDING_HORIZONTAL * 2;
     return input.tabMinWidth > 0 ? Math.max(0, Math.floor(room / input.tabMinWidth)) : 0;
+}
+
+/**
+ * How wide each of `slots` tabs may be in the accessory row, so the bar stays centred on the screen
+ * between the accessory and its mirror. Never wider than the tab's own width: a wide phone keeps a
+ * content-sized bar with room around it.
+ */
+export function resolveFloatingTabBarAccessorySlotWidth(input: Readonly<{
+    windowWidth: number;
+    maxWidth: number;
+    accessorySize: number;
+    slots: number;
+    tabMinWidth: number;
+}>): number {
+    const room = Math.min(input.windowWidth - FLOATING_SIDE_GUTTER * 2, input.maxWidth)
+        - (input.accessorySize + ACCESSORY_GAP) * 2 - PILL_PADDING_HORIZONTAL * 2;
+    return Math.min(input.tabMinWidth, Math.floor(room / input.slots));
 }
 
 const styles = StyleSheet.create({
@@ -87,7 +100,11 @@ const styles = StyleSheet.create({
         // those surfaces.
         alignItems: 'stretch',
         alignSelf: 'stretch',
-        paddingHorizontal: ACCESSORY_EDGE_INSET,
+        justifyContent: 'center',
+    },
+    // Only the mirror gives way when a labelled bar needs the room; the accessory keeps its square.
+    accessoryMirror: {
+        flexShrink: 1,
     },
     // The accessory's square footprint, mirrored on the leading edge so the bar stays centred on
     // the SCREEN instead of in the space the accessory leaves over. Both are as wide as the bar is
@@ -99,10 +116,10 @@ const styles = StyleSheet.create({
         aspectRatio: 1,
     },
     accessoryRowBar: {
-        // The bar is the only cell that absorbs a narrow viewport (its tabs already shrink); the
-        // accessory keeps its square footprint so its glyph never squashes.
-        flex: 1,
+        // The bar keeps its content size, so a wide phone leaves the room outside the row and the bar
+        // stays centred. It shrinks only past what the mirror could give.
         flexShrink: 1,
+        minWidth: 0,
         alignItems: 'center',
         justifyContent: 'center',
         marginHorizontal: ACCESSORY_GAP,
@@ -176,7 +193,7 @@ export const FloatingTabBarSurface = React.memo(function FloatingTabBarSurface(p
                 // Centring the row as a whole pushes the bar left by half the accessory; the bar is
                 // the thing the eye centres on, not the row.
                 <View style={styles.accessoryRow}>
-                    <View pointerEvents="none" style={accessoryFootprint} />
+                    <View pointerEvents="none" style={[accessoryFootprint, styles.accessoryMirror]} />
                     <View style={styles.accessoryRowBar} onLayout={handleBarCellLayout}>
                         {bar}
                     </View>

@@ -170,6 +170,28 @@ describe('MainAppTabBar', () => {
         expect(tablist.findAllByType('TrailingAccessory' as never)).toHaveLength(0);
     });
 
+    it('holds the accessory cell on a tab without one, so the tabs stand in the same place on every tab', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        const screen = await renderTabBar(<MainAppTabBar activeTab="projects" onTabPress={() => {}} />);
+
+        const surface = screen.tree.root.find((node) => 'bottomInset' in node.props);
+        expect(surface.props.trailingAccessory).toBeTruthy();
+    });
+
+    it('renders More after the tabs, in the tab row, and not as a tab', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+
+        const screen = await renderTabBar(
+            <MainAppTabBar activeTab="sessions" onTabPress={() => {}} more={() => React.createElement('MoreAction')} />,
+        );
+
+        const tablist = screen.tree.root.find((node) => node.props.accessibilityRole === 'tablist');
+        expect(tablist.findAllByType('MoreAction' as never)).toHaveLength(1);
+        expect(tablist.findAll((node) => node.props.accessibilityRole === 'tab' && typeof node.props.testID === 'string'
+            && node.props.testID.includes('more'))).toHaveLength(0);
+    });
+
     it('exposes localized tab semantics and selected state when visual labels are hidden', async () => {
         badgeSettingsState.showLabels = false;
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];

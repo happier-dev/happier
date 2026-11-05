@@ -66,6 +66,21 @@ describe('FloatingTabBarSurface', () => {
         expect(mergedStyle(bounds?.props.style).maxWidth).toBe('100%');
     });
 
+    // Four tabs and More beside the "+" and its mirror, icons only at the regular bar: 42 tall, 50 wide tabs.
+    it.each([
+        { windowWidth: 430, expected: 50 },
+        { windowWidth: 390, expected: 50 },
+        { windowWidth: 360, expected: 44 },
+    ])('gives each of five slots what the accessory row leaves at $windowWidth', async ({ windowWidth, expected }) => {
+        const { resolveFloatingTabBarAccessorySlotWidth } = await import('./FloatingTabBarSurface');
+
+        const width = resolveFloatingTabBarAccessorySlotWidth({ windowWidth, maxWidth: 800, accessorySize: 42, slots: 5, tabMinWidth: 50 });
+
+        expect(width).toBe(expected);
+        // The whole row still fits inside the gutters with the bar centred on the screen.
+        expect(16 + 42 + 8 + (width * 5 + 4) + 8 + 42 + 16).toBeLessThanOrEqual(windowWidth);
+    });
+
     it('stretches the accessory row so the accessory cannot change the measured bar height', async () => {
         const { FloatingTabBarSurface } = await import('./FloatingTabBarSurface');
 

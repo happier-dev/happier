@@ -1,13 +1,14 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Text } from '@/components/ui/text/Text';
-import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
+import { FloatingTabBarSurface, resolveFloatingTabBarAccessorySlotWidth } from '@/components/ui/navigation/FloatingTabBarSurface';
+import { layout } from '@/components/ui/layout/layout';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
-import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
+import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { Typography } from '@/constants/Typography';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useMainAppTabDefinitions } from './useMainAppTabDefinitions';
@@ -26,7 +27,12 @@ type MainAppTabBarProps = Readonly<{
      * action.
      */
     trailingAccessory?: React.ReactNode;
+    /** The bar's last slot, in the tab row but not a tab: the caller owns what it opens. */
+    more?: (metrics: TabBarMetrics) => React.ReactNode;
 }>;
+
+/** Holds the accessory's cell on a tab without one, so the tabs stand in the same place on every tab. */
+const EMPTY_ACCESSORY = <View />;
 
 const styles = StyleSheet.create((theme) => ({
     innerContainer: {
@@ -72,10 +78,16 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
     const tabs = useMainAppTabDefinitions();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const windowWidth = useWindowDimensions().width;
+    const baseMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    // Words size their own tabs; icons share what the "+" and its mirror leave.
+    const metrics = baseMetrics.showLabels ? baseMetrics : { ...baseMetrics, tabMinWidth: resolveFloatingTabBarAccessorySlotWidth({
+        windowWidth, maxWidth: layout.maxWidth, accessorySize: baseMetrics.iconSize + baseMetrics.tabPaddingVertical * 2,
+        slots: tabs.length + (props.more ? 1 : 0), tabMinWidth: baseMetrics.tabMinWidth,
+    }) };
 
     return (
-        <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={props.trailingAccessory}>
+        <FloatingTabBarSurface bottomInset={insets.bottom} trailingAccessory={props.trailingAccessory ?? EMPTY_ACCESSORY}>
             <View
                 accessibilityRole="tablist"
                 style={[styles.innerContainer, { gap: metrics.rowGap }]}
@@ -117,6 +129,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                         </HappierPressable>
                     );
                 })}
+                {props.more?.(metrics)}
             </View>
         </FloatingTabBarSurface>
     );
