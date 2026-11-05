@@ -1,3 +1,5 @@
+import { shallow } from 'zustand/shallow';
+import { carryMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { readSessionArchivePending, readSessionArchiveOperationsForServers, projectSessionArchiveRow, projectSessionArchiveRowsByServerId } from '../domains/session/listing/sessionArchiveState';
 import React from 'react';
 import type { MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -136,7 +138,7 @@ import { selectHomeQualifiedSession } from '../domains/session/selectHomeQualifi
 export { useProjectAccountRows } from '../domains/workspaces/projectAccountRows';
 import { buildSessionMetadataStabilitySignature } from '../domains/session/metadata/sessionMetadataStability';
 import { readSessionOwnerMetadataView } from '../domains/session/readSessionOwnerMetadataView';
-import { buildMachineDisplayRenderableFromMachine } from '../domains/machines/machineDisplayRenderable';
+import { areMachineDisplaySemanticsEqual, buildMachineDisplayRenderableFromMachine } from '../domains/machines/machineDisplayRenderable';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrimmedString';
 import {
@@ -1350,6 +1352,41 @@ export function useMachineDisplayById<T>(select?: (machines: Record<string, Mach
     const machines = state.machineDisplayById ?? EMPTY_MACHINE_DISPLAY_BY_ID;
     return select ? select(machines) : machines;
   }));
+}
+
+/** Home-scoped display inventory: daemon content and heartbeat clocks have their own subscribers. */
+export function useMachineDisplaysByServerId(serverIds: readonly string[]): Readonly<Record<string, Record<string, MachineDisplayRenderable>>> {
+  const select = React.useMemo(() => {
+    const heldByServer = new Map<string, Readonly<{
+      machines: Machine[] | null;
+      displays: Record<string, MachineDisplayRenderable>;
+    }>>();
+    return (state: StorageState) => {
+      const next: Record<string, Record<string, MachineDisplayRenderable>> = {};
+      for (const serverId of serverIds) {
+        const machines = readMachineListForServer(state, serverId);
+        const held = heldByServer.get(serverId);
+        if (held?.machines === machines) {
+          next[serverId] = held.displays;
+          continue;
+        }
+        const displays: Record<string, MachineDisplayRenderable> = {};
+        for (const machine of selectVisibleMachines(machines) ?? []) {
+          const display = buildMachineDisplayRenderableFromMachine(machine);
+          const previous = held?.displays[machine.id];
+          if (previous && areMachineDisplaySemanticsEqual(previous, display)) {
+            carryMachineActivity(previous, display);
+            displays[machine.id] = previous;
+          } else displays[machine.id] = display;
+        }
+        const value = held && shallow(held.displays, displays) ? held.displays : displays;
+        heldByServer.set(serverId, { machines, displays: value });
+        next[serverId] = value;
+      }
+      return next;
+    };
+  }, [serverIds]);
+  return usePresentedMachineInventory(select, true);
 }
 
 /** Subscribe only to display-name changes for an already-bounded machine set. */

@@ -53,19 +53,18 @@ const QuickReplyPhrasesSchema = (<I extends z.core.$ZodType, O extends z.core.$Z
     const phrases = raw
         .filter((value): value is string => typeof value === 'string')
         .map((value) => value.trim())
-        .filter((value) => value.length > 0)
-        .slice(0, 6);
+        .filter((value) => value.length > 0);
     return phrases.length > 0 ? phrases : [...DEFAULT_QUICK_REPLY_PHRASES];
-}), z.array(z.string().check(z.minLength(1))).check(z.minLength(1), z.maxLength(6)));
+}), z.array(z.string().check(z.minLength(1))).check(z.minLength(1)));
 
-const AttentionDeviceOverrideDesktopOverlaySchema = z.looseObject({
+export const AttentionDeviceOverrideDesktopOverlaySchema = z.pipe(z.transform((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    const { compactCollapsedMode, collapsedCarouselEnabled, physicalNotchMode, autoDismissDelayMs, ...current } = raw as Record<string, unknown>;
+    return current;
+}), z.looseObject({
     hoverExpandDelay: z._default(z.enum(['instant', 'normal', 'slow']), 'normal'),
-    compactCollapsedMode: z._default(z.boolean(), false),
-    collapsedCarouselEnabled: z._default(z.boolean(), true),
-    physicalNotchMode: z._default(z.enum(['automatic', 'physical_only', 'force_virtual']), 'automatic'),
-    autoDismissDelayMs: z._default(z.number().check(z.int(), z.positive(), z.maximum(120_000)), 10_000),
     quickReplyPhrases: z._default(QuickReplyPhrasesSchema, [...DEFAULT_QUICK_REPLY_PHRASES]),
-});
+}));
 
 const AttentionDeviceOverrideLiveActivitiesSchema = z.looseObject({
     registerRemoteUpdateTargets: z._default(z.boolean(), true),
@@ -141,7 +140,6 @@ const LEGACY_ATTENTION_DEVICE_OVERRIDE_KEYS = [
     'activityBadgeShowQueuedUserInput',
     'activityBadgeShowFriendRequestsInboxCount',
     'activityBadgeShowDesktopNonNumericDot',
-    'desktopOverlayAutoHideDelayMs',
     'liveActivitiesShowPreviewText',
     'activitySurfacePrivacyMode',
     'widgetsEnabled',
@@ -257,12 +255,6 @@ export function deriveAttentionDeviceOverridesV1FromLegacyLocalSettings(params: 
                 'activityBadgeShowDesktopNonNumericDot',
                 base.badge.includeDesktopNonNumericDot,
             ),
-        },
-        desktopOverlay: {
-            ...base.desktopOverlay,
-            autoDismissDelayMs: typeof legacy.desktopOverlayAutoHideDelayMs === 'number'
-                ? legacy.desktopOverlayAutoHideDelayMs
-                : base.desktopOverlay.autoDismissDelayMs,
         },
         liveActivities: {
             ...base.liveActivities,

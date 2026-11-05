@@ -12,33 +12,26 @@ import type { ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServi
 
 import { buildDesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
 import type { DesktopActivityOverlaySource } from '../runtime/useDesktopActivityOverlaySource';
+import { buildDesktopActivityOverlayRequestSnapshots } from './snapshot/buildDesktopActivityOverlayRequestSnapshots';
+import { resolveDesktopActivityOverlayRequestCardActions } from '../ui/cards/resolveDesktopActivityOverlayCardActions';
+import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+
+const EMPTY_SHARED_ACTIVITY = { visible: false, activity: 'quiet', word: '', entries: [], tray: [] } as const;
 
 function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOverlayPolicy {
     return {
         enabled: true,
         visibilityMode: 'attention_only',
-        showWhenRunning: true,
-        showWhenAttentionRequired: true,
-        showWhenReady: true,
+
         alwaysOnTop: true,
-        autoHideEnabled: true,
-        autoHideDelayMs: 6000,
+
         hoverExpandDelayMs: 500,
-        expandedBehavior: 'click',
-        interactiveCollapsed: true,
-        presentationMode: 'automatic',
-        clickAction: 'expand_overlay',
-        density: 'compact',
-        compactStyle: 'pill',
-        showSessionCount: true,
-        showPreviewText: false,
+
+        dock: 'top',
+        idle: 'tip',
+        botConversationPresentation: 'overlay',
+
         quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
-        placementMode: 'anchored',
-        anchor: 'top_center',
-        offsetX: 0,
-        offsetY: 0,
-        enableDragReposition: false,
-        lockPosition: true,
         ...overrides,
     };
 }
@@ -81,6 +74,80 @@ function createOverlaySource(params: Readonly<{
 }
 
 describe('buildDesktopActivityOverlaySnapshot', () => {
+    it('keeps the Session catalog Always allow choice for an external MCP ask', () => {
+        const mcpTool = ResolvedMcpToolIdentityV1Schema.parse({ server: 'github', tool: 'edit_file',
+            item: { serverId: 'github' }, serverTitle: 'GitHub',
+            decision: { exposed: true, approval: 'ask', effectClass: 'unknown', source: 'server_default' } });
+        const session = createSessionFixture({ id: 'mcp-session', serverId: 'server-1', active: true,
+            metadata: { path: '/tmp/notch-choice-parity', host: 'qa', flavor: 'claude' },
+            agentState: { requests: { mcp: { tool: 'mcp__github__edit_file', kind: 'permission',
+                arguments: {}, mcpTool, createdAt: 950 } } },
+        });
+        const source = { ...createOverlaySource({ sessions: [session] }),
+            audienceScopes: new Map([['server-1', { serverId: 'server-1', accountId: 'account-1' }]]) };
+        const snapshot = buildDesktopActivityOverlaySnapshot({ source,
+            sourceOverview: { candidates: [buildSessionActivityAttention({ session, nowMs: 1_000 })],
+                counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
+            activityPolicy: resolveActivitySurfacePolicy({}), desktopPolicy: createDesktopPolicy(), nowMs: 1_000 });
+        expect(snapshot.permissionRequests[0]?.permissionChoices?.map(choice => choice.id)).toContain('mcp_always_allow');
+        const model = buildDesktopActivityOverlayModel({ snapshot, policy: createDesktopPolicy(), sharedActivity: EMPTY_SHARED_ACTIVITY });
+        const card = model.expanded.cards?.find(card => card.kind === 'permission_request');
+        expect(card?.actions?.find(action => action.id === 'mcp_always_allow')).toMatchObject({
+            actionIdentifier: 'overlay-mcp-always-allow', data: { sessionId: 'mcp-session', requestId: 'mcp', serverId: 'server-1' },
+        });
+    });
+    it.each([
+        { flavor: 'codex', ownerMetadata: false }, { flavor: 'claude', ownerMetadata: false },
+        { flavor: 'codex', ownerMetadata: true }, { flavor: 'claude', ownerMetadata: true },
+    ])('offers the Session choices for a $flavor file edit (owner metadata: $ownerMetadata), including scoped grants and Stop', ({ flavor, ownerMetadata }) => {
+        const session = createSessionFixture({ id: 'edit-session', active: true,
+            metadata: { path: '/tmp/notch-choice-parity', host: 'qa', ...(ownerMetadata ? {} : { flavor }) },
+            ...(ownerMetadata ? { metadataLayoutVersion: 1, ownerMetadataView: { path: '/tmp/notch-choice-parity', host: 'qa', flavor } } : {}),
+            agentState: { requests: { edit: { tool: 'Edit', kind: 'permission',
+                arguments: { file_path: '/tmp/notch-choice-parity/file.txt', old_string: 'before', new_string: 'after' },
+                createdAt: 950 } } },
+        });
+        const candidate = buildSessionActivityAttention({ session, nowMs: 1_000 });
+        const snapshot = buildDesktopActivityOverlaySnapshot({ source: createOverlaySource({ sessions: [session] }),
+            sourceOverview: { candidates: [candidate], counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
+            activityPolicy: resolveActivitySurfacePolicy({}), desktopPolicy: createDesktopPolicy(), nowMs: 1_000 });
+        const model = buildDesktopActivityOverlayModel({ snapshot, policy: createDesktopPolicy(), sharedActivity: EMPTY_SHARED_ACTIVITY });
+        const card = model.expanded.cards?.find(card => card.kind === 'permission_request');
+        expect(card?.kind).toBe('permission_request');
+        if (card?.kind !== 'permission_request') throw new Error('Missing file edit');
+        const actions = resolveDesktopActivityOverlayRequestCardActions(card);
+        expect(actions.map(action => action.id)).toEqual(flavor === 'codex'
+            ? ['allow', 'always_allow', 'deny', 'stop'] : ['allow', 'allow_all_edits', 'deny', 'stop']);
+        expect(actions.find(action => action.id === 'allow')?.data).toMatchObject({ decision: 'approved' });
+        expect(actions.find(action => action.id === 'stop')?.data).toMatchObject({ decision: flavor === 'codex' ? 'denied' : 'abort' });
+        expect(actions.find(action => action.id === (flavor === 'codex' ? 'always_allow' : 'allow_all_edits'))?.data)
+            .toMatchObject(flavor === 'codex' ? { decision: 'approved_for_session' } : { decision: 'approved', mode: 'acceptEdits' });
+    });
+    it('keeps the admitted pinned ask outside overview slots, with status-only privacy hiding it', () => {
+        const session = createSessionFixture({ id: 'pinned', serverId: 'server-1', encryptionMode: 'plain',
+            active: true, pendingPermissionRequestCount: 1, pendingRequestObservedAt: 950,
+            agentState: { requests: { ask: { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: 950 } } },
+        });
+        const candidate = buildSessionActivityAttention({ session, nowMs: 1_000 });
+        expect(candidate.address).toEqual({ serverId: 'server-1', sessionId: 'pinned' });
+        expect(buildDesktopActivityOverlayRequestSnapshots({ candidates: [candidate], resolveCandidatePrivacyMode: () => 'include_preview' })
+            .permissionRequests.map(request => request.requestId)).toEqual(['ask']);
+        const params = { source: createOverlaySource({ sessions: [session] }),
+            sourceOverview: { candidates: [candidate], counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy(),
+            conversation: { serverId: 'server-1', accountId: 'account-server-1', sessionId: session.id, reply: { state: 'none' as const, text: null }, refreshing: false, reachable: true },
+            nowMs: 1_000,
+        };
+        const snapshot = buildDesktopActivityOverlaySnapshot({ ...params, resolveCandidatePrivacyMode: () => 'include_preview' });
+        expect(snapshot.sessions).toEqual([expect.objectContaining({ serverId: 'server-1', sessionId: 'pinned' })]);
+        expect(snapshot.permissionRequests.map(request => request.requestId)).toEqual(['ask']);
+        const hidden = buildDesktopActivityOverlaySnapshot({ ...params,
+            conversation: { ...params.conversation, reply: { state: 'hidden', text: null } },
+            resolveCandidatePrivacyMode: () => 'status_only' });
+        expect(hidden.permissionRequests).toHaveLength(0);
+        expect(hidden.conversation?.reply).toEqual({ state: 'hidden', text: null });
+    });
     it('keeps reconciled lifecycle facts in a mixed-row desktop snapshot', () => {
         const base = createSessionFixture({ id: 'mixed-desktop', serverId: 'server-1',
             active: true, activeAt: 1_000, presence: 'online', updatedAt: 900,
@@ -98,6 +165,20 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             nowMs: 1_000,
         });
         expect(snapshot.primary).toMatchObject({ sessionId: base.id, active: true, updatedAt: 900 });
+    });
+
+    it('projects each row\'s work-status tone and Agent identity for the overlay window', () => {
+        const base = createSessionFixture({ id: 'identity-desktop', serverId: 'server-1',
+            active: true, activeAt: 1_000, presence: 'online', updatedAt: 900,
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: 950,
+            metadata: { path: '/repo', host: 'host', flavor: 'claude', machineId: 'machine-1' } });
+        const snapshot = buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({ sessions: [base] }),
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy(),
+            nowMs: 1_000,
+        });
+        expect(snapshot.sessions[0]).toMatchObject({ sessionId: base.id, tone: 'attention', agentId: 'claude', machineId: 'machine-1' });
     });
 
     it.each(['status_only', 'title_only', 'include_preview'] as const)('applies %s workspace privacy to real-source overlay payloads', (privacyMode) => {
@@ -131,6 +212,83 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.primary?.sessionId).toBe('workspace-privacy');
         expect(snapshot.primary?.subtitle).toContain('Home A');
         expect(JSON.stringify(snapshot.sessions).includes('PRIVATE-WORKSPACE-SENTINEL')).toBe(privacyMode === 'include_preview');
+    });
+
+    describe('who is asking', () => {
+        const askingSession = (overrides: Parameters<typeof createSessionFixture>[0] = {}) => createSessionFixture({
+            id: 'asker', serverId: 'server-1', encryptionMode: 'plain', active: true, presence: 'online',
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: 950,
+            agentState: { requests: { ask: { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: 950 } } },
+            metadata: { path: '/Users/tester/happier', host: 'tester.local', homeDir: '/Users/tester', machineId: 'machine-1' },
+            ...overrides,
+        });
+        const buildFor = (
+            session: ReturnType<typeof createSessionFixture>,
+            machines: Record<string, Readonly<{ id: string; metadata: Readonly<{ displayName?: string; host?: string }> }>>,
+            privacyMode?: 'status_only',
+        ) => buildDesktopActivityOverlaySnapshot({
+            source: {
+                ...createOverlaySource({ sessions: [session] }),
+                serverProfilesById: { 'server-1': {
+                    id: 'server-1', name: 'Home A', serverUrl: 'https://server-1.example.test',
+                    createdAt: 1, updatedAt: 1, lastUsedAt: 1, source: 'manual',
+                } },
+            },
+            machineDisplaysByServerId: { 'server-1': machines },
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy(),
+            nowMs: 1_000,
+            ...(privacyMode ? { resolveCandidatePrivacyMode: () => privacyMode } : {}),
+        });
+        const devbox = { 'machine-1': { id: 'machine-1', metadata: { displayName: 'devbox', host: 'devbox.local' } } };
+
+        it('names the project and Machine while it asks, at the default privacy', () => {
+            const snapshot = buildFor(askingSession(), devbox);
+
+            expect(snapshot.permissionRequests).toHaveLength(1);
+            expect(snapshot.primary?.subtitle).toBe('happier · devbox');
+        });
+
+        it('tells two same-named Machines apart', () => {
+            const snapshot = buildFor(askingSession(), {
+                'machine-1': { id: 'machine-1', metadata: { host: 'box' } },
+                'machine-2': { id: 'machine-2', metadata: { host: 'box' } },
+            });
+
+            expect(snapshot.primary?.subtitle).toMatch(/^happier · box · machine-1/);
+        });
+
+        it('names only the Machine for a Session without a folder', () => {
+            const snapshot = buildFor(askingSession({ metadata: {
+                path: '/managed/private', host: 'tester.local', homeDir: '/Users/tester', machineId: 'machine-1',
+                sessionDirectoryV1: { v: 1, kind: 'managed' },
+            } }), devbox);
+
+            expect(snapshot.primary?.subtitle).toBe('devbox');
+        });
+
+        it('keeps the Home when it knows neither project nor Machine', () => {
+            const snapshot = buildFor(askingSession({ metadata: {
+                path: '/managed/private', host: 'tester.local', sessionDirectoryV1: { v: 1, kind: 'managed' },
+            } }), {});
+
+            expect(snapshot.primary?.subtitle).toBe('Home A');
+        });
+
+        it('leaves a row that is not asking to the privacy preference', () => {
+            const snapshot = buildFor(askingSession({ agentState: {} }), devbox);
+
+            expect(snapshot.permissionRequests).toHaveLength(0);
+            expect(snapshot.primary?.subtitle).toBe('Home A');
+        });
+
+        it('says nothing more when the privacy preference withholds the ask itself', () => {
+            const snapshot = buildFor(askingSession(), devbox, 'status_only');
+
+            expect(snapshot.permissionRequests).toHaveLength(0);
+            expect(JSON.stringify(snapshot.sessions)).not.toContain('devbox');
+            expect(JSON.stringify(snapshot.sessions)).not.toContain('happier');
+        });
     });
 
     it('carries the shared safe structural context independently of locked private content', () => {
@@ -281,9 +439,6 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             activityPolicy: resolveActivitySurfacePolicy({}),
             desktopPolicy: createDesktopPolicy({
                 visibilityMode: 'active_sessions',
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: false,
             }),
             nowMs: 1_000,
         });
@@ -292,11 +447,8 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             snapshot,
             policy: createDesktopPolicy({
                 visibilityMode: 'active_sessions',
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: false,
             }),
-            isExpanded: false,
+            sharedActivity: EMPTY_SHARED_ACTIVITY,
         });
 
         expect(snapshot.sessions.map((session) => session.sessionId)).toEqual([
@@ -304,10 +456,10 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             'thinking',
             'quiet-active',
         ]);
-        expect(model.collapsed.sessionCount).toBe(3);
+        expect(model.collapsed.sessionCount).toBeNull();
     });
 
-    it('keeps desktop preview text in the snapshot when the overlay setting enables it', () => {
+    it('keeps admitted expanded preview text after the collapsed preview preference retires', () => {
         const snapshot = buildDesktopActivityOverlaySnapshot({
             source: createOverlaySource({
                 sessions: [
@@ -330,9 +482,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             activityPolicy: resolveActivitySurfacePolicy({
                 activitySurfacePrivacyMode: 'include_preview',
             }),
-            desktopPolicy: createDesktopPolicy({
-                showPreviewText: true,
-            }),
+            desktopPolicy: createDesktopPolicy({}),
             nowMs: 1_000,
         });
 
@@ -368,10 +518,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             }),
             desktopPolicy: createDesktopPolicy({
                 visibilityMode: 'always_when_enabled',
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: false,
-                showPreviewText: true,
+
             }),
             nowMs: 1_000,
         });
@@ -469,7 +616,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                 } },
             })] }),
             activityPolicy: resolveActivitySurfacePolicy({ activitySurfacePrivacyMode: 'include_preview' }),
-            desktopPolicy: createDesktopPolicy({ visibilityMode: 'active_sessions', showPreviewText: true }),
+            desktopPolicy: createDesktopPolicy({ visibilityMode: 'active_sessions' }),
             nowMs: 1_000,
         });
         expect(snapshot.primary?.sessionId).toBe('locked-requests');
@@ -725,13 +872,14 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.userQuestions).toEqual([]);
     });
 
-    it('derives permission risk from real request snapshots into model actions', () => {
+    it('retains risk as presentation metadata without narrowing the Session choices', () => {
         const snapshot = buildDesktopActivityOverlaySnapshot({
             source: createOverlaySource({
                 sessions: [
                     createSessionFixture({
                         encryptionMode: 'plain',
                         id: 'session-edit',
+                        metadata: { path: '/repo', host: 'qa', flavor: 'claude' },
                         active: true,
                         presence: 'online',
                         pendingPermissionRequestCount: 1,
@@ -750,6 +898,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                     createSessionFixture({
                         encryptionMode: 'plain',
                         id: 'session-bash',
+                        metadata: { path: '/repo', host: 'qa', flavor: 'claude' },
                         active: true,
                         presence: 'online',
                         pendingPermissionRequestCount: 1,
@@ -776,7 +925,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot,
             policy: createDesktopPolicy(),
-            isExpanded: true,
+            sharedActivity: EMPTY_SHARED_ACTIVITY,
         });
 
         expect(snapshot.permissionRequests).toEqual(expect.arrayContaining([
@@ -803,15 +952,16 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(editCard).toEqual(expect.objectContaining({
             kind: 'permission_request',
             risk: 'high',
-            actions: [
-                expect.objectContaining({ id: 'deny:perm-edit' }),
+            actions: expect.arrayContaining([
+                expect.objectContaining({ id: 'allow' }),
+                expect.objectContaining({ id: 'allow_all_edits' }),
+                expect.objectContaining({ id: 'deny' }),
                 expect.objectContaining({ id: 'open:perm-edit' }),
-            ],
+            ]),
         }));
         expect(editCard).not.toEqual(expect.objectContaining({
             actions: expect.arrayContaining([
                 expect.objectContaining({ id: 'always_allow' }),
-                expect.objectContaining({ id: 'allow:perm-edit' }),
             ]),
         }));
         expect(bashCard).toEqual(expect.objectContaining({
@@ -819,7 +969,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             risk: 'low',
             actions: expect.arrayContaining([
                 expect.objectContaining({ id: 'always_allow' }),
-                expect.objectContaining({ id: 'allow:perm-bash' }),
+                expect.objectContaining({ id: 'allow' }),
             ]),
         }));
     });

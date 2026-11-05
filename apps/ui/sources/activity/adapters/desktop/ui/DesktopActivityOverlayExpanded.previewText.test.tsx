@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
@@ -32,6 +32,16 @@ vi.mock('react', async (importActual) => {
         ),
     };
 });
+
+// The Agent mark reads the machine-scoped Agent catalog (plugins, sync scope); this render test only needs
+// its presence, so it draws a named leaf instead of loading that graph.
+vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
+    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) => React.createElement('SessionAgentCatalogIdentityIcon', props),
+}));
+
+// Bot faces draw through Skia (a native graphics boundary): the canonical testkit mock, as the route tests use.
+vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
+vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -69,11 +79,15 @@ vi.mock('@/text', async () => {
 });
 
 describe('DesktopActivityOverlayExpanded', () => {
+    // The panel's first import transforms its whole graph (cards, Bot rows, menus) once; later imports reuse it.
+    beforeAll(async () => { await import('./DesktopActivityOverlayExpanded'); }, 240_000);
+
     function createCollapsedModel(overrides: Partial<DesktopActivityOverlayUiModel['collapsed']> = {}): DesktopActivityOverlayUiModel['collapsed'] {
         return {
             title: 'Primary session',
             statusText: 'Needs attention',
             defaultTarget: 'open-primary-session',
+            activity: 'needsYou',
             sessionCount: 1,
             primaryCardKind: 'session_overview',
             ...overrides,
@@ -208,8 +222,9 @@ describe('DesktopActivityOverlayExpanded', () => {
     function createModel(overrides: Partial<DesktopActivityOverlayUiModel> = {}): DesktopActivityOverlayUiModel {
         return {
             visible: true,
-            isExpanded: true,
             generatedAt: 1,
+            faces: { faces: [], overflowCount: 0 },
+            conversation: null,
             collapsed: createCollapsedModel(),
             expanded: {
                 title: 'Sessions',
@@ -224,10 +239,6 @@ describe('DesktopActivityOverlayExpanded', () => {
                     },
                 ],
                 cards: [createSessionOverviewCard()],
-            },
-            window: {
-                collapsed: { width: 340, height: 72 },
-                expanded: { width: 420, height: 220 },
             },
             ...overrides,
         };
@@ -316,6 +327,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         title: 'No active sessions',
                         statusText: null,
                         defaultTarget: 'open-inbox',
+                        activity: 'needsYou',
                         sessionCount: null,
                         primaryCardKind: 'idle_state',
                     }),
@@ -362,6 +374,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                             title: 'No active sessions',
                             statusText: null,
                             defaultTarget: 'open-inbox',
+                            activity: 'needsYou',
                             sessionCount: null,
                             primaryCardKind: 'idle_state',
                         }),
@@ -401,6 +414,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         title: 'Permission required',
                         statusText: '1 request',
                         defaultTarget: 'open-session:session-1',
+                        activity: 'needsYou',
                         sessionCount: 1,
                         primaryCardKind: 'permission_request',
                     }),
@@ -422,7 +436,7 @@ describe('DesktopActivityOverlayExpanded', () => {
         const allowAction = screen.findByTestId(
             resolveDesktopActivityOverlayCardActionInstanceTestID(createPermissionRequestCard().id, 'allow'),
         );
-        expect(allowAction?.props.accessibilityRole).toBe('button');
+        // The shared button owns its role; the island names the decision.
         expect(allowAction?.props.accessibilityLabel).toBe('Allow');
 
         screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(createPermissionRequestCard().id, 'allow'));
@@ -529,6 +543,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         title: 'Claude asks',
                         statusText: 'Choose an answer',
                         defaultTarget: 'open-session:session-1',
+                        activity: 'needsYou',
                         sessionCount: 1,
                         primaryCardKind: 'user_question',
                     }),
@@ -554,17 +569,17 @@ describe('DesktopActivityOverlayExpanded', () => {
         }));
     });
 
-    it('renders numbered user-question chips with inline other input', async () => {
+    it('offers Other as a choice that opens its own answer field', async () => {
         const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
         const onAction = vi.fn();
         const questionCard = createUserQuestionCard({
             actions: [
                 {
                     id: 'option-1-production',
-                    label: '1. Production',
+                    label: 'Production',
                     actionIdentifier: 'answer-user-question',
                     data: { requestId: 'question-1', sessionId: 'session-1', serverId: 'server-1', answers: ['production'] },
-                    tone: 'primary',
+                    tone: 'secondary',
                 },
                 {
                     id: 'other',
@@ -591,16 +606,26 @@ describe('DesktopActivityOverlayExpanded', () => {
                 onAction={onAction}
             />,
         );
+        const otherInput = `desktop-activity-overlay-question-other-input-${questionCard.id}`;
 
-        expect(screen.getTextContent()).toContain('1. Production');
-        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(questionCard.id, 'other'))).toBeTruthy();
-        expect(screen.findByTestId(`desktop-activity-overlay-question-other-input-${questionCard.id}`)).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Production');
+        // The free answer waits behind its choice: no empty field under every question.
+        expect(screen.findByTestId(otherInput)).toBeNull();
 
         await act(async () => {
-            screen.changeTextByTestId(`desktop-activity-overlay-question-other-input-${questionCard.id}`, 'Canary');
+            screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(questionCard.id, 'other'));
         });
-        screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(questionCard.id, 'other'));
+        expect(screen.findByTestId(otherInput)).toBeTruthy();
+        expect(onAction).not.toHaveBeenCalled();
 
+        await act(async () => {
+            screen.changeTextByTestId(otherInput, 'Canary');
+        });
+        await act(async () => {
+            screen.pressByTestId(`desktop-activity-overlay-question-other-send-${questionCard.id}`);
+        });
+
+        expect(onAction).toHaveBeenCalledTimes(1);
         expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
             actionIdentifier: 'session.user_action.answer',
             data: expect.objectContaining({
@@ -610,6 +635,177 @@ describe('DesktopActivityOverlayExpanded', () => {
                 answers: [{ question: 'Which deployment target?', answer: 'Canary' }],
             }),
         }));
+    });
+
+    it('heads each ask with its Session and lists the other Sessions after it, once each', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const asking = {
+            sessionId: 'session-2',
+            serverId: 'server-1',
+            title: 'Fix the token refresh race',
+            subtitle: null,
+            statusText: 'Needs you',
+            previewText: null,
+            tone: 'attention' as const,
+            agentId: 'claude',
+            machineId: null,
+        };
+        const working = { ...asking, sessionId: 'session-3', title: 'Speed up the Session list', statusText: 'Working', tone: 'neutral' as const };
+        const questionCard = createUserQuestionCard({ sessionId: 'session-2', session: asking });
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel({
+                    expanded: {
+                        title: 'Sessions',
+                        rows: [asking, working],
+                        cards: [questionCard],
+                    },
+                })}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        expect(screen.findAllHostsByTestId('desktop-activity-overlay-session-row-session-2')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-activity-overlay-session-row-session-3')).toHaveLength(1);
+        const text = screen.getTextContent();
+        expect(text.indexOf('Fix the token refresh race')).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('Fix the token refresh race')).toBeLessThan(text.indexOf('Which deployment target?'));
+        expect(text.indexOf('Which deployment target?')).toBeLessThan(text.indexOf('Speed up the Session list'));
+    });
+
+    it('keeps who is asking in view: one header per Session, its context line rather than its preview, and the count of its asks', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const asking = {
+            sessionId: 'session-2',
+            serverId: 'server-1',
+            title: 'Review and steward PR #828',
+            subtitle: 'happier · devbox',
+            statusText: 'Needs you',
+            previewText: 'Looking at the review comments',
+            tone: 'attention' as const,
+            agentId: 'codex',
+            machineId: null,
+        };
+        const permission = createPermissionRequestCard({ requestId: 'bash-1', sessionId: 'session-2', session: asking });
+        const question = createUserQuestionCard({ sessionId: 'session-2', session: asking });
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel({ expanded: { title: 'Sessions', rows: [asking], cards: [permission, question] } })}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        expect(screen.findAllHostsByTestId('desktop-activity-overlay-session-row-session-2')).toHaveLength(1);
+        const text = screen.getTextContent();
+        expect(text).toContain('happier · devbox');
+        expect(text).not.toContain('Looking at the review comments');
+        expect(screen.findByTestId('desktop-activity-overlay-session-row-session-2-ask-count')).toBeTruthy();
+    });
+
+    it('heads a Bot that asks with where it runs instead of its activity line, and no count for a single ask', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const face = {
+            serverId: 'server-1',
+            sessionId: 'session-4',
+            face: { seed: 'session-4', face: null },
+            name: 'Flake hunter',
+            activity: 'needsYou' as const,
+            currentLine: 'Wants to edit .github/quarantine.json',
+            meaningfulActivityAt: 0,
+            live: true,
+            agentId: 'claude',
+            machineId: null,
+        };
+        const row = {
+            sessionId: 'session-4',
+            serverId: 'server-1',
+            title: 'Flake hunter',
+            subtitle: 'happier · devbox',
+            statusText: 'Needs you',
+            previewText: null,
+        };
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel({ expanded: { title: 'Sessions', rows: [row], cards: [createPermissionRequestCard({ sessionId: 'session-4' })] } })}
+                bots={{ faces: [face], handlers: { onOpen: () => {}, onOpenIn: () => {} } }}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        const text = screen.getTextContent();
+        expect(text).toContain('happier · devbox');
+        expect(text).not.toContain('Wants to edit .github/quarantine.json');
+        expect(screen.findByTestId('desktop-activity-overlay-bot-row-session-4-ask-count')).toBeNull();
+    });
+
+    it('answers a decision in place: the chosen action replaces the buttons until the ask leaves', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const card = createPermissionRequestCard();
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel({ expanded: { title: 'Actions', rows: [], cards: [card] } })}
+                onOpenSession={() => {}}
+                onAction={() => true}
+            />,
+        );
+
+        await act(async () => {
+            screen.pressByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(card.id, 'allow'));
+        });
+
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(card.id, 'allow'))).toBeNull();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(card.id, 'deny'))).toBeNull();
+        expect(screen.findByTestId(`desktop-activity-overlay-card-answered-${card.id}`)).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Allow');
+    });
+
+    it('keeps the reply out of the open list: it lives in the pinned conversation', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel()}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('desktop-activity-overlay-quick-reply-input')).toBeNull();
+    });
+
+    it('stops counting a status header once the panel no longer has one (a dock change from a side to the top)', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const onNaturalHeight = vi.fn();
+        const element = (header: React.ReactNode) => (
+            <DesktopActivityOverlayExpanded
+                visualMode="notch_integrated"
+                model={createModel()}
+                header={header}
+                onNaturalHeight={onNaturalHeight}
+                onOpenSession={() => {}}
+            />
+        );
+        const screen = await renderScreen(element(React.createElement('Text', null, 'Needs you')));
+        const scroll = () => screen.findByTestId('desktop-activity-overlay-expanded-scroll');
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-expanded-header'), 'onLayout', { nativeEvent: { layout: { x: 0, y: 0, width: 440, height: 28 } } });
+            (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);
+        });
+        const withHeader = onNaturalHeight.mock.calls.at(-1)?.[0] as number;
+
+        await screen.update(element(undefined));
+        await act(async () => {
+            (scroll()!.props.onContentSizeChange as (width: number, height: number) => void)(440, 200);
+        });
+        const withoutHeader = onNaturalHeight.mock.calls.at(-1)?.[0] as number;
+
+        expect(withHeader - withoutHeader).toBeGreaterThanOrEqual(28);
     });
 
     it('renders completion-state card content without unsupported-kind crash', async () => {
@@ -625,6 +821,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                             title: 'Turn complete',
                             statusText: 'Ready to review',
                             defaultTarget: 'open-session:session-1',
+                            activity: 'needsYou',
                             sessionCount: 1,
                             primaryCardKind: 'completion_state',
                         }),
@@ -697,6 +894,41 @@ describe('DesktopActivityOverlayExpanded', () => {
         expect(screen.findByTestId('desktop-activity-overlay-completion-turn')).toBeNull();
         expect(screen.findByTestId('desktop-activity-overlay-completion-subagent')).toBeTruthy();
         expect(screen.findByTestId('desktop-activity-overlay-completion-tool')).toBeTruthy();
+    });
+
+    it('falls back to the Session list instead of an empty panel once the last completion leaves', async () => {
+        vi.useFakeTimers();
+        const { act } = await import('react-test-renderer');
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel({
+                    expanded: {
+                        title: 'Sessions',
+                        rows: [{
+                            sessionId: 'session-1',
+                            serverId: 'server-1',
+                            title: 'Fix checkout flow',
+                            subtitle: 'happier/app',
+                            statusText: 'Finished',
+                            previewText: null,
+                        }],
+                        cards: [createCompletionStateCard({ autoDismissMs: 15000, sticky: false })],
+                    },
+                })}
+                onOpenSession={() => {}}
+            />,
+        );
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+        });
+
+        expect(screen.findByTestId('desktop-activity-overlay-completion-turn')).toBeNull();
+        expect(screen.findByTestId('desktop-activity-overlay-session-row-session-1')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Fix checkout flow');
     });
 
     it('does not hide a different qualified completion when one completion is dismissed', async () => {

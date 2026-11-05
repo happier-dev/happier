@@ -1,5 +1,5 @@
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
-import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
+import type { PetCompanionActivityModel } from '@/components/pets/activity';
 
 export const DESKTOP_PET_OVERLAY_COMMANDS = {
     readWindowState: 'desktop_pet_overlay_read_window_state',
@@ -67,7 +67,7 @@ export type DesktopPetOverlaySyncPayload = Readonly<{
     expanded: boolean;
     window: DesktopPetOverlaySize;
     nativeMouseTrackingEnabled: boolean;
-    activity: PetCompanionActivityState;
+    activity: PetCompanionActivityModel;
     policy: DesktopPetOverlayPolicy;
 }>;
 
@@ -84,7 +84,7 @@ export type DesktopPetOverlayWindowStatePayload = Readonly<{
     logicalSize: DesktopPetOverlaySize;
     scaleFactor: number;
     lastPlacementRecoveryCode: string | null;
-    activity?: PetCompanionActivityState | null;
+    activity?: PetCompanionActivityModel | null;
     layout?: DesktopPetOverlayLayoutPayload | null;
 }>;
 

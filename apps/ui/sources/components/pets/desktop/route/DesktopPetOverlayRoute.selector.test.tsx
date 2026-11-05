@@ -22,8 +22,17 @@ import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/s
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol';
-import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
+import { buildPetCompanionActivityModel } from '@/components/pets/activity/buildPetCompanionActivityModel';
+import { usePetCompanionTrayDismissals } from '@/components/pets/activity/usePetCompanionTrayDismissals';
+import { buildSharedActivityProjection } from '@/activity/delivery/sharedActivityProjection';
+import { resolveActivitySurfaceDeliveryAdmission } from '@/activity/delivery/resolveActivitySurfaceDeliveryAdmission';
+import { resolveActivitySurfacePolicy } from '@/activity/attention/resolveActivitySurfacePolicy';
+import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { DesktopPetOverlayRouteProps } from './DesktopPetOverlayRoute';
+
 
 function createSessionFixture(
     overrides: Parameters<typeof createBaseSessionFixture>[0] = {},
@@ -66,7 +75,6 @@ const localSettingsState = vi.hoisted(() => ({
             | { kind: 'detectedCodexHome'; sourceKey: string }
             | { kind: 'happierManagedLocal'; sourceKey: string };
         petsCompanionSizeScale: number;
-        petsDismissedCompanionTrayItemKeys?: string[];
     };
 }));
 const featureDecisionState = vi.hoisted(() => ({
@@ -292,9 +300,31 @@ function seedPetsStorage() {
         });
 }
 
-async function renderScreen(...args: Parameters<typeof renderTestkitScreen>) {
+// Route tests consume the same admitted producer payload as the native WebView.
+// Exact-Home acquisition and privacy are exercised by the real hook/mount suites.
+function RouteWithAdmittedActivity({ element }: { element: React.ReactElement<DesktopPetOverlayRouteProps> }) {
+    const sessions = storage(state => state.sessions);
+    const { dismissedTrayItemKeys } = usePetCompanionTrayDismissals();
+    if (element.props.activitySource === 'native' || element.props.activityModel) return element;
+    const scope = { serverId: activeServerSnapshotState.current.serverId, accountId: 'route-owner' };
+    const policy = resolveActivitySurfacePolicy({});
+    const admission = resolveActivitySurfaceDeliveryAdmission({
+        candidates: Object.values(sessions).map(session => buildSessionActivityAttention({ session, nowMs: Date.now() })),
+        surface: 'desktop_overlay', now: new Date(Date.now()), localSettings: {},
+        resolveAccountSettings: () => accountSettingsParse({}),
+        audienceScopes: new Map([[scope.serverId, scope]]),
+        accountDeliveryMutesByServerId: { [scope.serverId]: { scope, scopes: [] } },
+    });
+    return React.cloneElement(element, { activitySource: 'native', activityModel: buildPetCompanionActivityModel({
+        projection: buildSharedActivityProjection({ admission, policy }), dismissedTrayItemKeys,
+    }) });
+}
+
+async function renderScreen(element: React.ReactElement<DesktopPetOverlayRouteProps>) {
     seedPetsStorage();
-    return renderTestkitScreen(...args);
+    const screen = await renderTestkitScreen(<RouteWithAdmittedActivity element={element} />);
+    return { ...screen, update: (next: React.ReactElement<DesktopPetOverlayRouteProps>) =>
+        screen.update(<RouteWithAdmittedActivity element={next} />) };
 }
 
 function responseWithAsset(mediaType: string, bytes: readonly number[]) {
@@ -468,8 +498,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
     it('can render tray activity from native window state without reading session activity locally', async () => {
         sessionsState.current = [];
         const nativeActivity = {
-            state: 'waiting',
-            reason: 'permission',
+            state: 'needsYou',
             address: { serverId: 'server-a', sessionId: 'session-native' },
             sessionId: 'session-native',
             trayItems: [{
@@ -478,12 +507,10 @@ describe('DesktopPetOverlayRoute selectors', () => {
                 address: { serverId: 'server-a', sessionId: 'session-native' },
                 sessionId: 'session-native',
                 contextLine: 'Home A',
-                status: 'waiting',
-                priority: 100,
+                activity: 'needsYou',
                 title: 'Native session',
                 subtitle: 'Waiting for approval',
                 activityAtMs: 12_000,
-                expiresAtMs: null,
                 actions: {
                     primary: 'open',
                     quickReply: false,
@@ -631,7 +658,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('running');
     });
 
-    it('derives persistent waiting attention from the existing unread session selector', async () => {
+    it('keeps unread completion quiet through the shared activity decision', async () => {
         sessionsState.current = [
             createSessionFixture({ id: 'session-unread', active: true, thinking: false }),
         ];
@@ -647,7 +674,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
 
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
 
-        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('waiting');
+        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
     });
 
     it('renders activity tray items as no-drag actionable status cards', async () => {
@@ -845,7 +872,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
             createSessionFixture({
                 id: 'session-stale-compact-layout',
                 active: true,
-                pendingCount: 0,
+                pendingCount: 1,
                 seq: 2,
                 latestReadyEventSeq: 2,
                 lastViewedSessionSeq: 1,
@@ -985,8 +1012,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
     });
 
     it('uses native layout positions when the overlay window reports measured placement', async () => {
-        listenDesktopPetOverlayWindowStateMock.mockImplementation(async (handler) => {
-            handler({
+        const initialWindowState = {
                 visible: true,
                 inputLocked: false,
                 monitorId: null,
@@ -1001,9 +1027,9 @@ describe('DesktopPetOverlayRoute selectors', () => {
                     tray: { left: 0, top: 0, width: 276, height: 112 },
                     controls: { left: 266, top: 108, width: 30, height: 30 },
                 },
-            });
-            return () => {};
-        });
+        };
+        getDesktopPetOverlayWindowStateMock.mockResolvedValue(initialWindowState);
+        listenDesktopPetOverlayWindowStateMock.mockImplementation(async (handler) => { handler(initialWindowState); return () => {}; });
         sessionsState.current = [
             createSessionFixture({ id: 'session-native-layout', active: true, pendingCount: 1 }),
         ];
@@ -1086,7 +1112,16 @@ describe('DesktopPetOverlayRoute selectors', () => {
             getElementById: vi.fn(() => null),
         });
         try {
-            const screen = await renderScreen(<DesktopPetOverlayRoute />);
+            const entry = {
+                id: 'home/session-native-hover', dismissKey: 'request-native-hover',
+                address: { serverId: 'server-a', sessionId: 'session-native-hover' },
+                sessionId: 'session-native-hover', activity: 'needsYou' as const,
+                title: 'Approval', subtitle: null, contextLine: null, accessibilityContext: null,
+            };
+            const activityModel = buildPetCompanionActivityModel({ projection: {
+                visible: true, activity: 'needsYou', word: 'Needs you', entries: [entry], tray: [entry],
+            } });
+            const screen = await renderScreen(<DesktopPetOverlayRoute activityModel={activityModel} />);
             expect(screen.findByTestId('desktop-pet-overlay-tray-reply-action-session-native-hover')?.props.pointerEvents).toBe('none');
             expect(nativeMouseHandler).not.toBeNull();
 
@@ -1354,49 +1389,23 @@ describe('DesktopPetOverlayRoute selectors', () => {
 
         expect(screen.findByTestId(itemTestID)).toBeNull();
         expect(screen.findByTestId('desktop-pet-overlay-context-toggle')).toBeNull();
-        // Dismissal persists through the store's own local-settings writer, not the Settings-write hook.
+        // Presentation history persists through its keyed device owner.
         expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual(expect.arrayContaining([
-            JSON.stringify(['waiting', 'server-pets', 'session-dismiss', '1']),
+            expect.stringContaining('session-dismiss'),
         ]));
     });
 
-    it('persists dismissed tray items until the same session has newer activity', async () => {
-        localSettingsState.current = {
-            ...localSettingsState.current,
-            petsDismissedCompanionTrayItemKeys: [
-                JSON.stringify(['waiting', 'server-pets', 'session-dismissed', '1000']),
-            ],
-        } as typeof localSettingsState.current;
-        sessionsState.current = [
-            createSessionFixture({
-                id: 'session-dismissed',
-                active: true,
-                pendingCount: 1,
-                createdAt: 1_000,
-                activeAt: 1_000,
-                thinkingAt: 1_000,
-                meaningfulActivityAt: 1_000,
-            }),
-        ];
+    it('preserves dismissal for one ask and displays the next ask', async () => {
+        const ask = (requestId: string) => createSessionFixture({ id: 'session-dismissed', active: true, pendingCount: 1,
+            agentState: { requests: { [requestId]: { kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1_000 } } },
+        });
+        sessionsState.current = [ask('first')];
         const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
-
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
+        await screen.pressByTestIdAsync('desktop-pet-overlay-tray-dismiss-session-dismissed');
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-dismissed')).toBeNull();
-
-        sessionsState.current = [
-            createSessionFixture({
-                id: 'session-dismissed',
-                active: true,
-                pendingCount: 1,
-                createdAt: 1_000,
-                activeAt: 2_000,
-                thinkingAt: 2_000,
-                meaningfulActivityAt: 2_000,
-            }),
-        ];
+        sessionsState.current = [ask('next')];
         await act(async () => seedPetsStorage());
-        await screen.update(<DesktopPetOverlayRoute />);
-
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-dismissed')).not.toBeNull();
     });
 
@@ -2348,8 +2357,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
             <DesktopPetOverlayRoute
                 activitySource="native"
                 activityModel={{
-                    state: 'idle',
-                    reason: 'idle',
+                    state: 'quiet',
                     address: null,
                     sessionId: null,
                     trayItems: [],

@@ -1,7 +1,9 @@
+import * as React from 'react';
+import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { createSessionFixture as createBaseSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture as createBaseSessionFixture, renderHook, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from "@happier-dev/session-core/messages";
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -13,7 +15,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 import { usePetCompanionActivityModel } from './usePetCompanionActivityModel';
-import { PET_COMPANION_ACTIVITY_EXPIRY_MS } from './petCompanionActivityConstants';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -74,17 +76,80 @@ describe('usePetCompanionActivityModel', () => {
         await homes.reset();
         serverId = await homes.addHome({ name: 'Server A', serverUrl: 'https://pet-activity.test',
             accountId: 'pet-owner', currentAccount: true });
+        homes.answer(serverId, '/v2/account/session-delivery-mutes', { body: { scopes: [] } });
         await loadSyncSingletonForTests();
         connection = await restoreServerAccountForTest({ serverUrl: 'https://pet-activity.test',
             accountId: 'pet-owner', request: homes.request });
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        saveAccountSettings({ serverId, accountId: 'pet-owner' }, settingsParse({}), 1);
+        await vi.waitFor(() => expect(storage.getState().concurrentSessionListCacheByServerId[serverId]?.listObservation?.phase).toBe('error'));
     });
 
     afterEach(async () => {
-        standardCleanup();
+        setScreenSharingPrivacyActive(false);
+        await standardCleanup();
         await connection?.dispose();
         connection = undefined;
         await homes.reset();
         vi.restoreAllMocks();
+    });
+
+    it('omits recording-private Sessions from companion activity and restores them when sharing ends', async () => {
+        const previousState = storage.getState();
+        const sessions = ['private-pet', 'public-pet'].map(id => createSessionFixture({ id, encryptionMode: 'plain',
+            active: true, activeAt: 4_000, thinking: true, thinkingAt: 4_000,
+            metadata: { path: '/repo', host: 'host', name: id },
+        }));
+        try {
+            storage.setState({ isDataReady: true, sessions: Object.fromEntries(sessions.map(session => [session.id, session])),
+                ...buildSessionListProjection(sessions), sessionMessages: {},
+            });
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic(serverId, 'private-pet', ['private']);
+            setScreenSharingPrivacyActive(true);
+            const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent().trayItems.map(item => item.sessionId)).toEqual(['public-pet']);
+            expect(JSON.stringify(hook.getCurrent())).not.toContain('private-pet');
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            await flushHookEffects();
+            expect(hook.getCurrent().trayItems.map(item => item.sessionId).sort()).toEqual(['private-pet', 'public-pet']);
+            await hook.unmount();
+        } finally { storage.setState(previousState, true); }
+    });
+
+    it.each([false, true])('honors Home-restricted pet delivery with a permitted control (permitted=%s)', async permitted => {
+        const previousState = storage.getState();
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        saveAccountSettings({ serverId, accountId: 'pet-owner' }, settingsParse({
+            attentionDeliveryPolicyV1: { channels: { desktop_overlay: { enabled: permitted } } },
+        }), 2);
+        const session = createSessionFixture({ id: 'home-restricted', encryptionMode: 'plain',
+            active: true, activeAt: 4_000, thinking: true, thinkingAt: 4_000,
+            metadata: { path: '/private', host: 'private-host', name: 'Prohibited pet title' },
+        });
+        try {
+            storage.setState({ isDataReady: true, sessions: { [session.id]: session },
+                ...buildSessionListProjection([session]),
+                sessionMessages: { [session.id]: createSessionMessages([{
+                    kind: 'agent-text', id: 'private-text', localId: null, createdAt: 4_000,
+                    text: 'Prohibited transcript', isThinking: false,
+                }]) },
+            });
+            const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent().trayItems).toHaveLength(permitted ? 1 : 0);
+            if (permitted) expect(hook.getCurrent().trayItems[0]?.title).toBe('Prohibited pet title');
+            else expect(JSON.stringify(hook.getCurrent())).not.toContain('Prohibited');
+            expect(JSON.stringify(hook.getCurrent())).not.toContain('Prohibited transcript');
+            await hook.unmount();
+        } finally { storage.setState(previousState, true); }
     });
 
     it.each([
@@ -112,6 +177,7 @@ describe('usePetCompanionActivityModel', () => {
                 sessionMessages: { [session.id]: createSessionMessages([message]) },
             }));
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
             const model = hook.getCurrent();
@@ -131,69 +197,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('does not map a failed tool call to failed or waiting session activity', async () => {
-        const previousState = storage.getState();
-        const session = createSessionFixture({
-            encryptionMode: 'plain',
-            id: 'failed-session',
-            active: true,
-            seq: 1,
-            createdAt: 1_000,
-            updatedAt: 2_000,
-            activeAt: 2_000,
-            lastViewedSessionSeq: 0,
-            thinking: false,
-            thinkingAt: 0,
-        });
-        const failedToolMessage: Message = {
-            kind: 'tool-call',
-            id: 'tool-failed',
-            localId: null,
-            createdAt: 2_000,
-            tool: {
-                id: 'tool-1',
-                name: 'Bash',
-                state: 'error',
-                input: { command: 'exit 1' },
-                createdAt: 2_000,
-                startedAt: 2_000,
-                completedAt: 2_100,
-                description: null,
-                result: { error: 'Command failed' },
-            },
-            children: [],
-        };
-
-        try {
-            storage.setState((state) => ({
-                ...state,
-                isDataReady: true,
-                sessions: { [session.id]: session },
-                ...buildSessionListProjection([session]),
-                sessionMessages: {
-                    ...state.sessionMessages,
-                    [session.id]: createSessionMessages([failedToolMessage]),
-                },
-            }));
-
-            const hook = await renderHook(() => usePetCompanionActivityModel(), {
-                flushOptions: { cycles: 1, turns: 4 },
-            });
-
-            expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
-                sessionId: session.id,
-                trayItems: [],
-            });
-
-            await hook.unmount();
-        } finally {
-            storage.setState(previousState, true);
-        }
-    });
-
-    it('does not recompute activity when unrelated storage state changes', async () => {
+    it('does not commit activity when unrelated storage state changes', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             encryptionMode: 'plain',
@@ -218,11 +222,14 @@ describe('usePetCompanionActivityModel', () => {
 
             let renderCount = 0;
             const hook = await renderHook(() => {
-                renderCount += 1;
+                React.useLayoutEffect(() => { renderCount += 1; });
                 return usePetCompanionActivityModel();
             }, {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeUnrelatedUpdate = renderCount;
 
             await act(async () => {
@@ -240,7 +247,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('does not recompute activity when an unrelated hidden system session changes', async () => {
+    it('does not commit activity when an unrelated hidden system session changes', async () => {
         const previousState = storage.getState();
         const visibleSession = createSessionFixture({
             encryptionMode: 'plain',
@@ -301,16 +308,18 @@ describe('usePetCompanionActivityModel', () => {
 
             let renderCount = 0;
             const hook = await renderHook(() => {
-                renderCount += 1;
+                React.useLayoutEffect(() => { renderCount += 1; });
                 return usePetCompanionActivityModel();
             }, {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'needsYou',
                 sessionId: visibleSession.id,
             });
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeHiddenUpdate = renderCount;
             const hiddenSessionMetadata = hiddenSession.metadata;
             if (!hiddenSessionMetadata) {
@@ -346,7 +355,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('recomputes fallback session activity for meaningful activity without surfacing runtime attention', async () => {
+    it('publishes fallback session activity for meaningful activity without surfacing runtime attention', async () => {
         vi.mocked(Date.now).mockReturnValue(130_000);
         const previousState = storage.getState();
         const session = createSessionFixture({
@@ -377,16 +386,18 @@ describe('usePetCompanionActivityModel', () => {
 
             let renderCount = 0;
             const hook = await renderHook(() => {
-                renderCount += 1;
+                React.useLayoutEffect(() => { renderCount += 1; });
                 return usePetCompanionActivityModel();
             }, {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
+                state: 'working',
                 sessionId: session.id,
             });
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeBookkeepingUpdate = renderCount;
             const bookkeepingSession = { ...session, updatedAt: 3_000 };
 
@@ -400,6 +411,8 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBe(renderCountBeforeBookkeepingUpdate);
 
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeMeaningfulActivityUpdate = renderCount;
             const meaningfulSession = {
                 ...bookkeepingSession,
@@ -416,8 +429,7 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
             expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
+                state: 'working',
                 sessionId: session.id,
             });
 
@@ -427,7 +439,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('recomputes renderable-only activity for meaningful activity without surfacing runtime attention', async () => {
+    it('publishes renderable-only activity for meaningful activity without surfacing runtime attention', async () => {
         vi.mocked(Date.now).mockReturnValue(130_000);
         const previousState = storage.getState();
         const session = createSessionFixture({
@@ -468,16 +480,18 @@ describe('usePetCompanionActivityModel', () => {
 
             let renderCount = 0;
             const hook = await renderHook(() => {
-                renderCount += 1;
+                React.useLayoutEffect(() => { renderCount += 1; });
                 return usePetCompanionActivityModel();
             }, {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
+                state: 'working',
                 sessionId: session.id,
             });
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeBookkeepingUpdate = renderCount;
             const bookkeepingSession = { ...session, updatedAt: 3_000 };
 
@@ -495,6 +509,8 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBe(renderCountBeforeBookkeepingUpdate);
 
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeMeaningfulActivityUpdate = renderCount;
             const meaningfulSession = {
                 ...bookkeepingSession,
@@ -515,8 +531,7 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
             expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
+                state: 'working',
                 sessionId: session.id,
             });
 
@@ -526,7 +541,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('ignores transcript updates outside the companion session scope', async () => {
+    it('reads zero transcript records or commits as own and unrelated transcripts grow', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             encryptionMode: 'plain',
@@ -559,113 +574,30 @@ describe('usePetCompanionActivityModel', () => {
 
             let renderCount = 0;
             const hook = await renderHook(() => {
-                renderCount += 1;
+                React.useLayoutEffect(() => { renderCount += 1; });
                 return usePetCompanionActivityModel();
             }, {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
+            await vi.waitFor(() => expect(hook.getCurrent().sessionId).not.toBeNull());
+            await flushHookEffects();
             const renderCountBeforeUnrelatedTranscriptUpdate = renderCount;
 
-            await act(async () => {
-                storage.setState((state) => ({
-                    ...state,
-                    sessionMessages: {
-                        ...state.sessionMessages,
-                        'unrelated-session': createSessionMessages([unrelatedMessage]),
-                    },
-                }));
-            });
+            let messageReads = 0;
+            for (const length of [128, 4096]) {
+                const messages = createSessionMessages(Array.from({ length }, (_, index) => ({ ...unrelatedMessage, id: `message-${index}` })));
+                const records = messages.messagesById;
+                Object.defineProperty(messages, 'messagesById', { enumerable: true, get: () => { messageReads++; return records; } });
+                Object.defineProperty(messages, 'messagesMap', { enumerable: true, get: () => { messageReads++; return records; } });
+                await act(async () => {
+                    storage.setState(state => ({ sessionMessages: { ...state.sessionMessages,
+                        [session.id]: messages, 'unrelated-session': messages } }));
+                });
+            }
+            expect(messageReads).toBe(0);
 
             expect(renderCount).toBe(renderCountBeforeUnrelatedTranscriptUpdate);
-
-            await hook.unmount();
-        } finally {
-            storage.setState(previousState, true);
-        }
-    });
-
-    it('aggregates runtime failure signals across non-selected sessions', async () => {
-        const previousState = storage.getState();
-        const activeSession = createSessionFixture({
-            encryptionMode: 'plain',
-            id: 'active-session',
-            active: true,
-            seq: 1,
-            createdAt: 1_000,
-            updatedAt: 2_000,
-            activeAt: 2_000,
-            lastViewedSessionSeq: 1,
-            thinking: false,
-            thinkingAt: 0,
-        });
-        const failedSession = {
-            ...createSessionFixture({
-            encryptionMode: 'plain',
-            id: 'failed-session',
-            active: true,
-            seq: 2,
-            createdAt: 1_500,
-            updatedAt: 3_000,
-            activeAt: 3_000,
-            lastViewedSessionSeq: 2,
-            thinking: false,
-            thinkingAt: 0,
-            }),
-            latestTurnStatus: 'failed',
-            lastRuntimeIssue: {
-                v: 1,
-                scope: 'primary_session',
-                status: 'failed',
-                code: 'agent_status_error',
-                source: 'agent_status_error',
-                occurredAt: 3_000,
-            },
-        } as const;
-        const failedToolMessage: Message = {
-            kind: 'tool-call',
-            id: 'tool-failed',
-            localId: null,
-            createdAt: 3_000,
-            tool: {
-                id: 'tool-1',
-                name: 'Bash',
-                state: 'error',
-                input: { command: 'exit 1' },
-                createdAt: 3_000,
-                startedAt: 3_000,
-                completedAt: 3_100,
-                description: null,
-                result: { error: 'Command failed' },
-            },
-            children: [],
-        };
-
-        try {
-            storage.setState((state) => ({
-                ...state,
-                isDataReady: true,
-                sessions: {
-                    [activeSession.id]: activeSession,
-                    [failedSession.id]: failedSession,
-                },
-                ...buildSessionListProjection([activeSession, failedSession]),
-                sessionMessages: {
-                    ...state.sessionMessages,
-                    [activeSession.id]: createSessionMessages([]),
-                    [failedSession.id]: createSessionMessages([failedToolMessage]),
-                },
-            }));
-
-            const hook = await renderHook(() => usePetCompanionActivityModel(), {
-                flushOptions: { cycles: 1, turns: 4 },
-            });
-
-            expect(hook.getCurrent()).toMatchObject({
-                state: 'failed',
-                reason: 'failed',
-                sessionId: failedSession.id,
-            });
-            expect(hook.getCurrent().trayItems.map((item) => item.sessionId)).toContain(failedSession.id);
 
             await hook.unmount();
         } finally {
@@ -699,12 +631,12 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'quiet',
                 sessionId: session.id,
                 trayItems: [],
             });
@@ -742,12 +674,12 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'quiet',
                 sessionId: session.id,
                 trayItems: [],
             });
@@ -801,16 +733,16 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'needsYou',
                 sessionId: session.id,
                 trayItems: [expect.objectContaining({
                     sessionId: session.id,
-                    status: 'waiting',
+                    activity: 'needsYou',
                 })],
             });
 
@@ -886,12 +818,12 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'needsYou',
                 sessionId: visibleSession.id,
                 trayItems: [
                     expect.objectContaining({
@@ -903,62 +835,6 @@ describe('usePetCompanionActivityModel', () => {
 
             await hook.unmount();
         } finally {
-            storage.setState(previousState, true);
-        }
-    });
-
-    it('expires stale activity when no store update happens at the expiry boundary', async () => {
-        vi.restoreAllMocks();
-        vi.useFakeTimers();
-        vi.setSystemTime(4_000);
-        const previousState = storage.getState();
-        const session = createSessionFixture({
-            encryptionMode: 'plain',
-            id: 'recent-thinking-session',
-            active: true,
-            seq: 1,
-            createdAt: 1_000,
-            updatedAt: 1_000,
-            activeAt: 1_000,
-            lastViewedSessionSeq: 1,
-            thinking: true,
-            thinkingAt: 1_000,
-        });
-
-        try {
-            storage.setState((state) => ({
-                ...state,
-                isDataReady: true,
-                sessions: { [session.id]: session },
-                ...buildSessionListProjection([session]),
-                sessionMessages: {},
-            }));
-
-            const hook = await renderHook(() => usePetCompanionActivityModel(), {
-                flushOptions: { cycles: 1, turns: 4 },
-            });
-
-            expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
-                sessionId: session.id,
-            });
-
-            await act(async () => {
-                vi.setSystemTime(1_000 + PET_COMPANION_ACTIVITY_EXPIRY_MS.running + 1);
-                await vi.advanceTimersByTimeAsync(PET_COMPANION_ACTIVITY_EXPIRY_MS.running);
-            });
-
-            expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
-                sessionId: session.id,
-                trayItems: [],
-            });
-
-            await hook.unmount();
-        } finally {
-            vi.useRealTimers();
             storage.setState(previousState, true);
         }
     });
@@ -989,12 +865,12 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'quiet',
                 sessionId: session.id,
                 trayItems: [],
             });
@@ -1034,12 +910,12 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'running',
-                reason: 'running',
+                state: 'working',
                 sessionId: onlineSession.id,
             });
 
@@ -1056,8 +932,7 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'quiet',
                 sessionId: onlineSession.id,
                 trayItems: [],
             });
@@ -1106,17 +981,17 @@ describe('usePetCompanionActivityModel', () => {
             }));
 
             const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled={false}>{children}</ActivityPersonalSessionMembershipProvider>,
                 flushOptions: { cycles: 1, turns: 4 },
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'needsYou',
                 sessionId: session.id,
                 trayItems: [
                     expect.objectContaining({
                         sessionId: session.id,
-                        status: 'waiting',
+                        activity: 'needsYou',
                     }),
                 ],
             });

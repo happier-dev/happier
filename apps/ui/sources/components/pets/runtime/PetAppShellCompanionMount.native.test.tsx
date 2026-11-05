@@ -1,3 +1,4 @@
+import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
@@ -14,7 +15,21 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync, isConcurrentOrdinarySessionListHome } from '@/sync/runtime/orchestration/concurrentSessionCache';
+import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+installDisconnectedServerSocketBoundary();
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+let homeA = '';
+let homeB = '';
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 type PetNativeMountTestState = {
     account: {
@@ -89,18 +104,18 @@ function createActivitySource(sessions: readonly ReturnType<typeof createSession
         isDataReady: true,
         sessionsById: Object.fromEntries(sessions.map((session) => [session.id, session])),
         sessionListRowsByServerId: {
-            'server-a': Object.fromEntries(
+            [homeA]: Object.fromEntries(
                 sessions.map((session) => [session.id, buildSessionListRenderableFromSession(session)]),
             ),
         },
         ordinarySessionListMembershipByServerId: {
-            'server-a': sessions.map((session) => session.id),
+            [homeA]: sessions.map((session) => session.id),
         },
         sessionListIndexByServerId: {
-            'server-a': sessions.map((session) => ({
+            [homeA]: sessions.map((session) => ({
                 type: 'session' as const,
                 sessionId: session.id,
-                serverId: 'server-a',
+                serverId: homeA,
                 serverName: 'Server A',
             })),
         },
@@ -194,15 +209,34 @@ function seedPetsStorage(runtimeStorage = storage) {
 async function renderScreen(...args: Parameters<typeof renderTestkitScreen>) {
     const { storage: runtimeStorage } = await import('@/sync/domains/state/storageStore');
     seedPetsStorage(runtimeStorage);
-    return renderTestkitScreen(...args);
+    return renderTestkitScreen(<ActivityPersonalSessionMembershipProvider enabled={false}>{args[0]}</ActivityPersonalSessionMembershipProvider>, args[1]);
 }
 
 describe('PetAppShellCompanionMount.native', () => {
     beforeEach(async () => {
-        await upsertAndActivateServer({ serverUrl: 'https://server-a', scope: 'tab' });
+        await homes.reset();
+        homeA = await homes.addHome({ name: 'Home A', serverUrl: 'https://home-a.example.test', accountId: 'owner-a', currentAccount: true });
+        homeB = await homes.addHome({ name: 'Home B', serverUrl: 'https://home-b.example.test', accountId: 'owner-b', active: false });
+        homes.answer(homeA, '/v2/account/session-delivery-mutes', { body: { scopes: [] } });
+        homes.answer(homeB, '/v2/account/session-delivery-mutes', { body: { scopes: [] } });
+        await loadSyncSingletonForTests();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-a.example.test', accountId: 'owner-a', additionalRequestOrigins: ['https://home-b.example.test'], request: homes.request });
+        saveAccountSettings({ serverId: homeA, accountId: 'owner-a' }, settingsParse({}), 1);
+        saveAccountSettings({ serverId: homeB, accountId: 'owner-b' }, settingsParse({}), 1);
+        await homes.selectHomes([homeA, homeB]);
+        startConcurrentSessionCacheSync();
+        await vi.waitFor(() => expect(isConcurrentOrdinarySessionListHome(homeB)).toBe(true));
     });
 
-    afterEach(() => {
+
+
+    afterEach(async () => {
+        await standardCleanup();
+        vi.useRealTimers();
+        stopConcurrentSessionCacheSync();
+        await connection?.dispose();
+        connection = undefined;
+        await homes.reset();
         vi.restoreAllMocks();
         standardCleanup();
         storage.setState(initialStorageState, true);
@@ -229,6 +263,38 @@ describe('PetAppShellCompanionMount.native', () => {
         sessionsState.current = [];
         activitySourceState.source = createActivitySource([]);
         executePetCompanionActionSpy.mockClear();
+    });
+
+    it('shows admitted Home activity and never discloses the other Home restriction', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(12_000);
+        settingsState.account.petsEnabled = true;
+        saveAccountSettings({ serverId: homeB, accountId: 'owner-b' }, settingsParse({
+            attentionDeliveryPolicyV1: { channels: { desktop_overlay: { enabled: false } } },
+        }), 2);
+        const allowed = createSessionFixture({ id: 'allowed-ask', serverId: homeA, active: true, activeAt: 12_000,
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: 12_000,
+            metadata: { name: 'Allowed title', path: '/allowed', host: 'allowed-machine' } });
+        const restricted = createSessionFixture({ id: 'restricted-ask', serverId: homeB, active: true, activeAt: 12_000,
+            pendingPermissionRequestCount: 1, pendingRequestObservedAt: 12_000,
+            metadata: { name: 'Prohibited title', path: '/private', host: 'private-machine' } });
+        activitySourceState.source = {
+            ...createActivitySource([allowed]),
+            sessionsById: { [allowed.id]: allowed, [restricted.id]: restricted },
+            sessionListRowsByServerId: { [homeA]: { [allowed.id]: buildSessionListRenderableFromSession(allowed) },
+                [homeB]: { [restricted.id]: buildSessionListRenderableFromSession(restricted) } },
+            ordinarySessionListMembershipByServerId: { [homeA]: [allowed.id], [homeB]: [restricted.id] },
+            sessionListIndexByServerId: { [homeA]: [{ type: 'session', sessionId: allowed.id, serverId: homeA }],
+                [homeB]: [{ type: 'session', sessionId: restricted.id, serverId: homeB }] },
+        };
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount.native');
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+        await vi.waitFor(() => expect(screen.findByTestId('desktop-pet-overlay-tray-item-allowed-ask')).toBeTruthy());
+        expect(screen.findByTestId('desktop-pet-overlay-tray-item-restricted-ask')).toBeNull();
+        expect(JSON.stringify(screen.tree)).not.toContain('Prohibited title');
+        await act(async () => {
+            saveAccountSettings({ serverId: homeB, accountId: 'owner-b' }, settingsParse({}), 3);
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('desktop-pet-overlay-tray-item-restricted-ask')).toBeTruthy());
     });
 
     it('renders the selected pet in the native app shell with safe-area-aware positioning', async () => {
@@ -351,14 +417,14 @@ describe('PetAppShellCompanionMount.native', () => {
         vi.spyOn(Date, 'now').mockReturnValue(12_000);
         const activeHomeSession = createSessionFixture({
             id: 'native-pet-session',
-            serverId: 'server-a',
+            serverId: homeA,
             active: true,
             updatedAt: 10_000,
             activeAt: 10_000,
         });
         const secondaryHomeSession = createSessionFixture({
             id: 'native-pet-session',
-            serverId: 'home-b',
+            serverId: homeB,
             active: true,
             pendingPermissionRequestCount: 1,
             pendingRequestObservedAt: 11_000,
@@ -372,33 +438,33 @@ describe('PetAppShellCompanionMount.native', () => {
                 [secondaryHomeSession.id]: secondaryHomeSession,
             },
             sessionListRowsByServerId: {
-                'server-a': {
+                [homeA]: {
                     [activeHomeSession.id]: buildSessionListRenderableFromSession(activeHomeSession),
                 },
-                'home-b': {
+                [homeB]: {
                     [secondaryHomeSession.id]: buildSessionListRenderableFromSession(secondaryHomeSession),
                 },
             },
             ordinarySessionListMembershipByServerId: {
-                'server-a': [activeHomeSession.id],
-                'home-b': [secondaryHomeSession.id],
+                [homeA]: [activeHomeSession.id],
+                [homeB]: [secondaryHomeSession.id],
             },
             sessionListIndexByServerId: {
-                'server-a': [{
+                [homeA]: [{
                     type: 'session',
                     sessionId: activeHomeSession.id,
-                    serverId: 'server-a',
+                    serverId: homeA,
                     serverName: 'Home A',
                 }],
-                'home-b': [{
+                [homeB]: [{
                     type: 'session',
                     sessionId: secondaryHomeSession.id,
-                    serverId: 'home-b',
+                    serverId: homeB,
                     serverName: 'Home B',
                 }],
             },
             activeServer: {
-                serverId: 'server-a',
+                serverId: homeA,
                 serverUrl: 'https://home-a.example.test',
                 generation: 1,
             },
@@ -407,7 +473,7 @@ describe('PetAppShellCompanionMount.native', () => {
 
         const screen = await renderScreen(<PetAppShellCompanionMount />);
 
-        expect(screen.findByTestId('desktop-pet-overlay-tray')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('desktop-pet-overlay-tray')).not.toBeNull());
         expect(screen.findByTestId('desktop-pet-overlay-tray-item-native-pet-session')).not.toBeNull();
 
         await screen.pressByTestIdAsync('desktop-pet-overlay-tray-item-native-pet-session');
@@ -415,7 +481,7 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(executePetCompanionActionSpy).toHaveBeenCalledWith(
             'session.open',
             { sessionId: 'native-pet-session' },
-            { defaultSessionId: 'native-pet-session', serverId: 'home-b' },
+            { defaultSessionId: 'native-pet-session', serverId: homeB },
         );
         executePetCompanionActionSpy.mockClear();
 
@@ -487,7 +553,7 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(executePetCompanionActionSpy).toHaveBeenCalledWith(
             'session.message.send',
             { sessionId: 'native-pet-session', message: 'Reply from native\nwith detail' },
-            { defaultSessionId: 'native-pet-session', serverId: 'home-b' },
+            { defaultSessionId: 'native-pet-session', serverId: homeB },
         );
         expect(screen.findByTestId('desktop-pet-overlay-tray-reply-input-native-pet-session')?.props.value).toBe('');
         executePetCompanionActionSpy.mockClear();
@@ -510,7 +576,7 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(executePetCompanionActionSpy).toHaveBeenCalledWith(
             'session.message.send',
             { sessionId: 'native-pet-session', message: 'Reply from native' },
-            { defaultSessionId: 'native-pet-session', serverId: 'home-b' },
+            { defaultSessionId: 'native-pet-session', serverId: homeB },
         );
         expect(screen.findByTestId('desktop-pet-overlay-tray-reply-input-native-pet-session')?.props.value).toBe('');
     });
@@ -520,7 +586,7 @@ describe('PetAppShellCompanionMount.native', () => {
         sessionsState.current = [
             createSessionFixture({
                 id: 'native-close-reply-session',
-                serverId: 'server-a',
+                serverId: homeA,
                 active: true,
                 pendingPermissionRequestCount: 1,
                 pendingRequestObservedAt: 11_000,

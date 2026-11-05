@@ -18,12 +18,6 @@ export function serializePaneSizePxBucket(
     };
 }
 
-export function serializeDesktopOverlayAutoHideDelayBucket(value: number): '3s' | '6s' | '10s' | '30s' {
-    if (value <= 3_000) return '3s';
-    if (value <= 6_000) return '6s';
-    if (value <= 10_000) return '10s';
-    return '30s';
-}
 
 export const paneDetailsTabSchema = z.object({
     key: z.string(),

@@ -17,7 +17,6 @@ describe('LOCAL_SETTING_DEFINITIONS pets', () => {
         expect(LOCAL_SETTING_DEFINITIONS.petsCompanionSizeScale.default).toBe(1);
         expect(LOCAL_SETTING_DEFINITIONS.petsDetectCodexPets.default).toBe(true);
         expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayEnabledOverride.default).toBe('inherit');
-        expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayVisibilityModeOverride.default).toBe('inherit');
         expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayAnchor.default).toBe('bottomRight');
         expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayOffset.default).toEqual({ x: 0, y: 0 });
         expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayLocked.default).toBe(false);

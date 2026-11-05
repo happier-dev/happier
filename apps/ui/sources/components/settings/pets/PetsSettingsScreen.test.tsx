@@ -7,11 +7,13 @@ import { socketRpcCodec } from '@happier-dev/sync-client';
 import { StyleSheet } from 'react-native';
 import {
     PET_DAEMON_RPC_METHODS,
-    PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-    type AccountPetLibraryEntryV1,
     type DiscoveredPetPackageV1,
     type ImportedLocalPetPackageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/daemonRpc';
+import {
+    PET_PACKAGE_FORMAT_CODEX_ATLAS_V1} from '@happier-dev/protocol/pets/constants';
+import {
+    type AccountPetLibraryEntryV1} from '@happier-dev/protocol/pets/accountLibrary';
 import type { StoreApi, UseBoundStore } from 'zustand';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, type ReactTestInstance } from 'react-test-renderer';
@@ -335,7 +337,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 petsEnabled: false,
                 petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
                 petsDesktopOverlayDefaultEnabled: true,
-                petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
             }),
             useLocalSettings: () => ({
                 ...localSettingsDefaults,
@@ -344,7 +345,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 petsCompanionSizeScale: localSettingsState.petsCompanionSizeScale,
                 petsDetectCodexPets: localSettingsState.petsDetectCodexPets,
                 desktopPetOverlayEnabledOverride: 'inherit',
-                desktopPetOverlayVisibilityModeOverride: 'inherit',
                 desktopPetOverlayAnchor: 'bottomRight',
                 desktopPetOverlayOffset: { x: 0, y: 0 },
                 desktopPetOverlayLocked: false,
@@ -543,6 +543,11 @@ describe('PetsSettingsScreen', () => {
             });
         });
 
+        expect(applyLocalSettingsSpy).not.toHaveBeenCalled();
+        await act(async () => {
+            invokeTestInstanceHandler(track, 'onResponderRelease');
+        });
+        expect(applyLocalSettingsSpy).toHaveBeenCalledTimes(1);
         expect(applyLocalSettingsSpy).toHaveBeenCalledWith({
             petsCompanionSizeScale: 1.5,
         });
@@ -593,26 +598,15 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-desktop-overlay-reset-position')).toBeNull();
     });
 
-    it('lets desktop users choose attention-or-active overlay visibility for this device', async () => {
+    it('retires the independent desktop pet activity mode while keeping its enable and reset controls', async () => {
         const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
         const screen = await renderScreen(<PetsSettingsScreen />);
-
-        const visibilityDropdown = screen.root.findAll((node) => (
-            String(node.type) === 'DropdownMenu'
-            && Array.isArray(node.props.items)
-            && node.props.items.some((item: { id?: string }) => item.id === 'attentionOrActive')
-        ))[0] ?? null;
-
-        expect(screen.findByTestId('settings-pets-desktop-overlay-visibility-mode')).not.toBeNull();
-        expect(visibilityDropdown).not.toBeNull();
-
-        await act(async () => {
-            visibilityDropdown?.props.onSelect?.('attentionOrActive');
-        });
-
-        expect(applyLocalSettingsSpy).toHaveBeenCalledWith({
-            desktopPetOverlayVisibilityModeOverride: 'attentionOrActive',
-        });
+        expect(screen.findByTestId('settings-pets-desktop-overlay-visibility-mode')).toBeNull();
+        expect(screen.findByTestId('settings-pets-desktop-overlay-enabled')).not.toBeNull();
+        expect(screen.findByTestId('settings-pets-desktop-overlay-device-override')).not.toBeNull();
+        expect(screen.findByTestId('settings-pets-desktop-overlay-reset-position')).not.toBeNull();
+        expect(applySettingsSpy).not.toHaveBeenCalled();
+        expect(applyLocalSettingsSpy).not.toHaveBeenCalled();
     });
 
     it('detects Codex pets when a command palette action requests a refresh', async () => {

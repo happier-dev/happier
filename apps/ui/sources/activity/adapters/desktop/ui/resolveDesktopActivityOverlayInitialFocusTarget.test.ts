@@ -18,22 +18,20 @@ function createModel(
 ): DesktopActivityOverlayUiModel {
     return {
         visible: true,
-        isExpanded: true,
         generatedAt: 1,
+        faces: { faces: [], overflowCount: 0 },
+        conversation: null,
         collapsed: {
             title: 'Sessions',
             statusText: null,
             defaultTarget: 'open-primary-session',
+            activity: 'needsYou',
             sessionCount: null,
         },
         expanded: {
             title: 'Active sessions',
             rows: [],
             ...expanded,
-        },
-        window: {
-            collapsed: { width: 340, height: 72 },
-            expanded: { width: 420, height: 220 },
         },
     };
 }
@@ -80,7 +78,6 @@ describe('resolveDesktopActivityOverlayInitialFocusTarget', () => {
     it('prefers the first actionable card over a later session row', () => {
         const target = resolveDesktopActivityOverlayInitialFocusTarget(
             createModel({ cards: [permissionCard, sessionOverviewCard] }),
-            { quickReplyVisible: true },
         );
 
         expect(target).toEqual({
@@ -112,7 +109,6 @@ describe('resolveDesktopActivityOverlayInitialFocusTarget', () => {
                     },
                 ],
             }),
-            { quickReplyVisible: false },
         );
 
         expect(target).toEqual({
@@ -123,17 +119,9 @@ describe('resolveDesktopActivityOverlayInitialFocusTarget', () => {
         });
     });
 
-    it('falls back to the quick reply input when no card can be acted on', () => {
-        expect(resolveDesktopActivityOverlayInitialFocusTarget(
-            createModel({ cards: [] }),
-            { quickReplyVisible: true },
-        )).toEqual({ kind: 'quick_reply_input' });
-    });
-
     it('falls back to the island surface when there is nothing to act on at all', () => {
         expect(resolveDesktopActivityOverlayInitialFocusTarget(
             createModel({}),
-            { quickReplyVisible: false },
         )).toEqual({ kind: 'surface' });
     });
 });

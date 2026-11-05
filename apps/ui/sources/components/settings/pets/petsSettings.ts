@@ -1,4 +1,5 @@
 import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
+import { resetDesktopPetOverlayPosition } from '@/components/pets/desktop/bridge/desktopPetOverlayBridge';
 
 /** The searchable settings of the `pets` page. Rows render their labels from these declarations. */
 export const PETS_SETTINGS = defineSettingsPage({
@@ -24,7 +25,15 @@ export const PETS_SETTINGS = defineSettingsPage({
             settings: {
                 desktopOverlayEnabled: {},
                 desktopOverlayDeviceOverride: {},
-                desktopOverlayVisibilityMode: {},
+                desktopOverlayResetPosition: {
+                    operation: {
+                        kind: 'invoke', requiresHumanInteraction: false, requiresApproval: false,
+                        invoke: async () => {
+                            await resetDesktopPetOverlayPosition();
+                            return { status: 'completed' };
+                        },
+                    },
+                },
             },
         },
     },

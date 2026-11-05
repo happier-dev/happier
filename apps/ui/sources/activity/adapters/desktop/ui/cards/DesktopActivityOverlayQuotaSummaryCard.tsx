@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { t } from '@/text';
 
-import type { DesktopActivityOverlayVisualMode } from '../DesktopActivityOverlayVisualMode';
+import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import type { DesktopActivityOverlayExpandedCard } from '../shared/desktopActivityOverlayUiModel';
 import { DesktopActivityOverlayCardFrame } from './DesktopActivityOverlayCardFrame';
 

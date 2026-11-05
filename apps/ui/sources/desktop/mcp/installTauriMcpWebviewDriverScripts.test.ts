@@ -4,8 +4,10 @@ import { installTauriMcpWebviewDriverScripts } from './installTauriMcpWebviewDri
 import { maybeInstallTauriMcpBridge } from './maybeInstallTauriMcpBridge';
 import { SystemTaskSpecSchema, type SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { DesktopActivityOverlaySyncPayload } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
-import { readDesktopActivityOverlayQaSyncOverride } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayQaSyncOverride';
+import { hasDesktopActivityOverlayQaFixtureProducer, selectDesktopActivityOverlayQaFixture, registerDesktopActivityOverlayQaFixtureProducer } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtureSelection';
 import { controlPersonalHomeBootstrapQaMutationPause } from '@/components/personalHome/bootstrap/personalHomeBootstrapQaMutationPause';
+import { storage } from '@/sync/domains/state/storage';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 // The actual default task runner and overlay bridge terminate at this native IPC boundary.
 const native = vi.hoisted(() => ({
@@ -16,6 +18,7 @@ const native = vi.hoisted(() => ({
     listeners: new Map<string, (payload: unknown) => void>(),
     overlayPayloads: [] as DesktopActivityOverlaySyncPayload[],
     overlayState: null as DesktopActivityOverlaySyncPayload | null,
+    presentationRequests: [] as string[],
 }));
 
 vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
@@ -41,6 +44,7 @@ vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
             return;
         }
         if (command === 'desktop_activity_overlay_get_window_state') return native.overlayState;
+        if (command === 'desktop_activity_overlay_request_presentation') { native.presentationRequests.push(String(args?.requestedState)); return; }
         throw new Error(`Unexpected desktop IPC command: ${command}`);
     },
     listenDesktopHostEvent: async (event: string, listener: (payload: unknown) => void) => {
@@ -50,8 +54,9 @@ vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
 }));
 
 type QaCommands = {
+    applyHappierLocalSettings: (delta: unknown) => Promise<Record<string, unknown>>;
     seedDesktopActivityOverlayQaState: (mode: string) => Promise<Record<string, unknown>>;
-    clearDesktopActivityOverlayQaState: () => Record<string, unknown>;
+    clearDesktopActivityOverlayQaState: () => Promise<Record<string, unknown>>;
     readPersonalHomeBootstrapQaObservation: () => Record<string, unknown>;
     navigateHappierQaPath: (path: string) => Record<string, unknown>;
     readPersonalHomeDaemonQaStatus: () => Promise<unknown>;
@@ -90,6 +95,15 @@ vi.mock('@/sync/sync', () => ({
 
 describe('installTauriMcpWebviewDriverScripts', () => {
     beforeEach(() => {
+        vi.stubGlobal('window', globalThis);
+        vi.stubGlobal('__TAURI_INTERNALS__', { transformCallback: () => 1, invoke: async (command: string) => {
+            if (command === 'plugin:event|listen') return 1;
+            if (command === 'plugin:event|unlisten') return;
+            if (command === 'desktop_host_get_availability') return {
+                activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+            };
+            throw new Error(`Unexpected host availability command: ${command}`);
+        } });
         vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
         native.taskSpecs.length = 0;
         native.taskData = {};
@@ -97,6 +111,8 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         native.listeners.clear();
         native.overlayPayloads.length = 0;
         native.overlayState = null;
+        native.presentationRequests.length = 0;
+        selectDesktopActivityOverlayQaFixture(null);
         ensureSessionVisibleForMessageRouteMock.mockReset();
         legacyEnsureSessionVisibleForMessageRouteMock.mockReset();
         getSyncSingletonMock.mockReset();
@@ -107,10 +123,11 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         legacyEnsureSessionVisibleForMessageRouteMock.mockResolvedValue(true);
     });
 
-    afterEach(() => {
-        for (const windowObj of qaWindows.splice(0)) windowObj.__MCP__.clearDesktopActivityOverlayQaState();
+    afterEach(async () => {
+        for (const windowObj of qaWindows.splice(0)) await windowObj.__MCP__.clearDesktopActivityOverlayQaState();
         controlPersonalHomeBootstrapQaMutationPause({ action: 'release' });
         vi.unstubAllEnvs();
+        vi.unstubAllGlobals();
         vi.useRealTimers();
     });
 
@@ -391,151 +408,76 @@ describe('installTauriMcpWebviewDriverScripts', () => {
         expect(native.taskSpecs.map(spec => spec.kind)).toEqual(['daemon.service.status.v1', 'daemon.service.stop.v1']);
     });
 
-    it('installs a deterministic desktop-overlay QA seed helper for canonical proof states', async () => {
-        const windowObj = installDefaultQaBridge();
-        await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('permission_request')).resolves.toMatchObject({
-            ok: true, mode: 'permission_request', cardKind: 'permission_request', expanded: true,
-        });
-        const override = readDesktopActivityOverlayQaSyncOverride({ windowObj });
-        expect(override).not.toBeNull();
-        expect(native.overlayState).toBe(override);
-        const cards = override?.model.expanded.cards;
-        expect(cards).toBeDefined();
-        if (!cards) throw new Error('Expected the permission-request overlay to contain cards');
-        expect(cards[0]?.kind).toBe('permission_request');
-        expect(override?.expanded).toBe(true);
+    it('selects fixtures for the mounted producer and pins through the real notch Action without native sync writes', async () => {
+        const selectedModes: Array<string | null> = [];
+        const unsubscribe = registerDesktopActivityOverlayQaFixtureProducer(model => selectedModes.push(model?.expanded.cards?.[0]?.kind ?? null));
+        try {
+            const windowObj = installDefaultQaBridge();
+            await expect(windowObj.__MCP__.applyHappierLocalSettings({ desktopOverlayEnabled: true }))
+                .resolves.toMatchObject({ ok: true, overlaySyncOk: true });
+            expect(native.presentationRequests).toEqual(['rest']);
+            await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('permission_request')).resolves.toEqual({
+                ok: true, mode: 'permission_request', state: 'pinned',
+            });
+            expect(selectedModes).toEqual(['permission_request']);
+            expect(native.presentationRequests).toEqual(['rest', 'pinned']);
+            expect(native.overlayPayloads).toHaveLength(0);
+            await expect(windowObj.__MCP__.clearDesktopActivityOverlayQaState()).resolves.toEqual({ ok: true });
+            expect(selectedModes).toEqual(['permission_request', null]);
+            expect(native.presentationRequests).toEqual(['rest', 'pinned', 'rest']);
+        } finally { unsubscribe(); }
     });
 
-    it('pins desktop-overlay QA seed state without repeatedly churning the proof payload', async () => {
-        vi.useFakeTimers();
-        const timersBefore = vi.getTimerCount();
-        const windowObj = installDefaultQaBridge();
-        await expect(windowObj.__MCP__.seedDesktopActivityOverlayQaState('quota_summary')).resolves.toMatchObject({ ok: true });
-        const pinned = readDesktopActivityOverlayQaSyncOverride({ windowObj });
-        const cards = pinned?.model.expanded.cards;
-        expect(cards).toBeDefined();
-        if (!cards) throw new Error('Expected the quota-summary overlay to contain cards');
-        expect(cards[0]?.kind).toBe('quota_summary');
-        const syncsBefore = native.overlayPayloads.length;
-        await vi.advanceTimersByTimeAsync(350);
-        // There must be real pin delivery; a fake seed with no override used to pass this case.
-        expect(native.overlayPayloads.length).toBeGreaterThan(syncsBefore);
-        expect(native.overlayPayloads.every(payload => payload === pinned)).toBe(true);
-        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBe(pinned);
-        await vi.advanceTimersByTimeAsync(30_000);
-        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBeNull();
-        const syncsAtExpiry = native.overlayPayloads.length;
-        await vi.advanceTimersByTimeAsync(350);
-        expect(native.overlayPayloads).toHaveLength(syncsAtExpiry);
-        expect(vi.getTimerCount()).toBe(timersBefore);
-    });
-
-    it('stops the previous desktop-overlay QA seed pin before pinning a new proof state', async () => {
-        vi.useFakeTimers();
-        const timersBefore = vi.getTimerCount();
-        const windowObj = installDefaultQaBridge();
-        const mcp = windowObj.__MCP__;
-        await expect(mcp.seedDesktopActivityOverlayQaState('permission_request')).resolves.toMatchObject({ ok: true });
-        const oldPin = readDesktopActivityOverlayQaSyncOverride({ windowObj });
-        await expect(mcp.seedDesktopActivityOverlayQaState('user_question')).resolves.toMatchObject({ ok: true });
-        const currentPin = readDesktopActivityOverlayQaSyncOverride({ windowObj });
-        expect(currentPin).not.toBe(oldPin);
-        const cards = currentPin?.model.expanded.cards;
-        expect(cards).toBeDefined();
-        if (!cards) throw new Error('Expected the user-question overlay to contain cards');
-        expect(cards[0]?.kind).toBe('user_question');
-        const syncsBefore = native.overlayPayloads.length;
-        await vi.advanceTimersByTimeAsync(250);
-        const subsequentPayloads = native.overlayPayloads.slice(syncsBefore);
-        expect(subsequentPayloads.length).toBeGreaterThan(0);
-        expect(subsequentPayloads.every(payload => payload === currentPin)).toBe(true);
-        expect(vi.getTimerCount()).toBe(timersBefore + 1);
-        expect(mcp.clearDesktopActivityOverlayQaState()).toEqual({ ok: true });
-        expect(readDesktopActivityOverlayQaSyncOverride({ windowObj })).toBeNull();
-        const syncsAtClear = native.overlayPayloads.length;
-        await vi.advanceTimersByTimeAsync(250);
-        expect(native.overlayPayloads).toHaveLength(syncsAtClear);
-        expect(vi.getTimerCount()).toBe(timersBefore);
-    });
-
-    it('re-syncs a pinned desktop-overlay QA seed until native state reports the seeded card', async () => {
-        const moduleExports = await import('./installTauriMcpWebviewDriverScripts');
-        const waitForSeedState = (moduleExports as {
-            waitForDesktopOverlayQaSeedState?: unknown;
-        }).waitForDesktopOverlayQaSeedState;
-        expect(typeof waitForSeedState).toBe('function');
-        if (typeof waitForSeedState !== 'function') {
-            return;
+    it('respects an explicit MCP Ask policy before requesting native presentation', async () => {
+        const previous = storage.getState().settings.actionsSettingsV1;
+        const unsubscribe = registerDesktopActivityOverlayQaFixtureProducer(() => {});
+        storage.getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'desktop.notch.set': { approvalRequiredSurfaces: ['mcp'] } },
+        }) });
+        try {
+            const mcp = installDefaultQaBridge().__MCP__;
+            await expect(mcp.applyHappierLocalSettings({ desktopOverlayEnabled: true }))
+                .resolves.toMatchObject({ ok: true, overlaySyncOk: false });
+            expect(native.presentationRequests).toEqual([]);
+        } finally {
+            storage.getState().applySettingsLocal({ actionsSettingsV1: previous });
+            unsubscribe();
         }
+    });
 
-        const syncCalls: unknown[] = [];
-        const delays: number[] = [];
-        let readCount = 0;
-        const payload = {
-            visible: true,
-            expanded: true,
-            policy: { enabled: true },
-            window: {
-                collapsed: { width: 336, height: 68 },
-                expanded: { width: 408, height: 232 },
-            },
-            model: {
-                visible: true,
-                isExpanded: true,
-                generatedAt: 1,
-                collapsed: {
-                    title: 'No active sessions',
-                    primaryCardKind: 'idle_state',
-                },
-                expanded: {
-                    rows: [],
-                    cards: [{ id: 'idle', kind: 'idle_state', title: 'No active sessions' }],
-                },
-                window: {
-                    collapsed: { width: 336, height: 68 },
-                    expanded: { width: 408, height: 232 },
-                },
-            },
-        };
+    it('pins desktop-overlay QA seed state without resends, expiry or repeated fixture publications', async () => {
+        vi.useFakeTimers();
+        const timersBefore = vi.getTimerCount();
+        const publishedModes: Array<string | null> = [];
+        const unsubscribe = registerDesktopActivityOverlayQaFixtureProducer(model => publishedModes.push(model?.expanded.cards?.[0]?.kind ?? null));
+        try {
+            const mcp = installDefaultQaBridge().__MCP__;
+            await expect(mcp.seedDesktopActivityOverlayQaState('quota_summary')).resolves.toMatchObject({ ok: true });
+            await expect(mcp.seedDesktopActivityOverlayQaState('quota_summary')).resolves.toMatchObject({ ok: true });
+            await vi.advanceTimersByTimeAsync(30_350);
+            expect(publishedModes).toEqual(['quota_summary']);
+            expect(native.overlayPayloads).toHaveLength(0);
+            expect(native.presentationRequests).toEqual(['pinned', 'pinned']);
+            expect(vi.getTimerCount()).toBe(timersBefore);
+            await mcp.seedDesktopActivityOverlayQaState('user_question');
+            expect(publishedModes).toEqual(['quota_summary', 'user_question']);
+            await mcp.clearDesktopActivityOverlayQaState();
+            expect(publishedModes).toEqual(['quota_summary', 'user_question', null]);
+            expect(native.overlayPayloads).toHaveLength(0);
+            expect(vi.getTimerCount()).toBe(timersBefore);
+        } finally { unsubscribe(); }
+    });
 
-        const result = await waitForSeedState({
-            mode: 'idle',
-            payload,
-            attempts: 3,
-            delayMs: 25,
-            syncDesktopOverlayPayload: async (nextPayload: unknown) => {
-                syncCalls.push(nextPayload);
-            },
-            readDesktopOverlayWindowState: async () => {
-                readCount += 1;
-                return readCount === 1
-                    ? {
-                        expanded: true,
-                        model: {
-                            collapsed: { primaryCardKind: 'multi_session_list' },
-                            expanded: { cards: [{ kind: 'multi_session_list' }] },
-                        },
-                    }
-                    : {
-                        expanded: true,
-                        model: {
-                            collapsed: { primaryCardKind: 'idle_state' },
-                            expanded: { cards: [{ kind: 'idle_state' }] },
-                        },
-                    };
-            },
-            wait: async (ms: number) => {
-                delays.push(ms);
-            },
+    it('reports unavailable without a mounted fixture producer and rejects unsupported seeds', async () => {
+        const mcp = installDefaultQaBridge().__MCP__;
+        await expect(mcp.applyHappierLocalSettings({ desktopOverlayEnabled: true })).resolves.toMatchObject({
+            ok: true, overlaySyncOk: false, overlaySyncError: 'producer-unavailable',
         });
-
-        expect(result).toMatchObject({
-            ok: true,
-            expectedCardKind: 'idle_state',
-            observedCardKind: 'idle_state',
-        });
-        expect(syncCalls).toHaveLength(2);
-        expect(delays).toEqual([25]);
+        await expect(mcp.seedDesktopActivityOverlayQaState('idle')).resolves.toEqual({ ok: false, reason: 'producer-unavailable', mode: 'idle' });
+        await expect(mcp.seedDesktopActivityOverlayQaState('unknown')).resolves.toEqual({ ok: false, reason: 'unsupported-mode', mode: 'unknown' });
+        expect(hasDesktopActivityOverlayQaFixtureProducer()).toBe(false);
+        expect(native.overlayPayloads).toHaveLength(0);
+        expect(native.presentationRequests).toHaveLength(0);
     });
 
     it('maybeInstallTauriMcpBridge installs scripts only on desktop', () => {

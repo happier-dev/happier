@@ -35,6 +35,7 @@ installSettingsViewCommonModuleMocks({
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => true,
+    desktopHostKind: () => null,
 }));
 
 vi.mock('./useDesktopLoginStart', () => ({

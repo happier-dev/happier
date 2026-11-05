@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol';
+import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 describe('Protocol pet Account settings', () => {
     it('defaults account pets to disabled Blink with overlay default enabled', () => {
@@ -9,7 +9,16 @@ describe('Protocol pet Account settings', () => {
             petId: 'blink',
         });
         expect(ACCOUNT_SETTING_DEFINITIONS.petsDesktopOverlayDefaultEnabled.default).toBe(true);
-        expect(ACCOUNT_SETTING_DEFINITIONS.petsDesktopOverlayDefaultVisibilityMode.default).toBe('alwaysWhenEnabled');
+        expect(ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('petsDesktopOverlayDefaultVisibilityMode');
+    });
+
+    it('strips retired pet activity mode without changing Account enable or selection preferences', () => {
+        const parsed = accountSettingsParse({ petsDesktopOverlayDefaultVisibilityMode: 'attentionOnly', petsEnabled: true,
+            petsDesktopOverlayDefaultEnabled: false, petsSelectedPetRef: { kind: 'accountPet', accountPetId: 'chosen-pet' },
+            futurePreference: { retained: true } });
+        expect(parsed).not.toHaveProperty('petsDesktopOverlayDefaultVisibilityMode');
+        expect(parsed).toMatchObject({ petsEnabled: true, petsDesktopOverlayDefaultEnabled: false,
+            petsSelectedPetRef: { kind: 'accountPet', accountPetId: 'chosen-pet' }, futurePreference: { retained: true } });
     });
 
     it('allows only built-in and account-pet references in account settings', () => {

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
     resolveDesktopOverlayPolicy,
-    resolveDesktopOverlaySettingsVisibilityState,
 } from './resolveDesktopOverlayPolicy';
 
 describe('resolveDesktopOverlayPolicy', () => {
@@ -11,21 +10,26 @@ describe('resolveDesktopOverlayPolicy', () => {
 
         expect(policy.enabled).toBe(false);
         expect(policy.visibilityMode).toBe('attention_only');
-        expect(policy.showWhenRunning).toBe(true);
-        expect(policy.showWhenAttentionRequired).toBe(true);
-        expect(policy.showWhenReady).toBe(true);
         expect(policy.alwaysOnTop).toBe(true);
-        expect(policy.autoHideEnabled).toBe(true);
-        expect(policy.autoHideDelayMs).toBe(6000);
         expect(policy).toMatchObject({
             hoverExpandDelayMs: 500,
         });
-        expect(policy.expandedBehavior).toBe('click');
-        expect(policy.interactiveCollapsed).toBe(true);
-        expect(policy.presentationMode).toBe('automatic');
         expect(policy.displayMode).toBe('automatic');
-        expect(policy.placementMode).toBe('anchored');
-        expect(policy.anchor).toBe('top_center');
+    });
+
+    it('docks the notch on top and rests it as a tip unless the person chose otherwise', () => {
+        expect(resolveDesktopOverlayPolicy({})).toMatchObject({ dock: 'top', idle: 'tip' });
+        expect(resolveDesktopOverlayPolicy({ desktopOverlayDock: 'floating', desktopOverlayIdle: 'hidden' }))
+            .toMatchObject({ dock: 'floating', idle: 'hidden' });
+        expect(resolveDesktopOverlayPolicy({ desktopOverlayDock: 'bottom', desktopOverlayIdle: 'peek' }))
+            .toMatchObject({ dock: 'top', idle: 'tip' });
+    });
+
+    it('keeps a named display choice and drops the retired focused mode', () => {
+        expect(resolveDesktopOverlayPolicy({ desktopOverlayDisplayMode: 'named:edid-610-41056-12345678' }).displayMode)
+            .toBe('named:edid-610-41056-12345678');
+        expect(resolveDesktopOverlayPolicy({ desktopOverlayDisplayMode: 'focused' }).displayMode).toBe('automatic');
+        expect(resolveDesktopOverlayPolicy({ desktopOverlayDisplayMode: 'named:' }).displayMode).toBe('automatic');
     });
 
     it('reads explicit desktop overlay settings from local settings', () => {
@@ -57,41 +61,11 @@ describe('resolveDesktopOverlayPolicy', () => {
 
         expect(policy.enabled).toBe(true);
         expect(policy.visibilityMode).toBe('active_sessions');
-        expect(policy.showWhenRunning).toBe(false);
-        expect(policy.showWhenAttentionRequired).toBe(true);
-        expect(policy.showWhenReady).toBe(false);
         expect(policy.alwaysOnTop).toBe(false);
-        expect(policy.autoHideEnabled).toBe(false);
-        expect(policy.autoHideDelayMs).toBe(10000);
-        expect(policy.expandedBehavior).toBe('click');
-        expect(policy.interactiveCollapsed).toBe(true);
-        expect(policy.presentationMode).toBe('floating_overlay');
         expect(policy.displayMode).toBe('built_in');
-        expect(policy.placementMode).toBe('custom');
-        expect(policy.anchor).toBe('bottom_right');
-        expect(policy.offsetX).toBe(24);
-        expect(policy.offsetY).toBe(-16);
-        expect(policy.enableDragReposition).toBe(true);
-        expect(policy.lockPosition).toBe(false);
-        expect(policy.density).toBe('compact');
-        expect(policy.compactStyle).toBe('pill');
-        expect(policy.showSessionCount).toBe(true);
-        expect(policy.collapsedCarouselEnabled).toBe(true);
-        expect(policy.showPreviewText).toBe(true);
-        expect(policy.clickAction).toBe('expand_overlay');
     });
 
-    it('reads collapsed carousel behavior from canonical desktop overlay device overrides', () => {
-        const policy = resolveDesktopOverlayPolicy({
-            attentionDeviceOverridesV1: {
-                desktopOverlay: {
-                    collapsedCarouselEnabled: false,
-                },
-            },
-        });
 
-        expect(policy.collapsedCarouselEnabled).toBe(false);
-    });
 
     it('maps canonical hover delay overrides to explicit product timings', () => {
         expect(resolveDesktopOverlayPolicy({
@@ -117,145 +91,39 @@ describe('resolveDesktopOverlayPolicy', () => {
         })).toMatchObject({ hoverExpandDelayMs: 1000 });
     });
 
-    it('reads and clamps quick reply phrases from canonical desktop overlay device overrides', () => {
+    it('normalizes all quick reply phrases once through the canonical schema from canonical desktop overlay device overrides', () => {
         const policy = resolveDesktopOverlayPolicy({
             attentionDeviceOverridesV1: {
                 desktopOverlay: {
-                    quickReplyPhrases: [' Ship ', 'Explain', '', 'Retry', 'More', 'Stop', 'Ignored'],
+                    quickReplyPhrases: [' Ship ', 'Explain', '', 'Retry', 'More', 'Stop', 'Seventh', 'Eighth'],
                 },
             },
         });
 
-        expect(policy.quickReplyPhrases).toEqual(['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Ignored']);
+        expect(policy.quickReplyPhrases).toEqual(['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Seventh', 'Eighth']);
     });
 
-    it('falls back to click when the expanded behavior is invalid', () => {
-        const policy = resolveDesktopOverlayPolicy({
-            desktopOverlayExpandedBehavior: 'invalid',
-        });
 
-        expect(policy.expandedBehavior).toBe('click');
+
+    it('drops retired placement and presentation inputs from the active policy', () => {
+        const policy = resolveDesktopOverlayPolicy({ desktopOverlayPresentationMode: 'floating_overlay',
+            desktopOverlayPlacementMode: 'custom', desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayOffsetX: 240, desktopOverlayOffsetY: -160,
+            desktopOverlayEnableDragReposition: false, desktopOverlayLockPosition: true });
+        for (const key of ['presentationMode', 'placementMode', 'anchor', 'offsetX', 'offsetY', 'enableDragReposition', 'lockPosition']) {
+            expect(policy).not.toHaveProperty(key);
+        }
+        expect(policy.dock).toBe('top');
     });
 
-    it('falls back to automatic when the presentation mode is invalid', () => {
-        const policy = resolveDesktopOverlayPolicy({
-            desktopOverlayPresentationMode: 'invalid',
-        });
 
-        expect(policy.presentationMode).toBe('automatic');
-    });
+});
 
-    it('ignores stale placement offsets while anchored placement is active', () => {
-        const policy = resolveDesktopOverlayPolicy({
-            desktopOverlayPlacementMode: 'anchored',
-            desktopOverlayAnchor: 'top_center',
-            desktopOverlayOffsetX: 240,
-            desktopOverlayOffsetY: -160,
-            desktopOverlayEnableDragReposition: true,
-            desktopOverlayLockPosition: false,
-        });
 
-        expect(policy.placementMode).toBe('anchored');
-        expect(policy.offsetX).toBe(0);
-        expect(policy.offsetY).toBe(0);
-    });
-
-    it('hides non-applicable settings rows from the centralized settings visibility resolver', () => {
-        const hiddenWhenDisabled = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: false,
-            }),
-        );
-        expect(hiddenWhenDisabled.showOverlayConfiguration).toBe(false);
-        expect(hiddenWhenDisabled.showAttentionFilterControls).toBe(false);
-        expect(hiddenWhenDisabled.showAutoHideDelay).toBe(false);
-        expect(hiddenWhenDisabled.showCustomPlacementControls).toBe(false);
-        expect(hiddenWhenDisabled.showFloatingPlacementControls).toBe(false);
-
-        const shownInAttentionOnlyMode = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayVisibilityMode: 'attention_only',
-            }),
-        );
-        expect(shownInAttentionOnlyMode.showAttentionFilterControls).toBe(true);
-
-        const hiddenInActiveSessionsMode = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayVisibilityMode: 'active_sessions',
-            }),
-        );
-        expect(hiddenInActiveSessionsMode.showAttentionFilterControls).toBe(false);
-
-        const hiddenInAlwaysVisibleMode = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayVisibilityMode: 'always_when_enabled',
-            }),
-        );
-        expect(hiddenInAlwaysVisibleMode.showAttentionFilterControls).toBe(false);
-
-        const hiddenWhenNotchIntegrated = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'notch_integrated',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-        );
-        expect(hiddenWhenNotchIntegrated.showFloatingPlacementControls).toBe(false);
-        expect(hiddenWhenNotchIntegrated.showHostModeFallbackNotice).toBe(false);
-
-        const shownWhenFloatingOverlay = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'floating_overlay',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-        );
-        expect(shownWhenFloatingOverlay.showFloatingPlacementControls).toBe(true);
-        expect(shownWhenFloatingOverlay.showHostModeFallbackNotice).toBe(false);
-
-        const hiddenWhenResolvedHostModeIsNotchIntegrated = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'floating_overlay',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-            'notch_integrated',
-        );
-        expect(hiddenWhenResolvedHostModeIsNotchIntegrated.showFloatingPlacementControls).toBe(false);
-
-        const shownWhenResolvedHostModeIsFloating = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'notch_integrated',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-            'floating',
-        );
-        expect(shownWhenResolvedHostModeIsFloating.showFloatingPlacementControls).toBe(true);
-        expect(shownWhenResolvedHostModeIsFloating.showHostModeFallbackNotice).toBe(true);
-
-        const shownWhenAutomaticFallsBackToFloating = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'automatic',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-            'floating',
-        );
-        expect(shownWhenAutomaticFallsBackToFloating.showFloatingPlacementControls).toBe(true);
-        expect(shownWhenAutomaticFallsBackToFloating.showHostModeFallbackNotice).toBe(true);
-
-        const hiddenWhenHostModeIsStillUnknown = resolveDesktopOverlaySettingsVisibilityState(
-            resolveDesktopOverlayPolicy({
-                desktopOverlayEnabled: true,
-                desktopOverlayPresentationMode: 'automatic',
-                desktopOverlayPlacementMode: 'custom',
-            }),
-        );
-        expect(hiddenWhenHostModeIsStillUnknown.showFloatingPlacementControls).toBe(false);
-        expect(hiddenWhenHostModeIsStillUnknown.showHostModeFallbackNotice).toBe(false);
-    });
+it('retires hidden and competing controls rather than publishing them as live policy', () => {
+    const policy = resolveDesktopOverlayPolicy({ desktopOverlayAutoHideEnabled: true, desktopOverlayShowPreviewText: true,
+        desktopOverlayShowWhenRunning: false, attentionDeviceOverridesV1: { desktopOverlay: { collapsedCarouselEnabled: true } } });
+    for (const key of ['showWhenRunning', 'showWhenAttentionRequired', 'showWhenReady', 'autoHideEnabled', 'autoHideDelayMs',
+        'expandedBehavior', 'interactiveCollapsed', 'clickAction', 'density', 'compactStyle', 'showSessionCount',
+        'showPreviewText', 'collapsedCarouselEnabled']) expect(policy).not.toHaveProperty(key);
 });

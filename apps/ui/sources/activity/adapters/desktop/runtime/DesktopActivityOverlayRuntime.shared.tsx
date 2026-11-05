@@ -1,4 +1,10 @@
+import { buildSharedActivityProjection } from '@/activity/delivery/sharedActivityProjection';
+import { createDesktopActivityOverlayActionHandler } from './desktopActivityOverlayActions';
+import { DesktopActivityOverlayMcpPermission } from './DesktopActivityOverlayMcpPermission';
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { useConnectedServiceQuotaSummaries, type ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
+import { areSessionAddressesEqual, sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { router } from 'expo-router';
 import { admitInternalRouteHref } from '@/utils/path/routeUtils';
 
@@ -16,6 +22,7 @@ import {
 } from '@/activity/delivery/resolveActivitySurfaceDeliveryAdmission';
 import { resolveStricterActivitySurfacePrivacyMode } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { buildDesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import {
     buildDesktopActivityOverlaySnapshot,
@@ -23,30 +30,36 @@ import {
 } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlaySnapshot';
 import {
     buildActivityOverviewFromCandidates,
-    buildStableActivityOverviewFingerprint,
 } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { isUnsafeNotificationServerUrl } from '@/activity/notifications/notificationRouting';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
-import type { ActionId } from '@happier-dev/protocol';
-import { useLocalSettings } from '@/sync/domains/state/storage';
-import { isDesktopHost } from '@/utils/platform/desktopHost';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { storage, useLocalSetting } from '@/sync/domains/state/storage';
+import { isDesktopHost, useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isCaptureWindowLabel, listenDesktopWindowAction } from '@/utils/platform/desktopWindowActionBridge';
-import { dispatchDesktopCaptureWindowAction } from '@/utils/platform/desktopWindowActionDispatch';
+import { registerMountedDesktopOverlayPresentation } from '@/components/appShell/workspace/desktopOverlayPresentationRuntime';
 
 import {
     emitDesktopActivityOverlayInteractionResult,
-    listenDesktopActivityOverlayInteraction,
-    setDesktopActivityOverlayExpanded,
     showDesktopMainWindow,
     syncDesktopActivityOverlay,
+    type DesktopActivityOverlaySyncPayload,
 } from './desktopActivityOverlayBridge';
-import { readDesktopActivityOverlayQaSyncOverride } from './desktopActivityOverlayQaSyncOverride';
+import { isCaptureWindowLabel, listenDesktopWindowAction } from '@/utils/platform/desktopWindowActionBridge';
+import { dispatchDesktopCaptureWindowAction } from '@/utils/platform/desktopWindowActionDispatch';
+import { reconcileDesktopActivityOverlayState } from './useDesktopActivityOverlayState';
 import { isDesktopActivityOverlayWindowContext } from './isDesktopActivityOverlayWindowContext';
 import { resolveDesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 import { buildDesktopActivityOverlayOverviewFromSource } from '../presentation/snapshot/buildDesktopActivityOverlayOverviewFromSource';
 import { useDesktopActivityOverlaySource } from './useDesktopActivityOverlaySource';
+import { useBotsHomeServerIds, useOrderedBots } from '@/components/sessions/bots/botsSummary';
+import { useMachineDisplaysByServerId, useSessionOrganizationProjections } from '@/sync/store/hooks';
+import { buildNotchBotFaces } from '../presentation/buildNotchBotFaces';
+import type { NotchBotFaces, PinnedDesktopOverlayConversation } from '../presentation/notchBotTypes';
+import { usePinnedDesktopOverlayConversation } from './usePinnedDesktopOverlayConversation';
+import { registerDesktopActivityOverlayQaFixtureProducer } from './desktopActivityOverlayQaFixtureSelection';
+import type { DesktopActivityOverlayQaModel } from './desktopActivityOverlayQaFixtures.mjs';
 
 type InteractionPayload = Readonly<{
     requestId?: string;
@@ -55,6 +68,7 @@ type InteractionPayload = Readonly<{
 }>;
 
 const DESKTOP_OVERLAY_DIRECT_ACTION_IDS = new Set([
+    'session.open',
     'session.message.send',
     'session.permission.respond',
     'session.user_action.answer',
@@ -66,22 +80,6 @@ function readExpandedFromInteraction(payload: InteractionPayload): boolean | nul
         return null;
     }
     return typeof data.expanded === 'boolean' ? data.expanded : null;
-}
-
-function readLockedFromInteraction(payload: InteractionPayload): boolean | null {
-    const data = payload.data;
-    if (!data || typeof data !== 'object') {
-        return null;
-    }
-    return typeof data.locked === 'boolean' ? data.locked : null;
-}
-
-function readEngagedFromInteraction(payload: InteractionPayload): boolean | null {
-    const data = payload.data;
-    if (!data || typeof data !== 'object') {
-        return null;
-    }
-    return typeof data.engaged === 'boolean' ? data.engaged : null;
 }
 
 function readSessionIdFromInteraction(payload: InteractionPayload): string | null {
@@ -107,6 +105,7 @@ function emitDirectActionInteractionResult(
     requestId: string | null,
     result: Readonly<{
         ok: boolean;
+        result?: unknown;
         errorCode?: unknown;
         error?: unknown;
     }>,
@@ -118,7 +117,8 @@ function emitDirectActionInteractionResult(
     fireAndForget(emitDesktopActivityOverlayInteractionResult({
         requestId,
         ok,
-        ...(ok ? {} : {
+        // The Action's typed output (e.g. `session.open`'s window outcome), so the island acts on what happened.
+        ...(ok ? (result.result === undefined ? {} : { result: result.result }) : {
             errorCode: readResultString(result.errorCode) ?? 'action_failed',
             error: readResultString(result.error) ?? 'action_failed',
         }),
@@ -184,6 +184,10 @@ function collectKnownServerIdsForSession(
     sessionId: string,
 ): ReadonlySet<string> {
     const serverIds = new Set<string>();
+    for (const face of snapshot.bots.faces) {
+        addKnownServerIdForSession(serverIds, sessionId, face.sessionId, face.serverId);
+    }
+    if (snapshot.conversation) addKnownServerIdForSession(serverIds, sessionId, snapshot.conversation.sessionId, snapshot.conversation.serverId);
     for (const session of snapshot.sessions) {
         addKnownServerIdForSession(serverIds, sessionId, session.sessionId, session.serverId);
     }
@@ -208,6 +212,8 @@ function collectKnownInteractionIdentities(
     snapshot: DesktopActivityOverlaySnapshot,
 ): readonly ActivityInteractionIdentity[] {
     const identities: ActivityInteractionIdentity[] = [];
+    for (const face of snapshot.bots.faces) addKnownInteractionIdentity(identities, face.sessionId, face.serverId);
+    if (snapshot.conversation) addKnownInteractionIdentity(identities, snapshot.conversation.sessionId, snapshot.conversation.serverId);
     for (const session of snapshot.sessions) {
         addKnownInteractionIdentity(identities, session.sessionId, session.serverId);
     }
@@ -279,38 +285,6 @@ function buildVerifiedDesktopDirectActionCommand(params: Readonly<{
     };
 }
 
-function hasBlockingAutoCollapseCard(model: ReturnType<typeof buildDesktopActivityOverlayModel>): boolean {
-    return (model.expanded.cards ?? []).some((card) => (
-        card.kind === 'permission_request' || card.kind === 'user_question'
-    ));
-}
-
-function buildDesktopOverlaySyncFingerprint(params: Readonly<{
-    sourceFingerprint: string;
-    visible: boolean;
-    expanded: boolean;
-    snapshot: DesktopActivityOverlaySnapshot;
-    policy: ReturnType<typeof resolveDesktopOverlayPolicy>;
-    window: ReturnType<typeof buildDesktopActivityOverlayModel>['window'];
-    qaSyncOverride: unknown;
-}>): string {
-    if (params.qaSyncOverride) {
-        return JSON.stringify({
-            qaSyncOverride: params.qaSyncOverride,
-        });
-    }
-
-    const { generatedAt: _generatedAt, ...stableSnapshot } = params.snapshot;
-    return JSON.stringify({
-        source: params.sourceFingerprint,
-        visible: params.visible,
-        expanded: params.expanded,
-        snapshot: stableSnapshot,
-        policy: params.policy,
-        window: params.window,
-    });
-}
-
 function isRouteCommand(command: ActivityInteractionCommand): command is Extract<
     ActivityInteractionCommand,
     { kind: 'openSession' | 'openInbox' | 'focusComposer' | 'openSettings' }
@@ -321,14 +295,67 @@ function isRouteCommand(command: ActivityInteractionCommand): command is Extract
         || command.kind === 'openSettings';
 }
 
-export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null {
-    const source = useDesktopActivityOverlaySource();
+// This producer reads only the preferences used by its desktop policy and delivery admission.
+// Other device preferences must not rebuild activity or publish native content.
+const DESKTOP_OVERLAY_SETTING_KEYS = [
+    'activitySurfacesEnabled', 'activitySurfaceTapTarget', 'activitySurfacePrivacyMode',
+    'attentionDeviceOverridesV1', 'desktopOverlayEnabled', 'desktopOverlayVisibilityMode',
+    'desktopOverlayAlwaysOnTop', 'desktopOverlayDisplayMode',
+    'desktopOverlayDock', 'desktopOverlayIdle', 'desktopBotConversationPresentation',
+] as const;
+
+type ProducerContext = Readonly<{
+    snapshot: DesktopActivityOverlaySnapshot;
+    source: ReturnType<typeof useDesktopActivityOverlaySource>;
+    admittedCandidates: readonly SessionActivityAttention[];
+}>;
+
+type ProducerProps = Readonly<{
+    detailAddresses: readonly SessionAddress[] | null;
+    contextRef: React.MutableRefObject<ProducerContext | null>;
+    publishedRef: React.MutableRefObject<DesktopActivityOverlaySyncPayload | null>;
+    pinnedTarget: SessionAddress | null;
+    setPinnedTarget: React.Dispatch<React.SetStateAction<SessionAddress | null>>;
+}>;
+
+function DesktopActivityOverlayPinnedConversation({ target, hidden, reachable, onChange }: Readonly<{
+    target: Pick<PinnedDesktopOverlayConversation, 'serverId' | 'accountId' | 'sessionId'>;
+    hidden: boolean;
+    reachable: boolean;
+    onChange: (conversation: PinnedDesktopOverlayConversation) => void;
+}>): null {
+    const conversation = usePinnedDesktopOverlayConversation({ target, hidden, reachable });
+    React.useEffect(() => { onChange(conversation); }, [conversation, onChange]);
+    return null;
+}
+
+function DesktopActivityOverlayQuotaDemand({ onChange }: Readonly<{
+    onChange: (summaries: readonly ConnectedServiceQuotaSummary[]) => void;
+}>): null {
+    const { summaries } = useConnectedServiceQuotaSummaries();
+    React.useEffect(() => { onChange(summaries); }, [onChange, summaries]);
+    return null;
+}
+
+function DesktopActivityOverlayProducer({ detailAddresses, contextRef, publishedRef, pinnedTarget, setPinnedTarget }: ProducerProps): React.ReactElement | null {
+    const [qaModel, setQaModel] = React.useState<DesktopActivityOverlayQaModel | null>(null);
+    React.useEffect(() => {
+        if (__DEV__) return registerDesktopActivityOverlayQaFixtureProducer(setQaModel);
+    }, []);
+    const [pinnedConversation, setPinnedConversation] = React.useState<PinnedDesktopOverlayConversation | null>(null);
+    const orderedBots = useOrderedBots();
+    const botHomeIds = useBotsHomeServerIds();
+    const organizations = useSessionOrganizationProjections(botHomeIds);
+    const machineDisplaysByServerId = useMachineDisplaysByServerId(botHomeIds);
+    const previousFaces = React.useRef<NotchBotFaces | undefined>(undefined);
+    const detailDemanded = detailAddresses !== null;
+    const [quotaSummaries, setQuotaSummaries] = React.useState<readonly ConnectedServiceQuotaSummary[]>([]);
+    const source = useDesktopActivityOverlaySource({ detailDemanded, detailAddresses: detailAddresses ?? undefined, quotaSummaries });
+    const isSessionVisible = useSessionRecordingVisibility();
     const resolveAccountSettings = useExactHomeAccountSettings(source.audienceScopes);
-    const localSettings = useLocalSettings();
-    const [isExpanded, setIsExpanded] = React.useState(false);
-    const [inputLocked, setInputLocked] = React.useState(false);
-    const [surfaceEngaged, setSurfaceEngaged] = React.useState(false);
-    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
+    const localSettings = storage(useShallow(state => Object.fromEntries(
+        DESKTOP_OVERLAY_SETTING_KEYS.map(key => [key, (state.localSettings as Readonly<Record<string, unknown>>)[key]]),
+    )), { localSettings: DESKTOP_OVERLAY_SETTING_KEYS });
     const previousPrimaryRef = React.useRef<{
         serverId: string | null;
         sessionId: string | null;
@@ -338,10 +365,6 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
         sessionId: null,
         changedAtMs: null,
     });
-    const lastSyncFingerprintRef = React.useRef<string | null>(null);
-
-    const isDesktop = isDesktopHost();
-    const isOverlayWindow = isDesktopActivityOverlayWindowContext();
     const desktopPolicy = React.useMemo(
         () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),
         [localSettings],
@@ -369,9 +392,14 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
         localSettings: (localSettings ?? {}) as Record<string, unknown>,
         now: new Date(),
     }), [localSettings, resolveAccountSettings, source.accountDeliveryMutesByServerId, source.audienceScopes, unfilteredOverview]);
+    // Explicit conversation detail keeps its admission; ambient identities never reach the native projection.
+    const ambientAdmission = React.useMemo(() => ({
+        ...deliveryAdmission,
+        candidates: deliveryAdmission.candidates.filter(candidate => isSessionVisible(candidate.address ?? candidate)),
+    }), [deliveryAdmission, isSessionVisible]);
     const sourceOverview = React.useMemo(
-        () => buildActivityOverviewFromCandidates(deliveryAdmission.candidates),
-        [deliveryAdmission],
+        () => buildActivityOverviewFromCandidates(ambientAdmission.candidates),
+        [ambientAdmission],
     );
     // The device-global overlay privacy preference and the exact Home's plan are two
     // gates; the overlay shows only what both allow.
@@ -384,10 +412,31 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
         },
         [activityPolicy.privacyMode, deliveryAdmission],
     );
-    const sourceOverviewFingerprint = React.useMemo(
-        () => buildStableActivityOverviewFingerprint(sourceOverview),
-        [sourceOverview],
-    );
+    const pinnedCandidate = pinnedTarget ? deliveryAdmission.candidates.find(candidate =>
+        areSessionAddressesEqual(candidate.address, pinnedTarget)) : null;
+    // Admission already used this exact Home/Account scope; carry it to M6 unchanged.
+    const pinnedScope = pinnedCandidate?.address ? source.audienceScopes?.get(pinnedCandidate.address.serverId) : undefined;
+    const pinnedHidden = pinnedCandidate ? resolveCandidatePrivacyMode(pinnedCandidate) === 'status_only' : false;
+    // A child effect may still hold the previous slice during a retarget/privacy change.
+    // Consume the already-decided privacy mode before any content crosses the bridge.
+    const conversation = React.useMemo(() => pinnedCandidate && pinnedScope && pinnedConversation?.accountId === pinnedScope.accountId
+        && areSessionAddressesEqual(pinnedConversation, pinnedCandidate.address)
+        ? pinnedHidden && pinnedConversation ? { ...pinnedConversation, reply: { state: 'hidden' as const, text: null } }
+            : pinnedConversation
+        : null, [pinnedCandidate, pinnedScope, pinnedConversation, pinnedHidden]);
+    React.useEffect(() => {
+        if (pinnedTarget && !pinnedCandidate) setPinnedTarget(null);
+    }, [pinnedCandidate, pinnedTarget, setPinnedTarget]);
+    const bots = React.useMemo(() => buildNotchBotFaces({
+        orderedBots, admission: ambientAdmission,
+        railPinnedByServerId: Object.fromEntries(botHomeIds.map(serverId =>
+            [serverId, organizations[serverId]?.railPinnedSessionIds ?? []])),
+        mode: desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode,
+    }, previousFaces.current), [orderedBots, ambientAdmission, botHomeIds, organizations, desktopPolicy.visibilityMode, activityPolicy, resolveCandidatePrivacyMode]);
+    previousFaces.current = bots;
+    const sharedActivity = React.useMemo(() => buildSharedActivityProjection({
+        admission: ambientAdmission, policy: activityPolicy, selectedFaces: bots.faces,
+    }), [ambientAdmission, activityPolicy, bots]);
     const snapshot = React.useMemo(
         () => buildDesktopActivityOverlaySnapshot({
             source,
@@ -395,6 +444,9 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             activityPolicy,
             desktopPolicy,
             resolveCandidatePrivacyMode,
+            bots,
+            conversation,
+            machineDisplaysByServerId,
             previousPrimaryAddress: previousPrimaryRef.current.serverId && previousPrimaryRef.current.sessionId
                 ? {
                     serverId: previousPrimaryRef.current.serverId,
@@ -403,7 +455,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 : null,
             previousPrimaryChangedAtMs: previousPrimaryRef.current.changedAtMs,
         }),
-        [activityPolicy, desktopPolicy, resolveCandidatePrivacyMode, source, sourceOverview],
+        [activityPolicy, desktopPolicy, resolveCandidatePrivacyMode, source, sourceOverview, bots, conversation, machineDisplaysByServerId],
     );
     const snapshotPrimarySessionId = snapshot.primary?.sessionId ?? null;
     const snapshotPrimaryServerId = snapshot.primary?.serverId ?? null;
@@ -417,97 +469,91 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             changedAtMs: snapshotPrimarySessionId ? snapshot.generatedAt : null,
         };
     }
-    const snapshotRef = React.useRef(snapshot);
-    snapshotRef.current = snapshot;
-    const sourceRef = React.useRef(source);
-    sourceRef.current = source;
+    contextRef.current = { snapshot, source, admittedCandidates: deliveryAdmission.candidates };
     const model = React.useMemo(
-        () => buildDesktopActivityOverlayModel({
+        () => qaModel ? { ...qaModel, generatedAt: snapshot.generatedAt } : buildDesktopActivityOverlayModel({
             snapshot,
+            sharedActivity,
             policy: desktopPolicy,
-            isExpanded,
         }),
-        [desktopPolicy, isExpanded, snapshot],
+        [desktopPolicy, snapshot, sharedActivity, qaModel],
     );
 
     React.useEffect(() => {
-        if (!isDesktop || isOverlayWindow) {
-            return;
-        }
-
-        const qaSyncOverride = readDesktopActivityOverlayQaSyncOverride();
-        const payload = qaSyncOverride ?? {
+        const previous = publishedRef.current;
+        const payload = reconcileDesktopActivityOverlayState(previous, {
             visible: model.visible,
-            expanded: isExpanded,
             model,
             policy: desktopPolicy,
-            window: model.window,
-        };
-        const nextSyncFingerprint = buildDesktopOverlaySyncFingerprint({
-            sourceFingerprint: sourceOverviewFingerprint,
-            visible: model.visible,
-            expanded: isExpanded,
-            snapshot,
-            policy: desktopPolicy,
-            window: model.window,
-            qaSyncOverride,
         });
-        if (lastSyncFingerprintRef.current === nextSyncFingerprint) {
-            return;
-        }
-        lastSyncFingerprintRef.current = nextSyncFingerprint;
-
+        if (previous === payload) return;
+        publishedRef.current = payload;
         fireAndForget(syncDesktopActivityOverlay(payload), {
             tag: 'DesktopActivityOverlayRuntime.syncDesktopActivityOverlay',
         });
-    }, [
-        desktopPolicy,
-        isDesktop,
-        isExpanded,
-        isOverlayWindow,
-        model,
-        snapshot,
-        sourceOverviewFingerprint,
-    ]);
+    }, [desktopPolicy, model, publishedRef]);
+    React.useEffect(() => () => {
+        const previous = publishedRef.current;
+        publishedRef.current = null;
+        if (!previous) return;
+        // The producer owns its final publication before subscriptions are released.
+        fireAndForget(syncDesktopActivityOverlay({
+            visible: false,
+            model: { ...previous.model, visible: false },
+            policy: { ...previous.policy, enabled: false },
+        }), { tag: 'DesktopActivityOverlayRuntime.suspend' });
+    }, [publishedRef]);
+    return <>
+        {snapshot.permissionRequests.flatMap(request => {
+            const choice = request.permissionChoices?.find(choice => choice.catalog);
+            const scope = request.serverId ? source.audienceScopes?.get(request.serverId) : undefined;
+            return choice?.catalog && scope ? [<DesktopActivityOverlayMcpPermission key={request.activityInstanceId}
+                sessionId={request.sessionId} requestId={request.requestId} turnId={request.turnId} scope={scope}
+                choice={{ ...choice, catalog: choice.catalog }} />] : [];
+        })}
+        {pinnedCandidate?.address && pinnedScope ? <DesktopActivityOverlayPinnedConversation key={JSON.stringify([pinnedScope.accountId, sessionAddressKey(pinnedCandidate.address)])}
+            target={{ ...pinnedCandidate.address, accountId: pinnedScope.accountId }} hidden={pinnedHidden} reachable={pinnedCandidate.awareness.runtime !== 'offline'}
+            onChange={setPinnedConversation} /> : null}
+        {detailDemanded ? <DesktopActivityOverlayQuotaDemand onChange={setQuotaSummaries} /> : null}
+    </>;
+}
+
+export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null {
+    const availability = useDesktopHostRoleAvailability('activity');
+    const enabled = useLocalSetting('desktopOverlayEnabled');
+    const isDesktop = isDesktopHost();
+    const isOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const [detailAddresses, setDetailAddresses] = React.useState<readonly SessionAddress[] | null>(null);
+    const [pinnedTarget, setPinnedTarget] = React.useState<SessionAddress | null>(null);
+    const contextRef = React.useRef<ProducerContext | null>(null);
+    const publishedRef = React.useRef<DesktopActivityOverlaySyncPayload | null>(null);
+    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
+    const producing = availability?.kind === 'available' && enabled && !isOverlayWindow;
 
     React.useEffect(() => {
-        if (!isDesktop || isOverlayWindow) {
-            return;
-        }
-        if (!isExpanded || !model.visible) {
-            return;
-        }
-        if (inputLocked) {
-            return;
-        }
-        if (surfaceEngaged || hasBlockingAutoCollapseCard(model)) {
-            return;
-        }
-        if (!desktopPolicy.autoHideEnabled) {
-            return;
-        }
+        if (producing) return;
+        contextRef.current = null;
+        setDetailAddresses(null);
+        setPinnedTarget(null);
+    }, [producing]);
 
-        const timeoutId = setTimeout(() => {
-            setIsExpanded(false);
-            fireAndForget(setDesktopActivityOverlayExpanded(false), {
-                tag: 'DesktopActivityOverlayRuntime.autoHideCollapse',
-            });
-        }, desktopPolicy.autoHideDelayMs);
-
-        return () => {
-            clearTimeout(timeoutId);
-        };
-    }, [
-        desktopPolicy.autoHideDelayMs,
-        desktopPolicy.autoHideEnabled,
-        inputLocked,
-        isDesktop,
-        isExpanded,
-        isOverlayWindow,
-        model.visible,
-        model,
-        surfaceEngaged,
-    ]);
+    React.useEffect(() => {
+        if (!producing) return;
+        return registerMountedDesktopOverlayPresentation(async target => {
+            const candidate = contextRef.current?.admittedCandidates.find(value => areSessionAddressesEqual(value.address, target));
+            if (!candidate) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            setDetailAddresses(null);
+            setPinnedTarget(previous => areSessionAddressesEqual(previous, target) ? previous : target);
+            let applied = false;
+            try {
+                const result = await actionExecutor.execute('desktop.notch.set', { state: 'pinned' }, { surface: 'ui', serverId: target.serverId });
+                applied = result.ok;
+                return result.ok ? { ok: true } : result;
+            } finally {
+                if (!applied) setPinnedTarget(current => areSessionAddressesEqual(current, target) ? null : current);
+            }
+        });
+    }, [actionExecutor, producing]);
 
     React.useEffect(() => {
         if (!isDesktop || isOverlayWindow) {
@@ -516,6 +562,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
 
         let disposed = false;
         let unlisten: (() => void) | null = null;
+        const overlayActions = createDesktopActivityOverlayActionHandler(actionExecutor);
         void listenDesktopWindowAction((payload) => {
             if (disposed) {
                 return;
@@ -535,59 +582,32 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 });
                 return;
             }
-        }).then((dispose) => {
-            if (disposed) {
-                dispose();
-                return;
-            }
-            unlisten = dispose;
-        }).catch(() => {});
+            if (payload.windowLabel !== 'activity_overlay') return;
 
-        return () => {
-            disposed = true;
-            unlisten?.();
-        };
-    }, [actionExecutor, isDesktop, isOverlayWindow]);
-
-    React.useEffect(() => {
-        if (!isDesktop || isOverlayWindow) {
-            return () => {};
-        }
-
-        let disposed = false;
-        let unlisten: (() => void) | null = null;
-        void listenDesktopActivityOverlayInteraction((payload) => {
-            if (disposed) {
-                return;
-            }
+            if (overlayActions.handle(payload)) return;
 
             const actionIdentifier = payload.actionIdentifier.trim();
             if (actionIdentifier === 'overlay-set-expanded') {
+                if (payload.data?.target === null) setPinnedTarget(null);
                 const expanded = readExpandedFromInteraction(payload);
                 if (expanded == null) return;
-                setIsExpanded(expanded);
-                if (!expanded) {
-                    setInputLocked(false);
-                    setSurfaceEngaged(false);
+                if (expanded) {
+                    const current = contextRef.current;
+                    if (!current) return;
+                    const serverId = readServerIdFromInteraction(payload);
+                    const sessionId = readSessionIdFromInteraction(payload);
+                    setDetailAddresses(serverId && sessionId ? [{ serverId, sessionId }]
+                        : current.snapshot.sessions.flatMap(session => session.serverId
+                            ? [{ serverId: session.serverId, sessionId: session.sessionId }] : []));
+                } else {
+                    setDetailAddresses(null);
                 }
-                fireAndForget(setDesktopActivityOverlayExpanded(expanded), {
-                    tag: 'DesktopActivityOverlayRuntime.setExpanded.explicit',
-                });
                 return;
             }
-            if (actionIdentifier === 'overlay-input-locked') {
-                const locked = readLockedFromInteraction(payload);
-                if (locked == null) return;
-                setInputLocked(locked);
-                return;
-            }
-            if (actionIdentifier === 'overlay-surface-engaged') {
-                const engaged = readEngagedFromInteraction(payload);
-                if (engaged == null) return;
-                setSurfaceEngaged(engaged);
-                return;
-            }
-            const currentSnapshot = snapshotRef.current;
+            if (actionIdentifier === 'overlay-input-locked' || actionIdentifier === 'overlay-surface-engaged') return;
+            const context = contextRef.current;
+            if (!context) return;
+            const currentSnapshot = context.snapshot;
             const sharedCommand = resolveActivityInteractionCommand({
                 actionIdentifier,
                 defaultActionIdentifier: currentSnapshot.defaultTarget,
@@ -615,7 +635,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                     error: 'unsafe_server_scope',
                 });
                 const fallbackSessionId = readSessionIdFromInteraction(payload) ?? currentSnapshot.primary?.sessionId ?? '';
-                const currentSource = sourceRef.current;
+                const currentSource = context.source;
                 const fallbackServerId = resolveServerIdForSessionIdFromLocalState({
                     sessions: currentSource.sessionsById,
                     sessionListRowsByServerId: currentSource.sessionListRowsByServerId,
@@ -663,15 +683,18 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
                 return;
             }
 
-            fireAndForget(showDesktopMainWindow(), {
+            fireAndForget((async () => {
+                const requestId = command.kind === 'openSession' ? readRequestIdFromInteraction(payload) : null;
+                try {
+                    await showDesktopMainWindow();
+                    router.push(admitInternalRouteHref(command.route));
+                    setDetailAddresses(null);
+                    emitDirectActionInteractionResult(requestId, { ok: true });
+                } catch (error) {
+                    emitDirectActionInteractionError(requestId, error);
+                }
+            })(), {
                 tag: 'DesktopActivityOverlayRuntime.showMainWindow.beforeRoute',
-            });
-            router.push(admitInternalRouteHref(command.route));
-            setIsExpanded(false);
-            setInputLocked(false);
-            setSurfaceEngaged(false);
-            fireAndForget(setDesktopActivityOverlayExpanded(false), {
-                tag: 'DesktopActivityOverlayRuntime.setExpanded.afterOpen',
             });
         }).then((dispose) => {
             if (disposed) {
@@ -683,11 +706,13 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
 
         return () => {
             disposed = true;
+            overlayActions.dispose();
             unlisten?.();
         };
     }, [actionExecutor, isDesktop, isOverlayWindow]);
 
-    return null;
+    return producing ? <DesktopActivityOverlayProducer detailAddresses={detailAddresses}
+        contextRef={contextRef} publishedRef={publishedRef} pinnedTarget={pinnedTarget} setPinnedTarget={setPinnedTarget} /> : null;
 }
 
 export default DesktopActivityOverlayRuntimeShared;

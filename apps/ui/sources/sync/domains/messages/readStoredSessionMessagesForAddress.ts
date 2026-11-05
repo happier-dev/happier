@@ -35,6 +35,23 @@ function resolveStoredSessionHomeAddress(
         ?? normalizeSessionAddress(activeServerId, sessionId);
 }
 
+/** Exact-Home admission shared by body readers and compact transcript projections. */
+export function readStoredSessionTranscriptForAddress<TState>(
+    state: (Readonly<{ sessionMessages?: Record<string, TState> }> & SessionHomeQualifiedMessagesStateLike) | null | undefined,
+    address: SessionAddress | null | undefined,
+    options?: Readonly<{ activeServerId?: string | null }>,
+): TState | null {
+    const requested = address ? normalizeSessionAddress(address.serverId, address.sessionId) : null;
+    if (!requested) return null;
+    const stored = resolveStoredSessionHomeAddress(
+        state,
+        requested.sessionId,
+        options?.activeServerId ?? getActiveServerSnapshot().serverId,
+    );
+    if (!areSessionAddressesEqual(stored, requested)) return null;
+    return state?.sessionMessages?.[requested.sessionId] ?? null;
+}
+
 export function readStoredSessionMessagesForAddress<TState, TFallback = Message>(
     state: (Readonly<{ sessionMessages?: Record<string, TState> }> & SessionHomeQualifiedMessagesStateLike) | null | undefined,
     address: SessionAddress | null | undefined,
@@ -45,13 +62,5 @@ export function readStoredSessionMessagesForAddress(
     address: SessionAddress | null | undefined,
     options?: Readonly<{ activeServerId?: string | null }>,
 ): unknown[] {
-    const requested = address ? normalizeSessionAddress(address.serverId, address.sessionId) : null;
-    if (!requested) return [];
-    const stored = resolveStoredSessionHomeAddress(
-        state,
-        requested.sessionId,
-        options?.activeServerId ?? getActiveServerSnapshot().serverId,
-    );
-    if (!areSessionAddressesEqual(stored, requested)) return [];
-    return readStoredSessionMessagesFromStateLike(state?.sessionMessages?.[requested.sessionId]);
+    return readStoredSessionMessagesFromStateLike(readStoredSessionTranscriptForAddress(state, address, options));
 }

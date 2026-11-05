@@ -5,7 +5,6 @@ import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoic
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text';
-export { AUTO_HIDE_DELAY_OPTIONS } from './desktopOverlayAutoHideDelayOptions';
 
 export type ChoiceOption<T extends string | number> = Readonly<{
     value: T;
@@ -29,73 +28,17 @@ export const VISIBILITY_MODE_OPTIONS: readonly ChoiceOption<'attention_only' | '
     },
 ];
 
-export const PRESENTATION_MODE_OPTIONS: readonly ChoiceOption<'automatic' | 'notch_integrated' | 'floating_overlay'>[] = [
-    {
-        value: 'automatic',
-        titleKey: 'settingsDesktop.overlay.presentationAutomaticTitle',
-    },
-    {
-        value: 'notch_integrated',
-        titleKey: 'settingsDesktop.overlay.presentationNotchIntegratedTitle',
-    },
-    {
-        value: 'floating_overlay',
-        titleKey: 'settingsDesktop.overlay.presentationFloatingOverlayTitle',
-    },
+export const DOCK_OPTIONS: readonly ChoiceOption<'top' | 'left' | 'right' | 'floating'>[] = [
+    { value: 'top', titleKey: 'settingsDesktop.overlay.dockTop' },
+    { value: 'left', titleKey: 'settingsDesktop.overlay.dockLeft' },
+    { value: 'right', titleKey: 'settingsDesktop.overlay.dockRight' },
+    { value: 'floating', titleKey: 'settingsDesktop.overlay.dockFloating' },
 ];
 
-export const PLACEMENT_MODE_OPTIONS: readonly ChoiceOption<'anchored' | 'custom'>[] = [
-    {
-        value: 'anchored',
-        titleKey: 'settingsDesktop.overlay.placementAnchoredTitle',
-    },
-    {
-        value: 'custom',
-        titleKey: 'settingsDesktop.overlay.placementCustomTitle',
-    },
-];
-
-export const ANCHOR_OPTIONS: readonly ChoiceOption<'top_center' | 'top_left' | 'top_right' | 'bottom_center' | 'bottom_left' | 'bottom_right' | 'left_center' | 'right_center'>[] = [
-    {
-        value: 'top_center',
-        titleKey: 'settingsDesktop.overlay.anchorTopCenterTitle',
-        icon: 'minus-circle',
-    },
-    {
-        value: 'top_left',
-        titleKey: 'settingsDesktop.overlay.anchorTopLeftTitle',
-        icon: 'arrow-elbow-up-left',
-    },
-    {
-        value: 'top_right',
-        titleKey: 'settingsDesktop.overlay.anchorTopRightTitle',
-        icon: 'arrow-elbow-up-right',
-    },
-    {
-        value: 'bottom_center',
-        titleKey: 'settingsDesktop.overlay.anchorBottomCenterTitle',
-        icon: 'minus-circle',
-    },
-    {
-        value: 'bottom_left',
-        titleKey: 'settingsDesktop.overlay.anchorBottomLeftTitle',
-        icon: 'arrow-elbow-down-left',
-    },
-    {
-        value: 'bottom_right',
-        titleKey: 'settingsDesktop.overlay.anchorBottomRightTitle',
-        icon: 'arrow-elbow-down-right',
-    },
-    {
-        value: 'left_center',
-        titleKey: 'settingsDesktop.overlay.anchorLeftCenterTitle',
-        icon: 'caret-left',
-    },
-    {
-        value: 'right_center',
-        titleKey: 'settingsDesktop.overlay.anchorRightCenterTitle',
-        icon: 'caret-right',
-    },
+export const IDLE_OPTIONS: readonly ChoiceOption<'tip' | 'full' | 'hidden'>[] = [
+    { value: 'tip', titleKey: 'settingsDesktop.overlay.idleTip' },
+    { value: 'full', titleKey: 'settingsDesktop.overlay.idleFull' },
+    { value: 'hidden', titleKey: 'settingsDesktop.overlay.idleHidden' },
 ];
 
 export function buildChoiceDropdownItems<T extends string | number>(
@@ -129,3 +72,8 @@ export function findChoiceOptionById<T extends string | number>(
 ): ChoiceOption<T> | null {
     return choices.find((choice) => String(choice.value) === id) ?? null;
 }
+
+export const BOT_CONVERSATION_OPTIONS: readonly ChoiceOption<'overlay' | 'window'>[] = [
+    { value: 'overlay', titleKey: 'settingsDesktop.overlay.botConversationOverlayTitle' },
+    { value: 'window', titleKey: 'settingsDesktop.overlay.botConversationWindowTitle' },
+];

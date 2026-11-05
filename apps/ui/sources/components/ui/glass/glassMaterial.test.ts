@@ -9,6 +9,7 @@ import {
     GLASS_SURFACE_GROUPS, glassPresetMaterials, readGlassMaterials, readGlassPreset, resolveGlassPresetSettingsDelta,
     resolveGlassSurfaceMaterial, resolveGlassSurfaceSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassBackdropTone,
     resolveGlassBackdropMap, readGlassTintedMaterials,
+    resolveGlassNotchPaint,
 } from './glassMaterial';
 
 describe('glass material Account owner', () => {
@@ -382,5 +383,38 @@ describe('glass material Account owner', () => {
         expect(GlassSurfaceMaterialsSchema.safeParse({ ...glassPresetMaterials('everywhere'), content: { blur: 'strong', opacity: 0 } }).success).toBe(true);
         expect(GlassSurfaceMaterialsSchema.safeParse({ ...glassPresetMaterials('everywhere'), content: { blur: 'strong', opacity: -0.1 } }).success).toBe(false);
         expect(GlassSurfaceMaterialsSchema.safeParse({ ...glassPresetMaterials('everywhere'), extra: {} }).success).toBe(false);
+    });
+});
+
+describe('the notch paint', () => {
+    const ink = '#0C0B0B';
+    const live = { desktopWindow: true, nativeWindowMaterialLive: true };
+    const coat = (settings: Parameters<typeof resolveGlassNotchPaint>[1], environment: Parameters<typeof resolveGlassNotchPaint>[2] = live) =>
+        Color(resolveGlassNotchPaint(ink, settings, environment)).alpha();
+
+    it('is the ink at the default coat, with the material behind it', () => {
+        const paint = Color(resolveGlassNotchPaint(ink, {}, live));
+        expect(paint.alpha()).toBeCloseTo(0.95);
+        expect(paint.rgb().array().slice(0, 3)).toEqual([12, 11, 11]);
+    });
+
+    it.each([[0, 0.55], [6, 0.75], [12, 0.95], [100, 1]])('follows Tint %i to a coat of %f', (glassTintIntensity, expected) => {
+        expect(coat({ glassTintIntensity })).toBeCloseTo(expected);
+    });
+
+    it('thickens with no step just past the default', () => {
+        expect(coat({ glassTintIntensity: 13 })).toBeGreaterThan(0.95);
+        expect(coat({ glassTintIntensity: 13 })).toBeLessThan(0.96);
+    });
+
+    it('is the same ink, solid, wherever no native material stands behind it', () => {
+        expect(coat({}, { desktopWindow: true, nativeWindowMaterialLive: false })).toBe(1);
+        expect(coat({}, { ...live, reduceTransparency: true })).toBe(1);
+        expect(coat({ glassBlurEnabled: false })).toBe(1);
+    });
+
+    it('applies a custom floating opacity as set, with no floor', () => {
+        const materials = glassPresetMaterials('auto', 'regular');
+        expect(coat({ glassSurfaceMaterials: { ...materials, floating: { blur: 'strong', opacity: 0.4 } } })).toBeCloseTo(0.4);
     });
 });

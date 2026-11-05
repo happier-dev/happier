@@ -1,17 +1,17 @@
 import type {
     DiscoveredPetPackageV1,
     ImportedLocalPetPackageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/daemonRpc';
 
+import type { z } from 'zod/mini';
+
+import type {
+    PetEnabledOverrideSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces';
 import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
 import type { PetDeviceOverrideV1 } from '@happier-dev/protocol/pets/selection';
 
-export type PetEnabledOverride = 'inherit' | 'enabled' | 'disabled';
-export type DesktopPetOverlayVisibilityModeOverride =
-    | 'inherit'
-    | 'attentionOrActive'
-    | 'alwaysWhenEnabled'
-    | 'attentionOnly';
+export type PetEnabledOverride = z.infer<typeof PetEnabledOverrideSchema>;
 
 export type ManagedLocalPet = (ImportedLocalPetPackageV1 | DiscoveredPetPackageV1) & {
     source: Extract<DiscoveredPetPackageV1['source'], { kind: 'happierManagedLocal' }>;

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS, ImportedLocalPetPackageV1Schema, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportAccountPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -27,8 +26,7 @@ import { normalizeLocalPetSourceMetadata } from '@/sync/domains/pets/normalizeLo
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
-import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
-import { DESKTOP_SETTINGS } from '@/components/settings/desktop/desktopSettings';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { PETS_SETTINGS } from '@/components/settings/pets/petsSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -97,11 +95,11 @@ export function PetsSettingsScreen() {
     const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();
-    const writeSetting = useSettingActionWriter();
+    const settingsScope = storage((state) => state.settingsScope);
+    const resetPositionAction = useMountedActionExecution(settingsScope);
     const selectPet = usePetSelectionAction();
     const companionEnabled = useFeatureEnabled('pets.companion');
     const syncEnabled = useFeatureEnabled('pets.sync');
-    const [desktopOverlayVisibilityModeOpen, setDesktopOverlayVisibilityModeOpen] = React.useState(false);
     const [codexDetectionState, setCodexDetectionState] = React.useState<CodexDetectionState>('idle');
     const [codexDetectionTargetKey, setCodexDetectionTargetKey] = React.useState<string | null>(null);
     const [discoveredPets, setDiscoveredPets] = React.useState<DiscoveredPetPackageV1[]>([]);
@@ -144,12 +142,6 @@ export function PetsSettingsScreen() {
         { id: 'inherit', label: t('settingsPets.overrideInherit') },
         { id: 'enabled', label: t('settingsPets.overrideEnabled') },
         { id: 'disabled', label: t('settingsPets.overrideDisabled') },
-    ];
-    const visibilityModeItems: DropdownMenuItem[] = [
-        { id: 'inherit', title: t('settingsPets.visibilityModeInherit') },
-        { id: 'alwaysWhenEnabled', title: t('settingsPets.visibilityModeAlwaysWhenEnabled') },
-        { id: 'attentionOrActive', title: t('settingsPets.visibilityModeAttentionOrActive') },
-        { id: 'attentionOnly', title: t('settingsPets.visibilityModeAttentionOnly') },
     ];
 
     const localPetRows = React.useMemo((): LocalDevicePetRow[] => {
@@ -403,10 +395,12 @@ export function PetsSettingsScreen() {
     }, [selectPet]);
 
     const handleResetDesktopOverlayPosition = React.useCallback(() => {
-        fireAndForget(writeSetting(DESKTOP_SETTINGS.settings.placementMode, 'anchored'), {
-            tag: 'PetsSettingsScreen.resetDesktopActivityOverlayPosition',
+        const operation = resetPositionAction.execute('settings.invoke', { anchor: PETS_SETTINGS.settings.desktopOverlayResetPosition.anchor });
+        fireAndForget(operation, {
+            tag: 'PetsSettingsScreen.resetDesktopPetOverlayPosition',
         });
-    }, [writeSetting]);
+        return operation;
+    }, [resetPositionAction.execute]);
 
     const selectedBuiltInPetId =
         localSettings.petsSelectedPetOverride.kind === 'inherit'
@@ -493,16 +487,11 @@ export function PetsSettingsScreen() {
             {showDesktopOverlaySettings ? (
                 <PetsDesktopOverlaySettingsSection
                     desktopOverlayDefaultEnabled={settings.petsDesktopOverlayDefaultEnabled}
-                    desktopOverlayVisibilityModeOpen={desktopOverlayVisibilityModeOpen}
                     desktopPetOverlayEnabledOverride={localSettings.desktopPetOverlayEnabledOverride}
-                    desktopPetOverlayVisibilityModeOverride={localSettings.desktopPetOverlayVisibilityModeOverride}
                     onDefaultEnabledChange={(value) => applySettings({ petsDesktopOverlayDefaultEnabled: value })}
                     onDesktopOverlayOverrideChange={(override) => applyLocalSettings({ desktopPetOverlayEnabledOverride: override })}
-                    onDesktopOverlayVisibilityModeOverrideChange={(override) => applyLocalSettings({ desktopPetOverlayVisibilityModeOverride: override })}
-                    onDesktopOverlayVisibilityModeOpenChange={setDesktopOverlayVisibilityModeOpen}
                     onResetPosition={handleResetDesktopOverlayPosition}
                     overrideOptions={overrideOptions}
-                    visibilityModeItems={visibilityModeItems}
                 />
             ) : null}
         </ItemList>

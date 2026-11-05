@@ -22,8 +22,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
-import { DESKTOP_SETTINGS } from '@/components/settings/desktop/desktopSettings';
+import { PETS_SETTINGS } from '@/components/settings/pets/petsSettings';
 import { requestCodexPetRefresh } from '@/components/settings/pets/petSettingsCommandEvents';
 import {
     SEARCH_DESTINATION_ID,
@@ -286,7 +285,6 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const activateCompactAppDestination = useActivateAppDestination();
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();
-    const writeSetting = useSettingActionWriter();
     const keyboardPlatform = useMemo(resolveKeyboardPlatform, []);
     const labelHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
@@ -373,9 +371,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             },
             resetPosition: desktop
                 ? () => {
-                    fireAndForget(writeSetting(DESKTOP_SETTINGS.settings.placementMode, 'anchored'), {
-                        tag: 'CommandPaletteProvider.resetDesktopActivityOverlayPosition',
+                    const operation = actionExecutor.execute('settings.invoke', { anchor: PETS_SETTINGS.settings.desktopOverlayResetPosition.anchor }, { surface: 'ui' }).then(() => {});
+                    fireAndForget(operation, {
+                        tag: 'CommandPaletteProvider.resetDesktopPetOverlayPosition',
                     });
+                    return operation;
                 }
                 : undefined,
             refreshCodexPets: () => {
@@ -383,7 +383,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 requestCodexPetRefresh();
             },
         };
-    }, [applyLocalSettings, applySettings, router, writeSetting]);
+    }, [actionExecutor, applyLocalSettings, applySettings, router]);
 
     const openNewSession = useCallback(() => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute();

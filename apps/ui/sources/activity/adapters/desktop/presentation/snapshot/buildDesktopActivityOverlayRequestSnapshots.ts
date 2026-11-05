@@ -1,3 +1,4 @@
+import { t } from '@/text';
 import { buildAgentRequestSemanticSummary, classifyPermissionRequestRisk, formatPermissionRequestSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
@@ -9,8 +10,16 @@ import {
     listPendingUserActionRequestsFromSession,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
-import type { DesktopActivityOverlayRequestSnapshot } from './desktopActivityOverlaySnapshotTypes';
-import { listSessionListPresentationPermissionRequests, listSessionListPresentationUserActionRequests } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { getDiffStats } from '@/components/ui/code/model/diff/calculateDiff';
+import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
+import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
+import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+
+import type { DesktopActivityOverlayRequestSnapshot, DesktopActivityOverlayRequestSubject } from './desktopActivityOverlaySnapshotTypes';
+import { listSessionListPresentationPermissionRequests, listSessionListPresentationUserActionRequests, readSessionListPresentationOwnerMetadata } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 function buildRequestActivityInstanceId(params: Readonly<{
     serverId: string | null;
@@ -70,9 +79,42 @@ function buildAskUserQuestionDirectOptions(request: {
     }));
 }
 
+function readInputString(input: unknown, keys: readonly string[]): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    for (const key of keys) {
+        const value = (input as Record<string, unknown>)[key];
+        if (typeof value === 'string') return value;
+    }
+    return null;
+}
+
+/** The file or command a permission request acts on, from the shared request summary (never the raw tool name). */
+function readPermissionRequestSubject(
+    semantic: ReturnType<typeof buildAgentRequestSemanticSummary>,
+    toolInput: unknown,
+): DesktopActivityOverlayRequestSubject | null {
+    const tool = semantic.normalizedToolLabel.toLowerCase();
+    if (semantic.shellCommand && (tool === 'bash' || tool === 'execute' || tool === 'shell')) {
+        return { kind: 'command', text: semantic.shellCommand, additions: null, deletions: null };
+    }
+    if (!semantic.filePath) return null;
+    if (tool === 'read') return { kind: 'read', text: semantic.filePath, additions: null, deletions: null };
+    if (tool === 'write') {
+        const content = readInputString(toolInput, ['content', 'newText', 'new_string']);
+        const stats = content === null ? null : getDiffStats('', content);
+        return { kind: 'write', text: semantic.filePath, additions: stats?.additions ?? null, deletions: stats ? 0 : null };
+    }
+    if (tool !== 'edit' && tool !== 'multiedit') return null;
+    const oldText = readInputString(toolInput, ['oldText', 'old_string']);
+    const newText = readInputString(toolInput, ['newText', 'new_string']);
+    const stats = oldText !== null && newText !== null ? getDiffStats(oldText, newText) : null;
+    return { kind: 'edit', text: semantic.filePath, additions: stats?.additions ?? null, deletions: stats?.deletions ?? null };
+}
+
 export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
     candidates: readonly SessionActivityAttention[];
     resolveCandidatePrivacyMode?: ActivitySurfaceCandidatePrivacyModeResolver;
+    audienceScopes?: ReadonlyMap<string, ServerAccountScope>;
 }>): Readonly<{
     permissionRequests: readonly DesktopActivityOverlayRequestSnapshot[];
     userQuestions: readonly DesktopActivityOverlayRequestSnapshot[];
@@ -98,6 +140,16 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 toolName: request.tool,
                 toolInput: request.arguments,
             });
+            const session = candidate.session;
+            const metadata = candidate.presentationSource
+                ? readSessionListPresentationOwnerMetadata(candidate.presentationSource)
+                : readSessionOwnerMetadataView(session);
+            const flavor = metadata && typeof metadata === 'object' && 'flavor' in metadata && typeof metadata.flavor === 'string' ? metadata.flavor : null;
+            const permissionBehavior = resolveSessionPermissionBehavior({
+                agentId: resolveAgentIdForPermissionUi({ metadata, flavor, toolName: request.tool }),
+                metadata, accountScope: serverId ? params.audienceScopes?.get(serverId) ?? null : undefined,
+            });
+            const canApprove = deriveTranscriptInteractionFromSession({ access: session.access, active: session.active }).canApprovePermissions;
 
             permissionRequests.push({
                 kind: 'permission_request',
@@ -125,10 +177,14 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 openActionIdentifier: createActivitySurfaceSessionTarget(sessionId, serverId),
                 allowActionIdentifier: 'session.permission.respond',
                 denyActionIdentifier: 'session.permission.respond',
+                permissionChoices: canApprove ? resolveSessionPermissionChoices({ toolName: request.tool, toolInput: request.arguments,
+                    source: request.source, suggestions: request.permissionSuggestions, permissionBehavior,
+                    mcpTool: request.mcpTool, canWriteCatalog: Boolean(serverId && params.audienceScopes?.has(serverId)) }) : [],
                 risk: classifyPermissionRequestRisk({
                     toolName: request.tool,
                     toolInput: request.arguments,
                 }),
+                subject: readPermissionRequestSubject(semantic, request.arguments),
                 directOptions: [],
             });
         }
@@ -154,7 +210,7 @@ export function buildDesktopActivityOverlayRequestSnapshots(params: Readonly<{
                 serverId,
                 title: semantic.firstQuestionText ?? semantic.permissionTitle ?? semantic.normalizedToolLabel,
                 summary: semantic.questionCount > 1
-                    ? `${semantic.questionCount} questions`
+                    ? t('tools.askUserQuestion.multipleQuestions', { count: semantic.questionCount })
                     : semantic.firstQuestionText,
                 toolLabel: semantic.normalizedToolLabel,
                 questionText: semantic.firstQuestionText,

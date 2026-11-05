@@ -1,39 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProfileConstants';
-import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/localSettingDefinitions.activitySurfaces';
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
-    it('defaults capture sound on and window text off for older records without losing device choices', () => {
-        expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({
-            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
-        });
-        expect(localSettingsParse({ screenCaptureSound: false, screenCaptureIncludeWindowText: true })).toMatchObject({
-            screenCaptureSound: false, screenCaptureIncludeWindowText: true,
-        });
-        expect(localSettingsParse({ screenCaptureSound: 'off', screenCaptureIncludeWindowText: 'on', themePreference: 'dark' })).toMatchObject({
-            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
-        });
-    });
-
-    it.each([
-        [{ desktopOverlayPresentationMode: 'floating_overlay' }, 'floating'],
-        [{ desktopOverlayAnchor: 'bottom_left' }, 'floating'],
-        [{ desktopOverlayAnchor: 'bottom_center' }, 'floating'],
-        [{ desktopOverlayAnchor: 'bottom_right' }, 'floating'],
-        [{ desktopOverlayAnchor: 'left_center' }, 'left'],
-        [{ desktopOverlayAnchor: 'right_center' }, 'right'],
-        [{ desktopOverlayAnchor: 'top_left' }, 'top'],
-        [{ desktopOverlayAnchor: 'top_center' }, 'top'],
-        [{ desktopOverlayAnchor: 'top_right' }, 'top'],
-    ] as const)('migrates legacy notch placement %j to %s once', (legacy, dock) => {
-        const migrated = localSettingsParse({ ...legacy, themePreference: 'dark' });
-        expect(migrated).toMatchObject({ desktopOverlayDock: dock, themePreference: 'dark' });
-        expect(localSettingsParse(migrated).desktopOverlayDock).toBe(dock);
-        expect(localSettingsParse({ ...legacy, desktopOverlayDock: 'right' }).desktopOverlayDock).toBe('right');
-    });
-
     it('keeps remote image consent device-local, tolerant and scoped to the chosen document', () => {
         expect(localSettingsParse({}).remoteImageConsentV1).toEqual([]);
         const input = { remoteImageConsentV1: [['workspace-a', 'README.md'], ['workspace-a', 'README.md'], ['workspace-b', 'README.md'], null, ['only-one'], ['', 'README.md']] };
@@ -184,11 +154,6 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null).brandHeroSeenAt).toBeNull();
     });
 
-    it('does not accept the dead shortcut_only desktop overlay expanded behavior in the rollout schema', () => {
-        expect(
-            ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS.desktopOverlayExpandedBehavior.schema.safeParse('shortcut_only').success,
-        ).toBe(false);
-    });
 
     it('includes multi-pane and pane tab defaults', () => {
         const parsed = localSettingsParse(null);
@@ -234,26 +199,7 @@ describe('localSettingsParse', () => {
         expect(parsed.activitySurfacePrivacyMode).toBe('title_only');
         expect(parsed.desktopOverlayEnabled).toBe(false);
         expect(parsed.desktopOverlayVisibilityMode).toBe('attention_only');
-        expect(parsed.desktopOverlayShowWhenRunning).toBe(true);
-        expect(parsed.desktopOverlayShowWhenAttentionRequired).toBe(true);
-        expect(parsed.desktopOverlayShowWhenReady).toBe(true);
         expect(parsed.desktopOverlayAlwaysOnTop).toBe(true);
-        expect(parsed.desktopOverlayAutoHideEnabled).toBe(true);
-        expect(parsed.desktopOverlayAutoHideDelayMs).toBe(6_000);
-        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
-        expect(parsed.desktopOverlayInteractiveCollapsed).toBe(true);
-        expect(parsed.desktopOverlayPresentationMode).toBe('automatic');
-        expect(parsed.desktopOverlayEnableDragReposition).toBe(false);
-        expect(parsed.desktopOverlayLockPosition).toBe(true);
-        expect(parsed.desktopOverlayPlacementMode).toBe('anchored');
-        expect(parsed.desktopOverlayAnchor).toBe('top_center');
-        expect(parsed.desktopOverlayOffsetX).toBe(0);
-        expect(parsed.desktopOverlayOffsetY).toBe(0);
-        expect(parsed.desktopOverlayClickAction).toBe('expand_overlay');
-        expect(parsed.desktopOverlayDensity).toBe('compact');
-        expect(parsed.desktopOverlayShowSessionCount).toBe(true);
-        expect(parsed.desktopOverlayShowPreviewText).toBe(false);
-        expect(parsed.desktopOverlayCompactStyle).toBe('pill');
         expect(parsed.attentionDeviceOverridesV1).toMatchObject({
             v: 1,
             enabled: true,
@@ -280,10 +226,8 @@ describe('localSettingsParse', () => {
             },
             desktopOverlay: {
                 hoverExpandDelay: 'normal',
-                compactCollapsedMode: false,
-                collapsedCarouselEnabled: true,
-                physicalNotchMode: 'automatic',
-                autoDismissDelayMs: 10_000,
+
+
                 quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
             },
             liveActivities: {
@@ -590,14 +534,10 @@ describe('localSettingsParse', () => {
             activitySurfacePrivacyMode: 'include_preview',
             desktopOverlayEnabled: true,
             desktopOverlayVisibilityMode: 'always_when_enabled',
-            desktopOverlayShowWhenRunning: false,
-            desktopOverlayShowWhenAttentionRequired: false,
-            desktopOverlayShowWhenReady: false,
+
             desktopOverlayAlwaysOnTop: false,
-            desktopOverlayAutoHideEnabled: false,
-            desktopOverlayAutoHideDelayMs: 30_000,
-            desktopOverlayExpandedBehavior: 'click',
-            desktopOverlayInteractiveCollapsed: false,
+
+
             desktopOverlayPresentationMode: 'notch_integrated',
             desktopOverlayEnableDragReposition: true,
             desktopOverlayLockPosition: false,
@@ -605,11 +545,8 @@ describe('localSettingsParse', () => {
             desktopOverlayAnchor: 'bottom_right',
             desktopOverlayOffsetX: 12,
             desktopOverlayOffsetY: -8,
-            desktopOverlayClickAction: 'open_sessions',
-            desktopOverlayDensity: 'comfortable',
-            desktopOverlayShowSessionCount: false,
-            desktopOverlayShowPreviewText: true,
-            desktopOverlayCompactStyle: 'panel',
+
+
         });
 
         expect(parsed.activityBadgesEnabled).toBe(false);
@@ -642,26 +579,7 @@ describe('localSettingsParse', () => {
         expect(parsed.activitySurfacePrivacyMode).toBe('include_preview');
         expect(parsed.desktopOverlayEnabled).toBe(true);
         expect(parsed.desktopOverlayVisibilityMode).toBe('always_when_enabled');
-        expect(parsed.desktopOverlayShowWhenRunning).toBe(false);
-        expect(parsed.desktopOverlayShowWhenAttentionRequired).toBe(false);
-        expect(parsed.desktopOverlayShowWhenReady).toBe(false);
         expect(parsed.desktopOverlayAlwaysOnTop).toBe(false);
-        expect(parsed.desktopOverlayAutoHideEnabled).toBe(false);
-        expect(parsed.desktopOverlayAutoHideDelayMs).toBe(30_000);
-        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
-        expect(parsed.desktopOverlayInteractiveCollapsed).toBe(false);
-        expect(parsed.desktopOverlayPresentationMode).toBe('notch_integrated');
-        expect(parsed.desktopOverlayEnableDragReposition).toBe(true);
-        expect(parsed.desktopOverlayLockPosition).toBe(false);
-        expect(parsed.desktopOverlayPlacementMode).toBe('custom');
-        expect(parsed.desktopOverlayAnchor).toBe('bottom_right');
-        expect(parsed.desktopOverlayOffsetX).toBe(12);
-        expect(parsed.desktopOverlayOffsetY).toBe(-8);
-        expect(parsed.desktopOverlayClickAction).toBe('open_sessions');
-        expect(parsed.desktopOverlayDensity).toBe('comfortable');
-        expect(parsed.desktopOverlayShowSessionCount).toBe(false);
-        expect(parsed.desktopOverlayShowPreviewText).toBe(true);
-        expect(parsed.desktopOverlayCompactStyle).toBe('panel');
     });
 
     it('strips obsolete local keyboard shortcut settings instead of preserving pre-release compatibility state', () => {
@@ -728,10 +646,8 @@ describe('localSettingsParse', () => {
                 },
                 desktopOverlay: {
                     hoverExpandDelay: 'slow',
-                    compactCollapsedMode: true,
-                    collapsedCarouselEnabled: false,
-                    physicalNotchMode: 'force_virtual',
-                    autoDismissDelayMs: 12_000,
+
+
                     quickReplyPhrases: ['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Thanks', 'Ignored'],
                 },
                 liveActivities: {
@@ -763,11 +679,9 @@ describe('localSettingsParse', () => {
             },
             desktopOverlay: {
                 hoverExpandDelay: 'slow',
-                compactCollapsedMode: true,
-                collapsedCarouselEnabled: false,
-                physicalNotchMode: 'force_virtual',
-                autoDismissDelayMs: 12_000,
-                quickReplyPhrases: ['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Thanks'],
+
+
+                quickReplyPhrases: ['Ship', 'Explain', 'Retry', 'More', 'Stop', 'Thanks', 'Ignored'],
             },
             liveActivities: {
                 registerRemoteUpdateTargets: false,
@@ -796,7 +710,7 @@ describe('localSettingsParse', () => {
             activityBadgeShowPendingPermissionRequests: true,
             activityBadgeShowPendingUserActionRequests: false,
             activityBadgeShowQueuedUserInput: false,
-            desktopOverlayAutoHideDelayMs: 30_000,
+
             liveActivitiesShowPreviewText: false,
             liveActivitiesAllowActionButtons: false,
             widgetsEnabled: false,
@@ -824,7 +738,7 @@ describe('localSettingsParse', () => {
                 includeQueuedUserInput: false,
             },
             desktopOverlay: {
-                autoDismissDelayMs: 30_000,
+
             },
             liveActivities: {
                 privacyMode: 'status_only',
@@ -836,21 +750,13 @@ describe('localSettingsParse', () => {
         });
     });
 
-    it('migrates the legacy shortcut_only desktop overlay expanded behavior before validation', () => {
-        const parsed = localSettingsParse({
-            desktopOverlayExpandedBehavior: 'shortcut_only',
-        });
-
-        expect(parsed.desktopOverlayExpandedBehavior).toBe('click');
-    });
-
     it('syncs canonical activity surface aliases when applying local settings', () => {
         const applied = applyLocalSettings(localSettingsDefaults, {
             iosLiveActivitiesEnabled: false,
             homeScreenWidgetsMode: 'running',
             homeScreenWidgetsShowPreviewText: false,
             homeScreenWidgetsShowMachinePath: false,
-            desktopOverlayExpandedBehavior: 'click',
+
         });
 
         expect(applied.liveActivitiesEnabled).toBe(false);
@@ -861,7 +767,6 @@ describe('localSettingsParse', () => {
         expect(applied.homeScreenWidgetsShowPreviewText).toBe(false);
         expect(applied.widgetsShowMachinePath).toBe(false);
         expect(applied.homeScreenWidgetsShowMachinePath).toBe(false);
-        expect(applied.desktopOverlayExpandedBehavior).toBe('click');
     });
 
     it('keeps attention device overrides in sync when applying legacy local setting deltas', () => {
@@ -869,7 +774,7 @@ describe('localSettingsParse', () => {
             localNotificationsEnabled: false,
             localNotificationsShowReady: false,
             localNotificationsForegroundBehavior: 'off',
-            desktopOverlayAutoHideDelayMs: 25_000,
+
         });
 
         expect(applied.attentionDeviceOverridesV1).toMatchObject({
@@ -881,7 +786,7 @@ describe('localSettingsParse', () => {
                 },
             },
             desktopOverlay: {
-                autoDismissDelayMs: 25_000,
+
             },
         });
     });
@@ -935,5 +840,42 @@ describe('localSettingsParse', () => {
         const staleDelta: Record<string, unknown> = { [key]: true };
         const applied = applyLocalSettings(localSettingsDefaults, staleDelta);
         expect(applied).not.toHaveProperty(key);
+    });
+});
+
+
+describe('Notch U4 stored preference contraction', () => {
+    const retired = {
+        desktopOverlayShowWhenRunning: false, desktopOverlayShowWhenAttentionRequired: false,
+        desktopOverlayShowWhenReady: false, desktopOverlayExpandedBehavior: 'bad',
+        desktopOverlayInteractiveCollapsed: 'bad', desktopOverlayClickAction: 'bad',
+        desktopOverlayDensity: 'bad', desktopOverlayCompactStyle: 'bad', desktopOverlayShowSessionCount: 'bad',
+        desktopOverlayAutoHideEnabled: 'bad', desktopOverlayAutoHideDelayMs: 'bad', desktopOverlayShowPreviewText: true,
+        desktopPetOverlayVisibilityModeOverride: 'alwaysWhenEnabled', desktopPetOverlayOffset: { x: 9, y: 4 },
+    };
+    it('strips retired values without resetting deliberate canonical and unrelated preferences', () => {
+        const input = { ...retired, desktopOverlayVisibilityMode: 'active_sessions', themePreference: 'dark',
+            petsEnabledOverride: 'disabled', desktopPetOverlayEnabledOverride: 'enabled' };
+        for (const parsed of [localSettingsParse(input), applyLocalSettings(localSettingsParse(input), retired)]) {
+            expect(parsed).toMatchObject({ desktopOverlayVisibilityMode: 'active_sessions', themePreference: 'dark',
+                petsEnabledOverride: 'disabled', desktopPetOverlayEnabledOverride: 'enabled' });
+            for (const key of Object.keys(retired)) expect(parsed).not.toHaveProperty(key);
+            expect(localSettingsParse(parsed)).toEqual(parsed);
+        }
+        expect(localSettingsParse(retired).desktopOverlayVisibilityMode).toBe('attention_only');
+    });
+    it('strips only retired nested overrides and retains all quick replies and unrelated branches', () => {
+        const phrases = [' One ', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'];
+        const parsed = localSettingsParse({ themePreference: 'dark', attentionDeviceOverridesV1: {
+            desktopOverlay: { compactCollapsedMode: 'bad', physicalNotchMode: 'bad', autoDismissDelayMs: 'bad',
+                collapsedCarouselEnabled: 'bad', hoverExpandDelay: 'slow', quickReplyPhrases: phrases },
+            widgets: { enabled: false },
+        } });
+        expect(parsed.themePreference).toBe('dark');
+        expect(parsed.attentionDeviceOverridesV1).toMatchObject({ desktopOverlay: {
+            hoverExpandDelay: 'slow', quickReplyPhrases: phrases.map(value => value.trim()) },
+            widgets: { enabled: false } });
+        for (const key of ['compactCollapsedMode', 'physicalNotchMode', 'autoDismissDelayMs', 'collapsedCarouselEnabled'])
+            expect(parsed.attentionDeviceOverridesV1.desktopOverlay).not.toHaveProperty(key);
     });
 });

@@ -1,197 +1,77 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { createSecretSettingsTestHarness, type SecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { storage } from '@/sync/domains/state/storage';
 
-import type { DesktopActivityOverlayWindowStatePayload } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
-import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
-import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
-import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
-
-const autostartState = vi.hoisted(() => ({
-    supported: true,
-    mode: 'at-login' as 'at-login' | 'on-demand' | null,
-    installed: true as boolean | null,
-    loading: false,
-    error: null as string | null,
-    setMode: async (_mode: 'at-login' | 'on-demand') => {},
-}));
-const localSettingsState = vi.hoisted(() => ({
-    current: {} as Record<string, unknown>,
-}));
-const getDesktopActivityOverlayWindowStateMock = vi.hoisted(
-    () => vi.fn<() => Promise<DesktopActivityOverlayWindowStatePayload | null>>(async () => null),
-);
-const listenDesktopActivityOverlayWindowStateMock = vi.hoisted(
-    () => vi.fn<(handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) => Promise<() => void>>(async () => () => {}),
-);
-
-function createDesktopOverlayWindowStatePayload(hostMode: 'floating' | 'notch_integrated'): DesktopActivityOverlayWindowStatePayload {
-    return {
-        visible: true,
-        expanded: false,
-        model: {
-            visible: true,
-            isExpanded: false,
-            generatedAt: Date.now(),
-            collapsed: {
-                title: 'Session One',
-                statusText: 'Needs attention',
-                defaultTarget: 'open-primary-session',
-                sessionCount: 1,
-            },
-            expanded: {
-                title: 'Active sessions',
-                rows: [],
-            },
-            window: {
-                collapsed: { width: 340, height: 72 },
-                expanded: { width: 420, height: 220 },
-            },
-        },
-        policy: {
-            enabled: true,
-            visibilityMode: 'attention_only',
-            showWhenRunning: true,
-            showWhenAttentionRequired: true,
-            showWhenReady: true,
-            alwaysOnTop: true,
-            autoHideEnabled: true,
-            autoHideDelayMs: 6000,
-            expandedBehavior: 'click',
-            interactiveCollapsed: true,
-            presentationMode: 'automatic',
-            clickAction: 'expand_overlay',
-            density: 'compact',
-            compactStyle: 'pill',
-            showSessionCount: true,
-            showPreviewText: false,
-            quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
-            placementMode: 'custom',
-            anchor: 'bottom_right',
-            offsetX: 24,
-            offsetY: -18,
-            enableDragReposition: true,
-            lockPosition: false,
-        },
-        window: {
-            collapsed: { width: 340, height: 72 },
-            expanded: { width: 420, height: 220 },
-        },
-        placementDiagnostics: {
-            monitorSource: 'primary',
-            effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
-            anchor: 'bottom_right',
-            placementMode: 'custom',
-            requestedHostMode: hostMode,
-            hostMode,
-            displayContext: null,
-            effectiveOffsetX: 24,
-            effectiveOffsetY: -18,
-            computedPosition: { x: 24, y: 24 },
-        },
-    };
-}
-
-vi.mock('@/utils/web/radixCjs', () => {
-    const React = require('react');
-    return {
-        requireRadixDismissableLayer: () => ({
-            Branch: (props: any) => React.createElement('DismissableLayerBranch', props, props.children),
-        }),
-    };
-});
-
-vi.mock('@/utils/web/reactDomCjs', () => ({
-    requireReactDOM: () => ({
-        createPortal: (node: any, target: any) => {
-            const React = require('react');
-            return React.createElement('Portal', { target }, node);
-        },
-    }),
-}));
-
-installSettingsViewCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSettings: () => localSettingsState.current,
-        });
-    },
-});
-
-const desktopHostState = vi.hoisted(() => ({ value: true }));
-
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => desktopHostState.value,
-}));
-
-vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({
-    getDesktopActivityOverlayWindowState: () => getDesktopActivityOverlayWindowStateMock(),
-    listenDesktopActivityOverlayWindowState: (handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) =>
-        listenDesktopActivityOverlayWindowStateMock(handler),
-}));
-
-vi.mock('./useDesktopLoginStart', () => ({
-    useDesktopLoginStart: () => autostartState,
-}));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
+const originalState = storage.getState();
+const originalAuth = getCurrentAuth();
 
 describe('DesktopAppSettingsScreen', () => {
-    beforeEach(() => {
-        autostartState.supported = true;
-        autostartState.mode = 'at-login';
-        autostartState.installed = true;
-        autostartState.loading = false;
-        autostartState.error = null;
-        desktopHostState.value = true;
-        localSettingsState.current = {};
-        getDesktopActivityOverlayWindowStateMock.mockReset();
-        listenDesktopActivityOverlayWindowStateMock.mockReset();
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createDesktopOverlayWindowStatePayload('floating'));
+    let account: SecretSettingsTestHarness;
+    beforeEach(async () => {
+        const secureStorage = createDesktopSecureStorageBoundary();
+        let callbackId = 0;
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_host_get_availability') return Promise.resolve({
+                activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+            });
+            if (command === 'plugin:event|listen') return Promise.resolve(++callbackId);
+            return secureStorage.invoke(command, args);
+        }, transformCallback: () => ++callbackId });
+        vi.stubGlobal('__TAURI_EVENT_PLUGIN_INTERNALS__', { unregisterListener: () => {} });
+        account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        storage.setState({ localSettings: { ...localSettingsDefaults, desktopOverlayEnabled: true } });
     });
+    afterEach(async () => {
+        standardCleanup();
+        await account?.dispose();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+        setCurrentAuth(originalAuth);
+        storage.setState(originalState, true);
+    });
+    const render = () => renderSettingsView(<InjectedAuthProvider credentials={account.credentials}>
+        <DesktopAppSettingsScreen />
+    </InjectedAuthProvider>);
 
-    it('renders the desktop app settings content with the autostart and overlay surfaces', async () => {
-        const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
-        const screen = await renderSettingsView(<DesktopAppSettingsScreen />);
-
-        expect(screen.findRow('settings-desktop-autostart-enabled')).toBeTruthy();
+    it('keeps startup settings beside the enabled Notch controls', async () => {
+        const screen = await render();
+        expect(screen.findByTestId('settings-desktop-autostart-enabled')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-dock')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-display')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-idle')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-bot-conversation-presentation')).toBeTruthy();
+        expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
     });
 
-    it('says where these settings live instead of rendering an empty page outside the desktop app', async () => {
-        autostartState.supported = false;
-        desktopHostState.value = false;
-        const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
-        const screen = await renderSettingsView(<DesktopAppSettingsScreen />);
-
+    it('says where these settings live when opened outside the desktop app', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', undefined);
+        const screen = await render();
         expect(screen.findRow('settings-desktop-unavailable')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeNull();
-    });
-
-    it('hides the autostart section when it is not supported', async () => {
-        autostartState.supported = false;
-        const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
-        const screen = await renderSettingsView(<DesktopAppSettingsScreen />);
-
         expect(screen.findRow('settings-desktop-autostart-enabled')).toBeNull();
-        expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-    });
-
-    it('renders the real dropdown-backed overlay controls when the desktop overlay is enabled', async () => {
-        localSettingsState.current = {
-            desktopOverlayEnabled: true,
-        };
-
-        const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
-        await withPopoverWebGlobals(async () => {
-            const screen = await renderSettingsView(<DesktopAppSettingsScreen />);
-
-            expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-            expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
-            expect(screen.findRow('settings-desktop-overlay-placement-mode')).toBeTruthy();
-            expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
-        });
     });
 });

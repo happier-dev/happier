@@ -1,17 +1,81 @@
-import type { DesktopHostAvailability } from '@/utils/platform/desktopHost';
-import { invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
+import { desktopHostKind, invokeDesktopHost, listenDesktopHostEvent, requireDesktopHostRole, type DesktopHostAvailability } from '@/utils/platform/desktopHost';
 
 import type { DesktopActivityOverlayModel } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
 import { DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS } from '../desktopActivityOverlayTiming';
-import type { DesktopOverlayAnchor, DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
+import type { DesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
+import type { NotchSurface } from '../ui/presentation/notchPresentation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import {
+    emitDesktopWindowAction,
+    emitDesktopWindowActionResult,
+    executeDesktopWindowActionWithResult,
+    listenDesktopWindowAction,
+    listenDesktopWindowActionResult,
+    DESKTOP_WINDOW_ACTION_EVENTS,
+} from '@/utils/platform/desktopWindowActionBridge';
 
 export const DESKTOP_ACTIVITY_OVERLAY_EVENTS = {
     state: 'activityOverlay://state',
-    interaction: 'activityOverlay://interaction',
-    interactionResult: 'activityOverlay://interaction-result',
+    pointer: 'activityOverlay://pointer',
+    interaction: DESKTOP_WINDOW_ACTION_EVENTS.request,
+    interactionResult: DESKTOP_WINDOW_ACTION_EVENTS.result,
 } as const;
 
-let nextDesktopActivityOverlayInteractionRequestSequence = 0;
+export type DesktopActivityOverlayExtent = Readonly<{
+    width: number;
+    height: number;
+    cameraOffset?: number;
+    /** Additional layer bounds in logical screen coordinates (the Session window rect's units). */
+    screenBounds?: DesktopActivityOverlayRect;
+}>;
+export type DesktopActivityOverlayPresent = Readonly<{
+    surface: NotchSurface;
+    engaged: boolean;
+    extent: DesktopActivityOverlayExtent;
+    settled?: boolean;
+}>;
+/** Applied window top-left in logical screen coordinates; scaleFactor maps logical to physical pixels. */
+export type DesktopActivityOverlayScreenOrigin = Readonly<{ x: number; y: number; scaleFactor: number }>;
+export type DesktopActivityOverlayFrame = Readonly<{
+    dock: 'top' | 'left' | 'right' | 'floating';
+    growth: Readonly<{ x: 'left' | 'right' | null; y: 'up' | 'down' | null }>;
+    anchorOffset: Readonly<{ x: number; y: number }>;
+    screenOrigin?: DesktopActivityOverlayScreenOrigin;
+}>;
+export type DesktopActivityOverlayPointer = Readonly<{ kind: 'enter' | 'leave' | 'outsidePress' }>;
+export type DesktopNotchSetInput = Parameters<NonNullable<import('@happier-dev/protocol/actions/actionExecutor').ActionExecutorDeps['desktopNotchSet']>>[0]['input'];
+export type DesktopActivityOverlayPresentationRequest = Readonly<{
+    state: NonNullable<DesktopNotchSetInput['state']>; focus: boolean;
+}>;
+
+export async function setDesktopNotch(input: DesktopNotchSetInput): Promise<void> {
+    await requireDesktopHostRole('activity');
+    if (input.position !== undefined) {
+        await invokeDesktopHost<void>('desktop_activity_overlay_move', { position: input.position, commit: true });
+    }
+    if (input.state !== undefined) {
+        await invokeDesktopHost<void>('desktop_activity_overlay_request_presentation', { requestedState: input.state });
+    }
+}
+
+export async function listenDesktopActivityOverlayPresentation(handler: (payload: DesktopActivityOverlayPresentationRequest) => void): Promise<() => void> {
+    await requireDesktopHostRole('activity');
+    let disposed = false;
+    const drain = async () => {
+        const input = await invokeDesktopHost<DesktopActivityOverlayPresentationRequest | null>('desktop_activity_overlay_take_presentation_request');
+        if (!disposed && input) handler(input);
+    };
+    const unlisten = await listenDesktopHostEvent('activityOverlay://presentation', () => {
+        fireAndForget(drain(), { tag: 'desktopActivityOverlay.presentation' });
+    });
+    try { await drain(); } catch (error) { unlisten(); throw error; }
+    return () => { disposed = true; unlisten(); };
+}
+
+export async function setDesktopActivityOverlayKeyboardWanted(wanted: boolean): Promise<void> {
+    await requireDesktopHostRole('activity');
+    await invokeDesktopHost<void>('desktop_activity_overlay_set_keyboard_wanted', { wanted });
+}
 
 export type DesktopActivityOverlayRect = Readonly<{
     x: number;
@@ -21,20 +85,12 @@ export type DesktopActivityOverlayRect = Readonly<{
 }>;
 
 export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
-    monitorSource: 'main_window' | 'overlay_window' | 'primary' | 'built_in' | 'focused';
+    monitorSource: 'main_window' | 'overlay_window' | 'primary' | 'built_in' | 'named';
     effectiveMonitor: DesktopActivityOverlayRect;
-    anchor: DesktopOverlayAnchor;
-    placementMode: DesktopOverlayPolicy['placementMode'];
-    requestedHostMode: 'floating' | 'notch_integrated';
-    hostMode: 'floating' | 'notch_integrated';
-    hostFallbackReason?:
-        | 'missing_display_context'
-        | 'unsupported_platform'
-        | 'external_display'
-        | 'display_has_no_physical_notch'
-        | 'panel_host_apply_failed'
-        | 'panel_position_unavailable'
-        | null;
+    display?: Readonly<{ storageKey: string; name: string; source: string; fellBack: boolean; requestedName?: string }>;
+    dock: DesktopActivityOverlayFrame['dock'];
+    surface: NotchSurface;
+    engaged: boolean;
     displayContext?: Readonly<{
         isMacos: boolean;
         isBuiltinDisplay: boolean;
@@ -47,8 +103,6 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
         screenFrame: DesktopActivityOverlayRect;
         visibleFrame: DesktopActivityOverlayRect;
     }> | null;
-    effectiveOffsetX: number;
-    effectiveOffsetY: number;
     computedPosition: Readonly<{
         x: number;
         y: number;
@@ -57,32 +111,21 @@ export type DesktopActivityOverlayPlacementDiagnostics = Readonly<{
     appliedNativeFrame?: DesktopActivityOverlayRect | null;
 }>;
 
-/** Applied window top-left in logical screen coordinates; scaleFactor maps logical to physical pixels. */
-export type DesktopActivityOverlayScreenOrigin = Readonly<{ x: number; y: number; scaleFactor: number }>;
-export type DesktopActivityOverlayFrame = Readonly<{
-    dock: 'top' | 'left' | 'right' | 'floating';
-    growth: Readonly<{ x: 'left' | 'right' | null; y: 'up' | 'down' | null }>;
-    anchorOffset: Readonly<{ x: number; y: number }>;
-    screenOrigin?: DesktopActivityOverlayScreenOrigin;
-}>;
-
 export type DesktopActivityOverlayWindowStatePayload = Readonly<{
+    visible: boolean;
+    surface?: NotchSurface;
+    engaged?: boolean;
     frame?: DesktopActivityOverlayFrame;
     availability?: Partial<DesktopHostAvailability>;
-    visible: boolean;
-    expanded: boolean;
     model: DesktopActivityOverlayModel;
     policy: DesktopOverlayPolicy;
-    window: DesktopActivityOverlayModel['window'];
     placementDiagnostics?: DesktopActivityOverlayPlacementDiagnostics | null;
 }>;
 
 export type DesktopActivityOverlaySyncPayload = Readonly<{
     visible: boolean;
-    expanded: boolean;
     model: DesktopActivityOverlayModel;
     policy: DesktopOverlayPolicy;
-    window: DesktopActivityOverlayModel['window'];
 }>;
 
 export type DesktopActivityOverlayInteractionPayload = Readonly<{
@@ -94,107 +137,46 @@ export type DesktopActivityOverlayInteractionPayload = Readonly<{
 export type DesktopActivityOverlayInteractionResultPayload = Readonly<{
     requestId: string;
     ok: boolean;
+    /** The Action's output when it succeeded (already validated by the executor in main). */
+    result?: unknown;
     errorCode?: string;
     error?: string;
 }>;
 
-export type DesktopActivityOverlayPointerId = number | string;
-
-export type DesktopActivityOverlayDragVelocityPayload = Readonly<{
-    pointerId: DesktopActivityOverlayPointerId;
-    vx: number;
-    vy: number;
-    sampleWindowMs: number;
-}>;
-
-export type DesktopActivityOverlayMomentumDeltaPayload = Readonly<{
-    generation: number;
-    deltaX: number;
-    deltaY: number;
-}>;
-
-type DesktopActivityOverlayScheduledMomentumDelta = Readonly<{
-    deltaX: number;
-    deltaY: number;
-    delayMs: number;
-}>;
-
-type DesktopActivityOverlayMomentumPlan = Readonly<{
-    generation: number;
-    tickMs: number;
-    deltas: readonly DesktopActivityOverlayScheduledMomentumDelta[];
-}>;
-
-function createDesktopActivityOverlayInteractionRequestId(): string {
-    nextDesktopActivityOverlayInteractionRequestSequence =
-        (nextDesktopActivityOverlayInteractionRequestSequence + 1) % Number.MAX_SAFE_INTEGER;
-    return `desktop-overlay-interaction-${Date.now().toString(36)}-${nextDesktopActivityOverlayInteractionRequestSequence}`;
-}
-
-function readErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error || 'action_failed');
-}
-
 export async function syncDesktopActivityOverlay(payload: DesktopActivityOverlaySyncPayload): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_sync', { payload });
+    await requireDesktopHostRole('activity');
+    await invokeDesktopHost('desktop_activity_overlay_sync', { payload });
 }
 
 export async function getDesktopActivityOverlayWindowState(): Promise<DesktopActivityOverlayWindowStatePayload | null> {
+    await requireDesktopHostRole('activity');
     return invokeDesktopHost<DesktopActivityOverlayWindowStatePayload | null>('desktop_activity_overlay_get_window_state');
 }
 
-export async function setDesktopActivityOverlayExpanded(expanded: boolean): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_set_expanded', { expanded });
+export async function presentDesktopActivityOverlay(payload: DesktopActivityOverlayPresent): Promise<void> {
+    await requireDesktopHostRole('activity');
+    await invokeDesktopHost<void>('desktop_activity_overlay_present', { payload });
 }
 
-export async function setDesktopActivityOverlayInputLocked(locked: boolean): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_set_input_locked', { locked });
+export async function listenDesktopActivityOverlayPointer(handler: (payload: DesktopActivityOverlayPointer) => void): Promise<() => void> {
+    await requireDesktopHostRole('activity');
+    return listenDesktopHostEvent(DESKTOP_ACTIVITY_OVERLAY_EVENTS.pointer, handler);
 }
 
-export async function applyDesktopActivityOverlayDragDelta(deltaX: number, deltaY: number): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_apply_drag_delta', { deltaX, deltaY });
+/** WebView2 supplies entry; the engaged native raw-input adapter supplies reliable exit. */
+export async function enterDesktopActivityOverlayPointer(): Promise<void> {
+    await requireDesktopHostRole('activity');
+    if (desktopHostKind() === 'tauri') await invokeDesktopHost<void>('desktop_activity_overlay_pointer_enter');
 }
 
-export async function releaseDesktopActivityOverlayDragVelocity(
-    payload: DesktopActivityOverlayDragVelocityPayload,
-): Promise<void> {
-    const plan = await invokeDesktopHost<DesktopActivityOverlayMomentumPlan>('desktop_activity_overlay_release_drag_velocity', {
-        payload: {
-            ...payload,
-            pointerId: String(payload.pointerId),
-        },
-    });
-    scheduleDesktopActivityOverlayMomentumPlan(plan);
-}
+export type DesktopActivityOverlayMove = Readonly<{
+    delta: Readonly<{ x: number; y: number }>;
+    commit: boolean;
+}>;
 
-export async function applyDesktopActivityOverlayMomentumDelta(
-    payload: DesktopActivityOverlayMomentumDeltaPayload,
-): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_apply_momentum_delta', { payload });
-}
-
-function scheduleDesktopActivityOverlayMomentumPlan(
-    plan: DesktopActivityOverlayMomentumPlan | undefined,
-): void {
-    if (!plan || !Array.isArray(plan.deltas)) {
-        return;
-    }
-    plan.deltas.forEach((delta, index) => {
-        const delayMs = Number.isFinite(delta.delayMs) && delta.delayMs >= 0
-            ? delta.delayMs * (index + 1)
-            : plan.tickMs * (index + 1);
-        setTimeout(() => {
-            void applyDesktopActivityOverlayMomentumDelta({
-                generation: plan.generation,
-                deltaX: delta.deltaX,
-                deltaY: delta.deltaY,
-            }).catch(() => undefined);
-        }, delayMs);
-    });
-}
-
-export async function resetDesktopActivityOverlayPosition(): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_reset_position');
+export async function moveDesktopActivityOverlay(move: DesktopActivityOverlayMove): Promise<void> {
+    await requireDesktopHostRole('activity');
+    await invokeDesktopHost<void>('desktop_activity_overlay_move', move);
 }
 
 export async function showDesktopMainWindow(): Promise<void> {
@@ -202,89 +184,41 @@ export async function showDesktopMainWindow(): Promise<void> {
 }
 
 export async function emitDesktopActivityOverlayInteraction(payload: DesktopActivityOverlayInteractionPayload): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_emit_interaction', { payload });
+    await emitDesktopWindowAction({ ...payload, windowLabel: 'activity_overlay' });
 }
 
 export async function emitDesktopActivityOverlayInteractionResult(
     payload: DesktopActivityOverlayInteractionResultPayload,
 ): Promise<void> {
-    await invokeDesktopHost<void>('desktop_activity_overlay_emit_interaction_result', { payload });
+    await emitDesktopWindowActionResult({ ...payload, windowLabel: 'activity_overlay' });
 }
 
 export async function executeDesktopActivityOverlayInteractionWithResult(
     payload: DesktopActivityOverlayInteractionPayload,
     options: Readonly<{ timeoutMs?: number }> = {},
 ): Promise<DesktopActivityOverlayInteractionResultPayload> {
-    const requestId = payload.requestId ?? createDesktopActivityOverlayInteractionRequestId();
-    const timeoutMs = options.timeoutMs ?? DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS;
-
-    let settled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let dispose: (() => void) | null = null;
-
-    return new Promise<DesktopActivityOverlayInteractionResultPayload>((resolve) => {
-        const settle = (result: DesktopActivityOverlayInteractionResultPayload) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            if (timeoutId !== null) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
-            }
-            dispose?.();
-            resolve(result);
-        };
-
-        timeoutId = setTimeout(() => {
-            settle({
-                requestId,
-                ok: false,
-                errorCode: 'ack_timeout',
-                error: 'ack_timeout',
-            });
-        }, timeoutMs);
-
-        listenDesktopActivityOverlayInteractionResult((result) => {
-            if (result.requestId !== requestId) {
-                return;
-            }
-            settle(result);
-        }).then((nextDispose) => {
-            if (settled) {
-                nextDispose();
-                return;
-            }
-            dispose = nextDispose;
-            return emitDesktopActivityOverlayInteraction({
-                ...payload,
-                requestId,
-            });
-        }).catch((error: unknown) => {
-            settle({
-                requestId,
-                ok: false,
-                errorCode: 'bridge_emit_failed',
-                error: readErrorMessage(error),
-            });
-        });
-    });
+    const { windowLabel: _windowLabel, ...result } = await executeDesktopWindowActionWithResult(
+        { ...payload, windowLabel: 'activity_overlay' },
+        { timeoutMs: options.timeoutMs ?? DESKTOP_ACTIVITY_OVERLAY_INTERACTION_RESULT_TIMEOUT_MS },
+    );
+    return result;
 }
 
 export async function listenDesktopActivityOverlayWindowState(
     handler: (payload: DesktopActivityOverlayWindowStatePayload) => void,
 ): Promise<() => void> {
+    await requireDesktopHostRole('activity');
     return listenDesktopHostEvent<DesktopActivityOverlayWindowStatePayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
 }
 
 export async function listenDesktopActivityOverlayInteraction(
     handler: (payload: DesktopActivityOverlayInteractionPayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopActivityOverlayInteractionPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interaction, handler);
+    return listenDesktopWindowAction(payload => { if (payload.windowLabel === 'activity_overlay') handler(payload); });
 }
 
 export async function listenDesktopActivityOverlayInteractionResult(
     handler: (payload: DesktopActivityOverlayInteractionResultPayload) => void,
 ): Promise<() => void> {
-    return listenDesktopHostEvent<DesktopActivityOverlayInteractionResultPayload>(DESKTOP_ACTIVITY_OVERLAY_EVENTS.interactionResult, handler);
+    return listenDesktopWindowActionResult(payload => { if (payload.windowLabel === 'activity_overlay') handler(payload); });
 }

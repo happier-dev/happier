@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Slider } from '@/components/ui/forms/Slider';
+import { useLocalSettingPreview, useLocalSettingPreviewValue } from '@/sync/store/settingsPreview';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import {
@@ -22,7 +23,9 @@ type PetCompanionSizeSliderProps = Readonly<{
 /** The pet size row: a real ordered scale, so a slider whose ends show small and large. */
 export function PetCompanionSizeSlider(props: PetCompanionSizeSliderProps): React.ReactElement {
     const { theme } = useUnistyles();
-    const value = normalizePetCompanionSizeScale(props.value);
+    const previewSize = useLocalSettingPreview('petsCompanionSizeScale');
+    const previewValue = useLocalSettingPreviewValue('petsCompanionSizeScale');
+    const value = normalizePetCompanionSizeScale(previewValue ?? props.value);
     const percent = petCompanionSizeScaleToPercent(value);
     const { onValueChange } = props;
     const handleValueChange = React.useCallback((next: number) => {
@@ -50,6 +53,7 @@ export function PetCompanionSizeSlider(props: PetCompanionSizeSliderProps): Reac
                     leading={<Icon name="paw-print" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
                     trailing={<Icon name="paw-print" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     onValueChange={handleValueChange}
+                    onValuePreview={previewSize}
                 />
             )}
         />

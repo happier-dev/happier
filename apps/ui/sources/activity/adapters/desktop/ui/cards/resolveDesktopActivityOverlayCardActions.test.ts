@@ -14,7 +14,7 @@ vi.mock('@/text', async () => {
 });
 
 describe('resolveDesktopActivityOverlayCardActions', () => {
-    it('normalizes permission actions to translated labels and canonical decisions', () => {
+    it('preserves the request owner choices and labels even for a high-risk request', () => {
         const card: Extract<DesktopActivityOverlayExpandedCard, { kind: 'permission_request' }> = {
             id: 'permission:request-1',
             kind: 'permission_request',
@@ -22,6 +22,7 @@ describe('resolveDesktopActivityOverlayCardActions', () => {
             sessionId: 'session-1',
             serverId: null,
             title: 'Approve command',
+            risk: 'high',
             summary: 'npm test',
             toolLabel: 'Bash',
             questionText: null,
@@ -31,14 +32,14 @@ describe('resolveDesktopActivityOverlayCardActions', () => {
             denyActionIdentifier: 'session.permission.respond',
             actions: [
                 {
-                    id: 'allow:request-1',
+                    id: 'allow',
                     label: 'Allow',
                     actionIdentifier: 'session.permission.respond',
                     data: { requestId: 'request-1', sessionId: 'session-1', decision: 'allow' },
                     tone: 'primary',
                 },
                 {
-                    id: 'deny:request-1',
+                    id: 'deny',
                     label: 'Deny',
                     actionIdentifier: 'session.permission.respond',
                     data: { requestId: 'request-1', sessionId: 'session-1', decision: 'deny' },
@@ -47,18 +48,7 @@ describe('resolveDesktopActivityOverlayCardActions', () => {
             ],
         };
 
-        expect(resolveDesktopActivityOverlayRequestCardActions(card)).toEqual([
-            expect.objectContaining({
-                id: 'deny',
-                label: 'notifications.actions.deny',
-                data: { requestId: 'request-1', sessionId: 'session-1', decision: 'deny' },
-            }),
-            expect.objectContaining({
-                id: 'allow',
-                label: 'notifications.actions.allow',
-                data: { requestId: 'request-1', sessionId: 'session-1', decision: 'allow' },
-            }),
-        ]);
+        expect(resolveDesktopActivityOverlayRequestCardActions(card)).toEqual(card.actions);
     });
 
     it('keeps user-question option labels while filtering stale open actions', () => {

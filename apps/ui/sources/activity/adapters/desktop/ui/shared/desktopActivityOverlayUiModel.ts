@@ -2,20 +2,19 @@ import type {
     DesktopActivityOverlayExpandedCard,
     DesktopActivityOverlayModel,
 } from '@/activity/adapters/desktop/presentation/buildDesktopActivityOverlayModel';
+import type { DesktopActivityOverlayActionDescriptor } from '@/activity/adapters/desktop/presentation/model/desktopActivityOverlayModelTypes';
+
+/** True means the addressed action completed successfully. */
+export type DesktopActivityOverlayActionHandler = (action: DesktopActivityOverlayActionDescriptor) => boolean | Promise<boolean>;
 
 export type {
     DesktopActivityOverlayExpandedCard,
     DesktopActivityOverlayModel as DesktopActivityOverlayUiModel,
 };
 
-export type DesktopActivityOverlayActionTone = 'primary' | 'secondary' | 'danger';
-
-export type DesktopActivityOverlayActionDescriptor = Readonly<{
-    id: string;
-    label: string;
-    actionIdentifier: string;
-    accessibilityLabel?: string | null;
-    data?: Readonly<Record<string, unknown>>;
-    tone?: DesktopActivityOverlayActionTone;
-    inputKind?: 'inline_text';
-}>;
+// The island renders the model's own action descriptors; one type, owned by the model.
+export type {
+    DesktopActivityOverlayActionDescriptor,
+    DesktopActivityOverlayActionTone,
+    DesktopActivityOverlaySessionRowModel,
+} from '@/activity/adapters/desktop/presentation/model/desktopActivityOverlayModelTypes';

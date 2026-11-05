@@ -1071,26 +1071,6 @@ describe('keyboard and desktop Settings Actions', () => {
         expect(owner.account()).toEqual(before);
     });
 
-    it('uses the desktop placement owner for native repositioning and rejects other hosts', async () => {
-        const invoke = vi.spyOn(desktopHostBoundary, 'invokeDesktopHost').mockResolvedValue(undefined);
-        onTestFinished(() => invoke.mockRestore());
-        const owner = createOwner({ os: 'web', desktop: true });
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'desktop.placementMode', value: 'custom' } }))
-            .toEqual({ anchor: 'desktop.placementMode', value: 'custom' });
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'desktop.anchorPreset', value: 'bottom_left' } }))
-            .toEqual({ anchor: 'desktop.anchorPreset', value: 'bottom_left' });
-        expect(owner.local().desktopOverlayAnchor).toBe('bottom_left');
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'desktop.placementMode', value: 'anchored' } }))
-            .toEqual({ anchor: 'desktop.placementMode', value: 'anchored' });
-        expect(owner.local()).toMatchObject({ desktopOverlayPlacementMode: 'anchored', desktopOverlayAnchor: 'top_center',
-            desktopOverlayOffsetX: 0, desktopOverlayOffsetY: 0 });
-        expect(invoke).toHaveBeenCalledWith('desktop_activity_overlay_reset_position');
-        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'desktop.anchorPreset', value: 'random' } }))
-            .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
-        const web = createOwner();
-        expect(await web.action({ actionId: 'settings.get', input: { anchor: 'desktop.anchorPreset' } }))
-            .toMatchObject({ ok: false, errorCode: 'setting_unsupported_host' });
-    });
 });
 
 describe('navigation placement Settings Actions', () => {

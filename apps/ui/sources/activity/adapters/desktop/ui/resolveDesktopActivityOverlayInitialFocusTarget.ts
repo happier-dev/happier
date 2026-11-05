@@ -24,7 +24,6 @@ export type DesktopActivityOverlayFocusTargetRef = React.Ref<View>;
 export type DesktopActivityOverlayInitialFocusTarget =
     | Readonly<{ kind: 'card_action'; cardId: string; actionId: string }>
     | Readonly<{ kind: 'session_row'; cardId: string; sessionId: string; serverId: string | null }>
-    | Readonly<{ kind: 'quick_reply_input' }>
     | Readonly<{ kind: 'surface' }>;
 
 /**
@@ -33,8 +32,7 @@ export type DesktopActivityOverlayInitialFocusTarget =
  * rather than focused.
  */
 export function resolveDesktopActivityOverlayInitialFocusTarget(
-    model: DesktopActivityOverlayUiModel,
-    options: Readonly<{ quickReplyVisible: boolean }>,
+    model: Pick<DesktopActivityOverlayUiModel, 'expanded'>,
 ): DesktopActivityOverlayInitialFocusTarget {
     for (const card of model.expanded.cards ?? []) {
         switch (card.kind) {
@@ -78,5 +76,5 @@ export function resolveDesktopActivityOverlayInitialFocusTarget(
         }
     }
 
-    return options.quickReplyVisible ? { kind: 'quick_reply_input' } : { kind: 'surface' };
+    return { kind: 'surface' };
 }

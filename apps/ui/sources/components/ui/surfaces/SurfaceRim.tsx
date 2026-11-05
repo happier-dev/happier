@@ -37,6 +37,8 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     radius: number;
     /** The border role whose hairline the rim draws under its light (the surface's own `border.<role>`). */
     border: 'default' | 'surface' | 'modal';
+    /** The corner the light stands in; a surface flush against a screen edge moves it to a free corner. */
+    anchor?: 'top-left' | 'bottom-left';
     /** A static preview's theme; defaults to the active one. */
     theme?: Theme;
 }>) {
@@ -47,15 +49,17 @@ export const SurfaceRim = React.memo(function SurfaceRim(props: Readonly<{
     const edge = theme.colors.edge;
     const stroke = HAIRLINE * 2; // centred on the edge: the outer half falls outside and only the inner hairline shows
     const rect = { x: 0, y: 0, width: '100%', height: '100%', rx: props.radius, ry: props.radius } as const;
+    const cy = props.anchor === 'bottom-left' ? 1 : 0;
+    const anchored = (ellipse: string) => cy === 0 ? ellipse : `translate(0 ${cy}) ${ellipse} translate(0 ${-cy})`;
     return (
         <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
             <Defs>
-                <RadialGradient id={`${id}l`} cx={0} cy={0} r={1} gradientUnits="objectBoundingBox" gradientTransform={RIM_LIGHT_ELLIPSE}>
+                <RadialGradient id={`${id}l`} cx={0} cy={cy} r={1} gradientUnits="objectBoundingBox" gradientTransform={anchored(RIM_LIGHT_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.rimHi)} />
                     <Stop offset={RIM_MID_OFFSET} {...happierSvgGradientStop(edge.rimMid)} />
                     <Stop offset={RIM_END_OFFSET} {...happierSvgGradientStop(edge.rimMid, 0)} />
                 </RadialGradient>
-                <RadialGradient id={`${id}s`} cx={0} cy={0} r={SHEEN_RADIUS} gradientUnits="objectBoundingBox" gradientTransform={SHEEN_ELLIPSE}>
+                <RadialGradient id={`${id}s`} cx={0} cy={cy} r={SHEEN_RADIUS} gradientUnits="objectBoundingBox" gradientTransform={anchored(SHEEN_ELLIPSE)}>
                     <Stop offset={0} {...happierSvgGradientStop(edge.sheen)} />
                     <Stop offset={1} {...happierSvgGradientStop(edge.sheen, 0)} />
                 </RadialGradient>

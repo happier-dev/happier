@@ -28,6 +28,23 @@ export function useSessionListIdentityDisplay(): SessionListIdentityDisplay {
 }
 
 /**
+ * The Agent mark's inputs for a Session, the one reading every identity consumer shares (Session-list
+ * rows here; the desktop overlay projects it into its payload because its window has no Session store).
+ */
+export function readSessionListIdentityFacts(
+    session: Session | SessionListRenderableSession,
+    presentationSource?: SessionListPresentationSource,
+): Readonly<{ agentId: string | null; machineId: string | null }> {
+    const display = presentationSource ? readSessionListPresentationDisplay(presentationSource) : session;
+    const metadata = 'agentState' in session ? readSessionOwnerMetadataView(session) : session.metadata;
+    const agentId = presentationSource ? readSessionPresentationAgentId(display) : readSessionRowPresentationAgentId(session);
+    const machineId = presentationSource
+        ? readSessionListPresentationOwnerMetadataField(presentationSource, 'machineId')
+        : metadata?.machineId;
+    return { agentId: agentId ?? null, machineId: typeof machineId === 'string' ? machineId : null };
+}
+
+/**
  * Canonical leading identity used by Session-list-shaped rows.
  * Consumers choose geometry, while avatar-vs-Agent-logo semantics stay here.
  */
@@ -50,11 +67,7 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
     const source = props.presentationSource;
     const display = source ? readSessionListPresentationDisplay(source) : props.session;
     const notLive = (source?.lifecycle.active ?? props.session.active) !== true || !props.connected;
-    const metadata = 'agentState' in props.session
-        ? readSessionOwnerMetadataView(props.session)
-        : props.session.metadata;
-    const agentId = source ? readSessionPresentationAgentId(display) : readSessionRowPresentationAgentId(props.session);
-    const machineId = source ? readSessionListPresentationOwnerMetadataField(source, 'machineId') : metadata?.machineId;
+    const { agentId, machineId } = readSessionListIdentityFacts(props.session, source);
 
     if (props.display === 'avatar') {
         return (

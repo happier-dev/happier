@@ -1,5 +1,8 @@
-import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
-export type DesktopActivityOverlayActionTone = 'primary' | 'secondary' | 'danger';
+import type { BotActivity } from '@/components/sessions/bots/botActivity';
+import type { DesktopActivityOverlayRequestSubject, DesktopActivityOverlaySessionIdentity } from '../snapshot/desktopActivityOverlaySnapshotTypes';
+import type { NotchBotFaces, PinnedDesktopOverlayConversation } from '../notchBotTypes';
+/** `quiet`: a bare text choice beside the decision (Always allow); never the view's primary. */
+export type DesktopActivityOverlayActionTone = 'primary' | 'secondary' | 'danger' | 'quiet';
 
 export type DesktopActivityOverlayActionDescriptor = Readonly<{
     id: string;
@@ -21,38 +24,15 @@ export type DesktopActivityOverlayCardKind =
     | 'completion_state'
     | 'multi_session_list';
 
-export type DesktopActivityOverlayCollapsedSlideId =
-    | 'status'
-    | 'task_title'
-    | 'last_tool'
-    | 'project_duration';
-
-export type DesktopActivityOverlayCollapsedSlidePriority =
-    | 'idle'
-    | 'running'
-    | 'ready'
-    | 'attention';
-
-export type DesktopActivityOverlayCollapsedSlide = Readonly<{
-    id: DesktopActivityOverlayCollapsedSlideId;
+/** One Session row: identity, two lines of text, and the state tone its colour means. */
+export type DesktopActivityOverlaySessionRowModel = Readonly<{
+    sessionId: string;
+    serverId: string | null;
     title: string;
     subtitle: string | null;
-    animatedEllipsis: boolean;
-    priority: DesktopActivityOverlayCollapsedSlidePriority;
-}>;
-
-export type DesktopActivityOverlayCollapsedUrgency = Readonly<{
-    level: 'idle' | 'running' | 'needs_you' | 'critical';
-    unattendedMs: number;
-    pollMs: number;
-}>;
-
-export type DesktopActivityOverlayCollapsedTransitionCue = Readonly<{
-    kind: 'bounce_on_ready' | 'phase_flash';
-    phase: DesktopActivityOverlayCollapsedSlidePriority;
-    key: string;
-    durationMs: number;
-}>;
+    statusText: string | null;
+    previewText: string | null;
+}> & DesktopActivityOverlaySessionIdentity;
 
 type DesktopActivityOverlayCardBase = Readonly<{
     id: string;
@@ -71,6 +51,8 @@ export type DesktopActivityOverlayExpandedCard =
     }>)
     | (DesktopActivityOverlayCardBase & Readonly<{
         kind: 'permission_request';
+        /** The addressed Session's existing identity projection for the request header. */
+        session?: DesktopActivityOverlaySessionRowModel;
         requestId: string;
         turnId?: string;
         sessionId: string;
@@ -83,9 +65,12 @@ export type DesktopActivityOverlayExpandedCard =
         allowActionIdentifier?: string;
         denyActionIdentifier?: string;
         risk?: 'low' | 'high';
+        subject?: DesktopActivityOverlayRequestSubject | null;
     }>)
     | (DesktopActivityOverlayCardBase & Readonly<{
         kind: 'user_question';
+        /** The addressed Session's existing identity projection for the request header. */
+        session?: DesktopActivityOverlaySessionRowModel;
         requestId: string;
         sessionId: string;
         serverId: string | null;
@@ -120,23 +105,17 @@ export type DesktopActivityOverlayExpandedCard =
         attentionState: string;
         active: boolean;
         updatedAt: number;
-    }>)
+    }> & DesktopActivityOverlaySessionIdentity)
     | (DesktopActivityOverlayCardBase & Readonly<{
         kind: 'multi_session_list';
-        rows: readonly Readonly<{
-            sessionId: string;
-            serverId: string | null;
-            title: string;
-            subtitle: string | null;
-            statusText: string | null;
-            previewText: string | null;
-        }>[];
+        rows: readonly DesktopActivityOverlaySessionRowModel[];
     }>);
 
 export type DesktopActivityOverlayModel = Readonly<{
     visible: boolean;
-    isExpanded: boolean;
     generatedAt: number;
+    faces: NotchBotFaces;
+    conversation: PinnedDesktopOverlayConversation | null;
     collapsed: Readonly<{
         title: string;
         statusText: string | null;
@@ -144,40 +123,11 @@ export type DesktopActivityOverlayModel = Readonly<{
         sessionCount: number | null;
         primaryCardKind?: DesktopActivityOverlayCardKind | null;
         accentText?: string | null;
-        slides?: readonly DesktopActivityOverlayCollapsedSlide[];
-        carousel?: Readonly<{
-            enabled: boolean;
-            cadenceMs: number;
-            freezeReason: 'disabled' | 'reduced_motion' | 'voice_over' | null;
-        }>;
-        urgency?: DesktopActivityOverlayCollapsedUrgency;
-        transitionCue?: DesktopActivityOverlayCollapsedTransitionCue | null;
+        activity: BotActivity;
     }>;
     expanded: Readonly<{
         title: string;
-        rows: readonly Readonly<{
-            sessionId: string;
-            serverId: string | null;
-            title: string;
-            subtitle: string | null;
-            statusText: string | null;
-            previewText: string | null;
-        }>[];
+        rows: readonly DesktopActivityOverlaySessionRowModel[];
         cards?: readonly DesktopActivityOverlayExpandedCard[];
-        quickReply?: Readonly<{
-            targetSessionId: string;
-            serverId: string | null;
-            phrases: readonly string[];
-        }> | null;
     }>;
-    window: Readonly<{
-        collapsed: Readonly<{ width: number; height: number }>;
-        expanded: Readonly<{ width: number; height: number }>;
-    }>;
-}>;
-
-export type DesktopActivityOverlayWindowSizeParams = Readonly<{
-    density: DesktopOverlayPolicy['density'];
-    compactStyle: DesktopOverlayPolicy['compactStyle'];
-    rowCount: number;
 }>;

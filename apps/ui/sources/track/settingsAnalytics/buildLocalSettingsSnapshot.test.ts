@@ -12,7 +12,7 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(typeof smallBasis.properties.local_setting__sidebarWidthPx).toBe('string');
     });
     it('tracks local theme preference, pane size buckets, acknowledged CLI counts, and ui font scale bucket', () => {
-        const snapshot = buildLocalSettingsSnapshot({
+        const snapshot = buildLocalSettingsSnapshot(localSettingsParse({
             ...localSettingsDefaults,
             themePreference: 'dark',
             uiFontScale: 1.24,
@@ -70,7 +70,7 @@ describe('buildLocalSettingsSnapshot', () => {
                 'machine-a': '1.2.3',
                 'machine-b': '2.0.0',
             },
-        });
+        }));
         expect(snapshot.properties.local_setting__themePreference).toBe('dark');
         expect(snapshot.properties.local_setting__sidebarCollapsed).toBe(true);
         expect(snapshot.properties.local_setting__sidebarWidthPx).toBe('small');
@@ -95,24 +95,24 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__activitySurfacePrivacyMode).toBe('include_preview');
         expect(snapshot.properties.local_setting__desktopOverlayEnabled).toBe(true);
         expect(snapshot.properties.local_setting__desktopOverlayVisibilityMode).toBe('always_when_enabled');
-        expect(snapshot.properties.local_setting__desktopOverlayShowWhenRunning).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayShowWhenAttentionRequired).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayShowWhenReady).toBe(false);
+        expect(snapshot.properties.local_setting__desktopOverlayShowWhenRunning).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayShowWhenAttentionRequired).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayShowWhenReady).toBeUndefined();
         expect(snapshot.properties.local_setting__desktopOverlayAlwaysOnTop).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayAutoHideEnabled).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayAutoHideDelayMs).toBe('10s');
-        expect(snapshot.properties.local_setting__desktopOverlayExpandedBehavior).toBe('hover');
-        expect(snapshot.properties.local_setting__desktopOverlayInteractiveCollapsed).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayPresentationMode).toBe('notch_integrated');
-        expect(snapshot.properties.local_setting__desktopOverlayEnableDragReposition).toBe(true);
-        expect(snapshot.properties.local_setting__desktopOverlayLockPosition).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayPlacementMode).toBe('custom');
-        expect(snapshot.properties.local_setting__desktopOverlayAnchor).toBe('bottom_right');
-        expect(snapshot.properties.local_setting__desktopOverlayClickAction).toBe('open_primary_session');
-        expect(snapshot.properties.local_setting__desktopOverlayDensity).toBe('comfortable');
-        expect(snapshot.properties.local_setting__desktopOverlayShowSessionCount).toBe(false);
-        expect(snapshot.properties.local_setting__desktopOverlayShowPreviewText).toBe(true);
-        expect(snapshot.properties.local_setting__desktopOverlayCompactStyle).toBe('panel');
+        expect(snapshot.properties.local_setting__desktopOverlayAutoHideEnabled).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayAutoHideDelayMs).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayExpandedBehavior).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayInteractiveCollapsed).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayPresentationMode).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayEnableDragReposition).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayLockPosition).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayPlacementMode).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayAnchor).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayClickAction).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayDensity).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayShowSessionCount).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayShowPreviewText).toBeUndefined();
+        expect(snapshot.properties.local_setting__desktopOverlayCompactStyle).toBeUndefined();
         expect(snapshot.properties.local_setting__iosLiveActivitiesEnabled).toBeUndefined();
         expect(snapshot.properties.local_setting__iosWidgetsEnabled).toBeUndefined();
         expect(snapshot.properties.local_setting__homeScreenWidgetsMode).toBeUndefined();

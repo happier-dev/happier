@@ -96,6 +96,20 @@ On Android, bundled sounds map to dedicated notification channels so request not
 
 The desktop overlay is the compact activity island on desktop. It summarizes active attention without requiring you to open the full app.
 
+**Unreleased 0.3 development builds:** the compact island shows **Needs you**,
+**N working**, or no status word. An admitted request from any Session can bring
+it into view. Working Sessions and unread completions remain available in the
+opened list; selected Bot faces can also keep the island visible. Completions
+alone do not bring it into view.
+
+The companion pet uses the same activity and desktop-overlay delivery policy,
+including in the phone and browser app shell. Each Home's delivery restrictions,
+mutes and privacy apply before pet content appears. The character keeps its own
+enable and selection preferences. Its activity tray is hidden while the enabled
+desktop island is available, and returns when the island is disabled or
+unavailable. Dismissing a tray item leaves its approval unanswered; a later ask
+can appear again.
+
 It can show:
 
 - the current primary session
@@ -108,6 +122,58 @@ It can show:
 Permission cards classify request risk. Low-risk read-only requests can show quick allow options, including an **Always allow** shortcut. High-risk requests do not show the blanket allow shortcut; they keep review-oriented actions visible instead.
 
 User-question cards can show numbered choices. When a single question has direct options, the overlay can also offer **Other** so you can answer in context with free text.
+
+### Notch preferences
+
+**Unreleased 0.3 development builds:** open **Settings → Desktop app → Notch**
+to configure this computer’s notch. **Show the notch** turns it on; **Dock**
+chooses Top, Left, Right, or Floating, **Display** chooses its screen, and
+**When idle** chooses Tip, Full, or Hidden. **Keep on top of full-screen apps**
+controls whether it stays above full-screen windows. These preferences belong to
+this device.
+
+The notch is a barely-off-black glass in every app theme and on every dock.
+**Settings → Appearance → Glass** still applies: lower Tint shows more of the
+desktop through it, and Solid or the system's Reduce Transparency keeps it
+opaque. On macOS the desktop blurs behind it; on Windows and Linux it stays
+opaque.
+
+**Show Bots** chooses which of your rail Bots appear: **When they need you**,
+**While working**, or **Always**. A Bot that needs you always appears. The stored
+choice is kept when upgrading; if you have not chosen one, the default is
+**When they need you**. **Open Bot conversations** chooses **In the overlay**
+or **In a window** for a Bot click. The context menu lets you choose the other
+presentation for an individual conversation.
+
+The former running, attention, ready, preview, and auto-hide controls are retired;
+they do not override Show Bots or the idle choice. Removing the old preview switch
+does not relax a Home’s or this device’s privacy rules. The separate pet activity
+modes also retire without changing Show Bots. A pet previously limited to
+attention remains on screen while enabled. Account pet enable and selection
+defaults, and each device’s inheritance or explicit overrides, are preserved.
+
+### Bots in the notch
+
+**Unreleased 0.3 development builds:** your Bots appear as faces in the island,
+in the same order as the rail: up to four, then **+N**. A ring around a face means
+the Bot is working; an amber dot means it needs you. On the left and right docks
+the faces stack vertically.
+
+- **Click a face** (or press Enter on it) to pin the island open on that Bot: its
+  name and state, its last reply, any request waiting for you, and a reply field
+  for that Session. **Back** returns to the list; Esc, the pin, or a click outside
+  closes it. If the Home or this device shows only status on this surface, the
+  reply and the request stay hidden and **Open in a window** reads them.
+- **Open in a window** (the icon beside the pin) opens the same Session in its own
+  window.
+- **Right-click a face** or a Bot row (or press Shift+F10 or the Menu key) for
+  **Open in new window** and **Open in the overlay**.
+- The opened list shows your Bots first, each followed by its pending request,
+  then your other Sessions.
+
+The pinned reply field is that Session's own draft, the same one its window and the
+main app show. Switching to another Bot is immediate and shows that Bot's draft;
+text you typed stays with the Bot you typed it for.
 
 Completion states are queued by priority. Pending tool work is shown before a normal turn completion, and subagent completion can remain sticky so it is not lost behind a faster-changing session.
 

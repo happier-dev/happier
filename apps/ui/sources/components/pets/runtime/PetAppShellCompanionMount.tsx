@@ -1,3 +1,4 @@
+import { petActivityPose } from '@/components/pets/activity/petActivityPose';
 import * as React from 'react';
 import { Platform, View, useWindowDimensions, type ViewStyle } from 'react-native';
 
@@ -190,7 +191,7 @@ function PetAppShellCompanionRuntime({
             <PetCompanionSurface
                 reducedMotion={reducedMotion}
                 active={runtimeActive}
-                state={drag.dragState ?? activity.state}
+                state={drag.dragState ?? petActivityPose[activity.state]}
                 stateStyle={[
                     styles.pet,
                     {

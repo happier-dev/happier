@@ -72,46 +72,17 @@ export type PetCompanionActivityTrayProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
-function resolveStatusLabel(status: PetCompanionTrayItem['status']): string {
-    switch (status) {
-        case 'waiting':
-            return t('settingsPets.overlayStatusWaiting');
-        case 'failed':
-            return t('settingsPets.overlayStatusFailed');
-        case 'review':
-            return t('settingsPets.overlayStatusReview');
-        case 'running':
-            return t('settingsPets.overlayStatusRunning');
-    }
+function resolveStatusLabel(activity: PetCompanionTrayItem['activity']): string {
+    return activity === 'needsYou' ? t('workStatus.buckets.needs_you')
+        : activity === 'working' ? t('workStatus.buckets.working') : '';
 }
 
-function resolveStatusIcon(status: PetCompanionTrayItem['status']): IconName {
-    switch (status) {
-        case 'waiting':
-            return 'clock';
-        case 'failed':
-            return 'warning';
-        case 'review':
-            return 'check-circle';
-        case 'running':
-            return 'circle';
-    }
+function resolveStatusIcon(activity: PetCompanionTrayItem['activity']): IconName {
+    return activity === 'needsYou' ? 'clock' : 'circle';
 }
 
-function resolveStatusColor(
-    status: PetCompanionTrayItem['status'],
-    theme: ReturnType<typeof useUnistyles>['theme'],
-): string {
-    switch (status) {
-        case 'waiting':
-            return theme.colors.status.actionRequired;
-        case 'failed':
-            return theme.colors.status.error;
-        case 'review':
-            return theme.colors.state.success.foreground;
-        case 'running':
-            return theme.colors.status.connected;
-    }
+function resolveStatusColor(activity: PetCompanionTrayItem['activity'], theme: ReturnType<typeof useUnistyles>['theme']): string {
+    return activity === 'needsYou' ? theme.colors.state.attention.foreground : theme.colors.text.secondary;
 }
 
 function PetCompanionActivityTrayItemCard(props: Readonly<{
@@ -127,9 +98,9 @@ function PetCompanionActivityTrayItemCard(props: Readonly<{
     const { theme } = useUnistyles();
     const [draft, setDraft] = React.useState('');
     const safeSessionId = toTestIdSafeValue(props.item.sessionId);
-    const statusLabel = resolveStatusLabel(props.item.status);
-    const statusColor = resolveStatusColor(props.item.status, theme);
-    const statusIcon = resolveStatusIcon(props.item.status);
+    const statusLabel = resolveStatusLabel(props.item.activity);
+    const statusColor = resolveStatusColor(props.item.activity, theme);
+    const statusIcon = resolveStatusIcon(props.item.activity);
     const bubbleTheme = theme.colors.desktopPetOverlay?.bubble ?? {
         background: theme.colors.surface.base,
         backgroundPressed: theme.colors.surface.pressed,

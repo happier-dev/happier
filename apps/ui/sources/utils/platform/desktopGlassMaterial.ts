@@ -95,12 +95,16 @@ export async function subscribeDesktopGlassState(listener: (state: DesktopGlassS
 
 /**
  * A panel's card stops filling its window when it starts to move; its material clears until the next
- * resting frame (`presentCaptureWindow` carries that card's radius).
+ * resting frame (`presentCaptureWindow` carries that card's radius). `frame` places the material when it
+ * does not fill the window (the notch's island); such a panel's material only hides while it moves.
  */
-export async function setDesktopGlassPanelShape(radius: number | null): Promise<void> {
+export async function setDesktopGlassPanelShape(
+    radius: number | null,
+    frame?: Readonly<{ x: number; y: number; width: number; height: number }>,
+): Promise<void> {
     if (!isDesktopHost()) return;
     try {
-        await invokeDesktopHost<unknown>('desktop_set_glass_panel_shape', { radius });
+        await invokeDesktopHost<unknown>('desktop_set_glass_panel_shape', { radius, frame });
     } catch {
         // Older hosts have no panel material; the card stays opaque.
     }

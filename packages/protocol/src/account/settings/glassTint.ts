@@ -8,10 +8,20 @@ export type GlassTintValues = Readonly<{
     clearCardCoat: number;
     floatingCoat: number;
     panelCoat: number;
+    /** The notch's ink glass: its own anchor at the shipped default, so Tint moves smoothly through it. */
+    notchCoat: number;
     plainDarkCompression: number;
     pictureDarkCompression: number;
     lightCompression: number;
 }>;
+
+const NOTCH_COAT = { atClear: 0.55, atDefault: 0.95, atOpaque: 1 } as const;
+
+function resolveNotchCoat(tint: number): number {
+    return tint <= DEFAULT_GLASS_TINT_INTENSITY
+        ? NOTCH_COAT.atClear + (NOTCH_COAT.atDefault - NOTCH_COAT.atClear) * tint / DEFAULT_GLASS_TINT_INTENSITY
+        : NOTCH_COAT.atDefault + (NOTCH_COAT.atOpaque - NOTCH_COAT.atDefault) * (tint - DEFAULT_GLASS_TINT_INTENSITY) / (100 - DEFAULT_GLASS_TINT_INTENSITY);
+}
 
 /** Named materials share these anchors; card and floating use the same compression in both themes. */
 const GLASS_TINT_ANCHORS = {
@@ -21,7 +31,7 @@ const GLASS_TINT_ANCHORS = {
         plainDarkCompression: 1, pictureDarkCompression: 0.45, lightCompression: 0.43 },
     100: { cardCoat: 0.45, clearCardCoat: 0.3, floatingCoat: 0.25, panelCoat: 0.85,
         plainDarkCompression: 0.7, pictureDarkCompression: 0.35, lightCompression: 0.3 },
-} as const satisfies Record<0 | 50 | 100, GlassTintValues>;
+} as const satisfies Record<0 | 50 | 100, Omit<GlassTintValues, 'notchCoat'>>;
 
 /** Stored missing/malformed values recover to the default; mutations use the strict schema. */
 export function readGlassTintIntensity(value: unknown): number {
@@ -41,6 +51,7 @@ export function resolveGlassTintValues(value: unknown): GlassTintValues {
         clearCardCoat: interpolate('clearCardCoat'),
         floatingCoat: interpolate('floatingCoat'),
         panelCoat: interpolate('panelCoat'),
+        notchCoat: resolveNotchCoat(tint),
         plainDarkCompression: interpolate('plainDarkCompression'),
         pictureDarkCompression: interpolate('pictureDarkCompression'),
         lightCompression: interpolate('lightCompression'),

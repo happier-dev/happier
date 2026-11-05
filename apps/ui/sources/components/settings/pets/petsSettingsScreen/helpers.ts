@@ -2,15 +2,17 @@ import type {
     DaemonPetImportLocalPackageRequestV1,
     DiscoveredPetPackageV1,
     ImportedLocalPetPackageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/pets/daemonRpc';
 
+import {
+    PetEnabledOverrideSchema,
+} from '@/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces';
 import type {
     LocalPetPreviewAsset,
     LocalPetSourceMetadata,
 } from '@/sync/domains/pets/localPetSourceTypes';
 
 import type {
-    DesktopPetOverlayVisibilityModeOverride,
     DetectedPet,
     LocalDevicePetRow,
     ManagedLocalPet,
@@ -18,13 +20,7 @@ import type {
     PetImportCandidate,
 } from './types';
 
-const PET_ENABLED_OVERRIDE_IDS = new Set(['inherit', 'enabled', 'disabled']);
-const DESKTOP_PET_OVERLAY_VISIBILITY_MODE_OVERRIDE_IDS = new Set([
-    'inherit',
-    'attentionOrActive',
-    'alwaysWhenEnabled',
-    'attentionOnly',
-]);
+const PET_ENABLED_OVERRIDE_IDS: ReadonlySet<string> = new Set(PetEnabledOverrideSchema.options);
 
 export const USE_ON_THIS_DEVICE_ACTION_ID = 'use-on-this-device';
 export const IMPORT_TO_ACCOUNT_ACTION_ID = 'import-to-account';
@@ -32,12 +28,6 @@ export const REMOVE_FROM_DEVICE_ACTION_ID = 'remove-from-device';
 
 export function isPetEnabledOverride(value: string): value is PetEnabledOverride {
     return PET_ENABLED_OVERRIDE_IDS.has(value);
-}
-
-export function isDesktopPetOverlayVisibilityModeOverride(
-    value: string,
-): value is DesktopPetOverlayVisibilityModeOverride {
-    return DESKTOP_PET_OVERLAY_VISIBILITY_MODE_OVERRIDE_IDS.has(value);
 }
 
 export function sanitizeTestIdPart(value: string): string {

@@ -176,7 +176,7 @@ export function getSessionMachineLabel(input: Readonly<{
     return host || getMachineDisplayName({ id: input.machineId, absence: 'unlisted' });
 }
 
-type MachineNameSource = MachineNameInput & Readonly<{ id: string }>;
+export type MachineNameSource = MachineNameInput & Readonly<{ id: string }>;
 
 /**
  * The names of machines shown together (a list, a picker, the home hub): each machine's

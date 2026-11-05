@@ -85,17 +85,42 @@ describe('mounted slide mapper inputs', () => {
         await screen.unmount();
     });
 
-    it('mounts the desktop activity frame without admitting its React children into a mapper', async () => {
-        const { DesktopActivityOverlayMotionFrame } = await loadWorkletModule<typeof import('@/activity/adapters/desktop/ui/DesktopActivityOverlayMotionFrame')>(
-            resolve(import.meta.dirname, '../../../activity/adapters/desktop/ui/DesktopActivityOverlayMotionFrame.tsx'),
-            new Map<string, unknown>([['react-native-reanimated', Reanimated], ['react-native', Native]]),
+    it('mounts the desktop notch without admitting its React content into a mapper', async () => {
+        const notchDir = resolve(import.meta.dirname, '../../../activity/adapters/desktop/ui/notch');
+        const motion = await loadWorkletModule<typeof import('@/activity/adapters/desktop/ui/notch/useNotchMotion')>(
+            resolve(notchDir, 'useNotchMotion.ts'),
+            new Map<string, unknown>([['react-native-reanimated', Reanimated]]),
         );
-        const child = contextChild('activity');
+        const { NotchShape } = await loadWorkletModule<typeof import('@/activity/adapters/desktop/ui/notch/NotchShape')>(
+            resolve(notchDir, 'NotchShape.tsx'),
+            new Map<string, unknown>([
+                ['./useNotchMotion', motion],
+                ['react-native-svg', { ...(await import('@/dev/testkit/mocks/reactNativeSvg')), __esModule: true }],
+                ['react-native-reanimated', Reanimated],
+                ['react-native', Native],
+            ]),
+        );
+        const standard = contextChild('standard');
+        const open = contextChild('open');
         function Harness() {
-            return <DesktopActivityOverlayMotionFrame visible expanded>{child}</DesktopActivityOverlayMotionFrame>;
+            return (
+                <NotchShape
+                    dock="top"
+                    form="standard"
+                    growth={{ x: null, y: 'down' }}
+                    anchorOffset={{ x: 0, y: 0 }}
+                    camera={null}
+                    renderStandard={() => standard}
+                    renderOpen={() => open}
+                    onTipPress={() => {}}
+                    tipAccessibilityLabel={undefined}
+                    onPresent={() => {}}
+                />
+            );
         }
         const screen = await renderScreen(<Harness />);
-        expect(screen.findByTestId('activity')).not.toBeNull();
+        expect(screen.findByTestId('standard')).not.toBeNull();
+        expect(screen.findByTestId('open')).not.toBeNull();
         await screen.unmount();
     });
 

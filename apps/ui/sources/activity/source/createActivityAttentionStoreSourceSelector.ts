@@ -9,7 +9,7 @@ import {
 import type { ConcurrentSessionListCacheByServerId } from '@/sync/domains/session/listing/concurrentSessionListCache';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
@@ -493,7 +493,7 @@ export function readActivityAttentionStoreSource(
 
 export function createActivityAttentionStoreSourceSelector(
     personalMembershipByServerId: Readonly<Record<string, readonly string[]>> = {},
-    options: Readonly<{ includeSessionMessages?: boolean; includeFollowRuleFacts?: boolean }> = {},
+    options: Readonly<{ includeSessionMessages?: boolean; detailAddresses?: readonly SessionAddress[]; includeFollowRuleFacts?: boolean }> = {},
 ): (state: StorageState) => StoreActivityAttentionSource {
     const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
     const renderableSignatureCache = new Map<string, SignatureCacheEntry<SessionListRenderableSession>>();
@@ -532,7 +532,11 @@ export function createActivityAttentionStoreSourceSelector(
         // Store domains publish immutable references. Retain each semantic signature independently:
         // an unrelated notification must not sort/parse the unchanged Session collections.
         if (includeSessionMessages && (sessionsChanged || membershipChanged)) {
-            potentialSessionIds = collectPotentialSessionIds(state);
+            potentialSessionIds = options.detailAddresses
+                ? options.detailAddresses.filter(address =>
+                    state.sessions[address.sessionId]?.serverId === address.serverId,
+                ).map(address => address.sessionId)
+                : collectPotentialSessionIds(state);
         }
         if (sessionsChanged) signatures.sessions = buildCachedRecordSignature(state.sessions, sessionSignatureCache, session => {
             const serverId = session.serverId ?? state.profileScope?.serverId;
@@ -561,7 +565,12 @@ export function createActivityAttentionStoreSourceSelector(
         }
 
         previousSignature = signature;
-        previousSource = inputs;
+        previousSource = options.detailAddresses && includeSessionMessages
+            ? { ...inputs, sessionMessagesById: Object.fromEntries(potentialSessionIds.flatMap(id => {
+                const messages = state.sessionMessages[id];
+                return messages ? [[id, messages]] : [];
+            })) }
+            : inputs;
         return previousSource;
     };
 }

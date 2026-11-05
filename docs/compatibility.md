@@ -4722,6 +4722,15 @@ field, so there is no mixed-development fallback. This updates the unreleased
 V1 contract without a new wire epoch, package version, runtime ABI or database
 migration. The scoped-clean 0.2 predecessor at `b06b31d66f94` has no deployment
 Environment/source-intent owner; reverse development rollback is unsupported.
+The unreleased 0.3 desktop shell adds the closed client Action
+`desktop.notch.set {state?: 'rest' | 'open' | 'pinned', position?: number | {x,y}}`
+with the closed success result `{applied:true}`. Matching desktop source supplies
+the effect; hosts without it report typed unavailable through the existing Action
+dispatcher. Generated SDK Action DTOs consume the Protocol schema. This adds no
+runtime ABI, external wire epoch, Account setting or persisted presentation format.
+The native presentation request and keyboard commands are same-build renderer/host
+IPC; no released mixed-version adapter or alternate presentation owner is added.
+
 
 ## Proportionate matrix
 

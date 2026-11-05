@@ -1,5 +1,5 @@
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
-import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { buildSessionListHomeObservations } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import * as React from 'react';
 
@@ -17,16 +17,16 @@ import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 import { createActivityAttentionStoreSourceSelector } from './createActivityAttentionStoreSourceSelector';
 import { useActivityPersonalSessionMembership } from './activityPersonalSessionMembership';
 
-function useActivityAttentionStoreSource(includeSessionMessages: boolean): ActivityAttentionSource {
+function useActivityAttentionStoreSource(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[]): ActivityAttentionSource {
     const personalMembership = useActivityPersonalSessionMembership();
     const includeFollowRuleFacts = Object.values(personalMembership.followRulesByServerId ?? {}).some(snapshot =>
         snapshot.status === 'ready' && snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled));
     const storeSourceSelector = React.useMemo(
         () => createActivityAttentionStoreSourceSelector(
             personalMembership.membershipByServerId,
-            { includeSessionMessages, includeFollowRuleFacts },
+            { includeSessionMessages, detailAddresses, includeFollowRuleFacts },
         ),
-        [includeSessionMessages, includeFollowRuleFacts, personalMembership.membershipByServerId],
+        [includeSessionMessages, detailAddresses, includeFollowRuleFacts, personalMembership.membershipByServerId],
     );
     const activeServer = React.useSyncExternalStore(
         React.useCallback((listener) => {
@@ -57,8 +57,11 @@ export function useActivityAttentionSummarySource(): ActivityAttentionSource {
     return useActivityAttentionStoreSource(false);
 }
 
-export function useActivityAttentionSource(): ActivityAttentionSource {
-    const summarySource = useActivityAttentionStoreSource(true);
+export function useActivityAttentionSource(options?: Readonly<{
+    includeSessionMessages?: boolean;
+    detailAddresses?: readonly SessionAddress[];
+}>): ActivityAttentionSource {
+    const summarySource = useActivityAttentionStoreSource(options?.includeSessionMessages !== false, options?.detailAddresses);
     const serverProfilesGeneration = React.useSyncExternalStore(
         subscribeServerProfiles,
         getServerProfilesGeneration,

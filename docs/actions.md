@@ -4406,6 +4406,46 @@ locations such as command palettes and menus; it does not report connected
 clients. Tool exposure remains a separate policy: removing a transport-gap
 override does not change the default Agent discovery budget.
 
+In 0.3 development source, `desktop.notch.set` is a safe client Action on UI,
+Agent and MCP surfaces, discoverable on Agent/MCP without default approval.
+Its closed input is `{state?: 'rest' | 'open' | 'pinned', position?: number | {x,y}}`;
+success returns `{applied:true}` and unsupported hosts return typed `unavailable`.
+State is an input to the notch's renderer-owned presentation reducer: `open`
+expands, `pinned` stays open, and `rest` releases it. Keyboard-initiated opens
+request focus on the first control; native keyboard input is requested separately
+by the composer. The command palette's “Open the notch” uses `{state:'pinned'}`.
+Position uses visible-frame fractions: a number follows the current edge and
+`{x,y}` addresses Floating; the native move owner applies and persists it.
+Pointer movement uses the same native move owner, coalesced to one call per
+animation frame, and commits once on release. Per-display positions live in
+`window-state/notch-position.json`. Legacy local settings infer Dock only when
+it is unset; a legacy bottom anchor or floating mode becomes Floating.
+Native startup reads the current position file once on a best-effort basis.
+Never-shipped pixel-offset files do not carry their former anchor or size, so
+they remain untouched and the notch uses its default position until repositioned.
+The QA fixture feeds the normal model producer and uses this same Action for
+pin/release; it does not write a competing native sync payload.
+
+In 0.3 development source, `desktop.displays.list {}` is a safe client read on
+UI, Agent and MCP surfaces, discoverable on Agent/MCP without default approval
+or capture-result approval. It returns `{displays, automaticResolvesTo}`; each
+display carries `storageKey`, `name`, `builtIn`, `primary`, `connected` and
+`inUse`. `automaticResolvesTo` is a display storage key or `null`. The native
+display-choice owner supplies the same inventory to the Display setting and
+the `desktop.displays.list` option source for `desktop.display`. Options include
+Automatic, a confirmed Built-in display, Display with the Happier window and
+`named:<storageKey>` entries, including remembered disconnected displays. The
+read reports typed `unavailable` when the answering host cannot show the notch.
+
+`desktop.display` stores `automatic`, `built_in`, `main`, or
+`named:<storageKey>` as a device-local string. Automatic uses the connected
+built-in display while the lid is open, otherwise the primary display. Main
+follows the display containing the Happier window. An unplugged named display
+falls back to Automatic while retaining its choice and its last-seen name in
+the native `notch-position.json` record, so reconnecting restores the choice.
+On Wayland without connector facts, built-in status is unknown and Automatic
+uses the primary display.
+
 In 0.3 development source, `projects.pages.list {workspaceRefId,serverId}` is
 the safe client read for an accepted Project's built-in and applicable plugin
 pages. Its closed `{pages}` result carries host-generated `href`, title, icon,
@@ -4832,6 +4872,30 @@ snapshot and Account-settings CAS owner. Provider-side success alone does not
 mean its patch was saved: the result reports completion only after that owner
 acknowledges the patch. Decline, unavailable prerequisites and uncertain write
 outcomes remain explicit.
+
+In 0.3 development, `settings.invoke` at `pets.desktopOverlayResetPosition`
+resets the answering desktop client's native pet position. It defaults to no
+approval, while explicit Actions approval settings still apply. The Pets reset
+row and palette command use this same operation and preserve notch placement,
+visibility and settings.
+
+In **unreleased 0.3 development**, Desktop app’s **Notch** section uses the
+existing `settings.list/get/set/reset` family. Discovery exposes **Show Bots** at
+`desktop.visibilityMode`; its stored values remain `attention_only`,
+`active_sessions`, and `always_when_enabled`, labelled **When they need you**,
+**While working**, and **Always**. Device preferences use the answering client;
+Account pet enable/selection defaults keep their Account owner and device
+inheritance. Existing Off/Ask/Allowed policy and declaration-specific approval
+continue to apply to both UI and automated writes.
+
+The old trigger, preview, pinned-presentation, auto-hide, and pet activity-mode
+anchors are removed from discovery along with their controls. Writes to retired
+anchors return the existing unknown/unavailable declaration result. Neither old
+pet mode seeds Show Bots; an explicit stored Show Bots value wins, otherwise its
+existing default applies. The removed preview preference never broadens admitted
+Home/device privacy. Dock, Display, When idle, Open Bot conversations, and the
+full-screen preference share these existing Settings Actions; no overlay-specific
+settings Action family is introduced. Pet enable, selection, library and default/override preferences remain intact.
 
 The contributed `credentialSource` operation accepts `voice_credential_source`
 with its declared slot, None/SavedSecret/Connected selection and expected Account

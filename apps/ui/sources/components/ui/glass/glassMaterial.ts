@@ -266,6 +266,19 @@ export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: 
     return { tone: dark ? 'brightness(0.86) saturate(1.05)' : 'saturate(1.5)', coat: null };
 }
 
+/**
+ * The notch's ink glass, on every dock (owner ruling, Desktop notch item 16). The desktop stands behind it,
+ * not a page, so it skips the fixed-point solve: its paint at the Tint's coat over the native material, or
+ * the same paint solid where no material stands behind it, because a coat alone would show the sharp
+ * desktop. A custom opacity applies as set, with no floor (item 15).
+ */
+export function resolveGlassNotchPaint(paint: string, settings: GlassMaterialSettings, environment: GlassMaterialEnvironment): string {
+    const { material } = resolveGlassSurfaceMaterial(settings, 'floating', environment);
+    if (material.opacity === 1 || environment.nativeWindowMaterialLive !== true) return paint;
+    const opacity = readGlassPreset(settings) === 'custom' ? material.opacity : resolveGlassTintValues(settings.glassTintIntensity).notchCoat;
+    return parseThemeColor(paint)?.alpha(opacity).rgb().string() ?? paint;
+}
+
 /** The backdrop filter of `resolveGlassBackdropMap`, or '' when the surface keeps its exact paint. */
 export function resolveGlassBackdropTone(settings: GlassMaterialSettings, group: GlassSurfaceGroup, dark: boolean, environment: GlassMaterialEnvironment = {}, ground: GlassBackdropGround | null = null, panel: GlassFloatingCoat = false): string {
     return resolveGlassBackdropMap(settings, group, dark, environment, ground, panel)?.tone ?? '';

@@ -4,6 +4,17 @@ This page describes the unreleased 0.3 shell contracts under integration. The sh
 side panel, details workspace and bottom pane under one scoped owner. The left navigation column
 has its own visibility owner; hiding a page's main column does not collapse navigation.
 
+The notch's native frame owner publishes `frame.screenOrigin` (logical screen
+top-left and `scaleFactor`) through the existing overlay state event. Overlay
+layers read it with `useDesktopActivityOverlayField('screenOrigin')`; subtract
+the origin from a logical Session-window rect to place it in the overlay.
+`present.extent.screenBounds` optionally includes measured layer bounds in those
+same screen coordinates. Native unions them with the island before retaining the
+transition envelope, preserving the island anchor. Removing the bounds and
+presenting `settled: true` shrinks the window after the transition. Unchanged
+frames publish nothing. This is the development frame seam for Extract; N3 owns
+the flight rendering and its live acceptance.
+
 ## Owners and callers
 
 - `apps/ui/sources/components/appShell/panes/model/appPaneReducer.ts` owns scoped pane state.

@@ -6,8 +6,7 @@ import { renderScreen } from '@/dev/testkit';
 const isDesktopHostState = vi.hoisted(() => ({ value: true }));
 const syncDesktopPetOverlayState = vi.hoisted(() => vi.fn(async () => {}));
 const idleActivity = {
-    state: 'idle',
-    reason: 'idle',
+    state: 'quiet',
     address: null,
     sessionId: null,
     trayItems: [],
@@ -43,7 +42,6 @@ describe('DesktopPetOverlayRuntime', () => {
                 activity={idleActivity}
                 policy={{
                     enabled: false,
-                    visibilityMode: 'alwaysWhenEnabled',
                     alwaysOnTop: true,
                     inputLocked: false,
                     anchor: 'bottomRight',
@@ -79,7 +77,6 @@ describe('DesktopPetOverlayRuntime', () => {
                 activity={idleActivity}
                 policy={{
                     enabled: true,
-                    visibilityMode: 'alwaysWhenEnabled',
                     alwaysOnTop: true,
                     inputLocked: false,
                     anchor: 'bottomRight',

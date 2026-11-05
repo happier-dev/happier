@@ -1,3 +1,4 @@
+import { petActivityPose } from '@/components/pets/activity/petActivityPose';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import * as React from 'react';
 import { Pressable, View, useWindowDimensions, type GestureResponderEvent, type ViewStyle } from 'react-native';
@@ -191,7 +192,7 @@ function NativePetCompanionLayer({
             }, { source: 'ui' });
         },
     });
-    const effectiveState = reactionState ?? pan.dragState ?? activity.state;
+    const effectiveState = reactionState ?? pan.dragState ?? petActivityPose[activity.state];
     const handleOpenTrayItem = React.useCallback(async (item: PetCompanionTrayItem) => {
         await actionExecutor.execute(
             'session.open',

@@ -11,25 +11,19 @@ import {
     PET_COMPANION_SIZE_SCALE_DEFAULT,
     normalizePetCompanionSizeScale,
 } from '@/sync/domains/pets/companionSizeScale';
+
 import {
     PET_COMPANION_POSITION_DEFAULT,
     PetCompanionStoredPositionSchema,
 } from '@/sync/domains/pets/companionPosition/companionPosition';
-import { serializeDesktopOverlayAutoHideDelayBucket } from './localSettingDefinitions.shared';
-
-const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
-const PetSelectedOverrideSchema = createStoredReadSchema(PetDeviceOverrideV1Schema);
-const DesktopPetOverlayVisibilityModeOverrideSchema = z.enum([
-    'inherit',
-    'attentionOrActive',
-    'alwaysWhenEnabled',
-    'attentionOnly',
-]);
-const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
 const DesktopPetOverlayOffsetSchema = z.object({
     x: z.number(),
     y: z.number(),
 });
+
+export const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
+const PetSelectedOverrideSchema = createStoredReadSchema(PetDeviceOverrideV1Schema);
+const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
 const PetCompanionSizeScaleSchema = z.catch(z.number(), PET_COMPANION_SIZE_SCALE_DEFAULT);
 
 function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default' | 'large' | 'xlarge' {
@@ -41,6 +35,18 @@ function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default
 }
 
 export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
+    desktopBotConversationPresentation: {
+        schema: z.catch(z.enum(['overlay', 'window']), 'overlay'),
+        default: 'overlay',
+        description: 'Open Bot conversations in the overlay or an app window on this device',
+        storageScope: 'local',
+    },
+    desktopWindowBotRailEnabled: {
+        schema: z.catch(z.boolean(), true),
+        default: true,
+        description: 'Show the Bot rail in app windows on this device',
+        storageScope: 'local',
+    },
     activitySurfacesEnabled: {
         schema: z.boolean(),
         default: true,
@@ -244,13 +250,6 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    desktopPetOverlayVisibilityModeOverride: {
-        schema: DesktopPetOverlayVisibilityModeOverrideSchema,
-        default: 'inherit',
-        description: 'Device override for desktop pet overlay visibility mode',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
     desktopPetOverlayAnchor: {
         schema: DesktopPetOverlayAnchorSchema,
         default: 'bottomRight',
@@ -285,27 +284,6 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    desktopOverlayShowWhenRunning: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the desktop overlay when sessions are running',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayShowWhenAttentionRequired: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the desktop overlay when attention is required',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayShowWhenReady: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Show the desktop overlay when a session is ready for input',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
     desktopOverlayAlwaysOnTop: {
         schema: z.boolean(),
         default: true,
@@ -320,120 +298,17 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
-    desktopOverlayAutoHideEnabled: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Auto-hide the desktop overlay after inactivity',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayAutoHideDelayMs: {
-        schema: z.number(),
-        default: 6_000,
-        description: 'Auto-hide delay for the desktop overlay in milliseconds',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializeDesktopOverlayAutoHideDelayBucket,
-        },
-    },
-    desktopOverlayExpandedBehavior: {
-        schema: z.enum(['click', 'hover']),
-        default: 'click',
-        description: 'Legacy compatibility: historical desktop overlay expand behavior',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayInteractiveCollapsed: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Legacy compatibility: historical collapsed-overlay interaction toggle',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayPresentationMode: {
-        schema: z.enum(['automatic', 'notch_integrated', 'floating_overlay']),
+    desktopOverlayDisplayMode: {
+        schema: z.string(),
         default: 'automatic',
-        description: 'Desktop overlay presentation mode',
+        description: 'Desktop notch display: automatic, built_in, main, or named:<storageKey>',
         storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+        analytics: { trackCurrentState: false, trackChanges: false, valueKind: 'enum', privacy: 'forbidden', identityScope: 'device_user' },
     },
-    desktopOverlayEnableDragReposition: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Allow dragging the desktop overlay to reposition it',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayLockPosition: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Lock the desktop overlay position',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayPlacementMode: {
-        schema: z.enum(['anchored', 'custom']),
-        default: 'anchored',
-        description: 'Desktop overlay placement mode',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayAnchor: {
-        schema: z.enum(['top_center', 'top_left', 'top_right', 'bottom_center', 'bottom_left', 'bottom_right', 'left_center', 'right_center']),
-        default: 'top_center',
-        description: 'Desktop overlay anchor preset',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayOffsetX: {
-        schema: z.number(),
-        default: 0,
-        description: 'Desktop overlay horizontal offset',
-        storageScope: 'local',
-    },
-    desktopOverlayOffsetY: {
-        schema: z.number(),
-        default: 0,
-        description: 'Desktop overlay vertical offset',
-        storageScope: 'local',
-    },
-    desktopOverlayClickAction: {
-        schema: z.enum(['expand_overlay', 'open_primary_session', 'open_sessions']),
-        default: 'expand_overlay',
-        description: 'Legacy compatibility: historical desktop overlay click action',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayDensity: {
-        schema: z.enum(['compact', 'comfortable']),
-        default: 'compact',
-        description: 'Legacy compatibility: historical desktop overlay density',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayShowSessionCount: {
-        schema: z.boolean(),
-        default: true,
-        description: 'Legacy compatibility: historical desktop overlay session-count toggle',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayShowPreviewText: {
-        schema: z.boolean(),
-        default: false,
-        description: 'Show preview text in the collapsed desktop overlay',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
-    },
-    desktopOverlayCompactStyle: {
-        schema: z.enum(['pill', 'panel']),
-        default: 'pill',
-        description: 'Legacy compatibility: historical desktop overlay compact style',
+    desktopOverlayIdle: {
+        schema: z.enum(['tip', 'full', 'hidden']),
+        default: 'tip',
+        description: 'What the desktop notch shows when nothing needs you',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
@@ -454,7 +329,6 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
                 foregroundBehavior: value.foregroundBehavior,
                 quietHoursMode: value.quietHoursOverride.mode,
                 desktopHoverExpandDelay: value.desktopOverlay.hoverExpandDelay,
-                desktopCarouselEnabled: value.desktopOverlay.collapsedCarouselEnabled,
                 liveActivityRemoteModeOverride: value.liveActivities.remoteUpdateModeOverride,
                 terminalSmartSuppressionEnabled: value.terminalSmartSuppression.enabled,
             }),

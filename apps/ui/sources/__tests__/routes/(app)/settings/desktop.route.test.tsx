@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { DesktopActivityOverlayWindowStatePayload } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
+import { resolveDesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 import {
     createUseLocalSettingMock,
     createUseLocalSettingMutableMock,
@@ -25,7 +26,6 @@ const getDesktopActivityOverlayWindowStateMock = vi.hoisted(
 const listenDesktopActivityOverlayWindowStateMock = vi.hoisted(
     () => vi.fn<(handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) => Promise<() => void>>(async () => () => {}),
 );
-const resetDesktopActivityOverlayPositionMock = vi.hoisted(() => vi.fn(async () => {}));
 const localSettingsState = vi.hoisted(() => ({
     value: {} as LocalSettings,
 }));
@@ -88,7 +88,6 @@ vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () =
     getDesktopActivityOverlayWindowState: () => getDesktopActivityOverlayWindowStateMock(),
     listenDesktopActivityOverlayWindowState: (handler: (payload: DesktopActivityOverlayWindowStatePayload) => void) =>
         listenDesktopActivityOverlayWindowStateMock(handler),
-    resetDesktopActivityOverlayPosition: () => resetDesktopActivityOverlayPositionMock(),
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -134,29 +133,11 @@ describe('/settings/desktop route', () => {
         getDesktopActivityOverlayWindowStateMock.mockResolvedValue(null);
         listenDesktopActivityOverlayWindowStateMock.mockReset();
         listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-        resetDesktopActivityOverlayPositionMock.mockReset();
         localSettingsState.value = {
             ...localSettingsDefaults,
             desktopOverlayEnabled: true,
             desktopOverlayVisibilityMode: 'attention_only',
-            desktopOverlayShowWhenRunning: true,
-            desktopOverlayShowWhenAttentionRequired: true,
-            desktopOverlayShowWhenReady: true,
             desktopOverlayAlwaysOnTop: true,
-            desktopOverlayAutoHideEnabled: true,
-            desktopOverlayAutoHideDelayMs: 6000,
-            desktopOverlayExpandedBehavior: 'click',
-            desktopOverlayInteractiveCollapsed: true,
-            desktopOverlayPresentationMode: 'automatic',
-            desktopOverlayPlacementMode: 'anchored',
-            desktopOverlayAnchor: 'top_center',
-            desktopOverlayOffsetX: 0,
-            desktopOverlayOffsetY: 0,
-            desktopOverlayClickAction: 'expand_overlay',
-            desktopOverlayDensity: 'compact',
-            desktopOverlayShowSessionCount: true,
-            desktopOverlayShowPreviewText: false,
-            desktopOverlayCompactStyle: 'pill',
         };
     });
 
@@ -176,67 +157,18 @@ describe('/settings/desktop route', () => {
         isRunningOnMacMock.mockReturnValue(true);
         getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
             visible: true,
-            expanded: false,
             model: {
                 visible: true,
-                isExpanded: false,
                 generatedAt: Date.now(),
+                faces: { faces: [], overflowCount: 0 },
+                conversation: null,
                 collapsed: {
-                    title: 'Session One',
-                    statusText: 'Needs attention',
-                    defaultTarget: 'open-primary-session',
-                    sessionCount: 1,
+                    title: 'Session One', statusText: 'Needs attention', defaultTarget: 'open-primary-session',
+                    sessionCount: 1, activity: 'needsYou',
                 },
-                expanded: {
-                    title: 'Active sessions',
-                    rows: [],
-                },
-                window: {
-                    collapsed: { width: 340, height: 72 },
-                    expanded: { width: 420, height: 220 },
-                },
+                expanded: { title: 'Active sessions', rows: [] },
             },
-            policy: {
-                enabled: true,
-                visibilityMode: 'attention_only',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                expandedBehavior: 'click',
-                interactiveCollapsed: true,
-                presentationMode: 'automatic',
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
-            window: {
-                collapsed: { width: 340, height: 72 },
-                expanded: { width: 420, height: 220 },
-            },
-            placementDiagnostics: {
-                monitorSource: 'primary',
-                effectiveMonitor: { x: 0, y: 0, width: 1512, height: 982 },
-                anchor: 'top_center',
-                placementMode: 'anchored',
-                requestedHostMode: 'floating',
-                hostMode: 'floating',
-                displayContext: null,
-                effectiveOffsetX: 0,
-                effectiveOffsetY: 0,
-                computedPosition: { x: 756, y: 24 },
-            },
+            policy: resolveDesktopOverlayPolicy({ desktopOverlayEnabled: true }),
         });
 
         const { default: DesktopSettingsRoute } = await import('@/app/(app)/settings/desktop');
@@ -247,7 +179,7 @@ describe('/settings/desktop route', () => {
         await flushHookEffects({ cycles: 3, turns: 3 });
 
         expect(screen.findAllByTestId('app-crash-restart')).toHaveLength(0);
-        expect(screen.findByTestId('settings-desktop-overlay-presentation-mode')).toBeTruthy();
+        expect(screen.findByTestId('settings-desktop-bot-conversation-presentation')).toBeTruthy();
         expect(screen.findByTestId('settings-desktop-overlay-visibility-mode')).toBeTruthy();
     });
 });

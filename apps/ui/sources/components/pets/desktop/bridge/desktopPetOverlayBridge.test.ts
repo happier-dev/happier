@@ -29,8 +29,7 @@ describe('desktopPetOverlayBridge', () => {
             window: { width: 192, height: 208 },
             nativeMouseTrackingEnabled: true,
             activity: {
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'needsYou',
                 address: { serverId: 'server-a', sessionId: 'session-native' },
                 sessionId: 'session-native',
                 trayItems: [],

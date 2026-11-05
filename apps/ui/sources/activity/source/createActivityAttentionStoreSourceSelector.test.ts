@@ -1,3 +1,4 @@
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
@@ -37,6 +38,29 @@ function expectNoObjectKeysOrValuesOnRecords(action: () => void, guardedRecords:
 }
 
 describe('createActivityAttentionStoreSourceSelector', () => {
+    it('reads only explicitly demanded Session details and releases them when demand closes', () => {
+        const base = storage.getState();
+        const first = createSessionFixture({ id: 'detail-a', serverId: 'home-a' });
+        const other = createSessionFixture({ id: 'detail-b', serverId: 'home-b' });
+        const messages = createSessionMessagesFixture({ isLoaded: true, messagesVersion: 1 });
+        const state = { ...base, sessions: { [first.id]: first, [other.id]: other },
+            sessionMessages: { [first.id]: messages, [other.id]: messages } };
+        const selector = createActivityAttentionStoreSourceSelector({}, {
+            detailAddresses: [{ serverId: 'home-a', sessionId: first.id }],
+        });
+        const opened = selector(state);
+        expect(Object.keys(opened.sessionMessagesById ?? {})).toEqual([first.id]);
+        const unrelated = selector({ ...state, sessionMessages: { ...state.sessionMessages,
+            [other.id]: { ...messages, messagesVersion: 2 } } });
+        expect(unrelated).toBe(opened);
+        const relevant = selector({ ...state, sessionMessages: { ...state.sessionMessages,
+            [first.id]: { ...messages, messagesVersion: 2 } } });
+        expect(relevant).not.toBe(opened);
+        expect(relevant.sessionMessagesById?.[first.id]?.messagesVersion).toBe(2);
+        const closed = createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: false });
+        expect(closed(state).sessionMessagesById).toBeUndefined();
+    });
+
     it('uses held Section assignments for rule preview and invalidates only affected membership', () => {
         const base = storage.getState();
         const session = createSessionFixture({ id: 'section-source', serverId: 'home-a', ownerAccountId: 'alice',

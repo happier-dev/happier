@@ -1,21 +1,16 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 
 import {
-    DesktopActivityOverlayChromeBackdrop,
-    createDesktopActivityOverlayChromeStyle,
-    DesktopActivityOverlayChromeHighlights,
-} from './DesktopActivityOverlayChrome';
-import { desktopActivityOverlayChromeMetrics } from './DesktopActivityOverlayChromeMetrics';
-import {
     resolveDesktopActivityOverlaySurfaceTestID,
-    type DesktopActivityOverlayVisualMode,
-} from './DesktopActivityOverlayVisualMode';
-import { useDesktopActivityOverlayMotionProgress } from './DesktopActivityOverlayMotionFrame';
+} from './shared/desktopActivityOverlaySelectors.mjs';
+import { DesktopActivityOverlayPinButton } from './DesktopActivityOverlayPinButton';
+import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from './shared/desktopActivityOverlaySelectors';
 import { DesktopActivityOverlayExpandedCards } from './cards/DesktopActivityOverlayExpandedCards';
 import {
     isDesktopActivityOverlayDismissKey,
@@ -27,14 +22,21 @@ import {
     type DesktopActivityOverlayFocusTargetRef,
 } from './resolveDesktopActivityOverlayInitialFocusTarget';
 import type {
-    DesktopActivityOverlayActionDescriptor,
+    DesktopActivityOverlayActionHandler,
     DesktopActivityOverlayUiModel,
 } from './shared/desktopActivityOverlayUiModel';
-import { DesktopActivityOverlayQuickReplyComposer } from './quickReply/DesktopActivityOverlayQuickReplyComposer';
 
 export function DesktopActivityOverlayExpanded(props: Readonly<{
-    model: DesktopActivityOverlayUiModel;
+    model: Pick<DesktopActivityOverlayUiModel, 'expanded'>;
     visualMode: DesktopActivityOverlayVisualMode;
+    /** The status row heading the panel, when it is not already standing above it (side docks, Floating opening up). */
+    header?: React.ReactNode;
+    /** The status row stands just above the panel (Top, Floating opening down): the panel tucks under it. */
+    underStatusRow?: boolean;
+    /** The tallest the panel may be: the window native clamped to the visible frame. */
+    maxHeight?: number;
+    /** The panel's natural height, header and insets included, for the extent native frames. */
+    onNaturalHeight?: (height: number) => void;
     surfaceRef?: React.Ref<View>;
     initialFocusRef?: DesktopActivityOverlayFocusTargetRef;
     onHoverIn?: () => void;
@@ -42,20 +44,16 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     onFocusWithinChange?: (focusWithin: boolean) => void;
     onDismissKey?: () => void;
     onOpenSession: (sessionId: string, serverId?: string | null) => void;
-    onAction?: (action: DesktopActivityOverlayActionDescriptor) => void;
-    quickReplyDraft?: string;
-    onQuickReplyDraftChange?: (draft: string) => void;
-    onQuickReplySend?: (params: { sessionId: string; serverId?: string | null; message: string }) => boolean | Promise<boolean>;
-    onQuickReplyInputLockChange?: (locked: boolean) => void;
+    onAction?: DesktopActivityOverlayActionHandler;
+    /** The opened list's Bot section (faces' members, each with its ask). */
+    bots?: React.ComponentProps<typeof DesktopActivityOverlayExpandedCards>['bots'];
+    /** A pinned Bot conversation in place of the list; the shell (insets, header, scroll, keys) is the same. */
+    content?: React.ReactNode;
+    /** The list's pin, at the status row's trailing end: keeps the island open until Esc, the pin or a click outside. */
+    pin?: Readonly<{ pinned: boolean; onToggle: () => void }> | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const openProgress = useDesktopActivityOverlayMotionProgress();
     const surfaceTestID = resolveDesktopActivityOverlaySurfaceTestID('desktop-activity-overlay-expanded', props.visualMode);
-    const quickReply = props.model.expanded.quickReply;
-    const quickReplyDraft = props.quickReplyDraft ?? '';
-    const shouldRenderQuickReply = Boolean(quickReply || quickReplyDraft.length > 0);
-    const quickReplyServerId = typeof quickReply?.serverId === 'string' ? quickReply.serverId.trim() : '';
-    const quickReplyTargetAvailable = Boolean(quickReply && quickReplyServerId.length > 0);
     const [completionAutoDismissPaused, setCompletionAutoDismissPaused] = React.useState(false);
     const scrollFades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
@@ -63,9 +61,37 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
         edgeThreshold: 2,
     });
     const scrollMaskStyle = React.useMemo(
-        () => resolveVerticalScrollEdgeMaskStyle(scrollFades.visibility, { fadeSize: 14 }),
-        [scrollFades.visibility],
+        () => resolveVerticalScrollEdgeMaskStyle(scrollFades.visibility, { fadeSize: theme.space.s16 }),
+        [scrollFades.visibility, theme.space.s16],
     );
+    const insetTop = props.underStatusRow ? theme.space.s8 : theme.space.s12;
+    const insetBottom = theme.space.s12;
+    const headerHeightRef = React.useRef(0);
+    const contentHeightRef = React.useRef(0);
+    const { onNaturalHeight } = props;
+    // A header measured earlier no longer counts once the panel has none (a dock change from a side to the top).
+    const hasHeader = Boolean(props.header);
+    const reportNaturalHeight = React.useCallback(() => {
+        const headerHeight = hasHeader ? headerHeightRef.current : 0;
+        const gap = headerHeight > 0 ? theme.space.s10 : 0;
+        onNaturalHeight?.(insetTop + headerHeight + gap + contentHeightRef.current + insetBottom);
+    }, [hasHeader, insetBottom, insetTop, onNaturalHeight, theme.space.s10]);
+    const hadHeaderRef = React.useRef(hasHeader);
+    React.useEffect(() => {
+        if (hadHeaderRef.current === hasHeader) return;
+        hadHeaderRef.current = hasHeader;
+        reportNaturalHeight();
+    }, [hasHeader, reportNaturalHeight]);
+    const onScrollContentSizeChange = scrollFades.onContentSizeChange;
+    const handleContentSizeChange = React.useCallback((width: number, height: number) => {
+        contentHeightRef.current = height;
+        reportNaturalHeight();
+        onScrollContentSizeChange(width, height);
+    }, [onScrollContentSizeChange, reportNaturalHeight]);
+    const handleHeaderLayout = React.useCallback((event: LayoutChangeEvent) => {
+        headerHeightRef.current = event.nativeEvent.layout.height;
+        reportNaturalHeight();
+    }, [reportNaturalHeight]);
     const handleHoverIn = React.useCallback(() => {
         setCompletionAutoDismissPaused(true);
         props.onHoverIn?.();
@@ -84,11 +110,17 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
         onDismissKey?.();
     }, [onDismissKey]);
     const initialFocusTarget = React.useMemo(
-        () => resolveDesktopActivityOverlayInitialFocusTarget(props.model, {
-            quickReplyVisible: shouldRenderQuickReply,
-        }),
-        [props.model, shouldRenderQuickReply],
+        () => resolveDesktopActivityOverlayInitialFocusTarget(props.model),
+        [props.model],
     );
+
+    const pinButton = props.pin && !props.content ? (
+        <DesktopActivityOverlayPinButton
+            testID="desktop-activity-overlay-pin"
+            pinned={props.pin.pinned}
+            onPress={props.pin.onToggle}
+        />
+    ) : null;
 
     return (
         // The shell only tracks hover to pause completion auto-dismiss. A `Pressable` would make it
@@ -108,35 +140,19 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
             {...({ onKeyDown: handleKeyDown } as Record<string, unknown>)}
             style={[
                 styles.container,
-                props.visualMode === 'notch_integrated'
-                    ? styles.containerNotchIntegrated
-                    : styles.containerFloating,
-                createDesktopActivityOverlayChromeStyle(theme, {
-                    visualMode: props.visualMode,
-                    tone: 'expanded',
-                    openProgress,
-                }),
+                { paddingTop: insetTop, paddingBottom: insetBottom, maxHeight: props.maxHeight },
             ]}
         >
-            <View
-                pointerEvents="none"
-                testID={surfaceTestID}
-                style={StyleSheet.absoluteFill}
-            >
-                <DesktopActivityOverlayChromeBackdrop
-                    theme={theme}
-                    tone="expanded"
-                    visualMode={props.visualMode}
-                    width={props.model.window.expanded.width}
-                    height={props.model.window.expanded.height}
-                    openProgress={openProgress}
-                />
-                <DesktopActivityOverlayChromeHighlights
-                    theme={theme}
-                    tone="expanded"
-                    visualMode={props.visualMode}
-                />
-            </View>
+            <View pointerEvents="none" testID={surfaceTestID} style={StyleSheet.absoluteFill} />
+            {props.header ? (
+                <View testID="desktop-activity-overlay-expanded-header" style={styles.header} onLayout={handleHeaderLayout}>
+                    <View style={styles.headerContent}>{props.header}</View>
+                    {pinButton}
+                </View>
+            ) : pinButton ? (
+                // Under a status row standing on its edge, the pin sits at that row's trailing end.
+                <View style={styles.pinInStatusRow}>{pinButton}</View>
+            ) : null}
             <ScrollView
                 testID="desktop-activity-overlay-expanded-scroll"
                 style={[styles.scroll, scrollMaskStyle]}
@@ -144,69 +160,57 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                 showsVerticalScrollIndicator={false}
                 scrollEventThrottle={16}
                 onLayout={scrollFades.onViewportLayout}
-                onContentSizeChange={scrollFades.onContentSizeChange}
+                onContentSizeChange={handleContentSizeChange}
                 onScroll={scrollFades.onScroll}
                 onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}
             >
-                <DesktopActivityOverlayExpandedCards
-                    model={props.model}
-                    visualMode={props.visualMode}
-                    onOpenSession={props.onOpenSession}
-                    onAction={props.onAction}
-                    completionAutoDismissPaused={completionAutoDismissPaused}
-                    initialFocusTarget={initialFocusTarget}
-                    initialFocusRef={props.initialFocusRef}
-                    onDismissKey={props.onDismissKey}
-                />
-                {shouldRenderQuickReply ? (
-                    <DesktopActivityOverlayQuickReplyComposer
+                {props.content ?? (
+                    <DesktopActivityOverlayExpandedCards
+                        bots={props.bots}
+                        model={props.model}
                         visualMode={props.visualMode}
-                        phrases={quickReply?.phrases ?? []}
-                        draft={quickReplyDraft}
-                        targetAvailable={quickReplyTargetAvailable}
-                        inputRef={initialFocusTarget.kind === 'quick_reply_input' ? props.initialFocusRef : undefined}
-                        onDraftChange={props.onQuickReplyDraftChange}
-                        onSend={(message) => {
-                            if (!quickReply || quickReplyServerId.length === 0) {
-                                return false;
-                            }
-                            return props.onQuickReplySend?.({
-                                sessionId: quickReply.targetSessionId,
-                                serverId: quickReplyServerId,
-                                message,
-                            }) ?? false;
-                        }}
-                        onInputLockChange={props.onQuickReplyInputLockChange}
+                        onOpenSession={props.onOpenSession}
+                        onAction={props.onAction}
+                        completionAutoDismissPaused={completionAutoDismissPaused}
+                        initialFocusTarget={initialFocusTarget}
+                        initialFocusRef={props.initialFocusRef}
                         onDismissKey={props.onDismissKey}
                     />
-                ) : null}
+                )}
             </ScrollView>
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
+    // The panel content inside the island: lab `.nt-p` (s12 inset; s8 under a status row on its edge).
     container: {
         width: '100%',
-        height: '100%',
         position: 'relative',
-        overflow: 'hidden',
+        paddingHorizontal: theme.space.s12,
     },
-    containerFloating: {
-        paddingHorizontal: desktopActivityOverlayChromeMetrics.expanded.paddingHorizontal,
-        paddingTop: desktopActivityOverlayChromeMetrics.expanded.paddingTop,
-        paddingBottom: desktopActivityOverlayChromeMetrics.expanded.paddingBottom,
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        marginBottom: theme.space.s10,
     },
-    containerNotchIntegrated: {
-        paddingHorizontal: desktopActivityOverlayChromeMetrics.expanded.notchPaddingHorizontal,
-        paddingTop: desktopActivityOverlayChromeMetrics.expanded.paddingTop,
-        paddingBottom: desktopActivityOverlayChromeMetrics.expanded.paddingBottom,
+    headerContent: {
+        flex: 1,
+        minWidth: 0,
+    },
+    pinInStatusRow: {
+        position: 'absolute',
+        top: -PAGE_LIST_METRICS.controlHeightPx,
+        right: theme.space.s8,
+        height: PAGE_LIST_METRICS.controlHeightPx,
+        justifyContent: 'center',
     },
     scroll: {
-        flex: 1,
+        flexGrow: 0,
+        flexShrink: 1,
     },
     scrollContent: {
-        gap: 6,
-        paddingBottom: 0,
+        gap: theme.space.s12,
     },
-});
+}));

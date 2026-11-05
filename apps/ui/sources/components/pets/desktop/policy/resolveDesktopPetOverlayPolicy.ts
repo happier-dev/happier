@@ -1,5 +1,4 @@
 export type DesktopPetOverlayFeatureState = 'enabled' | 'disabled' | 'unknown';
-export type DesktopPetOverlayVisibilityMode = 'attentionOrActive' | 'alwaysWhenEnabled' | 'attentionOnly';
 export type DesktopPetOverlayAnchor = 'bottomRight' | 'bottomLeft' | 'topRight' | 'topLeft';
 
 export type DesktopPetOverlayPolicyInput = Readonly<{
@@ -10,14 +9,11 @@ export type DesktopPetOverlayPolicyInput = Readonly<{
 
 export type DesktopPetOverlayPolicy = Readonly<{
     enabled: boolean;
-    visibilityMode: DesktopPetOverlayVisibilityMode;
     alwaysOnTop: boolean;
     inputLocked: boolean;
     anchor: DesktopPetOverlayAnchor;
 }>;
 
-const VISIBILITY_MODES = ['attentionOrActive', 'alwaysWhenEnabled', 'attentionOnly'] as const;
-const VISIBILITY_MODE_OVERRIDES = ['inherit', ...VISIBILITY_MODES] as const;
 const ANCHORS = ['bottomRight', 'bottomLeft', 'topRight', 'topLeft'] as const;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> {
@@ -59,23 +55,9 @@ export function resolveDesktopPetOverlayPolicy(
         localSettings.desktopPetOverlayEnabledOverride,
         accountOverlayEnabled,
     );
-    const accountVisibilityMode = readEnum(
-        accountSettings.petsDesktopOverlayDefaultVisibilityMode,
-        VISIBILITY_MODES,
-        'alwaysWhenEnabled',
-    );
-    const localVisibilityModeOverride = readEnum(
-        localSettings.desktopPetOverlayVisibilityModeOverride,
-        VISIBILITY_MODE_OVERRIDES,
-        'inherit',
-    );
-    const visibilityMode = localVisibilityModeOverride === 'inherit'
-        ? accountVisibilityMode
-        : localVisibilityModeOverride;
 
     return {
         enabled: input.companionFeatureState === 'enabled' && petsEnabled && overlayEnabled,
-        visibilityMode,
         alwaysOnTop: true,
         inputLocked: readBoolean(localSettings.desktopPetOverlayLocked, false),
         anchor: readEnum(localSettings.desktopPetOverlayAnchor, ANCHORS, 'bottomRight'),

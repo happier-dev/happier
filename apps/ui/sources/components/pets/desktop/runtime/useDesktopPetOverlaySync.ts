@@ -5,7 +5,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { syncDesktopPetOverlayState } from '../bridge/desktopPetOverlayBridge';
 import type { DesktopPetOverlayPolicy } from '../policy/resolveDesktopPetOverlayPolicy';
-import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
+import type { PetCompanionActivityModel } from '@/components/pets/activity';
 
 export type DesktopPetOverlaySyncWindow = Readonly<{
     width: number;
@@ -17,7 +17,7 @@ export type DesktopPetOverlaySyncInput = Readonly<{
     expanded: boolean;
     window: DesktopPetOverlaySyncWindow;
     nativeMouseTrackingEnabled: boolean;
-    activity: PetCompanionActivityState;
+    activity: PetCompanionActivityModel;
     policy: DesktopPetOverlayPolicy;
 }>;
 

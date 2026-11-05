@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import type { DesktopActivityOverlayVisualMode } from '../DesktopActivityOverlayVisualMode';
+import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import type {
-    DesktopActivityOverlayActionDescriptor,
+    DesktopActivityOverlayActionHandler,
     DesktopActivityOverlayExpandedCard,
 } from '../shared/desktopActivityOverlayUiModel';
 import { DesktopActivityOverlayCardActions } from './DesktopActivityOverlayCardActions';
@@ -18,7 +18,7 @@ export function DesktopActivityOverlayCompletionStateCard(props: Readonly<{
     testID: string;
     initialFocusActionId?: string | null;
     initialFocusRef?: React.Ref<View>;
-    onAction?: (action: DesktopActivityOverlayActionDescriptor) => void;
+    onAction?: DesktopActivityOverlayActionHandler;
 }>): React.ReactElement {
     const actions = resolveDesktopActivityOverlayCompletionStateActions(props.card);
     const variantKey = props.card.variant === 'turn_complete'

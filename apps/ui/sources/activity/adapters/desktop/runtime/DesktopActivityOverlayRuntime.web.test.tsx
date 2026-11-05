@@ -1,219 +1,36 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import '@tauri-apps/api/event';
+import { afterEach, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import { settingsParse } from '@/sync/domains/settings/settings';
-import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { DesktopActivityOverlayRuntime } from './DesktopActivityOverlayRuntime.web';
 
-const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
-const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
-const sessionsState = vi.hoisted(() => ({
-    value: [
-        {
-            id: 'session-web-1',
-            seq: 2,
-            lastViewedSessionSeq: 0,
-            active: true,
-            presence: 'online',
-            thinking: false,
-            pendingPermissionRequestCount: 1,
-            pendingUserActionRequestCount: 0,
-            metadata: {
-                summary: { text: 'Desktop overlay web runtime', updatedAt: 1 },
-                path: '/Users/tester/project',
-                host: 'tester.local',
-                homeDir: '/Users/tester',
-            },
-        },
-    ] as Array<Record<string, unknown>>,
-}));
-const sessionListIndexState = vi.hoisted(() => ({
-    value: {
-        'server-1': [
-            {
-                type: 'session',
-                sessionId: 'session-web-1',
-                serverId: 'server-1',
-            },
-        ],
-    } as Record<string, ReadonlyArray<{ type: 'session'; sessionId: string; serverId: string }>>,
-}));
-const localSettingsState = vi.hoisted(() => ({
-    value: {
-        activitySurfacesEnabled: true,
-        desktopOverlayEnabled: true,
-        desktopOverlayVisibilityMode: 'always_when_enabled',
-    } as Record<string, unknown>,
-}));
-const syncDesktopActivityOverlayMock = vi.hoisted(
-    () => vi.fn<(payload: unknown) => Promise<void>>(async () => {}),
-);
-const listenDesktopActivityOverlayInteractionMock = vi.hoisted(
-    () => vi.fn<(handler: (payload: unknown) => void) => Promise<() => void>>(async () => () => {}),
-);
-const setDesktopActivityOverlayExpandedMock = vi.hoisted(
-    () => vi.fn<(expanded: boolean) => Promise<void>>(async () => {}),
-);
-const routerPushMock = vi.hoisted(() => vi.fn());
+const boundary = vi.hoisted(() => ({ commands: [] as string[], subscriptions: [] as string[] }));
 
-const expoRouterMock = createExpoRouterMock({
-    router: {
-        push: (value: unknown) => routerPushMock(value),
+vi.mock('@tauri-apps/api/event', () => ({
+    listen: async (event: string) => {
+        boundary.subscriptions.push(event);
+        return () => {};
     },
-});
-
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => isDesktopHostMock(),
 }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative'))
+    .createReactNativeWebMock({ Platform: { OS: 'web' } }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
-vi.mock('./isDesktopActivityOverlayWindowContext', () => ({
-    isDesktopActivityOverlayWindowContext: () => isDesktopOverlayWindowContextMock(),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    const storageState = () => ({
-        isDataReady: true,
-        sessions: Object.fromEntries(
-            sessionsState.value.map((session) => [session.id, session]),
-        ),
-        sessionListIndexByServerId: sessionListIndexState.value,
-        sessionListRowsByServerId: {
-            'server-1': Object.fromEntries(sessionsState.value.map((session) => [session.id, session])),
-        },
-        ordinarySessionListMembershipByServerId: {
-            'server-1': sessionsState.value.map((session) => String(session.id)),
-        },
-        sessionMessages: {},
-        concurrentSessionListCacheByServerId: {},
-        localSettings: localSettingsState.value,
-        // The production store always carries the canonical Account settings
-        // projection. Keep this boundary fixture truthful now that Activity
-        // consumes workspace presentation through that owner.
-        settings: {
-            workspacePathDisplayModeV1: 'absolute',
-        },
-    });
-    const storage = Object.assign(
-        ((selector?: (state: ReturnType<typeof storageState>) => unknown) =>
-            typeof selector === 'function' ? selector(storageState()) : storageState()),
-        {
-            getState: () => storageState(),
-            getInitialState: () => storageState(),
-            setState: () => undefined,
-            subscribe: () => () => undefined,
-            destroy: () => undefined,
-        },
-    );
-    return createStorageModuleStub({
-        storage,
-        useAllSessions: () => {
-            throw new Error('DesktopActivityOverlayRuntime.web should not use useAllSessions');
-        },
-        useLocalSettings: () => localSettingsState.value,
-    });
+afterEach(() => {
+    standardCleanup();
+    vi.unstubAllGlobals();
 });
 
-vi.mock('./desktopActivityOverlayBridge', async () => {
-    const actual = await vi.importActual<typeof import('./desktopActivityOverlayBridge')>('./desktopActivityOverlayBridge');
-    return {
-        ...actual,
-        syncDesktopActivityOverlay: (payload: unknown) => syncDesktopActivityOverlayMock(payload),
-        listenDesktopActivityOverlayInteraction: (handler: (payload: unknown) => void) => listenDesktopActivityOverlayInteractionMock(handler),
-        setDesktopActivityOverlayExpanded: (expanded: boolean) => setDesktopActivityOverlayExpandedMock(expanded),
-    };
-});
-
-// The overlay admits each candidate through its own Home's Account policy, so the
-// Home stays bound to an Account identity with persisted settings.
-vi.mock('@/hooks/teams/useSessionAudienceContext', async () => {
-    const { createSessionAudienceContextModuleMock } = await import('@/dev/testkit/mocks/sessionAudienceContext');
-    return createSessionAudienceContextModuleMock();
-});
-
-async function persistDesktopOverlayWebHomeAccountSettings(): Promise<void> {
-    const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
-    saveAccountSettings({ serverId: 'server-1', accountId: 'account-server-1' }, settingsParse({}), 1);
-}
-
-vi.mock('expo-router', () => expoRouterMock.module);
-
-vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries', () => ({
-    useConnectedServiceQuotaSummaries: () => ({
-        summaries: [],
-        isRefreshing: false,
-        hasConnectedProfiles: false,
-    }),
-}));
-
-describe('DesktopActivityOverlayRuntime.web', () => {
-    beforeEach(async () => {
-        await persistDesktopOverlayWebHomeAccountSettings();
-        isDesktopHostMock.mockReturnValue(true);
-        isDesktopOverlayWindowContextMock.mockReturnValue(false);
-        syncDesktopActivityOverlayMock.mockImplementation(async () => {});
-        listenDesktopActivityOverlayInteractionMock.mockImplementation(async () => () => {});
-        setDesktopActivityOverlayExpandedMock.mockImplementation(async () => {});
-        sessionsState.value = [
-            {
-                id: 'session-web-1',
-                serverId: 'server-1',
-                seq: 2,
-                lastViewedSessionSeq: 0,
-                active: true,
-                presence: 'online',
-                thinking: false,
-                pendingPermissionRequestCount: 1,
-                pendingUserActionRequestCount: 0,
-                metadata: {
-                    summary: { text: 'Desktop overlay web runtime', updatedAt: 1 },
-                    path: '/Users/tester/project',
-                    host: 'tester.local',
-                    homeDir: '/Users/tester',
-                },
-            },
-        ];
-        sessionListIndexState.value = {
-            'server-1': [
-                {
-                    type: 'session',
-                    sessionId: 'session-web-1',
-                    serverId: 'server-1',
-                },
-            ],
-        };
-    });
-
-    afterEach(() => {
-        isDesktopHostMock.mockReset();
-        isDesktopOverlayWindowContextMock.mockReset();
-        syncDesktopActivityOverlayMock.mockReset();
-        listenDesktopActivityOverlayInteractionMock.mockReset();
-        setDesktopActivityOverlayExpandedMock.mockReset();
-        routerPushMock.mockReset();
-    });
-
-    it('runs the real desktop overlay runtime when the web bundle is hosted inside Tauri', async () => {
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime.web');
-        const screen = await renderScreen(<DesktopActivityOverlayRuntime />);
-
-        expect(screen.tree.toJSON()).toBeNull();
-        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            visible: true,
-            model: expect.objectContaining({
-                visible: true,
-            }),
-        }));
-        expect(listenDesktopActivityOverlayInteractionMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('stays inert when the web bundle is not running inside Tauri', async () => {
-        isDesktopHostMock.mockReturnValue(false);
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime.web');
-        const screen = await renderScreen(<DesktopActivityOverlayRuntime />);
-
-        expect(screen.tree.toJSON()).toBeNull();
-        expect(syncDesktopActivityOverlayMock).not.toHaveBeenCalled();
-        expect(listenDesktopActivityOverlayInteractionMock).not.toHaveBeenCalled();
-    });
+it('issues no activity IPC on Electron while retaining the auxiliary Action listener', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Happier Electron/40.0' });
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string) => {
+        boundary.commands.push(command);
+        throw new Error(`Unexpected Electron IPC: ${command}`);
+    } });
+    vi.stubGlobal('window', { location: { href: 'https://app.example.test/' } });
+    await renderScreen(<DesktopActivityOverlayRuntime />);
+    await vi.waitFor(() => expect(boundary.subscriptions).toContain('desktopWindow://action'));
+    expect(boundary.commands).toEqual([]);
+    expect(boundary.subscriptions).not.toContain('activityOverlay://state');
 });

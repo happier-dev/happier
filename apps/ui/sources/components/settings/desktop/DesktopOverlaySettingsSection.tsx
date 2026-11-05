@@ -1,91 +1,144 @@
 import * as React from 'react';
-
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
-import { t } from '@/text';
-import {
-    getDesktopActivityOverlayWindowState,
-    listenDesktopActivityOverlayWindowState,
-} from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
-import {
-    resolveDesktopOverlayPolicy,
-    resolveDesktopOverlaySettingsVisibilityState,
-} from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
-import { useLocalSettings } from '@/sync/domains/state/storage';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
-import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { isDesktopHost } from '@/utils/platform/desktopHost';
-import {
-    ANCHOR_OPTIONS,
-    AUTO_HIDE_DELAY_OPTIONS,
-    findChoiceOptionById,
-    PLACEMENT_MODE_OPTIONS,
-    PRESENTATION_MODE_OPTIONS,
-    VISIBILITY_MODE_OPTIONS,
-    toSegmentedChoiceOptions,
-} from './DesktopOverlaySettingsSection.options';
-import { DesktopOverlayChoiceDropdownRow } from './DesktopOverlayChoiceDropdownRow';
+import { t } from '@/text';
+import { getDesktopActivityOverlayWindowState, listenDesktopActivityOverlayWindowState } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
+import { DOCK_OPTIONS, IDLE_OPTIONS, BOT_CONVERSATION_OPTIONS, VISIBILITY_MODE_OPTIONS,
+    findChoiceOptionById, toSegmentedChoiceOptions } from './DesktopOverlaySettingsSection.options';
+import { DesktopNotchDisplayRow, type DesktopNotchDisplayInUse } from './DesktopNotchDisplayRow';
 import { DESKTOP_SETTINGS } from './desktopSettings';
 
+function NotchEnabledRow() {
+    const enabled = useLocalSetting('desktopOverlayEnabled');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.enabled}>
+        <Item testID="settings-desktop-overlay-enabled" title={t('settingsDesktop.overlay.enabledTitle')}
+            subtitle={t('settingsDesktop.overlay.enabledSubtitle')} showChevron={false}
+            rightElement={<Switch value={enabled} onValueChange={value => { void setSetting(DESKTOP_SETTINGS.settings.enabled, value); }} />} />
+    </SettingAnchor>;
+}
 
-/**
- * While the overlay is off, only its first section renders; it answers for every overlay row, and its
- * `Enabled` switch is what they need.
- */
-const OVERLAY_SECTIONS_AFTER_ENABLED = [
-    DESKTOP_SETTINGS.sectionRefs.interaction,
-    DESKTOP_SETTINGS.sectionRefs.placement,
-    DESKTOP_SETTINGS.sectionRefs.presentation,
-];
+function NotchDockRow({ onCameraNotch }: { onCameraNotch: boolean }) {
+    const dock = useLocalSetting('desktopOverlayDock');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.dock}>
+        <SegmentedChoiceItem testID="settings-desktop-overlay-dock" testIDPrefix="settings-desktop-overlay-dock"
+            title={t('settingsDesktop.overlay.dockTitle')}
+            subtitle={dock === 'floating' ? t('settingsDesktop.overlay.dockSubtitleFloating') : onCameraNotch
+                ? t('settingsDesktop.overlay.dockSubtitleCamera') : t('settingsDesktop.overlay.dockSubtitleEdge')}
+            options={toSegmentedChoiceOptions(DOCK_OPTIONS)} value={dock} onChange={id => {
+                const choice = findChoiceOptionById(DOCK_OPTIONS, id);
+                return choice ? setSetting(DESKTOP_SETTINGS.settings.dock, choice.value) : undefined;
+            }} />
+    </SettingAnchor>;
+}
+
+function NotchDisplaySetting({ inUse }: { inUse: DesktopNotchDisplayInUse | null }) {
+    const display = useLocalSetting('desktopOverlayDisplayMode');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.display}>
+        <DesktopNotchDisplayRow value={display} inUse={inUse}
+            onSelect={value => { void setSetting(DESKTOP_SETTINGS.settings.display, value); }} />
+    </SettingAnchor>;
+}
+
+function NotchIdleRow({ onCameraNotch }: { onCameraNotch: boolean }) {
+    const idle = useLocalSetting('desktopOverlayIdle');
+    const dock = useLocalSetting('desktopOverlayDock');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.idle}>
+        <SegmentedChoiceItem testID="settings-desktop-overlay-idle" testIDPrefix="settings-desktop-overlay-idle"
+            title={t('settingsDesktop.overlay.idleTitle')} subtitle={onCameraNotch && dock === 'top'
+                ? t('settingsDesktop.overlay.idleSubtitleCamera') : t('settingsDesktop.overlay.idleSubtitleTip')}
+            options={toSegmentedChoiceOptions(IDLE_OPTIONS)} value={idle} onChange={id => {
+                const choice = findChoiceOptionById(IDLE_OPTIONS, id);
+                return choice ? setSetting(DESKTOP_SETTINGS.settings.idle, choice.value) : undefined;
+            }} />
+    </SettingAnchor>;
+}
+
+function NotchShowBotsRow() {
+    const mode = useLocalSetting('desktopOverlayVisibilityMode');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.visibilityMode}>
+        <SegmentedChoiceItem testID="settings-desktop-overlay-visibility-mode" testIDPrefix="settings-desktop-overlay-visibility-mode"
+            title={t('settingsDesktop.overlay.visibilityModeTitle')} subtitle={t('settingsDesktop.overlay.visibilityModeSubtitle')}
+            options={toSegmentedChoiceOptions(VISIBILITY_MODE_OPTIONS)} value={mode} onChange={id => {
+                const choice = findChoiceOptionById(VISIBILITY_MODE_OPTIONS, id);
+                return choice ? setSetting(DESKTOP_SETTINGS.settings.visibilityMode, choice.value) : undefined;
+            }} />
+    </SettingAnchor>;
+}
+
+function NotchConversationRow() {
+    const presentation = useLocalSetting('desktopBotConversationPresentation');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.botConversationPresentation}>
+        <SegmentedChoiceItem testID="settings-desktop-bot-conversation-presentation" testIDPrefix="settings-desktop-bot-conversation-presentation"
+            title={t('settingsDesktop.overlay.botConversationPresentationTitle')} subtitle={t('settingsDesktop.overlay.botConversationPresentationSubtitle')}
+            options={toSegmentedChoiceOptions(BOT_CONVERSATION_OPTIONS)} value={presentation} onChange={id => {
+                const choice = findChoiceOptionById(BOT_CONVERSATION_OPTIONS, id);
+                return choice ? setSetting(DESKTOP_SETTINGS.settings.botConversationPresentation, choice.value) : undefined;
+            }} />
+    </SettingAnchor>;
+}
+
+function NotchAlwaysOnTopRow() {
+    const alwaysOnTop = useLocalSetting('desktopOverlayAlwaysOnTop');
+    const { setSetting } = useSettingActionFeedback();
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.alwaysOnTop}>
+        <Item title={t('settingsDesktop.overlay.alwaysOnTopTitle')} subtitle={t('settingsDesktop.overlay.alwaysOnTopSubtitle')}
+            showChevron={false} rightElement={<Switch value={alwaysOnTop}
+                onValueChange={value => { void setSetting(DESKTOP_SETTINGS.settings.alwaysOnTop, value); }} />} />
+    </SettingAnchor>;
+}
 
 export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlaySettingsSection() {
-    const localSettings = useLocalSettings();
-    const applyLocalSettings = useApplyLocalSettings();
-    const { setSetting } = useSettingActionFeedback();
-    const [resolvedHostMode, setResolvedHostMode] = React.useState<'floating' | 'notch_integrated' | null>(null);
-
-    const desktopPolicy = React.useMemo(
-        () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),
-        [localSettings],
-    );
-    const settingsVisibility = React.useMemo(
-        () => resolveDesktopOverlaySettingsVisibilityState(desktopPolicy, resolvedHostMode),
-        [desktopPolicy, resolvedHostMode],
-    );
-
+    const enabled = useLocalSetting('desktopOverlayEnabled');
+    const availability = useDesktopHostRoleAvailability('activity');
+    const [onCameraNotch, setOnCameraNotch] = React.useState(false);
+    const [displayInUse, setDisplayInUse] = React.useState<DesktopNotchDisplayInUse | null>(null);
     React.useEffect(() => {
-        if (!isDesktopHost()) {
+        if (availability?.kind !== 'available') {
             return;
         }
 
         let cancelled = false;
         let unlisten: (() => void) | null = null;
-        const applyResolvedHostMode = (state: Awaited<ReturnType<typeof getDesktopActivityOverlayWindowState>>) => {
+        const applyDisplayFacts = (state: Awaited<ReturnType<typeof getDesktopActivityOverlayWindowState>>) => {
             if (cancelled) {
                 return;
             }
 
-            setResolvedHostMode(state?.placementDiagnostics?.hostMode ?? null);
+            const context = state?.placementDiagnostics?.displayContext;
+            setOnCameraNotch(Boolean(context?.hasPhysicalNotch && context.isBuiltinDisplay));
+            const display = state?.placementDiagnostics?.display;
+            setDisplayInUse((previous) => {
+                if (!display) return null;
+                return previous && previous.storageKey === display.storageKey && previous.name === display.name
+                    && previous.fellBack === display.fellBack && previous.requestedName === display.requestedName
+                    ? previous
+                    : { storageKey: display.storageKey, name: display.name, fellBack: display.fellBack, requestedName: display.requestedName };
+            });
         };
 
         void getDesktopActivityOverlayWindowState()
             .then((state) => {
-                applyResolvedHostMode(state);
+                applyDisplayFacts(state);
             })
-            .catch(() => {
-                if (!cancelled) {
-                    setResolvedHostMode(null);
-                }
-            });
+            .catch(() => {});
         void listenDesktopActivityOverlayWindowState((state) => {
-            applyResolvedHostMode(state);
+            applyDisplayFacts(state);
         })
             .then((dispose) => {
-                unlisten = dispose;
+                if (cancelled) dispose();
+                else unlisten = dispose;
             })
             .catch(() => {});
 
@@ -93,280 +146,25 @@ export const DesktopOverlaySettingsSection = React.memo(function DesktopOverlayS
             cancelled = true;
             unlisten?.();
         };
-    }, []);
+    }, [availability]);
 
-    const setLocalSetting = React.useCallback((delta: Partial<LocalSettings>) => {
-        applyLocalSettings(delta);
-    }, [applyLocalSettings]);
-
-    const handleResetPosition = React.useCallback(() => {
-        void setSetting(DESKTOP_SETTINGS.settings.placementMode, 'anchored');
-    }, [setSetting]);
-
-    const handlePlacementModeSelect = React.useCallback((value: 'anchored' | 'custom') => {
-        void setSetting(DESKTOP_SETTINGS.settings.placementMode, value);
-    }, [setSetting]);
-
-    return (
-        <>
-            <SettingSection section={DESKTOP_SETTINGS.sectionRefs.overlay} answersFor={settingsVisibility.showOverlayConfiguration ? undefined : OVERLAY_SECTIONS_AFTER_ENABLED}>
-            <ItemGroup
-                title={t('settingsDesktop.overlay.title')}
-                description={t('settingsDesktop.overlay.footer')}
-            >
-                <SettingAnchor setting={DESKTOP_SETTINGS.settings.enabled}>
-                    <Item
-                        testID="settings-desktop-overlay-enabled"
-                        title={t('settingsDesktop.overlay.enabledTitle')}
-                        subtitle={t('settingsDesktop.overlay.enabledSubtitle')}
-                        rightElement={(
-                            <Switch
-                                value={desktopPolicy.enabled}
-                                onValueChange={(value) => setLocalSetting({ desktopOverlayEnabled: Boolean(value) })}
-                            />
-                        )}
-                        showChevron={false}
-                    />
-                </SettingAnchor>
-                {settingsVisibility.showOverlayConfiguration ? (
-                    <>
-                        <SettingAnchor setting={DESKTOP_SETTINGS.settings.visibilityMode}>
-                            <SegmentedChoiceItem
-                                testID="settings-desktop-overlay-visibility-mode"
-                                testIDPrefix="settings-desktop-overlay-visibility-mode"
-                                title={t('settingsDesktop.overlay.visibilityModeTitle')}
-                                subtitle={t('settingsDesktop.overlay.visibilityModeSubtitle')}
-                                options={toSegmentedChoiceOptions(VISIBILITY_MODE_OPTIONS)}
-                                value={desktopPolicy.visibilityMode}
-                                onChange={(id) => {
-                                    const choice = findChoiceOptionById(VISIBILITY_MODE_OPTIONS, id);
-                                    if (choice) setLocalSetting({ desktopOverlayVisibilityMode: choice.value });
-                                }}
-                            />
-                        </SettingAnchor>
-                        {settingsVisibility.showAttentionFilterControls ? (
-                            <>
-                                <SettingAnchor setting={DESKTOP_SETTINGS.settings.showWhenRunning}>
-                                    <Item
-                                        title={t('settingsDesktop.overlay.showWhenRunningTitle')}
-                                        subtitle={t('settingsDesktop.overlay.showWhenRunningSubtitle')}
-                                        rightElement={(
-                                            <Switch
-                                                value={desktopPolicy.showWhenRunning}
-                                                onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenRunning: Boolean(value) })}
-                                            />
-                                        )}
-                                        showChevron={false}
-                                    />
-                                </SettingAnchor>
-                                <SettingAnchor setting={DESKTOP_SETTINGS.settings.showWhenAttentionRequired}>
-                                    <Item
-                                        title={t('settingsDesktop.overlay.showWhenAttentionRequiredTitle')}
-                                        subtitle={t('settingsDesktop.overlay.showWhenAttentionRequiredSubtitle')}
-                                        rightElement={(
-                                            <Switch
-                                                value={desktopPolicy.showWhenAttentionRequired}
-                                                onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenAttentionRequired: Boolean(value) })}
-                                            />
-                                        )}
-                                        showChevron={false}
-                                    />
-                                </SettingAnchor>
-                                <SettingAnchor setting={DESKTOP_SETTINGS.settings.showWhenReady}>
-                                    <Item
-                                        title={t('settingsDesktop.overlay.showWhenReadyTitle')}
-                                        subtitle={t('settingsDesktop.overlay.showWhenReadySubtitle')}
-                                        rightElement={(
-                                            <Switch
-                                                value={desktopPolicy.showWhenReady}
-                                                onValueChange={(value) => setLocalSetting({ desktopOverlayShowWhenReady: Boolean(value) })}
-                                            />
-                                        )}
-                                        showChevron={false}
-                                    />
-                                </SettingAnchor>
-                            </>
-                        ) : null}
-                        <SettingAnchor setting={DESKTOP_SETTINGS.settings.alwaysOnTop}>
-                            <Item
-                                title={t('settingsDesktop.overlay.alwaysOnTopTitle')}
-                                subtitle={t('settingsDesktop.overlay.alwaysOnTopSubtitle')}
-                                rightElement={(
-                                    <Switch
-                                        value={desktopPolicy.alwaysOnTop}
-                                        onValueChange={(value) => setLocalSetting({ desktopOverlayAlwaysOnTop: Boolean(value) })}
-                                    />
-                                )}
-                                showChevron={false}
-                            />
-                        </SettingAnchor>
-                    </>
-                ) : null}
-            </ItemGroup>
-            </SettingSection>
-
-            {settingsVisibility.showOverlayConfiguration ? (
-                <SettingSection section={DESKTOP_SETTINGS.sectionRefs.interaction}>
-                <ItemGroup
-                    title={t('settingsDesktop.overlay.interactionTitle')}
-                    description={t('settingsDesktop.overlay.interactionFooter')}
-                >
-                    <SettingAnchor setting={DESKTOP_SETTINGS.settings.autoHideEnabled}>
-                        <Item
-                            title={t('settingsDesktop.overlay.autoHideEnabledTitle')}
-                            subtitle={t('settingsDesktop.overlay.autoHideEnabledSubtitle')}
-                            rightElement={(
-                                <Switch
-                                    value={desktopPolicy.autoHideEnabled}
-                                    onValueChange={(value) => setLocalSetting({ desktopOverlayAutoHideEnabled: Boolean(value) })}
-                                />
-                            )}
-                            showChevron={false}
-                        />
-                    </SettingAnchor>
-                    {settingsVisibility.showAutoHideDelay ? (
-                        <SettingAnchor setting={DESKTOP_SETTINGS.settings.autoHideDelay}>
-                            <SegmentedChoiceItem
-                                testID="settings-desktop-overlay-auto-hide-delay"
-                                testIDPrefix="settings-desktop-overlay-auto-hide-delay"
-                                title={t('settingsDesktop.overlay.autoHideDelayTitle')}
-                                subtitle={t('settingsDesktop.overlay.autoHideDelaySubtitle')}
-                                options={toSegmentedChoiceOptions(AUTO_HIDE_DELAY_OPTIONS)}
-                                value={String(desktopPolicy.autoHideDelayMs)}
-                                onChange={(id) => {
-                                    const choice = findChoiceOptionById(AUTO_HIDE_DELAY_OPTIONS, id);
-                                    if (choice) setLocalSetting({ desktopOverlayAutoHideDelayMs: choice.value });
-                                }}
-                            />
-                        </SettingAnchor>
-                    ) : null}
-                </ItemGroup>
-                </SettingSection>
-            ) : null}
-
-            {settingsVisibility.showOverlayConfiguration ? (
-                <SettingSection section={DESKTOP_SETTINGS.sectionRefs.placement}>
-                <ItemGroup
-                    title={t('settingsDesktop.overlay.placementTitle')}
-                    description={t('settingsDesktop.overlay.placementFooter')}
-                >
-                    <SettingAnchor setting={DESKTOP_SETTINGS.settings.presentationMode}>
-                        <SegmentedChoiceItem
-                            testID="settings-desktop-overlay-presentation-mode"
-                            testIDPrefix="settings-desktop-overlay-presentation-mode"
-                            title={t('settingsDesktop.overlay.presentationModeTitle')}
-                            subtitle={t('settingsDesktop.overlay.presentationModeSubtitle')}
-                            options={toSegmentedChoiceOptions(PRESENTATION_MODE_OPTIONS)}
-                            value={desktopPolicy.presentationMode}
-                            onChange={(id) => {
-                                const choice = findChoiceOptionById(PRESENTATION_MODE_OPTIONS, id);
-                                if (choice) setLocalSetting({ desktopOverlayPresentationMode: choice.value });
-                            }}
-                        />
-                    </SettingAnchor>
-                    {settingsVisibility.showHostModeFallbackNotice ? (
-                        <Item
-                            title={t('settingsDesktop.overlay.hostModeFallbackTitle')}
-                            subtitle={t('settingsDesktop.overlay.hostModeFallbackSubtitle')}
-                            subtitleLines={0}
-                            mode="info"
-                            showChevron={false}
-                        />
-                    ) : null}
-                    {settingsVisibility.showFloatingPlacementControls ? (
-                        <>
-                            <SettingAnchor setting={DESKTOP_SETTINGS.settings.placementMode}>
-                                <SegmentedChoiceItem
-                                    testID="settings-desktop-overlay-placement-mode"
-                                    testIDPrefix="settings-desktop-overlay-placement-mode"
-                                    title={t('settingsDesktop.overlay.placementModeTitle')}
-                                    subtitle={t('settingsDesktop.overlay.placementModeSubtitle')}
-                                    options={toSegmentedChoiceOptions(PLACEMENT_MODE_OPTIONS)}
-                                    value={desktopPolicy.placementMode}
-                                    onChange={(id) => {
-                                        const choice = findChoiceOptionById(PLACEMENT_MODE_OPTIONS, id);
-                                        if (choice) handlePlacementModeSelect(choice.value);
-                                    }}
-                                />
-                            </SettingAnchor>
-                            {desktopPolicy.placementMode === 'anchored' ? (
-                                <SettingAnchor setting={DESKTOP_SETTINGS.settings.anchorPreset}>
-                                    <DesktopOverlayChoiceDropdownRow
-                                        testID="settings-desktop-overlay-anchor-preset"
-                                        title={t('settingsDesktop.overlay.anchorPresetTitle')}
-                                        subtitle={t('settingsDesktop.overlay.anchorPresetSubtitle')}
-                                        selectedValue={desktopPolicy.anchor}
-                                        choices={ANCHOR_OPTIONS}
-                                        onSelect={(value) => {
-                                            void setSetting(DESKTOP_SETTINGS.settings.anchorPreset, value);
-                                        }}
-                                    />
-                                </SettingAnchor>
-                            ) : null}
-                            <SettingAnchor setting={DESKTOP_SETTINGS.settings.resetPosition}>
-                                <Item
-                                    title={t('settingsDesktop.overlay.resetPositionTitle')}
-                                    subtitle={t('settingsDesktop.overlay.resetPositionSubtitle')}
-                                    onPress={handleResetPosition}
-                                    showChevron={false}
-                                />
-                            </SettingAnchor>
-                            {settingsVisibility.showCustomPlacementControls ? (
-                                <>
-                                    <SettingAnchor setting={DESKTOP_SETTINGS.settings.allowRepositioning}>
-                                        <Item
-                                            title={t('settingsDesktop.overlay.allowRepositioningTitle')}
-                                            subtitle={t('settingsDesktop.overlay.allowRepositioningSubtitle')}
-                                            rightElement={(
-                                                <Switch
-                                                    value={desktopPolicy.enableDragReposition}
-                                                    onValueChange={(value) => setLocalSetting({ desktopOverlayEnableDragReposition: Boolean(value) })}
-                                                />
-                                            )}
-                                            showChevron={false}
-                                        />
-                                    </SettingAnchor>
-                                    <SettingAnchor setting={DESKTOP_SETTINGS.settings.lockPosition}>
-                                        <Item
-                                            title={t('settingsDesktop.overlay.lockPositionTitle')}
-                                            subtitle={t('settingsDesktop.overlay.lockPositionSubtitle')}
-                                            rightElement={(
-                                                <Switch
-                                                    value={desktopPolicy.lockPosition}
-                                                    onValueChange={(value) => setLocalSetting({ desktopOverlayLockPosition: Boolean(value) })}
-                                                />
-                                            )}
-                                            showChevron={false}
-                                        />
-                                    </SettingAnchor>
-                                </>
-                            ) : null}
-                        </>
-                    ) : null}
-                </ItemGroup>
-                </SettingSection>
-            ) : null}
-
-            {settingsVisibility.showOverlayConfiguration ? (
-                <ItemGroup
-                    title={t('settingsDesktop.overlay.presentationTitle')}
-                    description={t('settingsDesktop.overlay.presentationFooter')}
-                >
-                    <SettingAnchor setting={DESKTOP_SETTINGS.settings.showPreviewText}>
-                        <Item
-                            title={t('settingsDesktop.overlay.showPreviewTextTitle')}
-                            subtitle={t('settingsDesktop.overlay.showPreviewTextSubtitle')}
-                            rightElement={(
-                                <Switch
-                                    value={desktopPolicy.showPreviewText}
-                                    onValueChange={(value) => setLocalSetting({ desktopOverlayShowPreviewText: Boolean(value) })}
-                                />
-                            )}
-                            showChevron={false}
-                        />
-                    </SettingAnchor>
-                </ItemGroup>
-            ) : null}
-        </>
-    );
+    return <SettingSection section={DESKTOP_SETTINGS.sectionRefs.overlay}>
+        <ItemGroup title={t('settingsDesktop.overlay.title')} description={t('settingsDesktop.overlay.footer')}>
+            {availability === null ? <Item testID="settings-desktop-overlay-loading"
+                title={t('common.loading')} mode="info" showChevron={false} />
+                : availability.kind === 'unavailable' ? <Item testID="settings-desktop-overlay-unavailable"
+                    title={t('common.unavailable')} subtitle={availability.reason} mode="info" showChevron={false} />
+                : <>
+                    <NotchEnabledRow />
+                    {enabled ? <>
+                        <NotchDockRow onCameraNotch={onCameraNotch} />
+                        <NotchDisplaySetting inUse={displayInUse} />
+                        <NotchIdleRow onCameraNotch={onCameraNotch} />
+                        <NotchShowBotsRow />
+                        <NotchConversationRow />
+                        <NotchAlwaysOnTopRow />
+                    </> : null}
+                </>}
+        </ItemGroup>
+    </SettingSection>;
 });

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { I18nManager, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Typography } from '@/constants/Typography';
+
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -16,8 +18,11 @@ import {
 } from '../desktopActivityOverlayKeyboard';
 import type { DesktopActivityOverlayPressableInteractionState } from '../DesktopActivityOverlayPressableInteractionState';
 import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActivityOverlayInitialFocusTarget';
-import type { DesktopActivityOverlayVisualMode } from '../DesktopActivityOverlayVisualMode';
+import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import { Icon } from '@/components/ui/icons/Icon';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { setDesktopActivityOverlayKeyboardWanted } from '../../runtime/desktopActivityOverlayBridge';
+import { DesktopActivityOverlayChip } from '../DesktopActivityOverlayChip';
 
 type StopPropagationEvent = Readonly<{
     stopPropagation?: () => void;
@@ -33,76 +38,86 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     visualMode: DesktopActivityOverlayVisualMode;
     phrases: readonly string[];
     draft?: string;
-    targetAvailable?: boolean;
+    /** Names who the reply goes to ("Reply to Flake hunter…"); the generic "Message" otherwise. */
+    placeholder?: string;
     inputRef?: DesktopActivityOverlayFocusTargetRef;
     onSend: (message: string) => boolean | Promise<boolean>;
     onDraftChange?: (draft: string) => void;
-    onInputLockChange?: (locked: boolean) => void;
     onDismissKey?: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const { onDismissKey, onDraftChange, onInputLockChange, onSend } = props;
+    const { onDismissKey, onDraftChange, onSend } = props;
     const [localDraft, setLocalDraft] = React.useState('');
     const controlledDraft = props.draft;
     const draft = controlledDraft ?? localDraft;
-    const [focused, setFocused] = React.useState(false);
     const [sendFailed, setSendFailed] = React.useState(false);
+    // The latest text, read when a send settles: anything typed while it was in flight is kept.
+    const draftRef = React.useRef(draft);
+    draftRef.current = draft;
+    // One send at a time; the ref decides at event time, the state renders the disabled control.
+    const sendingRef = React.useRef(false);
+    const [sending, setSending] = React.useState(false);
     const trimmedDraft = draft.trim();
-    const targetUnavailable = props.targetAvailable === false;
-    const canSendDraft = trimmedDraft.length > 0 && !targetUnavailable;
+    const canSendDraft = trimmedDraft.length > 0 && !sending;
     const stopEventPropagation = React.useCallback((event?: StopPropagationEvent) => {
         event?.stopPropagation?.();
     }, []);
     const webStopPropagationProps = React.useMemo<WebStopPropagationProps>(() => ({
         onClick: stopEventPropagation,
-        onMouseDown: stopEventPropagation,
+        // The island never takes the keyboard until the person goes to type: pressing the field asks for
+        // it before the field takes focus, and native gives it back when the island closes.
+        onMouseDown: (event) => {
+            stopEventPropagation(event);
+            fireAndForget(setDesktopActivityOverlayKeyboardWanted(true), { tag: 'DesktopActivityOverlayQuickReplyComposer.keyboard' });
+        },
         onPointerDown: stopEventPropagation,
     }), [stopEventPropagation]);
 
-    const setInputLocked = React.useCallback((locked: boolean) => {
-        onInputLockChange?.(locked);
-    }, [onInputLockChange]);
-
-    const sendMessage = React.useCallback(async (message: string) => {
+    /**
+     * Sends through the island's one send path (`session.message.send`). A phrase never touches the
+     * draft; a sent draft clears only the text that went out, so words typed during the send stay.
+     */
+    const sendMessage = React.useCallback(async (message: string, source: 'draft' | 'phrase') => {
         const trimmedMessage = message.trim();
-        if (!trimmedMessage) {
+        if (!trimmedMessage || sendingRef.current) {
             return;
         }
-        if (targetUnavailable) {
-            return;
+        sendingRef.current = true;
+        setSending(true);
+        setSendFailed(false);
+        let sent = false;
+        try {
+            sent = await onSend(trimmedMessage);
+        } catch {
+            sent = false;
+        } finally {
+            sendingRef.current = false;
+            setSending(false);
         }
-        if (sendFailed) {
-            setSendFailed(false);
-        }
-        const sent = await onSend(trimmedMessage);
         if (!sent) {
             setSendFailed(true);
             return;
         }
+        if (source === 'phrase') return;
+        const current = draftRef.current;
+        const remaining = current.trim() === trimmedMessage ? ''
+            : current.trimStart().startsWith(trimmedMessage) ? current.trimStart().slice(trimmedMessage.length).trimStart()
+                : current;
+        if (remaining === current) return;
+        draftRef.current = remaining;
         if (controlledDraft === undefined) {
-            setLocalDraft('');
+            setLocalDraft(remaining);
         }
-        onDraftChange?.('');
-        setInputLocked(focused);
-    }, [controlledDraft, focused, onDraftChange, onSend, sendFailed, setInputLocked, targetUnavailable]);
+        onDraftChange?.(remaining);
+    }, [controlledDraft, onDraftChange, onSend]);
 
     const handleChangeText = React.useCallback((nextDraft: string) => {
+        draftRef.current = nextDraft;
         if (controlledDraft === undefined) {
             setLocalDraft(nextDraft);
         }
         onDraftChange?.(nextDraft);
-        setInputLocked(focused || nextDraft.length > 0);
-    }, [controlledDraft, focused, onDraftChange, setInputLocked]);
-
-    const handleFocus = React.useCallback(() => {
-        setFocused(true);
-        setInputLocked(true);
-    }, [setInputLocked]);
-
-    const handleBlur = React.useCallback(() => {
-        setFocused(false);
-        setInputLocked(draft.length > 0);
-    }, [draft.length, setInputLocked]);
+    }, [controlledDraft, onDraftChange]);
 
     // `react-native-web`'s `TextInput` stops key propagation, so the dismiss key cannot bubble to the
     // island shell from here. Forward it to the route, which owns the dirty-draft dismissal lock.
@@ -113,53 +128,11 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
         onDismissKey?.();
     }, [onDismissKey]);
 
-    React.useEffect(() => () => {
-        setInputLocked(false);
-    }, [setInputLocked]);
-
     return (
         <View
             testID="desktop-activity-overlay-quick-reply"
-            style={[
-                styles.container,
-                createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
-                    visualMode: props.visualMode,
-                    kind: 'card',
-                }),
-            ]}
+            style={styles.container}
         >
-            {props.phrases.length > 0 ? (
-                <View style={styles.phraseRow}>
-                    {props.phrases.map((phrase) => (
-                        <Pressable
-                            key={phrase}
-                            testID={`desktop-activity-overlay-quick-reply-phrase-${phrase}`}
-                            accessibilityRole="button"
-                            accessibilityLabel={phrase}
-                            disabled={targetUnavailable}
-                            onPress={() => {
-                                void sendMessage(phrase);
-                            }}
-                            style={(state) => [
-                                styles.phraseChip,
-                                createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
-                                    visualMode: props.visualMode,
-                                    kind: 'action',
-                                }),
-                                targetUnavailable ? styles.disabledAction : null,
-                                createDesktopActivityOverlayFocusRingStyle(theme, (state as DesktopActivityOverlayPressableInteractionState).focused),
-                            ]}
-                        >
-                            <Text
-                                numberOfLines={1}
-                                style={[styles.phraseText, { color: theme.colors.overlay.foreground }]}
-                            >
-                                {phrase}
-                            </Text>
-                        </Pressable>
-                    ))}
-                </View>
-            ) : null}
             {/* The shell only stops event propagation around the input. A `Pressable` would make it
                 a react-native-web focus stop with no action, so it stays a plain view. */}
             <View
@@ -172,28 +145,26 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     {...webStopPropagationProps}
                     ref={props.inputRef}
                     testID="desktop-activity-overlay-quick-reply-input"
-                    accessibilityLabel={t('common.message')}
-                    placeholder={t('common.message')}
-                    placeholderTextColor={theme.colors.overlay.secondaryForeground}
+                    accessibilityLabel={props.placeholder ?? t('common.message')}
+                    placeholder={props.placeholder ?? t('common.message')}
+                    placeholderTextColor={theme.colors.text.tertiary}
                     value={draft}
                     onChangeText={handleChangeText}
-                    onFocus={handleFocus}
-                    onBlur={handleBlur}
                     onPress={stopEventPropagation}
                     onPressIn={stopEventPropagation}
                     onKeyPress={handleKeyPress}
                     onSubmitEditing={(event) => {
                         stopEventPropagation(event);
-                        void sendMessage(trimmedDraft);
+                        void sendMessage(draftRef.current, 'draft');
                     }}
                     returnKeyType="send"
                     style={[
                         styles.input,
+                        createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
+                            visualMode: props.visualMode,
+                            kind: 'field',
+                        }),
                         I18nManager.isRTL ? styles.inputRtl : null,
-                        {
-                            color: theme.colors.overlay.foreground,
-                            borderColor: theme.colors.overlay.secondaryForeground,
-                        },
                     ]}
                 />
                 <Pressable
@@ -204,12 +175,12 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     disabled={!canSendDraft}
                     onPress={(event) => {
                         event?.stopPropagation?.();
-                        void sendMessage(trimmedDraft);
+                        void sendMessage(draftRef.current, 'draft');
                     }}
                     style={(state) => [
                         createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
                             visualMode: props.visualMode,
-                            kind: 'action',
+                            kind: 'badge',
                         }),
                         styles.sendButton,
                         I18nManager.isRTL ? styles.sendButtonRtl : null,
@@ -217,21 +188,30 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         createDesktopActivityOverlayFocusRingStyle(theme, (state as DesktopActivityOverlayPressableInteractionState).focused),
                     ]}
                 >
-                    <Icon name="arrow-up" size={14} color={theme.colors.overlay.foreground} />
+                    <Icon name="arrow-up" size={SEND_GLYPH_SIZE} color={theme.colors.text.primary} />
                 </Pressable>
             </View>
-            {targetUnavailable ? (
-                <Text
-                    testID="desktop-activity-overlay-quick-reply-no-target"
-                    style={[styles.errorText, { color: theme.colors.overlay.secondaryForeground }]}
-                >
-                    {t('errors.sessionNotFound')}
-                </Text>
+            {props.phrases.length > 0 ? (
+                <View style={styles.phraseRow}>
+                    {props.phrases.map((phrase) => (
+                        <DesktopActivityOverlayChip
+                            key={phrase}
+                            role="phrase"
+                            label={phrase}
+                            testID={`desktop-activity-overlay-quick-reply-phrase-${phrase}`}
+                            disabled={sending}
+                            onPress={() => {
+                                void sendMessage(phrase, 'phrase');
+                            }}
+                        />
+                    ))}
+                </View>
             ) : null}
-            {sendFailed && !targetUnavailable ? (
+            {sendFailed ? (
                 <Text
                     testID="desktop-activity-overlay-quick-reply-error"
-                    style={[styles.errorText, { color: theme.colors.overlay.secondaryForeground }]}
+                    variant="meta"
+                    style={styles.errorText}
                 >
                     {t('errors.failedToSendMessage')}
                 </Text>
@@ -240,67 +220,53 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     );
 }
 
-const styles = StyleSheet.create({
+/** The send glyph at the quiet inline-icon size; its well is the field's height less an inset. */
+const SEND_GLYPH_SIZE = 14;
+
+const styles = StyleSheet.create((theme) => ({
     container: {
-        gap: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 10,
+        gap: theme.space.s8,
     },
     phraseRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 6,
-    },
-    phraseChip: {
-        minHeight: 28,
-        maxWidth: 128,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-    },
-    phraseText: {
-        fontSize: 11,
-        fontWeight: '700',
+        gap: theme.space.s6,
     },
     inputShell: {
-        minHeight: 34,
         position: 'relative',
     },
     input: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.primary,
         width: '100%',
         minWidth: 0,
-        borderWidth: 0.5,
-        borderRadius: 17,
-        paddingLeft: 12,
-        paddingRight: 40,
-        paddingVertical: 7,
-        fontSize: 12,
+        minHeight: theme.space.s32,
+        paddingLeft: theme.space.s12,
+        paddingRight: theme.space.s40,
+        paddingVertical: theme.space.s6,
     },
     inputRtl: {
-        paddingLeft: 40,
-        paddingRight: 12,
+        paddingLeft: theme.space.s40,
+        paddingRight: theme.space.s12,
     },
     sendButton: {
         position: 'absolute',
-        right: 3,
-        top: 2,
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        right: theme.space.s4,
+        top: theme.space.s4,
+        width: theme.space.s24,
+        height: theme.space.s24,
+        borderRadius: theme.space.s12,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 0,
     },
     sendButtonRtl: {
         right: undefined,
-        left: 2,
+        left: theme.space.s4,
     },
     disabledAction: {
         opacity: 0.45,
     },
     errorText: {
-        fontSize: 11,
-        fontWeight: '600',
+        color: theme.colors.text.secondary,
     },
-});
+}));

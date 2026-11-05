@@ -1236,7 +1236,6 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     petsEnabled: accountPreference(z.boolean(), false, 'pet preferences'),
     petsSelectedPetRef: accountPreference(PetAccountReferenceV1Schema, { kind: 'builtIn', petId: 'blink' }, 'pet preferences'),
     petsDesktopOverlayDefaultEnabled: accountPreference(z.boolean(), true, 'pet preferences'),
-    petsDesktopOverlayDefaultVisibilityMode: accountPreference(z.enum(['attentionOrActive', 'alwaysWhenEnabled', 'attentionOnly']), 'alwaysWhenEnabled', 'pet preferences'),
 } as const;
 const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmCommitStrategy: accountPreference(z.enum(['atomic', 'git_staging']), 'atomic', 'source control'),
@@ -1485,6 +1484,7 @@ export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transfo
     delete effective.providerSettingsV1;
     delete effective.connectedAccountServiceConfigurationsV1;
     delete effective.connectedAccountPurposeBindingsV1;
+    delete effective.petsDesktopOverlayDefaultVisibilityMode;
     return effective;
 }), z.looseObject(ACCOUNT_SETTING_ARTIFACTS.shape)));
 

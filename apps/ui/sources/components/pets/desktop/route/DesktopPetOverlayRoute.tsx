@@ -1,3 +1,4 @@
+import { petActivityPose } from '@/components/pets/activity/petActivityPose';
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -33,7 +34,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useRuntimeActive } from '@/hooks/runtime/useRuntimeActive';
 import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
-import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
+import type { PetCompanionActivityModel } from '@/components/pets/activity';
 import { useLocalSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -63,19 +64,19 @@ const CONTEXT_ACTION_SIZE_PX = 30;
 const PET_TRAY_SESSION_ID_ATTRIBUTE = 'data-pet-tray-session-id';
 
 export type DesktopPetOverlayRouteProps = Readonly<{
-    activityModel?: PetCompanionActivityState | null;
+    activityModel?: PetCompanionActivityModel | null;
     activitySource?: 'local' | 'native';
     nativeLayoutState?: DesktopPetOverlayNativeLayoutState | null;
     measurementElementResolver?: DesktopPetOverlayMeasurementElementResolver;
     onMeasuredLayoutChange?: (layout: DesktopPetOverlayMeasuredLayout) => void;
 }>;
 
-function isPetCompanionActivityState(value: unknown): value is PetCompanionActivityState {
+function isPetCompanionActivityModel(value: unknown): value is PetCompanionActivityModel {
     if (!value || typeof value !== 'object') return false;
-    const record = value as Partial<PetCompanionActivityState>;
+    const record = value as Partial<PetCompanionActivityModel>;
     return (
         typeof record.state === 'string'
-        && typeof record.reason === 'string'
+        && (record.state === 'needsYou' || record.state === 'working' || record.state === 'quiet')
         && (typeof record.sessionId === 'string' || record.sessionId === null)
         && Array.isArray(record.trayItems)
     );
@@ -179,21 +180,21 @@ export function DesktopPetOverlayRoute(props: DesktopPetOverlayRouteProps = {}):
 }
 
 type DesktopPetOverlayRouteContentProps = DesktopPetOverlayRouteProps & Readonly<{
-    activity: PetCompanionActivityState;
+    activity: PetCompanionActivityModel;
     onDismissTrayItem: (item: PetCompanionTrayItem) => void;
 }>;
 
-function readActivityFromWindowStatePayload(payload: unknown): PetCompanionActivityState | null {
+function readActivityFromWindowStatePayload(payload: unknown): PetCompanionActivityModel | null {
     if (!payload || typeof payload !== 'object') return null;
     const activity = (payload as { activity?: unknown }).activity;
-    return isPetCompanionActivityState(activity) ? activity : null;
+    return isPetCompanionActivityModel(activity) ? activity : null;
 }
 
 function useNativeDesktopPetOverlayWindowState(): Readonly<{
-    activity: PetCompanionActivityState | null;
+    activity: PetCompanionActivityModel | null;
     layout: DesktopPetOverlayNativeLayoutState | null;
 }> {
-    const [activity, setActivity] = React.useState<PetCompanionActivityState | null>(null);
+    const [activity, setActivity] = React.useState<PetCompanionActivityModel | null>(null);
     const [layout, setLayout] = React.useState<DesktopPetOverlayNativeLayoutState | null>(null);
 
     React.useEffect(() => {
@@ -504,7 +505,7 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
                 <PetCompanionSurface
                     reducedMotion={reducedMotion}
                     active={runtimeActive}
-                    state={drag.dragState ?? activity.state}
+                    state={drag.dragState ?? petActivityPose[activity.state]}
                     stateStyle={mascotStyle}
                     hitboxTestID="desktop-pet-overlay-hitbox"
                     spriteTestID="desktop-pet-overlay-sprite"

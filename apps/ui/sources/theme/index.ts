@@ -181,6 +181,9 @@ const lightThemeBase = {
             // The Media stage's immersive backdrop: near-black in every theme, so a picture reads as on a
             // darkened screen whatever the page colour (lab files MS1i).
             stageImmersive: '#0C0B0B',
+            // The desktop notch's material: the hardware camera notch's own black in every theme, so a
+            // docked or floating island reads as one object with the camera cut-out (notch lab M-A).
+            notch: '#000000',
             // Always-white paper: PDF pages and the Light media background, the same in every theme.
             mediaPaper: '#FFFFFF',
             foreground: '#FFFFFF',
@@ -544,6 +547,7 @@ const darkThemeBase = {
             scrimStrong: 'rgba(19,17,17,0.86)',
             scrimWizard: 'rgba(19,17,17,0.78)',
             stageImmersive: '#0C0B0B',
+            notch: '#000000',
             // Always-white paper: PDF pages and the Light media background, the same in every theme.
             mediaPaper: '#FFFFFF',
             foreground: '#EFEFEF',

@@ -75,6 +75,13 @@ export const AppRailBadge = React.memo(function AppRailBadge(props: Readonly<{
      * box instead of a rail slot, at the same overlap, so the two read as one family.
      */
     glyphSizePx?: number;
+    /**
+     * With `glyphSizePx`: the glyph corner the badge marks. A Bot face carries its dot bottom-right
+     * (`BotFaceMarker`), clear of the face's eyes; every other glyph keeps the top-right default.
+     */
+    corner?: 'topRight' | 'bottomRight';
+    /** The plane the glyph stands on, when it is not the rail's (the black island). */
+    ringColor?: string;
     testID?: string;
 }>) {
     const styles = stylesheet;
@@ -83,7 +90,11 @@ export const AppRailBadge = React.memo(function AppRailBadge(props: Readonly<{
         ? styles.attention
         : props.signal.tone === 'accent' ? styles.accent : styles.neutral;
     const anchor = props.glyphSizePx === undefined ? styles.anchor
-        : [styles.anchor, { left: props.glyphSizePx - APP_RAIL_BADGE_OVERLAP_PX, top: -APP_RAIL_BADGE_OVERLAP_PX }];
+        : [styles.anchor, {
+            left: props.glyphSizePx - APP_RAIL_BADGE_OVERLAP_PX,
+            top: props.corner === 'bottomRight' ? props.glyphSizePx - APP_RAIL_BADGE_OVERLAP_PX : -APP_RAIL_BADGE_OVERLAP_PX,
+            ...(props.ringColor ? { borderColor: props.ringColor } : null),
+        }];
     if (props.signal.kind === 'dot') {
         return <Animated.View pointerEvents="none" testID={props.testID} style={[anchor, styles.dot, tone, appear]} />;
     }

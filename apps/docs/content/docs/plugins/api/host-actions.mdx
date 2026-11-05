@@ -5656,6 +5656,36 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `position` (json): Position
 - `clientId` (text): Client Id
 
+## `desktop.displays.list`
+
+**List desktop displays** — Read connected and remembered displays, the notch display in use, and the display Automatic resolves to on the answering desktop.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `optional` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `clientId` (text): Client Id
+
+## `desktop.notch.set`
+
+**Set the desktop notch** — Open, pin or release the notch, or move it along its edge or within the display. Presentation is local to the answering desktop.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `state` (select): State
+- `position` (json): Position
+- `clientId` (text): Client Id
+
 ## `desktop.windows.open`
 
 **Open in a desktop window** — Move a qualified workspace or pane tab, or open a destination in the answering desktop. Full chrome opens an independent workspace; an explicit window id retargets it.

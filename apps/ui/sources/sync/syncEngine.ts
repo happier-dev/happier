@@ -3855,6 +3855,8 @@ class Sync {
             sessionId: string,
             options?: Readonly<{
                 authority?: ServerAccountRequestAuthority;
+                /** Captured exact-Account callers can read a Home other than the active Home. */
+                scopeCurrentness?: () => boolean;
                 /** Start the shared retry cycle without waiting for an unbounded background retry. */
                 awaitQueue?: boolean;
             }>,
@@ -3863,10 +3865,14 @@ class Sync {
             if (!normalized) return;
             if (options?.authority) {
                 const authority = options.authority;
-                const isCurrent = (): boolean => this.isServerAccountSessionReadCurrent(
-                    authority,
-                    normalized,
-                );
+                const cipherLifetime = captureEncryptionGenerationCurrentness(authority.context.encryption, authority.scope);
+                const pageOptions = options.scopeCurrentness
+                    ? this.getSessionMessagesPageOptions(normalized, undefined, {
+                        serverId: authority.scope.serverId, encryption: authority.context.encryption,
+                        isCurrent: () => options.scopeCurrentness?.() === true && cipherLifetime.isCurrent(),
+                    })
+                    : this.getSessionMessagesPageOptions(normalized, authority);
+                const isCurrent = pageOptions.isCurrent;
                 if (!isCurrent()) return;
                 const session = storage.getState().sessions[normalized] ?? null;
                 await fetchAndApplyMessages({
@@ -3903,7 +3909,7 @@ class Sync {
                             );
                         }
                     },
-                    ...this.getSessionMessagesPageOptions(normalized, authority),
+                    ...pageOptions,
                     log,
                 });
                 return;

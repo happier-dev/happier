@@ -23,8 +23,8 @@ describe('usePetCompanionTrayDismissals', () => {
             await act(async () => hook.getCurrent().dismissTrayItem({
                 id: 'session-a', dismissKey: 'waiting:session-a:1000',
                 address: { serverId: 'server-a', sessionId: 'session-a' }, sessionId: 'session-a',
-                contextLine: null, accessibilityContext: null, status: 'waiting', priority: 1,
-                title: 'Session', subtitle: null, activityAtMs: 1000, expiresAtMs: null,
+                contextLine: null, accessibilityContext: null, activity: 'needsYou',
+                title: 'Session', subtitle: null,
                 actions: { open: true, dismiss: true, quickReply: true },
             }));
             expect(storage.getState().localSettings.petsDismissedCompanionTrayItemKeys).toEqual(['waiting:session-a:1000']);

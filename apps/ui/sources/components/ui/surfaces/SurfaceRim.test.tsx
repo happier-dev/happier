@@ -44,6 +44,15 @@ describe('SurfaceRim', () => {
         }
     });
 
+    it('anchors its corner light where the surface asks, top-left unless told otherwise', async () => {
+        const anchors = async (anchor?: 'bottom-left') => {
+            const screen = await renderScreen(<SurfaceRim role="floating" radius={12} border="default" theme={darkTheme} anchor={anchor} />);
+            return screen.findAll((node) => String(node.type) === 'RadialGradient').map((node) => [node.props.cx, node.props.cy]);
+        };
+        expect(await anchors()).toEqual([[0, 0], [0, 0]]);
+        expect(await anchors('bottom-left')).toEqual([[0, 1], [0, 1]]);
+    });
+
     it('renders nothing where the role stands on the flat edge: cards and the composer, in either scheme', async () => {
         for (const [role, theme] of [['card', darkTheme], ['card', lightTheme], ['composer', darkTheme]] as const) {
             const screen = await renderScreen(<SurfaceRim role={role} radius={16} border="surface" theme={theme} />);

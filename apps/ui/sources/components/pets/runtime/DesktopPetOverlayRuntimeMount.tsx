@@ -12,26 +12,13 @@ import {
 import { DesktopPetOverlayRuntime } from '@/components/pets/desktop/runtime/DesktopPetOverlayRuntime';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
 import { resolveDesktopPetOverlayPolicy } from '@/components/pets/desktop/policy/resolveDesktopPetOverlayPolicy';
-import { buildPetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
-import { usePetCompanionActivityState } from '@/components/pets/state/usePetCompanionActivityState';
+import { usePetCompanionActivityModel } from '@/components/pets/activity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { isDesktopHost } from '@/utils/platform/desktopHost';
-
-function shouldShowDesktopPetOverlay(params: Readonly<{
-    policy: ReturnType<typeof resolveDesktopPetOverlayPolicy>;
-    activity: ReturnType<typeof buildPetCompanionActivityState>;
-}>): boolean {
-    if (!params.policy.enabled) return false;
-    if (params.policy.visibilityMode === 'alwaysWhenEnabled') return true;
-    if (params.policy.visibilityMode === 'attentionOnly') {
-        return params.activity.state === 'waiting' || params.activity.state === 'failed' || params.activity.state === 'review';
-    }
-    return params.activity.state !== 'idle' || params.activity.sessionId !== null;
-}
+import { useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
 
 function useDesktopPetOverlayMainWindowRequests(): void {
     const router = useRouter();
@@ -80,7 +67,8 @@ function useDesktopPetOverlayMainWindowRequests(): void {
 }
 
 export function DesktopPetOverlayRuntimeMount(): React.ReactElement | null {
-    if (Platform.OS !== 'web' || !isDesktopHost() || isDesktopPetOverlayWindowContext()) {
+    const host = useDesktopHostRoleAvailability('pet');
+    if (Platform.OS !== 'web' || host?.kind !== 'available' || isDesktopPetOverlayWindowContext()) {
         return null;
     }
 
@@ -90,21 +78,18 @@ export function DesktopPetOverlayRuntimeMount(): React.ReactElement | null {
 function TauriDesktopPetOverlayRuntimeMount(): React.ReactElement | null {
     const petsEnabled = useSetting('petsEnabled');
     const petsDesktopOverlayDefaultEnabled = useSetting('petsDesktopOverlayDefaultEnabled');
-    const petsDesktopOverlayDefaultVisibilityMode = useSetting('petsDesktopOverlayDefaultVisibilityMode');
     const petsEnabledOverride = useLocalSetting('petsEnabledOverride');
     const desktopPetOverlayEnabledOverride = useLocalSetting('desktopPetOverlayEnabledOverride');
-    const desktopPetOverlayVisibilityModeOverride = useLocalSetting('desktopPetOverlayVisibilityModeOverride');
     const desktopPetOverlayAnchor = useLocalSetting('desktopPetOverlayAnchor');
     const desktopPetOverlayLocked = useLocalSetting('desktopPetOverlayLocked');
     const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const companionEnabled = useFeatureEnabled('pets.companion');
     const policy = React.useMemo(() => resolveDesktopPetOverlayPolicy({
         companionFeatureState: companionEnabled ? 'enabled' : 'disabled',
-        accountSettings: { petsEnabled, petsDesktopOverlayDefaultEnabled, petsDesktopOverlayDefaultVisibilityMode },
+        accountSettings: { petsEnabled, petsDesktopOverlayDefaultEnabled },
         localSettings: {
             petsEnabledOverride,
             desktopPetOverlayEnabledOverride,
-            desktopPetOverlayVisibilityModeOverride,
             desktopPetOverlayAnchor,
             desktopPetOverlayLocked,
         },
@@ -112,10 +97,8 @@ function TauriDesktopPetOverlayRuntimeMount(): React.ReactElement | null {
         companionEnabled,
         petsEnabled,
         petsDesktopOverlayDefaultEnabled,
-        petsDesktopOverlayDefaultVisibilityMode,
         petsEnabledOverride,
         desktopPetOverlayEnabledOverride,
-        desktopPetOverlayVisibilityModeOverride,
         desktopPetOverlayAnchor,
         desktopPetOverlayLocked,
     ]);
@@ -138,9 +121,9 @@ function TauriDesktopPetOverlayRuntime({
     policy: ReturnType<typeof resolveDesktopPetOverlayPolicy>;
     companionSizeScale: number;
 }>): React.ReactElement {
-    const activity = usePetCompanionActivityState();
+    const activity = usePetCompanionActivityModel();
     useDesktopPetOverlayMainWindowRequests();
-    const visible = shouldShowDesktopPetOverlay({ policy, activity });
+    const visible = policy.enabled;
     const expanded = activity.trayItems.length > 0;
     const nativeMouseTrackingEnabled =
         visible

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeDesktopHostMock = vi.hoisted(() => vi.fn());
 const listenDesktopHostEventMock = vi.hoisted(() => vi.fn());
@@ -10,80 +10,53 @@ function expectTauriEventHandler(handler: unknown): asserts handler is (payload:
     }
 }
 
-vi.mock('@/utils/platform/desktopHost', () => ({
-    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostMock(command, args),
-    listenDesktopHostEvent: (eventName: string, handler: (payload: unknown) => void) => listenDesktopHostEventMock(eventName, handler),
+// The native IPC/event packages are the boundary; host admission remains real.
+vi.mock('@tauri-apps/api/event', () => ({
+    listen: (eventName: string, handler: (event: { payload: unknown }) => void) =>
+        listenDesktopHostEventMock(eventName, (payload: unknown) => handler({ payload })),
 }));
 
 describe('desktopActivityOverlayBridge', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubGlobal('navigator', { userAgent: 'Tauri' });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_host_get_availability') return {
+                activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+            };
+            return invokeDesktopHostMock(command, args);
+        } });
+        listenDesktopHostEventMock.mockResolvedValue(() => {});
+    });
     afterEach(() => {
         vi.useRealTimers();
+        vi.unstubAllGlobals();
         invokeDesktopHostMock.mockReset();
         listenDesktopHostEventMock.mockReset();
     });
 
-    it('syncs overlay state through tauri invoke', async () => {
-        const { syncDesktopActivityOverlay } = await import('./desktopActivityOverlayBridge');
+    it('settles unsupported Electron presentation without invoking its Tauri-shaped bridge', async () => {
+        vi.stubGlobal('navigator', { userAgent: 'Happier Electron/43.4' });
+        const bridge = await import('./desktopActivityOverlayBridge');
+        await expect(bridge.presentDesktopActivityOverlay({
+            surface: 'peek', engaged: true, extent: { width: 300, height: 100 },
+        })).rejects.toMatchObject({ code: 'desktop_host_unavailable', role: 'activity' });
+        expect(invokeDesktopHostMock).not.toHaveBeenCalled();
+        expect(listenDesktopHostEventMock).not.toHaveBeenCalled();
+    });
 
-        await syncDesktopActivityOverlay({
-            visible: true,
-            expanded: false,
-            model: {
-                visible: true,
-                isExpanded: false,
-                generatedAt: Date.now(),
-                collapsed: {
-                    title: 'Primary',
-                    statusText: null,
-                    defaultTarget: 'open-primary-session',
-                    sessionCount: 1,
-                },
-                expanded: {
-                    title: 'Sessions',
-                    rows: [],
-                },
-                window: {
-                    collapsed: { width: 320, height: 72 },
-                    expanded: { width: 420, height: 240 },
-                },
-            },
-            window: {
-                collapsed: { width: 320, height: 72 },
-                expanded: { width: 420, height: 240 },
-            },
-            policy: {
-                enabled: true,
-                visibilityMode: 'attention_only',
-                showWhenRunning: true,
-                showWhenAttentionRequired: true,
-                showWhenReady: true,
-                alwaysOnTop: true,
-                autoHideEnabled: true,
-                autoHideDelayMs: 6000,
-                hoverExpandDelayMs: 500,
-                expandedBehavior: 'click',
-                interactiveCollapsed: true,
-                presentationMode: 'automatic',
-                clickAction: 'expand_overlay',
-                density: 'compact',
-                compactStyle: 'pill',
-                showSessionCount: true,
-                showPreviewText: false,
-                quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
-                placementMode: 'anchored',
-                anchor: 'top_center',
-                offsetX: 0,
-                offsetY: 0,
-                enableDragReposition: false,
-                lockPosition: true,
-            },
+    it('sends measured start and settled extents through one presentation command', async () => {
+        const bridge = await import('./desktopActivityOverlayBridge');
+        await bridge.presentDesktopActivityOverlay({
+            surface: 'peek', engaged: true, extent: { width: 340, height: 120, cameraOffset: 20 }, settled: false,
         });
-
-        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_sync', expect.objectContaining({
-            payload: expect.objectContaining({
-                visible: true,
-            }),
-        }));
+        await bridge.presentDesktopActivityOverlay({
+            surface: 'tip', engaged: false, extent: { width: 80, height: 16 }, settled: true,
+        });
+        expect(invokeDesktopHostMock.mock.calls).toEqual([
+            ['desktop_activity_overlay_present', { payload: { surface: 'peek', engaged: true, extent: { width: 340, height: 120, cameraOffset: 20 }, settled: false } }],
+            ['desktop_activity_overlay_present', { payload: { surface: 'tip', engaged: false, extent: { width: 80, height: 16 }, settled: true } }],
+        ]);
     });
 
     it('subscribes to state updates through listenDesktopHostEvent', async () => {
@@ -93,109 +66,12 @@ describe('desktopActivityOverlayBridge', () => {
 
         await listenDesktopActivityOverlayWindowState(handler);
 
-        expect(listenDesktopHostEventMock).toHaveBeenCalledWith(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state, handler);
-    });
-
-    it('resets the persisted overlay position through tauri invoke', async () => {
-        const { resetDesktopActivityOverlayPosition } = await import('./desktopActivityOverlayBridge');
-
-        await resetDesktopActivityOverlayPosition();
-
-        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_reset_position', undefined);
-    });
-
-    it('releases drag velocity through the activity overlay command namespace', async () => {
-        const bridge = await import('./desktopActivityOverlayBridge');
-        const releaseDragVelocity = (bridge as Record<string, unknown>).releaseDesktopActivityOverlayDragVelocity;
-        expect(releaseDragVelocity).toBeTypeOf('function');
-        if (typeof releaseDragVelocity !== 'function') {
-            return;
-        }
-
-        await releaseDragVelocity({
-            pointerId: 9,
-            vx: 640,
-            vy: -320,
-            sampleWindowMs: 100,
-        });
-
-        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_release_drag_velocity', {
-            payload: {
-                pointerId: '9',
-                vx: 640,
-                vy: -320,
-                sampleWindowMs: 100,
-            },
-        });
-    });
-
-    it('schedules native momentum deltas from the activity overlay release velocity plan', async () => {
-        vi.useFakeTimers();
-        invokeDesktopHostMock.mockImplementation(async (command) => {
-            if (command === 'desktop_activity_overlay_release_drag_velocity') {
-                return {
-                    generation: 42,
-                    tickMs: 16,
-                    deltas: [
-                        { deltaX: 8, deltaY: -4, delayMs: 16 },
-                        { deltaX: 4, deltaY: -2, delayMs: 16 },
-                    ],
-                };
-            }
-            return undefined;
-        });
-        const { releaseDesktopActivityOverlayDragVelocity } = await import('./desktopActivityOverlayBridge');
-
-        await releaseDesktopActivityOverlayDragVelocity({
-            pointerId: 9,
-            vx: 640,
-            vy: -320,
-            sampleWindowMs: 100,
-        });
-        await vi.advanceTimersByTimeAsync(16);
-        await vi.advanceTimersByTimeAsync(16);
-
-        expect(invokeDesktopHostMock.mock.calls).toEqual([
-            [
-                'desktop_activity_overlay_release_drag_velocity',
-                {
-                    payload: {
-                        pointerId: '9',
-                        vx: 640,
-                        vy: -320,
-                        sampleWindowMs: 100,
-                    },
-                },
-            ],
-            [
-                'desktop_activity_overlay_apply_momentum_delta',
-                {
-                    payload: {
-                        generation: 42,
-                        deltaX: 8,
-                        deltaY: -4,
-                    },
-                },
-            ],
-            [
-                'desktop_activity_overlay_apply_momentum_delta',
-                {
-                    payload: {
-                        generation: 42,
-                        deltaX: 4,
-                        deltaY: -2,
-                    },
-                },
-            ],
-        ]);
-    });
-
-    it('sets the native overlay input lock through tauri invoke', async () => {
-        const { setDesktopActivityOverlayInputLocked } = await import('./desktopActivityOverlayBridge');
-
-        await setDesktopActivityOverlayInputLocked(true);
-
-        expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_set_input_locked', { locked: true });
+        const registration = listenDesktopHostEventMock.mock.calls.at(-1);
+        expect(registration?.[0]).toBe(DESKTOP_ACTIVITY_OVERLAY_EVENTS.state);
+        const onState = registration?.[1];
+        expectTauriEventHandler(onState);
+        onState({ visible: false });
+        expect(handler).toHaveBeenCalledWith({ visible: false });
     });
 
     it('reveals the main window through tauri invoke before route-driven overlay interactions', async () => {
@@ -210,7 +86,7 @@ describe('desktopActivityOverlayBridge', () => {
         const resultHandlerRef: { current?: (payload: unknown) => void } = {};
         const unlisten = vi.fn();
         listenDesktopHostEventMock.mockImplementation(async (eventName: string, handler: (payload: unknown) => void) => {
-            if (eventName === 'activityOverlay://interaction-result') {
+            if (eventName === 'desktopWindow://action-result') {
                 resultHandlerRef.current = handler;
             }
             return unlisten;
@@ -228,7 +104,7 @@ describe('desktopActivityOverlayBridge', () => {
             },
         });
 
-        await vi.waitFor(() => expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_activity_overlay_emit_interaction', {
+        await vi.waitFor(() => expect(invokeDesktopHostMock).toHaveBeenCalledWith('desktop_window_emit_action', {
             payload: expect.objectContaining({
                 requestId: 'quick-reply-request-1',
             }),
@@ -237,6 +113,7 @@ describe('desktopActivityOverlayBridge', () => {
         expectTauriEventHandler(resultHandler);
 
         resultHandler({
+            windowLabel: 'activity_overlay',
             requestId: 'quick-reply-request-1',
             ok: false,
             errorCode: 'action_failed',

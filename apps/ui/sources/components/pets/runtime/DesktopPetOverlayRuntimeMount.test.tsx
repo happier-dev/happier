@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
+import type { PetCompanionActivityModel } from '@/components/pets/activity';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -11,17 +11,17 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import * as overlayPolicy from '@/components/pets/desktop/policy/resolveDesktopPetOverlayPolicy';
+import { DesktopPetOverlayRuntimeMount } from './DesktopPetOverlayRuntimeMount';
 
 type AccountPetsSettingsSubset = Pick<
     Settings,
-    'petsEnabled' | 'petsDesktopOverlayDefaultEnabled' | 'petsDesktopOverlayDefaultVisibilityMode'
+    'petsEnabled' | 'petsDesktopOverlayDefaultEnabled'
 >;
 
 type LocalPetsSettingsSubset = Pick<
     LocalSettings,
     | 'petsEnabledOverride'
     | 'desktopPetOverlayEnabledOverride'
-    | 'desktopPetOverlayVisibilityModeOverride'
     | 'desktopPetOverlayAnchor'
     | 'desktopPetOverlayLocked'
 > & { petsCompanionSizeScale: number };
@@ -44,11 +44,11 @@ const featureState = vi.hoisted(() => ({
 const platformState = vi.hoisted(() => ({
     os: 'web',
     tauri: true,
+    pending: false,
 }));
-const activityState = vi.hoisted((): { current: PetCompanionActivityState } => ({
+const activityState = vi.hoisted((): { current: PetCompanionActivityModel } => ({
     current: {
-        state: 'running',
-        reason: 'running',
+        state: 'working',
         address: { serverId: 'server-a', sessionId: 'session-running' },
         sessionId: 'session-running',
         trayItems: [
@@ -59,12 +59,9 @@ const activityState = vi.hoisted((): { current: PetCompanionActivityState } => (
                 sessionId: 'session-running',
                 contextLine: 'Home A',
                 accessibilityContext: null,
-                status: 'running',
-                priority: 0,
+                activity: 'working',
                 title: 'Running session',
                 subtitle: null,
-                activityAtMs: null,
-                expiresAtMs: null,
                 actions: {
                     open: true,
                     dismiss: true,
@@ -78,14 +75,12 @@ const accountSettingsState = vi.hoisted((): { current: AccountPetsSettingsSubset
     current: {
         petsEnabled: true,
         petsDesktopOverlayDefaultEnabled: true,
-        petsDesktopOverlayDefaultVisibilityMode: 'alwaysWhenEnabled',
     },
 }));
 const localSettingsState = vi.hoisted((): { current: LocalPetsSettingsSubset } => ({
     current: {
         petsEnabledOverride: 'inherit',
         desktopPetOverlayEnabledOverride: 'inherit',
-        desktopPetOverlayVisibilityModeOverride: 'inherit',
         desktopPetOverlayAnchor: 'bottomRight',
         desktopPetOverlayLocked: false,
         petsCompanionSizeScale: 1,
@@ -107,6 +102,8 @@ vi.mock('react-native', async (importOriginal) => {
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => platformState.tauri,
+    useDesktopHostRoleAvailability: () => platformState.pending ? null : platformState.tauri
+        ? { kind: 'available' } : { kind: 'unavailable', reason: 'electron_overlay_unavailable' },
 }));
 
 vi.mock('@/components/pets/desktop/runtime/DesktopPetOverlayRuntime', () => ({
@@ -132,8 +129,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'pets.companion' && featureState.companionEnabled,
 }));
 
-vi.mock('@/components/pets/state/usePetCompanionActivityState', () => ({
-    usePetCompanionActivityState: () => activityState.current,
+vi.mock('@/components/pets/activity', () => ({
+    usePetCompanionActivityModel: () => activityState.current,
 }));
 
 vi.mock('@/components/pets/source/useSelectedPetPackage', () => ({
@@ -153,8 +150,7 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         vi.useFakeTimers();
         vi.setSystemTime(12_000);
         activityState.current = {
-            state: 'running',
-            reason: 'running',
+            state: 'working',
             address: { serverId: 'server-a', sessionId: 'session-running' },
             sessionId: 'session-running',
             trayItems: [
@@ -165,12 +161,9 @@ describe('DesktopPetOverlayRuntimeMount', () => {
                     sessionId: 'session-running',
                     contextLine: 'Home A',
                     accessibilityContext: null,
-                    status: 'running',
-                    priority: 0,
+                    activity: 'working',
                     title: 'Running session',
                     subtitle: null,
-                    activityAtMs: null,
-                    expiresAtMs: null,
                     actions: {
                         open: true,
                         dismiss: true,
@@ -192,8 +185,7 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         createDefaultActionExecutorMock.mockClear();
         featureState.companionEnabled = true;
         activityState.current = {
-            state: 'running',
-            reason: 'running',
+            state: 'working',
             address: { serverId: 'server-a', sessionId: 'session-running' },
             sessionId: 'session-running',
             trayItems: [
@@ -204,12 +196,9 @@ describe('DesktopPetOverlayRuntimeMount', () => {
                     sessionId: 'session-running',
                     contextLine: 'Home A',
                     accessibilityContext: null,
-                    status: 'running',
-                    priority: 0,
+                    activity: 'working',
                     title: 'Running session',
                     subtitle: null,
-                    activityAtMs: null,
-                    expiresAtMs: null,
                     actions: {
                         open: true,
                         dismiss: true,
@@ -221,23 +210,21 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         accountSettingsState.current = {
             petsEnabled: true,
             petsDesktopOverlayDefaultEnabled: true,
-            petsDesktopOverlayDefaultVisibilityMode: 'alwaysWhenEnabled',
         };
         localSettingsState.current = {
             petsEnabledOverride: 'inherit',
             desktopPetOverlayEnabledOverride: 'inherit',
-            desktopPetOverlayVisibilityModeOverride: 'inherit',
             desktopPetOverlayAnchor: 'bottomRight',
             desktopPetOverlayLocked: false,
             petsCompanionSizeScale: 1,
         };
         platformState.os = 'web';
         platformState.tauri = true;
+        platformState.pending = false;
         delete (globalThis as Partial<{ window: unknown }>).window;
     });
 
     it('mounts the desktop runtime without a hidden duplicate companion surface in the main app tree', async () => {
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         const screen = await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -247,7 +234,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             expanded: true,
             policy: {
                 enabled: true,
-                visibilityMode: 'alwaysWhenEnabled',
                 alwaysOnTop: true,
                 inputLocked: false,
                 anchor: 'bottomRight',
@@ -267,7 +253,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             requestHandler = handler;
             return () => {};
         });
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -297,13 +282,11 @@ describe('DesktopPetOverlayRuntimeMount', () => {
 
     it('shows the desktop pet overlay when enabled even if the companion is idle', async () => {
         activityState.current = {
-            state: 'idle',
-            reason: 'idle',
+            state: 'quiet',
             address: null,
             sessionId: null,
             trayItems: [],
         };
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         const screen = await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -313,7 +296,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             expanded: false,
             policy: {
                 enabled: true,
-                visibilityMode: 'alwaysWhenEnabled',
             },
         });
         expect((desktopRuntimeProps.calls[0]?.window as { width: number }).width).toBeLessThan(192);
@@ -322,8 +304,7 @@ describe('DesktopPetOverlayRuntimeMount', () => {
 
     it('sizes the compact desktop overlay window from the local companion size scale', async () => {
         activityState.current = {
-            state: 'idle',
-            reason: 'idle',
+            state: 'quiet',
             address: null,
             sessionId: null,
             trayItems: [],
@@ -333,7 +314,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             petsCompanionSizeScale: 1.5,
         };
         storage.getState().applyLocalSettings(localSettingsState.current, { persist: false });
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -343,20 +323,13 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         });
     });
 
-    it('keeps attention-or-active overlays visible for active idle sessions', async () => {
+    it('keeps the enabled pet visible for an active idle session', async () => {
         activityState.current = {
-            state: 'idle',
-            reason: 'idle',
+            state: 'quiet',
             address: { serverId: 'server-a', sessionId: 'session-active-idle' },
             sessionId: 'session-active-idle',
             trayItems: [],
         };
-        accountSettingsState.current = {
-            ...accountSettingsState.current,
-            petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
-        };
-        storage.getState().applySettingsLocal(accountSettingsState.current);
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         const screen = await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -366,36 +339,27 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             expanded: false,
             policy: {
                 enabled: true,
-                visibilityMode: 'attentionOrActive',
             },
         });
     });
 
-    it('hides attention-or-active overlays when there is no active or attention-bearing session', async () => {
+    it('unmounts the source and its native requests when the pet overlay preference is disabled', async () => {
         activityState.current = {
-            state: 'idle',
-            reason: 'idle',
+            state: 'quiet',
             address: null,
             sessionId: null,
             trayItems: [],
         };
         accountSettingsState.current = {
             ...accountSettingsState.current,
-            petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
+            petsDesktopOverlayDefaultEnabled: false,
         };
         storage.getState().applySettingsLocal(accountSettingsState.current);
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
-        expect(desktopRuntimeProps.calls[0]).toMatchObject({
-            visible: false,
-            expanded: false,
-            policy: {
-                enabled: true,
-                visibilityMode: 'attentionOrActive',
-            },
-        });
+        expect(desktopRuntimeProps.calls).toHaveLength(0);
+        expect(listenDesktopPetOverlayShowMainWindowRequestedMock).not.toHaveBeenCalled();
     });
 
     it('does not sync overlay state from inside the pet overlay window route', async () => {
@@ -408,7 +372,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
             configurable: true,
             writable: true,
         });
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         const screen = await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -416,9 +379,15 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         expect(desktopRuntimeProps.calls).toHaveLength(0);
     });
 
+    it('does not mount activity or native request subscriptions while host availability is pending', async () => {
+        platformState.pending = true;
+        await renderScreen(<DesktopPetOverlayRuntimeMount />);
+        expect(desktopRuntimeProps.calls).toHaveLength(0);
+        expect(listenDesktopPetOverlayShowMainWindowRequestedMock).not.toHaveBeenCalled();
+    });
+
     it('does not mount the desktop overlay runtime in ordinary browser web', async () => {
         platformState.tauri = false;
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
 
         const screen = await renderScreen(<DesktopPetOverlayRuntimeMount />);
 
@@ -427,7 +396,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
     });
 
     it('ignores unrelated settings and changes the overlay when its account preference changes', async () => {
-        const { DesktopPetOverlayRuntimeMount } = await import('./DesktopPetOverlayRuntimeMount');
         const commits = vi.fn();
         const resolvePolicy = vi.spyOn(overlayPolicy, 'resolveDesktopPetOverlayPolicy');
         await renderScreen(
@@ -445,14 +413,11 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         expect(desktopRuntimeProps.calls.length).toBe(runtimeBaseline);
         expect(resolvePolicy.mock.calls.length).toBe(computationBaseline);
         await act(async () => {
-            storage.getState().applySettingsLocal({ petsDesktopOverlayDefaultVisibilityMode: 'attentionOnly' });
+            storage.getState().applySettingsLocal({ petsDesktopOverlayDefaultEnabled: false });
         });
         expect(commits.mock.calls.length).toBe(baseline + 1);
         expect(resolvePolicy.mock.calls.length).toBe(computationBaseline + 1);
-        expect(desktopRuntimeProps.calls.at(-1)).toMatchObject({
-            visible: false,
-            policy: { visibilityMode: 'attentionOnly' },
-        });
+        expect(desktopRuntimeProps.calls.length).toBe(runtimeBaseline);
         await act(async () => {
             storage.getState().applyLocalSettings({ uiFontScale: 1.25 }, { persist: false });
         });
@@ -463,6 +428,6 @@ describe('DesktopPetOverlayRuntimeMount', () => {
         });
         expect(commits.mock.calls.length).toBe(baseline + 2);
         expect(resolvePolicy.mock.calls.length).toBe(computationBaseline + 2);
-        expect(desktopRuntimeProps.calls.at(-1)).toMatchObject({ policy: { inputLocked: true } });
+        expect(desktopRuntimeProps.calls.length).toBe(runtimeBaseline);
     });
 });

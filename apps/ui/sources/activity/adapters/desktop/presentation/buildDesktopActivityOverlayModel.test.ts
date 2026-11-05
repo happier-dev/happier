@@ -3,8 +3,16 @@ import { describe, expect, it } from 'vitest';
 import type { DesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 import { activityInstanceKey, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
+import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionChoices';
 
-import { buildDesktopActivityOverlayModel } from './buildDesktopActivityOverlayModel';
+import { buildDesktopActivityOverlayModel as buildModel } from './buildDesktopActivityOverlayModel';
+
+const QUIET_ACTIVITY = { visible: false, activity: 'quiet', word: '', entries: [], tray: [] } as const;
+function buildDesktopActivityOverlayModel(params: Omit<Parameters<typeof buildModel>[0], 'sharedActivity'>
+    & Partial<Pick<Parameters<typeof buildModel>[0], 'sharedActivity'>>) {
+    return buildModel({ ...params, sharedActivity: params.sharedActivity ?? QUIET_ACTIVITY });
+}
 
 type RequestSnapshotFixture = Omit<DesktopActivityOverlaySnapshot['permissionRequests'][number], 'activityInstanceId'>
     & Partial<Pick<DesktopActivityOverlaySnapshot['permissionRequests'][number], 'activityInstanceId'>>;
@@ -24,6 +32,8 @@ function createSnapshot(overrides: SnapshotOverrides = {}): DesktopActivityOverl
     const base: DesktopActivityOverlaySnapshot = {
         version: 1,
         generatedAt: 1_700_000_000_000,
+        bots: { faces: [], overflowCount: 0 },
+        conversation: null,
         state: 'content',
         counts: {
             unread: 1,
@@ -88,6 +98,8 @@ function createSnapshot(overrides: SnapshotOverrides = {}): DesktopActivityOverl
         ...overrides,
         permissionRequests: (overrides.permissionRequests ?? base.permissionRequests).map((request) => ({
             ...request,
+            permissionChoices: request.permissionChoices ?? resolveSessionPermissionChoices({ toolName: request.toolLabel,
+                permissionBehavior: resolveSessionPermissionBehavior({ agentId: 'claude', metadata: { flavor: 'claude' }, accountScope: undefined }) }),
             activityInstanceId: requestActivityInstanceId(request),
         })),
         userQuestions: (overrides.userQuestions ?? base.userQuestions).map((request) => ({
@@ -101,29 +113,16 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
     const base: DesktopOverlayPolicy = {
         enabled: true,
         visibilityMode: 'attention_only',
-        showWhenRunning: true,
-        showWhenAttentionRequired: true,
-        showWhenReady: true,
+
         alwaysOnTop: true,
-        autoHideEnabled: true,
-        autoHideDelayMs: 6000,
+
         hoverExpandDelayMs: 500,
-        expandedBehavior: 'click',
-        interactiveCollapsed: true,
-        presentationMode: 'automatic',
-        clickAction: 'expand_overlay',
-        density: 'compact',
-        compactStyle: 'pill',
-        showSessionCount: true,
-        showPreviewText: false,
-        collapsedCarouselEnabled: true,
+
+        dock: 'top',
+        idle: 'tip',
+        botConversationPresentation: 'overlay',
+
         quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
-        placementMode: 'anchored',
-        anchor: 'top_center',
-        offsetX: 0,
-        offsetY: 0,
-        enableDragReposition: false,
-        lockPosition: true,
     };
 
     return {
@@ -133,32 +132,60 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
 }
 
 describe('buildDesktopActivityOverlayModel', () => {
-    it('marks overlay visible when enabled and attention is present in attention mode', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy(),
-            isExpanded: false,
-        });
-
+    it('keeps an explicit conversation visible when privacy removes every ambient Session', () => {
+        const snapshot = createSnapshot({ primary: null, sessions: [], state: 'idle', conversation: {
+            serverId: 'server-1', accountId: 'account-1', sessionId: 'private', reachable: true, refreshing: false,
+            reply: { state: 'ready', text: 'Explicitly opened content' },
+        } });
+        const model = buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy() });
         expect(model.visible).toBe(true);
-        expect(model.collapsed.title).toBe('Primary session');
-        expect(model.collapsed.defaultTarget).toBe('open-primary-session');
-        expect(model.collapsed.sessionCount).toBe(2);
-        expect(model.expanded.rows).toHaveLength(2);
-        expect(model.expanded.cards).toEqual([
-            expect.objectContaining({
-                kind: 'multi_session_list',
-                rows: [
-                    expect.objectContaining({ sessionId: 'session-primary' }),
-                    expect.objectContaining({ sessionId: 'session-secondary' }),
-                ],
-            }),
-        ]);
-        expect(model.window.collapsed.width).toBeGreaterThan(200);
-        expect(model.window.expanded.height).toBeGreaterThan(model.window.collapsed.height);
-        expect(model.window.expanded.height).toBeLessThanOrEqual(176);
+        expect(model.expanded.rows).toEqual([]);
+        expect(model.conversation).toEqual(snapshot.conversation);
+        expect(buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy({ enabled: false }) }).visible).toBe(false);
     });
 
+    it.each(['permission_request', 'user_question'] as const)('keeps identical %s asks distinct with Home-scoped Session identity', (kind) => {
+        const request = {
+            kind, requestId: 'question-1', serverId: 'server-1',
+            title: 'Trust this folder?', summary: null, toolLabel: 'AskUserQuestion', questionText: 'Trust this folder?',
+            count: 1, openActionIdentifier: 'open-primary-session', directOptions: [],
+        };
+        const sessions = createSnapshot().sessions;
+        const snapshot = createSnapshot({
+            sessions: [...sessions, { ...sessions[0]!, serverId: 'server-2', title: 'Other Home session' }],
+            [kind === 'permission_request' ? 'permissionRequests' : 'userQuestions']: [
+                { ...request, sessionId: 'session-primary' },
+                { ...request, sessionId: 'session-secondary' },
+                { ...request, sessionId: 'session-primary', serverId: 'server-2' },
+            ],
+        });
+        const model = buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy() });
+        const cards = (model.expanded.cards ?? []).filter(card => card.kind === kind);
+        expect(new Set(cards.map(card => card.id)).size).toBe(3);
+        expect(cards).toMatchObject([
+            { session: { title: 'Primary session', sessionId: 'session-primary', serverId: 'server-1' } },
+            { session: { title: 'Secondary session', sessionId: 'session-secondary', serverId: 'server-1' } },
+            { session: { title: 'Other Home session', sessionId: 'session-primary', serverId: 'server-2' } },
+        ]);
+    });
+
+    it('consumes shared visibility and word without reconstructing triggers from cards', () => {
+        const snapshot = createSnapshot({ counts: { unread: 0, permissionRequired: 0,
+            actionRequired: 0, thinking: 0, totalAttention: 0 } });
+        const sharedActivity = { ...QUIET_ACTIVITY, visible: true, activity: 'needsYou' as const, word: 'Needs you' };
+        expect(buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy(),
+            sharedActivity })).toMatchObject({ visible: true, collapsed: { title: 'Needs you', activity: 'needsYou' } });
+        expect(buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy({ enabled: false }),
+            sharedActivity }).visible).toBe(false);
+    });
+    it('keeps working non-Bots and quiet completion cards at rest without selected faces', () => {
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({ counts: { unread: 0, permissionRequired: 0, actionRequired: 0,
+                thinking: 1, totalAttention: 0 }, permissionRequests: [], userQuestions: [] }),
+            policy: createPolicy({ visibilityMode: 'active_sessions' }),
+        });
+        expect(model.visible).toBe(false);
+    });
     it('uses one passive expanded composition without duplicating the primary session', () => {
         const singleSessionModel = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
@@ -177,12 +204,10 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy(),
-            isExpanded: true,
         });
         const multiSessionModel = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot(),
             policy: createPolicy(),
-            isExpanded: true,
         });
 
         expect(singleSessionModel.expanded.cards).toEqual([
@@ -202,48 +227,11 @@ describe('buildDesktopActivityOverlayModel', () => {
         ]);
     });
 
-    it('keeps pill collapsed windows tighter than panel collapsed windows for the same density', () => {
-        const pillModel = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy({
-                compactStyle: 'pill',
-                density: 'compact',
-            }),
-            isExpanded: false,
-        });
-        const panelModel = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy({
-                compactStyle: 'panel',
-                density: 'compact',
-            }),
-            isExpanded: false,
-        });
-
-        expect(pillModel.window.collapsed.width).toBeLessThan(panelModel.window.collapsed.width);
-        expect(pillModel.window.collapsed.height).toBeLessThan(panelModel.window.collapsed.height);
-    });
-
-    it('keeps compact collapsed pill windows in the dense notch-wing range', () => {
-        const pillModel = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy({
-                compactStyle: 'pill',
-                density: 'compact',
-            }),
-            isExpanded: false,
-        });
-        const panelModel = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy({
-                compactStyle: 'panel',
-                density: 'compact',
-            }),
-            isExpanded: false,
-        });
-
-        expect(pillModel.window.collapsed).toEqual({ width: 254, height: 38 });
-        expect(panelModel.window.collapsed.height).toBeLessThanOrEqual(68);
+    it('publishes content without a second presentation or geometry decision', () => {
+        const model = buildDesktopActivityOverlayModel({ snapshot: createSnapshot(), policy: createPolicy(), });
+        expect(model).not.toHaveProperty('isExpanded');
+        expect(model).not.toHaveProperty('window');
+        expect(model.expanded.cards?.length).toBeGreaterThan(0);
     });
 
     it('stays hidden when disabled regardless of counts', () => {
@@ -253,39 +241,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 enabled: false,
                 visibilityMode: 'always_when_enabled',
             }),
-            isExpanded: false,
-        });
-
-        expect(model.visible).toBe(false);
-    });
-
-    it('stays hidden in active-session mode when only inactive attention counts remain', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                state: 'idle',
-                counts: {
-                    unread: 1,
-                    permissionRequired: 0,
-                    actionRequired: 0,
-                    thinking: 0,
-                    totalAttention: 1,
-                },
-                summaryCounts: {
-                    attentionCount: 1,
-                    runningCount: 0,
-                    permissionCount: 0,
-                },
-                primary: null,
-                sessions: [],
-                permissionRequests: [],
-                userQuestions: [],
-                completionStates: [],
-            }),
-            policy: createPolicy({
-                visibilityMode: 'active_sessions',
-                showWhenAttentionRequired: true,
-            }),
-            isExpanded: false,
         });
 
         expect(model.visible).toBe(false);
@@ -311,11 +266,10 @@ describe('buildDesktopActivityOverlayModel', () => {
             policy: createPolicy({
                 visibilityMode: 'always_when_enabled',
             }),
-            isExpanded: false,
         });
 
-        expect(model.visible).toBe(true);
-        expect(model.collapsed.title).toBe('No active sessions');
+        expect(model.visible).toBe(false);
+        expect(model.collapsed.title).toBe('');
         expect(model.expanded.cards).toEqual([
             expect.objectContaining({
                 kind: 'idle_state',
@@ -330,7 +284,6 @@ describe('buildDesktopActivityOverlayModel', () => {
             policy: createPolicy({
                 visibilityMode: 'always_when_enabled',
             }),
-            isExpanded: true,
         });
 
         expect(model.collapsed).not.toHaveProperty('subtitle');
@@ -339,28 +292,6 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.expanded.rows[0]).not.toHaveProperty('route');
         expect(model.expanded.rows[0]).not.toHaveProperty('target');
         expect(model.expanded.rows[0]).not.toHaveProperty('attentionState');
-    });
-
-    it('stays hidden in attention-only mode when sessions exist but every auto-show trigger is disabled', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                counts: {
-                    unread: 0,
-                    permissionRequired: 0,
-                    actionRequired: 0,
-                    thinking: 1,
-                    totalAttention: 0,
-                },
-            }),
-            policy: createPolicy({
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: false,
-            }),
-            isExpanded: false,
-        });
-
-        expect(model.visible).toBe(false);
     });
 
     it('does not auto-show for queued user input without real attention or completion state', () => {
@@ -376,38 +307,11 @@ describe('buildDesktopActivityOverlayModel', () => {
                 completionStates: [],
             }),
             policy: createPolicy({
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: true,
+
             }),
-            isExpanded: false,
         });
 
         expect(model.visible).toBe(false);
-        expect(model.collapsed.slides?.[0]?.priority).not.toBe('ready');
-    });
-
-    it('stays visible in active-sessions mode when sessions exist even if every auto-show trigger is disabled', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                counts: {
-                    unread: 0,
-                    permissionRequired: 0,
-                    actionRequired: 0,
-                    thinking: 0,
-                    totalAttention: 0,
-                },
-            }),
-            policy: createPolicy({
-                visibilityMode: 'active_sessions',
-                showWhenRunning: false,
-                showWhenAttentionRequired: false,
-                showWhenReady: false,
-            }),
-            isExpanded: false,
-        });
-
-        expect(model.visible).toBe(true);
     });
 
     it('prioritizes permission request cards ahead of passive session overview cards', () => {
@@ -432,7 +336,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy(),
-            isExpanded: true,
         });
 
         expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
@@ -442,9 +345,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 JSON.stringify(['permission_request', 'perm-1']),
             ),
         }));
-        expect(model.collapsed.title).toBe('Approve command');
-        expect(model.collapsed.statusText).toBe('npm test');
-        expect(model.collapsed.primaryCardKind).toBe('permission_request');
     });
 
     it('preserves exact request instance identity across Homes, sessions, reorder, and delimiter-bearing ids', () => {
@@ -477,7 +377,6 @@ describe('buildDesktopActivityOverlayModel', () => {
         const buildCards = (permissionRequests: typeof requests) => buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({ permissionRequests }),
             policy: createPolicy(),
-            isExpanded: true,
         }).expanded.cards?.filter((card) => card.kind === 'permission_request') ?? [];
 
         const original = buildCards(requests);
@@ -507,321 +406,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 }),
             ]),
         }));
-    });
-
-    it('builds the four collapsed carousel slides from stable session transformations', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                generatedAt: 1_700_000_000_000,
-                counts: {
-                    unread: 0,
-                    permissionRequired: 0,
-                    actionRequired: 0,
-                    thinking: 1,
-                    totalAttention: 0,
-                },
-                summaryCounts: {
-                    attentionCount: 0,
-                    runningCount: 1,
-                    permissionCount: 0,
-                },
-                primary: {
-                    serverId: 'server-1',
-                    sessionId: 'session-primary',
-                    title: 'Improve checkout flow for authenticated users',
-                    subtitle: 'happier/app',
-                    statusText: 'Editing src/auth/very-long-middleware-filename.ts',
-                    previewText: 'The assistant is updating the purchase surface.',
-                    attentionState: 'thinking',
-                    active: true,
-                    updatedAt: 1_699_998_380_000,
-                },
-                sessions: [
-                    {
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Improve checkout flow for authenticated users',
-                        subtitle: 'happier/app',
-                        statusText: 'Editing src/auth/very-long-middleware-filename.ts',
-                        previewText: 'The assistant is updating the purchase surface.',
-                        attentionState: 'thinking',
-                        active: true,
-                        updatedAt: 1_699_998_380_000,
-                    },
-                ],
-            }),
-            policy: createPolicy({
-                showPreviewText: true,
-            }),
-            isExpanded: false,
-        });
-
-        expect(model.collapsed.carousel).toEqual({
-            enabled: true,
-            cadenceMs: 3000,
-            freezeReason: null,
-        });
-        const slides = model.collapsed.slides ?? [];
-        expect(slides.map((slide) => slide.id)).toEqual([
-            'status',
-            'task_title',
-            'last_tool',
-            'project_duration',
-        ]);
-        expect(slides[0]).toMatchObject({
-            title: 'Editing src/auth/very-long-middleware-filename.ts',
-            subtitle: 'Improve checkout flow for authenticated users',
-            animatedEllipsis: true,
-            priority: 'running',
-        });
-        expect(slides[1]).toMatchObject({
-            title: 'Improve checkout flow...',
-            subtitle: 'The assistant is updating the purchase surface.',
-        });
-        expect(slides[2]).toMatchObject({
-            title: 'Edit: very-long...',
-            subtitle: 'happier/app',
-        });
-        expect(slides[3]).toMatchObject({
-            title: 'happier/app · 27m',
-            subtitle: '1 session',
-        });
-    });
-
-    it('redacts collapsed carousel preview subtitles when desktop preview text is disabled', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                primary: {
-                    serverId: 'server-1',
-                    sessionId: 'session-primary',
-                    title: 'Improve checkout flow',
-                    subtitle: 'happier/app',
-                    statusText: 'Editing checkout.tsx',
-                    previewText: 'Sensitive assistant draft',
-                    attentionState: 'thinking',
-                    active: true,
-                    updatedAt: 1_699_999_980_000,
-                },
-                sessions: [
-                    {
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Improve checkout flow',
-                        subtitle: 'happier/app',
-                        statusText: 'Editing checkout.tsx',
-                        previewText: 'Sensitive assistant draft',
-                        attentionState: 'thinking',
-                        active: true,
-                        updatedAt: 1_699_999_980_000,
-                    },
-                ],
-            }),
-            policy: createPolicy({
-                showPreviewText: false,
-            }),
-            isExpanded: false,
-        });
-
-        const taskTitleSlide = model.collapsed.slides?.find((slide) => slide.id === 'task_title');
-        expect(taskTitleSlide).toMatchObject({
-            title: 'Improve checkout flow',
-            subtitle: 'happier/app',
-        });
-        expect(model.collapsed.slides).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ subtitle: 'Sensitive assistant draft' }),
-        ]));
-    });
-
-    it('adds a bounce transition cue for ready completion collapsed states', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                counts: {
-                    unread: 0,
-                    permissionRequired: 0,
-                    actionRequired: 0,
-                    thinking: 0,
-                    totalAttention: 0,
-                },
-                completionStates: [
-                    {
-                        sessionId: 'session-primary',
-                        serverId: 'server-1',
-                        title: 'Primary session',
-                        summary: 'Turn finished. Open the session to continue.',
-                        openActionIdentifier: 'open-session:session-primary',
-                        variant: 'turn_complete',
-                        autoDismissMs: 15000,
-                        sticky: false,
-                    },
-                ],
-                primary: {
-                    serverId: 'server-1',
-                    sessionId: 'session-primary',
-                    title: 'Primary session',
-                    subtitle: 'happier/app',
-                    statusText: 'Ready',
-                    previewText: null,
-                    attentionState: 'pending_input',
-                    active: false,
-                    updatedAt: 1_699_999_999_000,
-                },
-                sessions: [
-                    {
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Primary session',
-                        subtitle: 'happier/app',
-                        statusText: 'Ready',
-                        previewText: null,
-                        attentionState: 'pending_input',
-                        active: false,
-                        updatedAt: 1_699_999_999_000,
-                    },
-                ],
-            }),
-            policy: createPolicy(),
-            isExpanded: false,
-        });
-
-        expect(model.collapsed.slides?.[0]).toMatchObject({
-            title: 'Turn finished. Open the session to continue.',
-            priority: 'ready',
-        });
-        expect(model.collapsed.transitionCue).toEqual({
-            kind: 'bounce_on_ready',
-            phase: 'ready',
-            key: JSON.stringify(['ready', 'server-1', 'session-primary', 1699999999000, 0, 0, 1, 0]),
-            durationMs: 150,
-        });
-    });
-
-    it('adds a phase flash transition cue for attention collapsed states', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                generatedAt: 1_700_000_000_000,
-                permissionRequests: [
-                    {
-                        kind: 'permission_request',
-                        requestId: 'perm-1',
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Approve command',
-                        summary: 'npm test',
-                        toolLabel: 'Bash',
-                        questionText: null,
-                        count: 1,
-                        openActionIdentifier: 'open-session:session-primary',
-                        allowActionIdentifier: 'session.permission.respond',
-                        denyActionIdentifier: 'session.permission.respond',
-                        directOptions: [],
-                    },
-                ],
-            }),
-            policy: createPolicy(),
-            isExpanded: false,
-        });
-
-        expect(model.collapsed.transitionCue).toEqual({
-            kind: 'phase_flash',
-            phase: 'attention',
-            key: JSON.stringify(['attention', 'server-1', 'session-primary', 10, 1, 0, 0, 1]),
-            durationMs: 150,
-        });
-    });
-
-    it('keys collapsed transition cues by the exact Home and collision-safe Session tuple', () => {
-        const buildKey = (serverId: string, sessionId: string) => buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                primary: {
-                    ...createSnapshot().primary!,
-                    serverId,
-                    sessionId,
-                },
-                sessions: [{
-                    ...createSnapshot().sessions[0]!,
-                    serverId,
-                    sessionId,
-                }],
-            }),
-            policy: createPolicy(),
-            isExpanded: false,
-        }).collapsed.transitionCue?.key;
-
-        expect(buildKey('home-a', 'same-session')).not.toBe(buildKey('home-b', 'same-session'));
-        expect(buildKey('home:a', 'session')).not.toBe(buildKey('home', 'a:session'));
-    });
-
-    it('escalates the collapsed urgency level from unattended attention time', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                generatedAt: 1_700_000_000_000,
-                permissionRequests: [
-                    {
-                        kind: 'permission_request',
-                        requestId: 'perm-1',
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Approve command',
-                        summary: 'npm test',
-                        toolLabel: 'Bash',
-                        questionText: null,
-                        count: 1,
-                        openActionIdentifier: 'open-session:session-primary',
-                        allowActionIdentifier: 'session.permission.respond',
-                        denyActionIdentifier: 'session.permission.respond',
-                        directOptions: [],
-                    },
-                ],
-                primary: {
-                    serverId: 'server-1',
-                    sessionId: 'session-primary',
-                    title: 'Primary session',
-                    subtitle: 'agent on machine',
-                    statusText: 'Permission required',
-                    previewText: null,
-                    attentionState: 'permission_required',
-                    active: true,
-                    updatedAt: 1_699_999_940_000,
-                },
-                sessions: [
-                    {
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Primary session',
-                        subtitle: 'agent on machine',
-                        statusText: 'Permission required',
-                        previewText: null,
-                        attentionState: 'permission_required',
-                        active: true,
-                        updatedAt: 1_699_999_940_000,
-                    },
-                ],
-            }),
-            policy: createPolicy(),
-            isExpanded: false,
-        });
-
-        expect(model.collapsed.urgency).toEqual({
-            level: 'critical',
-            unattendedMs: 60000,
-            pollMs: 5000,
-        });
-    });
-
-    it('disables carousel rotation from desktop overlay device policy', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot(),
-            policy: createPolicy({
-                collapsedCarouselEnabled: false,
-            }),
-            isExpanded: false,
-        });
-
-        expect(model.collapsed.carousel).toEqual({
-            enabled: false,
-            cadenceMs: 3000,
-            freezeReason: 'disabled',
-        });
     });
 
     it('surfaces permissions before user questions, quota summaries, and completion cards in priority order', () => {
@@ -895,7 +479,6 @@ describe('buildDesktopActivityOverlayModel', () => {
             policy: createPolicy({
                 visibilityMode: 'active_sessions',
             }),
-            isExpanded: true,
         });
 
         expect(model.expanded.cards?.map((card) => card.kind)).toEqual([
@@ -955,11 +538,9 @@ describe('buildDesktopActivityOverlayModel', () => {
             expect.objectContaining({ kind: 'session_overview' }),
             expect.objectContaining({ kind: 'multi_session_list' }),
         ]));
-        expect(model.collapsed.title).toBe('Approve deployment');
-        expect(model.collapsed.accentText).toBe('Deploy');
     });
 
-    it('adds low-risk permission always-allow actions while high-risk permissions open for review', () => {
+    it('preserves the Session choices regardless of permission risk', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
                 permissionRequests: [
@@ -998,7 +579,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy(),
-            isExpanded: true,
         });
 
         const lowRiskCard = model.expanded.cards?.find((card) => card.kind === 'permission_request' && card.requestId === 'perm-low');
@@ -1010,22 +590,20 @@ describe('buildDesktopActivityOverlayModel', () => {
             actions: expect.arrayContaining([
                 expect.objectContaining({
                     id: 'always_allow',
-                    label: 'Always allow Read',
-                    data: expect.objectContaining({ persistence: 'always' }),
+                    // The card's title names the tool's kind; the button stays short and its name stays specific.
+                    tone: 'quiet',
+                    data: expect.objectContaining({ allowedTools: ['Read'] }),
                 }),
             ]),
         }));
         expect(highRiskCard).toEqual(expect.objectContaining({
             kind: 'permission_request',
             risk: 'high',
-            actions: [
-                expect.objectContaining({ id: expect.stringContaining('deny') }),
-                expect.objectContaining({ id: expect.stringContaining('open') }),
-            ],
-        }));
-        expect(highRiskCard).not.toEqual(expect.objectContaining({
             actions: expect.arrayContaining([
-                expect.objectContaining({ id: expect.stringContaining('allow') }),
+                expect.objectContaining({ id: 'allow' }),
+                expect.objectContaining({ id: 'always_allow', data: expect.objectContaining({ allowedTools: ['Bash'] }) }),
+                expect.objectContaining({ id: 'deny' }),
+                expect.objectContaining({ id: 'stop' }),
             ]),
         }));
     });
@@ -1071,7 +649,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy({ visibilityMode: 'active_sessions' }),
-            isExpanded: true,
         });
 
         const completionCards = model.expanded.cards?.filter((card) => card.kind === 'completion_state') ?? [];
@@ -1119,7 +696,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy({ visibilityMode: 'active_sessions' }),
-            isExpanded: true,
         });
 
         const completionCards = model.expanded.cards?.filter((card) => card.kind === 'completion_state') ?? [];
@@ -1145,7 +721,6 @@ describe('buildDesktopActivityOverlayModel', () => {
                     }],
                 }),
                 policy: createPolicy({ visibilityMode: 'active_sessions' }),
-                isExpanded: true,
             });
             return model.expanded.cards?.find((card) => card.kind === 'session_overview')?.id;
         };
@@ -1162,7 +737,7 @@ describe('buildDesktopActivityOverlayModel', () => {
         );
     });
 
-    it('numbers user-question choices and adds inline other for single-question flows', () => {
+    it('keeps user-question choices in the asker\'s words and adds inline other for single-question flows', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
                 userQuestions: [
@@ -1197,14 +772,13 @@ describe('buildDesktopActivityOverlayModel', () => {
                 ],
             }),
             policy: createPolicy(),
-            isExpanded: true,
         });
 
         expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
             kind: 'user_question',
             actions: [
-                expect.objectContaining({ id: 'option-1-production', label: '1. Production' }),
-                expect.objectContaining({ id: 'option-2-staging', label: '2. Staging' }),
+                expect.objectContaining({ id: 'option-1-production', label: 'Production' }),
+                expect.objectContaining({ id: 'option-2-staging', label: 'Staging' }),
                 expect.objectContaining({ id: 'other', inputKind: 'inline_text' }),
                 expect.objectContaining({ id: expect.stringContaining('open') }),
             ],
@@ -1234,7 +808,6 @@ describe('buildDesktopActivityOverlayModel', () => {
             policy: createPolicy({
                 visibilityMode: 'active_sessions',
             }),
-            isExpanded: true,
         });
 
         expect(model.expanded.cards?.[0]).toEqual(expect.objectContaining({
@@ -1251,70 +824,87 @@ describe('buildDesktopActivityOverlayModel', () => {
         }));
     });
 
-    it('carries quick reply phrases into the expanded overlay model', () => {
+    it('never repeats a request title as its body', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
-                sessions: [
-                    {
-                        serverId: 'server-1',
-                        sessionId: 'session-primary',
-                        title: 'Primary session',
-                        subtitle: 'agent on machine',
-                        statusText: 'Ready',
-                        previewText: null,
-                        attentionState: 'pending_input',
-                        active: true,
-                        updatedAt: 10,
-                    },
-                ],
+                permissionRequests: [{
+                    kind: 'permission_request',
+                    requestId: 'perm-1',
+                    serverId: 'server-1',
+                    sessionId: 'session-primary',
+                    title: 'Run npm test',
+                    summary: 'Run npm test',
+                    toolLabel: 'Bash',
+                    questionText: null,
+                    count: 1,
+                    openActionIdentifier: 'open-session:session-primary',
+                    allowActionIdentifier: 'session.permission.respond',
+                    denyActionIdentifier: 'session.permission.respond',
+                    directOptions: [],
+                }],
+                userQuestions: [{
+                    kind: 'user_question',
+                    requestId: 'question-1',
+                    serverId: 'server-1',
+                    sessionId: 'session-secondary',
+                    title: 'Which deployment target?',
+                    summary: 'Which deployment target?',
+                    toolLabel: 'AskUserQuestion',
+                    questionText: 'Which deployment target?',
+                    count: 1,
+                    openActionIdentifier: 'open-session:session-secondary',
+                    directOptions: [],
+                }],
             }),
-            policy: createPolicy({
-                quickReplyPhrases: ['Ship', 'Explain'],
-            }),
-            isExpanded: true,
+            policy: createPolicy(),
         });
 
-        expect(model.expanded.quickReply).toEqual({
-            targetSessionId: 'session-primary',
-            serverId: 'server-1',
-            phrases: ['Ship', 'Explain'],
-        });
+        const [permission, question] = model.expanded.cards ?? [];
+        expect(permission).toMatchObject({ kind: 'permission_request', title: 'Run npm test', body: null });
+        expect(question).toMatchObject({ kind: 'user_question', title: 'Which deployment target?', body: null });
     });
 
-    it('omits quick reply when the target session lacks server scope', () => {
+    it('offers question choices as equal secondary actions, not a row of primaries', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
-                primary: {
-                    serverId: null,
+                userQuestions: [{
+                    kind: 'user_question',
+                    requestId: 'question-1',
+                    serverId: 'server-1',
                     sessionId: 'session-primary',
-                    title: 'Primary session',
-                    subtitle: 'agent on machine',
-                    statusText: 'Ready',
-                    previewText: null,
-                    attentionState: 'pending_input',
-                    active: true,
-                    updatedAt: 10,
-                },
-                sessions: [
-                    {
-                        serverId: null,
-                        sessionId: 'session-primary',
-                        title: 'Primary session',
-                        subtitle: 'agent on machine',
-                        statusText: 'Ready',
-                        previewText: null,
-                        attentionState: 'pending_input',
-                        active: true,
-                        updatedAt: 10,
-                    },
-                ],
+                    title: 'Which deployment target?',
+                    summary: null,
+                    toolLabel: 'AskUserQuestion',
+                    questionText: 'Which deployment target?',
+                    count: 1,
+                    openActionIdentifier: 'open-session:session-primary',
+                    directOptions: [
+                        { id: 'production', label: 'Production', description: null, actionIdentifier: 'session.user_action.answer', answers: [] },
+                        { id: 'staging', label: 'Staging', description: null, actionIdentifier: 'session.user_action.answer', answers: [] },
+                    ],
+                }],
             }),
-            policy: createPolicy({
-                quickReplyPhrases: ['Ship', 'Explain'],
-            }),
-            isExpanded: true,
+            policy: createPolicy(),
         });
 
-        expect(model.expanded.quickReply).toBeNull();
+        const tones = (model.expanded.cards?.[0]?.actions ?? []).filter((action) => action.id.startsWith('option-')).map((action) => action.tone);
+        expect(tones).toEqual(['secondary', 'secondary']);
+    });
+
+    it("carries each row's state tone and Agent identity from the session snapshot", () => {
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                sessions: [
+                    { ...createSnapshot().sessions[0]!, tone: 'attention', agentId: 'claude', machineId: 'machine-1' },
+                    { ...createSnapshot().sessions[1]!, tone: 'neutral', agentId: 'codex', machineId: null },
+                ],
+            }),
+            policy: createPolicy({ visibilityMode: 'active_sessions' }),
+        });
+
+        expect(model.expanded.rows.map((row) => [row.tone, row.agentId, row.machineId])).toEqual([
+            ['attention', 'claude', 'machine-1'],
+            ['neutral', 'codex', null],
+        ]);
     });
 });

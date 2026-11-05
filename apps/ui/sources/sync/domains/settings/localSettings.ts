@@ -59,6 +59,20 @@ const deprecatedLocalSettingKeys = [
     'keyboardShortcutDisabledCommandIdsV1',
     'keyboardShortcutOverridesV1',
     'sessionsListStorageTab',
+    ...RETIRED_DESKTOP_OVERLAY_SETTING_KEYS,
+    'desktopOverlayShowWhenRunning',
+    'desktopOverlayShowWhenAttentionRequired',
+    'desktopOverlayShowWhenReady',
+    'desktopOverlayExpandedBehavior',
+    'desktopOverlayInteractiveCollapsed',
+    'desktopOverlayClickAction',
+    'desktopOverlayDensity',
+    'desktopOverlayCompactStyle',
+    'desktopOverlayShowSessionCount',
+    'desktopOverlayAutoHideEnabled',
+    'desktopOverlayAutoHideDelayMs',
+    'desktopOverlayShowPreviewText',
+    'desktopPetOverlayVisibilityModeOverride',
 ] as const;
 
 // 0.2 persisted the chosen pixels together with a proportional-scaling basis.
@@ -146,9 +160,6 @@ function migrateLegacyDesktopOverlayParseInput(
             || anchor === 'bottom_left' || anchor === 'bottom_center' || anchor === 'bottom_right'
             ? 'floating'
             : anchor === 'left_center' ? 'left' : anchor === 'right_center' ? 'right' : 'top';
-    }
-    if (settings.desktopOverlayExpandedBehavior === 'shortcut_only') {
-        settings.desktopOverlayExpandedBehavior = 'click';
     }
 
     return settings;

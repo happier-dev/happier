@@ -25,10 +25,8 @@ vi.mock('reanimated-color-picker', async () =>
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-const nativeOverlay = vi.hoisted(() => ({ reset: vi.fn(async () => {}) }));
-// The bridge is the OS/window boundary; placement intent and Settings admission remain real.
+// The bridge is the OS/window boundary; Settings admission remains real.
 vi.mock('@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge', () => ({
-    resetDesktopActivityOverlayPosition: () => nativeOverlay.reset(),
     getDesktopActivityOverlayWindowState: async () => null,
     listenDesktopActivityOverlayWindowState: async () => () => {},
 }));
@@ -76,50 +74,13 @@ describe('compound Settings controls through declared Action ingress', () => {
             expect(account.artifacts.list()).toHaveLength(1);
         } finally { standardCleanup(); await account.dispose(); }
     });
-    it('admits desktop placement before storage and native effects while preserving visibility', async () => {
+    it('retires placement controls while retaining the selected notch dock', async () => {
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: createDesktopSecureStorageBoundary().invoke });
-        nativeOverlay.reset.mockClear();
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
-            actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
-        }) });
-        storage.setState({ localSettings: { ...localSettingsDefaults, desktopOverlayEnabled: true,
-            desktopOverlayPlacementMode: 'custom', desktopOverlayAnchor: 'bottom_right', desktopOverlayOffsetX: 24,
-            desktopOverlayOffsetY: -18, desktopOverlayVisibilityMode: 'always_when_enabled', desktopOverlayPresentationMode: 'floating_overlay',
-        } });
-        try {
-            const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
-            const anchor = () => screen.findAll(node => node.props.testIDPrefix === 'settings-desktop-overlay-placement-mode'
-                && typeof node.props.onChange === 'function')[0]!.props.onChange('anchored');
-            await act(async () => { anchor(); });
-            expect(storage.getState().localSettings.desktopOverlayPlacementMode).toBe('custom');
-            expect(nativeOverlay.reset).not.toHaveBeenCalled();
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
-                actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
-            })); });
-            await act(async () => { anchor(); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            expect(storage.getState().localSettings.desktopOverlayPlacementMode).toBe('custom');
-            expect(nativeOverlay.reset).not.toHaveBeenCalled();
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await vi.waitFor(() => expect(storage.getState().localSettings).toMatchObject({ desktopOverlayPlacementMode: 'anchored',
-                desktopOverlayAnchor: 'top_center', desktopOverlayOffsetX: 0, desktopOverlayOffsetY: 0,
-            }));
-            expect(nativeOverlay.reset).toHaveBeenCalledTimes(1);
-            await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
-                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-            })); });
-            await act(async () => { screen.findAll(node => node.props.testID === 'settings-desktop-overlay-anchor-preset'
-                && typeof node.props.onSelect === 'function')[0]!.props.onSelect('bottom_left'); });
-            await vi.waitFor(() => expect(storage.getState().localSettings.desktopOverlayAnchor).toBe('bottom_left'));
-            expect(storage.getState().localSettings.desktopOverlayVisibilityMode).toBe('always_when_enabled');
-            expect(nativeOverlay.reset).toHaveBeenCalledTimes(2);
-            await act(async () => { screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')!.props.onPress(); });
-            await vi.waitFor(() => expect(storage.getState().localSettings).toMatchObject({ desktopOverlayPlacementMode: 'anchored',
-                desktopOverlayAnchor: 'top_center', desktopOverlayOffsetX: 0, desktopOverlayOffsetY: 0,
-            }));
-            expect(nativeOverlay.reset).toHaveBeenCalledTimes(3);
-            expect(account.artifacts.list()).toHaveLength(1);
-        } finally { standardCleanup(); await account.dispose(); }
+        storage.setState({ localSettings: { ...localSettingsDefaults, desktopOverlayEnabled: true, desktopOverlayDock: 'floating' } });
+        const screen = await renderSettingsView(<DesktopOverlaySettingsSection />);
+        expect(screen.findRowByTitle('settingsDesktop.overlay.resetPositionTitle')).toBeNull();
+        expect(screen.findAll(node => node.props.testIDPrefix === 'settings-desktop-overlay-placement-mode')).toEqual([]);
+        expect(storage.getState().localSettings.desktopOverlayDock).toBe('floating');
     });
     it('admits list layout before yielding its visit intent and preserves unrelated list preferences', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ sessionListLayoutV1: 'projects',
