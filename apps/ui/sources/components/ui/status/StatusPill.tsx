@@ -36,6 +36,22 @@ export function resolveAttentionStateColors(state: Readonly<{
     return { foreground: state.attention.foreground, textForeground: state.attention.textForeground, background: state.warning.background, border: state.attention.foreground };
 }
 
+function resolveStatusPillState(
+    colors: ReturnType<typeof useUnistyles>['theme']['colors']['state'],
+    variant: StatusPillVariant,
+): StateColors {
+    return variant === 'attention' ? resolveAttentionStateColors(colors) : colors[variant];
+}
+
+/**
+ * A plain status word as inline text, nested in the line it leads ("Needs sign-in · Find, create and update…"): the
+ * plain pill's ink, in the surrounding text's type, so the word and what follows wrap and ellipsize as one run.
+ */
+export function StatusWord(props: Readonly<{ variant: StatusPillVariant; label: string; testID?: string }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Text testID={props.testID} style={{ color: resolveStatusPillState(theme.colors.state, props.variant).foreground }}>{props.label}</Text>;
+}
+
 export function resolveStatusPillVariantForState(
     state: 'live' | 'needsAttention' | 'neutral',
 ): StatusPillVariant {
@@ -133,9 +149,7 @@ const stylesheet = StyleSheet.create(() => ({
 export function StatusPill(props: StatusPillProps): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const state: StateColors = props.variant === 'attention'
-        ? resolveAttentionStateColors(theme.colors.state)
-        : theme.colors.state[props.variant];
+    const state = resolveStatusPillState(theme.colors.state, props.variant);
     const chrome = props.chrome ?? 'pill';
     const plain = chrome === 'plain';
     const foregroundColor = props.foregroundColor ?? (plain ? state.foreground : state.textForeground ?? state.foreground);
