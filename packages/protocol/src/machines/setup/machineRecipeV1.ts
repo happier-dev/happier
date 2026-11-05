@@ -233,6 +233,7 @@ const UserDeclaration = z.object({ ...User.shape,
 const Group = MachineRecipeGroupStepV1Schema;
 const JournalGroupFact = MachineRecipeRequiredFactV1Schema.options[6];
 const GroupDeclaration = z.object({ ...Group.shape, name: bindable(Group.shape.name),
+    members: z.array(bindable(Name)),
     requiredFacts: z.array(z.union([MachineRecipeRequiredFactV1Schema,
         z.object({ ...JournalGroupFact.shape, group: bindable(JournalGroupFact.shape.group) }).strict(),
     ])).optional(),
@@ -334,7 +335,7 @@ export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarat
     let resolved: unknown = concreteStep;
     switch (step.kind) {
         case 'group':
-            resolved = { ...concreteStep, name: bind(step.name),
+            resolved = { ...concreteStep, name: bind(step.name), members: step.members.map(bind),
                 ...(step.requiredFacts ? { requiredFacts: step.requiredFacts.map(fact => fact.kind === 'journalReadGroup'
                     ? { ...fact, group: bind(fact.group) } : fact) } : {}) };
             break;

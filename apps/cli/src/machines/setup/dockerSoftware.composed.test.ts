@@ -1,4 +1,5 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { PassThrough } from 'node:stream';
 import { createActionExecutor, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { applyMachineSetupEffectPlan, createMachineSetupNativeBackend,
@@ -9,6 +10,11 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/machine-recipes/src/manifest';
 import { createMachineRecipeReadAction } from './machineRecipeActionDeps';
 import { createMachineSetupPlanAction } from './machineSetupAction';
+import { applyMachineSetup } from './applyMachineSetup';
+import { runMachineSetupEffectInternal } from './effectInternal';
+import type { MachineElevationDependencies, MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
+import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
+import { groupMachineSetupChanges } from '../../../../../apps/ui/sources/components/settings/machines/managed/machineSetupReviewChanges';
 
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
@@ -21,14 +27,30 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
   const calls: MachineSetupNativeCommand[] = [];
   const installed = new Set<string>();
   const effects: string[][] = [];
-  const run = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
+  let member = false;
+  const groups = [1000];
+  const run = async (command: MachineSetupNativeCommand, administrator = false): Promise<MachineSetupNativeCommandResult> => {
     calls.push(command);
+    if (command.executable === 'getent') return ok(command.args.includes('group')
+      ? `docker:x:109:${member ? 'happier' : ''}\n` : 'happier:x:1000:1000::/home/happier:/bin/bash\n');
+    if (command.executable === 'id') return ok(member ? '1000 109\n' : '1000\n');
+    if (command.executable === 'usermod') { member = true; effects.push(['usermod']); return ok(); }
+    if (command.executable === 'systemctl') {
+      if (command.args[0] === 'show') return ok('MainPID=27\nActiveState=active\n');
+      effects.push([...command.args]);
+      if (member) groups.splice(0, groups.length, 1000, 109);
+      return ok();
+    }
+    if (command.executable === 'cat') return ok(`Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t${groups.join(' ')}\n`);
+    if (command.executable === 'docker') return groups.includes(109) && engine !== 'absent'
+      ? ok('Docker Engine\n') : { code: 1, stdout: '', stderr: 'permission denied' };
     if (command.executable === 'which') return engine === 'absent' ? { code: 1, stdout: '', stderr: '' } : ok('/usr/bin/docker\n');
     if (command.executable === 'grep') return { code: family === 'other' ? 1
       : command.args[1]?.includes('ubuntu|debian') || family === 'ubuntu' ? 0 : 1, stdout: '', stderr: '' };
     if (command.executable === 'sh' || command.executable === '/bin/sh') {
       const body = command.inputBytes ? Buffer.from(command.inputBytes).toString() : command.args.join(' ');
-      if (body.includes('docker info')) return { code: engine === 'ready' ? 0 : engine === 'denied' ? 2 : 1, stdout: '', stderr: '' };
+      if (body.includes('docker info')) return { code: engine === 'absent' ? 1 : administrator || groups.includes(109)
+        ? 0 : body.includes('|| exit 1') ? 1 : 2, stdout: '', stderr: '' };
     }
     if (command.executable === 'dpkg') return ok('amd64\n');
     if (command.executable === 'apt-get') {
@@ -60,13 +82,18 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
       apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
         read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
         compareAndSwap: async () => { throw new Error('Plan cannot write desired state'); },
-      }) }, acquirePluginRuntimeRegistryLease: acquire, runNative: run }),
+      }), captureMachineAdminAccess: () => ({ observe: async () => observation,
+        readPolicy: async () => ({ version: 1, mode: 'preauthorized' }) }) }, acquirePluginRuntimeRegistryLease: acquire, runNative: run }),
   });
   const context = { surface: 'agent' as const, authority: 'present_user' as const };
   const plan = () => executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'machine', sources: [{
     kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] },
   }] }, context);
-  return { runtime, executor, context, plan, calls, effects, run, installed };
+  const observation = { version: 1 as const, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot' as const,
+    rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed' as const, managedDropIn: 'valid' as const,
+    tailscaledOperator: { authorization: 'unknown' as const } };
+  return { runtime, executor, context, plan, calls, effects, run, installed, groups, observation,
+    grant: () => { member = true; } };
 }
 
 it.each(['agent', 'ui'] as const)('offers Docker through the shared Software Action owner for %s', async surface => {
@@ -95,29 +122,85 @@ it.each(['ubuntu', 'debian'] as const)('plans read-only and applies %s distro pa
     const packages = ['docker.io', 'docker-buildx', family === 'ubuntu' ? 'docker-compose-v2' : 'docker-compose'];
     expect(plan.steps.filter(step => step.kind === 'package')).toMatchObject([{ manager: 'apt', packages: packages.map(name => ({ name })) }]);
     expect(PLUGIN_MANIFEST.contributes.machineRecipes?.find(recipe => recipe.id === ref.recipeId)?.removeSteps ?? []).toEqual([]);
-    expect(plan.steps).toEqual(expect.arrayContaining([expect.objectContaining({ affects: 'dockerEngine' })]));
-    const applied = await applyMachineSetupEffectPlan({ plan, backend: createMachineSetupNativeBackend({ run: f.run }) });
+    const applied = await applyMachineSetupEffectPlan({ plan, backend: createMachineSetupNativeBackend({ run: command => f.run(command, true) }) });
     expect(applied, JSON.stringify(applied)).toMatchObject({ status: 'applied' });
     expect([...f.installed]).toEqual(packages);
     expect(f.effects.filter(args => args[0] === 'install')).toHaveLength(1);
   } finally { await f.runtime.dispose(); }
 });
 
-it('treats an existing reachable engine as satisfied without package probes or changes', async () => {
-  const f = await fixture('other', 'ready');
+it('keeps reachable Docker drifted until its distro packages and daemon membership hold', async () => {
+  const f = await fixture('ubuntu', 'ready');
   try {
-    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }],
-      recipePlans: [{ plan: { nativeFacts: [{ status: 'satisfied' }] } }] } });
-    expect(f.calls.map(command => command.executable)).toEqual(['which', 'sh']);
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'drifted' }] } });
+    for (const name of ['docker.io', 'docker-buildx', 'docker-compose-v2']) f.installed.add(name);
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'drifted' }] } });
+    f.grant();
+    f.groups.push(109);
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
     expect(f.effects).toEqual([]);
   } finally { await f.runtime.dispose(); }
 });
 
-it.each([['other', 'absent'], ['ubuntu', 'denied']] as const)('refuses unsupported or inaccessible native facts (%s, %s)', async (family, engine) => {
+it.each([['other', 'absent']] as const)('refuses unsupported native facts (%s, %s)', async (family, engine) => {
   const f = await fixture(family, engine);
   try {
     expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'unavailable' }] } });
     expect(f.effects).toEqual([]);
     expect(f.calls.some(command => command.executable === 'apt-get')).toBe(false);
   } finally { await f.runtime.dispose(); }
+});
+
+it.each([{ configured: false, installed: false }, { configured: false, installed: true }, { configured: true, installed: true }])(
+  'Apply refreshes the user manager so the daemon’s next Docker call succeeds (%j)', async ({ configured, installed }) => {
+  const f = await fixture('ubuntu', installed ? 'ready' : 'absent');
+  const uid = vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
+  try {
+    if (installed) for (const name of ['docker.io', 'docker-buildx', 'docker-compose-v2']) f.installed.add(name);
+    if (configured) f.grant();
+    expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 1 });
+    const current = await getMachineSetupDesiredV1({ read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
+      compareAndSwap: async () => { throw new Error('Plan cannot mutate'); } });
+    const groupRefreshNative = { platform: 'linux' as const, user: { username: 'happier', uid: 1000 }, groups: f.groups,
+      readCgroup: async () => '0::/user.slice/user-1000.slice/user@1000.service/app.slice/happier-daemon.service\n' };
+    const reviewed = await prepareMachineSetupPlanV1({ current,
+      input: { homeId: 'home', machineId: 'machine', mode: 'effects', sources: [{ kind: 'direct', setup: {
+        items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] } }] },
+      readRecipes: async () => [{ id: `${ref.pluginId}/${ref.recipeId}`, pluginId: ref.pluginId, pluginVersion: PLUGIN_MANIFEST.version,
+        definition: PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === ref.recipeId)! }],
+      readAdminAccessObservation: async () => f.observation, runNative: f.run, groupRefreshNative });
+    if ('errorCode' in reviewed) throw new Error(reviewed.errorCode);
+    expect(reviewed).toMatchObject({ support: [{ status: 'drifted' }], review: { administratorRequired: true,
+      requiresSessionRefresh: { scope: 'userServices' } } });
+    if (!configured) expect(groupMachineSetupChanges([{ homeId: 'home', machineId: 'machine',
+      desiredRevision: reviewed.desiredRevision, sources: reviewed.sources, recipePlans: reviewed.recipePlans ?? [] }])
+      .find(group => group.kind === 'users')?.lines.map(line => line.operand).join('\n'))
+      .toMatch(/root.equivalent.*administrator/i);
+    const spawn: MachineElevationSpawn = launch => {
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      const settled = runMachineSetupEffectInternal(launch.args.slice(launch.args.indexOf('effect-internal') + 1), { stdin, stdout, runNative: command => f.run(command, true) })
+        .then(code => { stdout.end(); stderr.end(); return { code, signal: null }; });
+      return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
+    };
+    const elevation: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn,
+      readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true, observe: async () => f.observation };
+    const result = await applyMachineSetup({ homeId: 'home', machineId: 'machine', requesterAccountId: 'owner',
+      userHomeDirectory: '/home/happier', setup: reviewed.sources.map(source => source.setup), recipePlans: reviewed.recipePlans,
+      elevation, groupRefreshNative, isCurrent: async () => true,
+      terminalSessions: { ensure() { throw new Error('No terminal expected'); }, waitForExit() { throw new Error('No terminal expected'); },
+        requestStop() { throw new Error('No terminal expected'); }, observeOutput() { throw new Error('No terminal expected'); } },
+      environmentIo: { resolveTool: async () => null, run: async request => {
+        if (request.command !== 'docker') throw new Error('Unexpected engine inspector');
+        if (!installed) throw Object.assign(new Error('Docker absent'), { code: 'ENOENT' });
+        return { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker socket' };
+      } },
+      operation: { actionRequestId: `docker-access-${configured}`, signal: new AbortController().signal,
+        operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 0 });
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
+    expect(reviewed.recipePlans?.[0]?.plan.steps.find(step => step.kind === 'group')).toMatchObject({
+      name: 'docker', members: ['happier'], review: { description: expect.stringMatching(/root.equivalent.*administrator/i) } });
+    expect(f.effects).toContainEqual(['restart', '--', 'user@1000.service']);
+  } finally { uid.mockRestore(); await f.runtime.dispose(); }
 });

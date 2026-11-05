@@ -12,6 +12,12 @@
       "import": "./dist/organizationPolicy/readOrganizationPolicyFile.js",
       "default": "./dist/organizationPolicy/readOrganizationPolicyFile.js"
     },
+    "./machineSetup/dockerMembership": {
+      "happier-source": "./src/machineSetup/dockerMembership.ts",
+      "types": "./dist/machineSetup/dockerMembership.d.ts",
+      "import": "./dist/machineSetup/dockerMembership.js",
+      "default": "./dist/machineSetup/dockerMembership.js"
+    },
     "./machineSetup": {
       "happier-source": "./src/machineSetup/index.ts",
       "types": "./dist/machineSetup/index.d.ts",

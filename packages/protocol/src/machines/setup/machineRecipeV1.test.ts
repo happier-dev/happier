@@ -13,6 +13,14 @@ describe('machine recipe executable declarations', () => {
         expect(recipe.removeSteps?.[0]).toEqual(step);
         expect(MachineRecipeStepV1Schema.safeParse({ ...step, privateField: true }).success).toBe(false);
     });
+    it('binds group membership to the captured daemon identity and refuses unavailable identity', () => {
+        const recipe = MachineRecipeV1Schema.parse({ id: 'docker', revision: '1', title: 'Docker',
+            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+            steps: [{ id: 'membership', kind: 'group', name: 'docker', members: [{ kind: 'targetFact', fact: 'daemon.username' }] }] });
+        expect(resolveMachineRecipeStepInputsV1(recipe.steps[0]!, {}, { 'daemon.username': 'custom-daemon' }))
+            .toMatchObject({ members: ['custom-daemon'] });
+        expect(() => resolveMachineRecipeStepInputsV1(recipe.steps[0]!, {})).toThrow();
+    });
     it('binds the daemon operator CHECK to the same captured identity as its command argv', () => {
         const declaration: unknown = { id: 'operator', revision: '1', title: 'Native operator',
             inputSchema: { type: 'object', properties: {}, additionalProperties: false },

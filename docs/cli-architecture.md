@@ -1469,18 +1469,27 @@ submitted plans and recovery payloads remain private. Historical failures that
 discarded these details cannot recover them from the retained operation.
 
 Development Software Apply uses the same lifecycle owner to expose group refresh
-as a reviewed, manual recovery step. A daemon group grant (including a user
+in review. A daemon group grant (including a user
 declaration's supplementary groups) adds `review.requiresSessionRefresh` and
-possible downtime to Plan. After native effects, Apply returns
+possible downtime to Plan. When automatic refresh is unavailable, Apply returns
 `requires_session_refresh` with a typed `requiredStep` instead of running later
 scripts or reporting readiness. A no-op retry still requires recovery when the
 account membership is correct but the daemon's kernel groups are stale.
-On Linux, a daemon inside `user@<uid>.service` requires an administrator to
-restart that manager, interrupting all its user services; restarting only the
-daemon cannot refresh the manager's groups. A system-service install names the
+For Docker access on Linux, a daemon inside `user@<uid>.service` adds the existing
+administrator user-manager refresh after the reviewed membership effects, interrupting
+all its user services. Restarting only the daemon cannot refresh the manager's
+groups. A system-service install names the
 existing daemon unit restart instead. An unrecognized/manual installation names
-a fresh login session. Apply never performs these disruptive restarts implicitly.
+a fresh login session. Those installations and other group grants retain the
+typed recovery instruction.
 After recovery and reconnect, review a new Plan to establish usable membership.
+
+The Docker Software recipe checks its Ubuntu/Debian distro packages and grants
+the target daemon user Docker membership through the same declaration used by
+dedicated bootstrap. Its review discloses root-equivalent administrator power.
+Installed lists recorded Software copies only; there is no native Software census.
+Shared Docker state has no automatic Remove. Dedicated bootstrap retains its
+separate official-repository package installation.
 
 ### Devcontainer native roles (0.3 development)
 

@@ -268,3 +268,4 @@ export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, Pl
 export type { DeploymentTargetRoleV1 } from './deploymentTargets.js';
 export type { HealthCheckDnsConfigV1, HealthCheckHeartbeatConfigV1, HealthCheckTcpConfigV1 } from './healthCheckKinds.js';
 export type { DeploymentTargetDataInputV1 } from './deploymentTargets.js';
+export { createDockerMembershipStep } from './machineSetup.js';

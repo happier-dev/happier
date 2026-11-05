@@ -40,6 +40,8 @@ describe('Software group refresh review', () => {
         if (executable === 'getent') return { code: 0, stdout: args[1] === 'group'
           ? `docker:x:109:${member ? username : ''}\n` : `${username}:x:1000:1000::/home/${username}:/bin/bash\n`, stderr: '' };
         if (executable === 'id') return { code: 0, stdout: member ? '1000 109\n' : '1000\n', stderr: '' };
+        if (executable === 'systemctl') return { code: 0, stdout: 'MainPID=27\nActiveState=active\n', stderr: '' };
+        if (executable === 'cat') return { code: 0, stdout: `Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t${member && !stale ? '1000 109' : '1000'}\n`, stderr: '' };
         throw new Error(`Plan attempted native effect: ${executable}`);
       },
       groupRefreshNative: { platform: 'linux', user: { username: 'happier', uid: 1000 },
