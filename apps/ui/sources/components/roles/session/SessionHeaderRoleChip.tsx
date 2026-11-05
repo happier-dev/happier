@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_BADGE_METRICS, HappierPressable, HappierRoleMark } from '@happier-dev/plugin-ui/presentation';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -54,7 +54,8 @@ export const SessionHeaderRoleChip = React.memo(function SessionHeaderRoleChip(p
                     style={styles.anchor}
                     leading={selection ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                         <HappierRoleMark roleId={props.roleId} runsAs={selection.runsAs.kind} renderGlyph={(glyph) => (
-                            <Icon name={glyph} size={SESSION_HEADER_ICON_SIZE_PX} color={theme.colors.text.secondary} />
+                            // Beside its name the mark is the label's size; alone in a compact header it is a header icon.
+                            <Icon name={glyph} size={compact ? SESSION_HEADER_ICON_SIZE_PX : ICON_SIZE.xs} color={theme.colors.text.secondary} />
                         )} />
                     </View> : undefined}
                 />

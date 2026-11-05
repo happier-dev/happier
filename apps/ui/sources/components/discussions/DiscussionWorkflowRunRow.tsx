@@ -240,6 +240,8 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     width: '100%',
     paddingHorizontal: theme.space.s16,
+    // The band follows the message that started it as its own line, not as part of that bubble.
+    paddingTop: theme.space.s8,
     paddingBottom: theme.space.s12,
     gap: theme.space.s4,
   },
