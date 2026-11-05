@@ -14,7 +14,8 @@ import {
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import { useProfile } from '@/sync/store/hooks';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { getPreferredLanguage, t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useProviderCatalog } from '@/sync/store/useProviderCatalog';
@@ -100,9 +101,9 @@ export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | '
         : gatewayCatalog && gatewayCatalog.status !== 'ready'
             ? { kind: 'catalog' as const, catalog: gatewayCatalog.catalog }
             : { kind: 'declaration' as const };
-    const settings = useSettingsSelector((settings) => ({
-        connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-    }));
+    const settings = useSettingsValues([
+        'connectedServicesDefaultProfileByServiceId',
+    ]);
     const focusedRegistry = useProjectedConnectedServicesRegistry();
     const registrySnapshot = options.registry ?? focusedRegistry;
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
