@@ -51,7 +51,7 @@ export const en = {
     conflictBody: 'Your unsaved changes are preserved. Reload the saved version to review the latest changes.',
     conflictNoReload: 'The pool identity is no longer available. Your unsaved changes are preserved.',
     homeOffline: 'This Home is offline. Pool changes are unavailable until it reconnects.',
-    refreshFailed: 'Couldn’t refresh machine pools. Showing the last known list.',
+    refreshFailed: 'Couldn’t refresh machine pools.',
     featureUnavailable: 'Machine pools are unavailable on this Home. Update or enable them on the Home to continue.',
     openSettings: 'Machine pool settings',
     pickSpecificMachine: 'Pick a specific machine',

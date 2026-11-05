@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveNewSessionCreateAdmission, resolveNewSessionTargetRequirement } from './newSessionCreateAdmission';
+import { resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from './newSessionCreateAdmission';
 
 describe('resolveNewSessionCreateAdmission', () => {
     it('explains the first blocking requirement and advances the reason as it becomes ready', () => {
@@ -17,6 +17,15 @@ describe('resolveNewSessionCreateAdmission', () => {
         expect(resolveNewSessionCreateAdmission(requirements.map(requirement => ({ ...requirement, ready: true })))).toEqual({
             canCreate: true, disabledReason: null,
         });
+    });
+});
+
+describe('resolveNewSessionCredentialDefaultsRequirement', () => {
+    const reason = 'Credentials · Unavailable';
+    it('stays quiet while the defaults are still arriving, and names them only once they really failed', () => {
+        expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'loading', unavailableReason: reason })).toEqual({ ready: false, reason: null });
+        expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'unavailable', unavailableReason: reason })).toEqual({ ready: false, reason });
+        expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'ready', unavailableReason: reason }).ready).toBe(true);
     });
 });
 
@@ -37,9 +46,9 @@ describe('resolveNewSessionTargetRequirement', () => {
         }
     });
 
-    it('then asks for a folder, then reports the machine as unavailable', () => {
+    it('lets the folder chip speak for a missing folder, since it is still resolving, then reports the machine as unavailable', () => {
         expect(resolveNewSessionTargetRequirement({ ready: false, hasTarget: true, hasMachine: true, needsFolder: true, translate }))
-            .toEqual({ ready: false, reason: 'newSession.noPathSelected' });
+            .toEqual({ ready: false, reason: null });
         expect(resolveNewSessionTargetRequirement({ ready: false, hasTarget: true, hasMachine: true, needsFolder: false, translate }))
             .toEqual({ ready: false, reason: 'newSession.machineUnavailableStatus' });
         expect(resolveNewSessionTargetRequirement({ ready: true, hasTarget: true, hasMachine: true, needsFolder: false, translate }).ready)

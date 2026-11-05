@@ -15,11 +15,12 @@ export function resolveNewSessionCreateAdmission(requirements: ReadonlyArray<New
         : { canCreate: true, disabledReason: null };
 }
 
-type NewSessionTargetReasonKey = 'newSession.noMachineSelected' | 'newSession.noPathSelected' | 'newSession.machineUnavailableStatus';
+type NewSessionTargetReasonKey = 'newSession.noMachineSelected' | 'newSession.machineUnavailableStatus';
 
 /**
  * Where the session runs: a target (machine or cloud machine), then a folder, then a machine that can start it.
- * With no machine on the Home yet (58d AF1) the "Run on…" chip is the ask, so the status line stays empty.
+ * With no machine on the Home yet (58d AF1) the "Run on…" chip is the ask, so the status line stays empty. A missing
+ * folder is the folder chip's own resolving state, so it stays empty too: loading must not read as an error.
  */
 export function resolveNewSessionTargetRequirement(input: Readonly<{
     ready: boolean;
@@ -31,8 +32,14 @@ export function resolveNewSessionTargetRequirement(input: Readonly<{
 }>): NewSessionCreateRequirement {
     const reason = !input.hasTarget
         ? input.hasMachine === false ? null : input.translate('newSession.noMachineSelected')
-        : input.needsFolder
-            ? input.translate('newSession.noPathSelected')
-            : input.translate('newSession.machineUnavailableStatus');
+        : input.needsFolder ? null : input.translate('newSession.machineUnavailableStatus');
     return { ready: input.ready, reason };
+}
+
+/** The Account's credential defaults: still arriving is not a problem to report, only a settled failure is. */
+export function resolveNewSessionCredentialDefaultsRequirement(input: Readonly<{
+    status: 'loading' | 'ready' | 'unavailable';
+    unavailableReason: string;
+}>): NewSessionCreateRequirement {
+    return { ready: input.status === 'ready', reason: input.status === 'unavailable' ? input.unavailableReason : null };
 }

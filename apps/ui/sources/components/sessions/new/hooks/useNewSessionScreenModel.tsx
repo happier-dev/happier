@@ -178,7 +178,7 @@ import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBe
 import { useAgentScopedPluginSettingsSnapshot } from '@/agents/registry/useAgentScopedPluginSettingsSnapshot';
 import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatus } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
-import { resolveNewSessionCreateAdmission, resolveNewSessionTargetRequirement } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
+import { resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
 import { resolveAgentLaunchBlockedReasonForNewSession } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { describeTemporaryComputerLaunchBlock, describeTemporaryComputerUnavailability } from '@/components/sessions/new/hooks/temporaryComputerCopy';
 import type { NewSessionInstructionsCreationModel, NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
@@ -3902,8 +3902,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         }),
         { ready: backendTarget.kind !== 'backend' || !backendTarget.configuredBackendId || acpCatalogReady,
             reason: agentLaunchBlockedReason ?? `${t('settings.acpCatalog')} · ${t('common.unavailable')}` },
-        { ready: connectedAccountDefaultsStatus === 'ready',
-            reason: `${t('settings.connectedServices')} · ${t('common.unavailable')}` },
+        resolveNewSessionCredentialDefaultsRequirement({ status: connectedAccountDefaultsStatus,
+            unavailableReason: `${t('settings.connectedServices')} · ${t('common.unavailable')}` }),
         { ready: temporaryComputerTargetReady,
             reason: describeTemporaryComputerUnavailability(temporaryComputerAvailability)
                 ?? (selectedTemporaryArtifact === null ? t('newSession.temporaryComputer.unavailable.platformRetired')

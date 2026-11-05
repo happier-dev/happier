@@ -20,12 +20,19 @@ export function AvatarStack(props: Readonly<{
     accessibilityLabel?: string;
     /**
      * The marks share one leading slot of the avatar's own size, so a row's title keeps one edge whether it has a
-     * glyph, one face or two. The first entry stands in the slot; the next peeks out behind it, into the row's inset.
+     * glyph, one face or two. One mark fills the slot; two shrink to fit inside it, the first in front on the slot's
+     * edge and the next peeking out behind it, so neither crosses the section label's edge or nears the title.
      */
     slot?: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const markOffset = (index: number) => props.slot ? { position: 'absolute' as const, top: 0, left: -2 - index * SLOT_PEEK_PX } : null;
+    const shared = props.slot === true && props.entries.length > 1;
+    const faceScale = shared ? (props.size - SLOT_PEEK_PX) / props.size : 1;
+    // A mark's box is its face plus the 2 px ring; scaling keeps its centre, so its face's edge moves in by this much.
+    const scaledEdge = 2 + (props.size * (1 - faceScale)) / 2;
+    const markOffset = (index: number) => props.slot
+        ? { position: 'absolute' as const, top: 0, left: index * SLOT_PEEK_PX - scaledEdge, ...(shared ? { transform: [{ scale: faceScale }] } : null) }
+        : null;
     const entries = props.slot ? props.entries.map((entry, index) => ({ entry, index })).reverse() : props.entries.map((entry, index) => ({ entry, index }));
     return <View
         testID={props.testID}
@@ -54,7 +61,7 @@ export function AvatarStack(props: Readonly<{
 }
 
 /** How far a second face shows past the first in one slot: enough to read as a second person, no more. */
-const SLOT_PEEK_PX = 6;
+const SLOT_PEEK_PX = 4;
 
 const styles = StyleSheet.create(() => ({
     stack: { flexDirection: 'row', alignItems: 'center' },
