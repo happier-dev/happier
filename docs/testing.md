@@ -678,6 +678,13 @@ own resource changes. A head blocked by an active publication also waits without
 reserving its floor before its first offer. A physically fitting request can wait without an admission
 deadline; `--no-wait` instead returns a typed busy result.
 
+The queued command's wait line reports its one-based position and the count ahead
+among pending requests without an offered reservation, including workspace-blocked
+requests. The broker publishes changes during its existing serialized passes;
+unchanged positions stay quiet. Memory and workspace availability still decide
+which request can proceed. An updated client connected to an older broker shows
+only the total waiting count until that broker next starts with current source.
+
 The broker's private pathname socket and client-owned slot witnesses carry
 admission and payload lifetime. Broker restart reconnects surviving witnesses
 and recovers their floors; queued clients reconnect without a persisted queue.

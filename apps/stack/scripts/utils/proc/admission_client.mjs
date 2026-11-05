@@ -192,7 +192,9 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
         for await (const response of brokerResponses(control, request, cancellation.signal)) {
           if (response.kind === 'refused') return failure(response.reason, failureId, response.cause);
           if (response.kind === 'queued') {
-            console.error(`[preferred-execution] waiting for admission on ${machine} (class=${className}, waiting=${response.waitingCount})`);
+            const position = response.queuePosition === undefined ? ''
+              : `, position=${response.queuePosition}, ahead=${response.countAhead}`;
+            console.error(`[preferred-execution] waiting for admission (class=${className}${position}, waiting=${response.waitingCount})`);
           }
           if (response.kind === 'capacity-wait') priorityScope?.suspend();
           if (response.kind === 'reserved') {

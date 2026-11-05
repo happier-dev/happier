@@ -127,7 +127,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       queuedMemoryKiB: waiting.reduce((sum, item) => sum + (item.slot ? 0 : item.floorKiB), 0),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
-  const send = (socket, value) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...status(), ...value }) + '\n'); };
+  const send = (socket, value, snapshot = status()) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...snapshot, ...value }) + '\n'); };
   function recordFailure(error) {
     // Keep only a symbolic code and a source location, never exception text,
     // resource paths or OS payloads. Retain this evidence after recovery.
@@ -144,8 +144,22 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       sample = { ...sample, availableMemoryKiB: 0, creditedResidentMemoryKiB: 0, achievableMemoryKiB: 0, unreservedMemoryKiB: 0 };
       // The failed pass does not decide the fate of unrelated waiters. Keep
       // their order, watchers and existing catch-up so the next pass can decide.
-    });
+    }).then(publishQueuePositions);
     return serial;
+  }
+  function publishQueuePositions() {
+    if (closing) return;
+    const queued = waiting.filter(item => !item.slot);
+    let snapshot;
+    for (const [index, item] of queued.entries()) {
+      const queuePosition = index + 1;
+      if (item.queuePosition === queuePosition) continue;
+      item.queuePosition = queuePosition;
+      // One shared status projection keeps a queue advance proportional to
+      // its waiters instead of rescanning the queue for every notice.
+      snapshot ??= status();
+      send(item.socket, { kind: 'queued', queuePosition, countAhead: index }, snapshot);
+    }
   }
   async function observe() {
     sample = { ...(sample.lastFailure ? { lastFailure: sample.lastFailure } : {}),
@@ -400,9 +414,6 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (!disk.admitted) { refuse(item, 'HSTACK_DISK_UNAVAILABLE'); refreshWatchers(); return; }
       await observe();
       await drain();
-      // The first attempt decides whether this arrival really has to wait.
-      // Later drains reuse the queue without repeating its enqueue notice.
-      if (!item.slot && !item.settled) send(socket, { kind: 'queued' });
     }));
     socket.on('error', () => {});
     socket.once('close', () => {

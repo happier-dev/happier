@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createServer, Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -73,8 +73,25 @@ peer.close()
 
 test('admission reports one waiting line with enqueue facts only when capacity queues the command',
   { skip: process.platform !== 'linux' }, async t => {
-    for (const queued of [true, false]) await t.test(queued ? 'queued' : 'immediate', async t => {
+    for (const mode of ['queued', 'immediate', 'older-broker']) await t.test(mode, async t => {
+      const queued = mode !== 'immediate';
       const fixture = await restartFixture(t);
+      if (mode === 'older-broker') {
+        // The pre-position producer at 6ef4c629e8 has no per-request queue fields.
+        // Adapt only the network boundary; admission and payload remain real.
+        const nativeWrite = Socket.prototype.write;
+        t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+          if (typeof chunk === 'string' && chunk.startsWith('{')) {
+            const response = JSON.parse(chunk);
+            if (response.kind === 'queued') {
+              delete response.queuePosition;
+              delete response.countAhead;
+              chunk = JSON.stringify(response) + '\n';
+            }
+          }
+          return nativeWrite.call(this, chunk, ...args);
+        });
+      }
       let availableMemoryKiB = queued ? 0 : 100;
       let observed;
       const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
@@ -106,7 +123,8 @@ test('admission reports one waiting line with enqueue facts only when capacity q
       assert.equal(client.stdout(), 'entered');
       const waiting = client.stderr().split('\n').filter(line => line.includes('waiting for admission'));
       assert.equal(waiting.length, queued ? 1 : 0);
-      if (queued) assert.match(waiting[0], /^\[preferred-execution\] waiting for admission on fixture \(class=validation, waiting=1\)$/);
+      if (mode === 'older-broker') assert.match(waiting[0], /^\[preferred-execution\] waiting for admission \(class=validation, waiting=1\)$/);
+      else if (queued) assert.match(waiting[0], /^\[preferred-execution\] waiting for admission \(class=validation, position=1, ahead=0, waiting=1\)$/);
     });
   });
 

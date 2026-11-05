@@ -145,6 +145,42 @@ function captureRecoveryClock(t) {
   } };
 }
 
+test('queue positions advance on existing passes and unchanged waiters stay silent', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  const notices = [];
+  const nativeWrite = Socket.prototype.write;
+  // Observe the real transport output, including its owning server socket.
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'queued') notices.push({ socket: this, response });
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 0, totalMemoryKiB: 100 }) });
+  for (let index = 0; index < 3; index++) {
+    await acquire(root, 70, t);
+    const barrier = await request(root, { kind: 'sample' });
+    await barrier.next();
+    barrier.socket.destroy();
+  }
+  const positions = () => notices.map(({ response }) =>
+    [response.queuePosition, response.countAhead, response.waitingCount]);
+  assert.deepEqual(positions(), [[1, 0, 1], [2, 1, 2], [3, 2, 3]],
+    'each arrival gets its own rank without logging unchanged older ranks');
+  const closed = once(notices[0].socket, 'close');
+  notices[0].socket.destroy();
+  await closed;
+  const after = await request(root, { kind: 'sample' });
+  await after.next();
+  after.socket.destroy();
+  assert.deepEqual(positions().slice(3), [[1, 0, 2], [2, 1, 2]],
+    'withdrawing the head advances each remaining waiter at the owner');
+  await clock.tick();
+  await clock.tick();
+  assert.equal(notices.length, 5, 'unchanged positions do not produce catch-up log spam');
+});
+
 test('a missing slot settles its own request even when the following memory observation fails', linux, async t => {
   // Capture the wire outcome at the OS boundary so a missing refusal fails an
   // assertion instead of leaving this negative regression waiting forever.
