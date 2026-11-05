@@ -354,6 +354,39 @@ describe('Machine current access (real SQLite)', () => {
         expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: { status: 'source-result' } });
     });
 
+    it('delivers Machine-wide run inventory only for the owner and current Manage grantees', async () => {
+        const f = await fixture();
+        const requester = await account();
+        await grant(f.owner.id, f.machine.id, requester.id);
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
+        const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+            declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+        const inventory = { runs: [] };
+        const emitWithAck = vi.fn(async () => inventory);
+        const rpcMethod = RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST;
+        const target = { id: 'run-inventory-daemon',
+            data: { clientType: 'machine-scoped', machineId: f.machine.id, verifiedMachineInstallationId: 'install', accountStoredContentCompatibility },
+            timeout: () => ({ emitWithAck }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${f.owner.id}:${f.machine.id}:${rpcMethod}` || room === target.id ? [target] : []);
+        const call = async (actorAccountId: string) => {
+            const socket = createAuthenticatedFakeSocket({ data: { accountStoredContentCompatibility } });
+            rpcHandler(actorAccountId, socket as unknown as Socket, { io });
+            const reply = vi.fn();
+            await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method: `${f.machine.id}:${rpcMethod}`, params: {} }, reply);
+            return reply;
+        };
+        expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: inventory });
+        const ownedReads = emitWithAck.mock.calls.length;
+        expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).toHaveBeenCalledTimes(ownedReads);
+        await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        expect(await call(requester.id)).toHaveBeenCalledWith({ ok: true, result: inventory });
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const managedReads = emitWithAck.mock.calls.length;
+        expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).toHaveBeenCalledTimes(managedReads);
+    });
+
     it('refuses native cookie reads to Use before daemon delivery and admits Manage', async () => {
         const f = await fixture();
         const requester = await account();
