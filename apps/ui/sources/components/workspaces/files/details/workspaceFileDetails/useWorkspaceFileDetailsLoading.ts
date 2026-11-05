@@ -9,7 +9,7 @@ type Input = Omit<Parameters<typeof refreshWorkspaceFileDetails>[0], 'scope' | '
 
 /** Owns retained details state and publication for the currently active request. */
 export function useWorkspaceFileDetailsLoading(input: Input) {
-    const { scope, filePath, diffMode, fileEntryKind, fileHasIncludedDelta, isBinaryContent,
+    const { scope, filePath, diffMode, fileEntryKind, filePreviousPath, fileHasIncludedDelta, isBinaryContent,
         maxImagePreviewBytes, previewSlice, readAsText, includeDiff, includeFile, snapshotSignature, isActive, refreshFingerprint } = input;
     // Explicit callers own their captured Account; only legacy unscoped callers may capture the matching active Home.
     const accountId = input.accountId === undefined
@@ -76,7 +76,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
         setError(null);
         try {
             const result = await refreshWorkspaceFileDetails({
-                scope, filePath, diffMode, fileEntryKind, fileHasIncludedDelta, isBinaryContent,
+                scope, filePath, diffMode, fileEntryKind, filePreviousPath, fileHasIncludedDelta, isBinaryContent,
                 maxImagePreviewBytes, previewSlice, readAsText, includeDiff: wantsDiff, includeFile, snapshotSignature,
                 signal: abort.signal,
                 forceRefresh: options?.allowFileReuse !== true,
@@ -120,7 +120,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
             setStaleSince(next.staleSince);
             setIsLoading(false);
         }
-    }, [scope, filePath, diffMode, fileEntryKind, fileHasIncludedDelta, isBinaryContent, maxImagePreviewBytes, previewSlice, readAsText, includeDiff, wantsDiff, includeFile, snapshotSignature, isActive, fileKey]);
+    }, [scope, filePath, diffMode, fileEntryKind, filePreviousPath, fileHasIncludedDelta, isBinaryContent, maxImagePreviewBytes, previewSlice, readAsText, includeDiff, wantsDiff, includeFile, snapshotSignature, isActive, fileKey]);
     const readFileForSave = React.useCallback(async () => {
         if (activeResource.current !== resourceKey) return null;
         // Restored drafts have a byte hash, not serialization metadata. Reuse this

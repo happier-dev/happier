@@ -381,12 +381,21 @@ export async function gitDiffFile(input: {
         };
     }
     const area = request.area ?? 'pending';
+    const previous = request.previousPath === undefined ? null : normalizeRepoRootRelativePath(request.previousPath);
+    if (previous && !previous.ok) {
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: previous.error };
+    }
+    // Pending compares the index (where a staged rename already has its new name).
+    // HEAD comparisons need both paths: filtering to the destination makes Git see an addition.
+    const paths = previous?.ok && area !== 'pending'
+        ? [previous.pathspec, normalized.pathspec]
+        : [normalized.pathspec];
     const args =
         area === 'included'
-            ? ['diff', '--no-ext-diff', '--cached', '--', normalized.pathspec]
+            ? ['diff', '--no-ext-diff', '--cached', '--', ...paths]
             : area === 'both'
-                ? ['diff', '--no-ext-diff', 'HEAD', '--', normalized.pathspec]
-                : ['diff', '--no-ext-diff', '--', normalized.pathspec];
+                ? ['diff', '--no-ext-diff', 'HEAD', '--', ...paths]
+                : ['diff', '--no-ext-diff', '--', ...paths];
     let result = await runScmCommand({ bin: 'git', cwd: context.cwd, args, timeoutMs: 10_000 });
     if (area === 'both' && !result.success && result.exitCode !== 1 && !result.timedOut && !result.outputLimitExceeded) {
         const head = await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD'], timeoutMs: 10_000 });
@@ -397,7 +406,7 @@ export async function gitDiffFile(input: {
             if (!emptyTree.success) {
                 return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: emptyTree.stderr || 'Failed to resolve empty tree' };
             }
-            result = await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['diff', '--no-ext-diff', emptyTree.stdout.trim(), '--', normalized.pathspec], timeoutMs: 10_000 });
+            result = await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['diff', '--no-ext-diff', emptyTree.stdout.trim(), '--', ...paths], timeoutMs: 10_000 });
         }
     }
     // git diff uses exit code 1 to indicate "differences found". Treat that as success so

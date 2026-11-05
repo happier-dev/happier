@@ -5207,6 +5207,23 @@ using the new daemon response (the existing 0.3 all-component direct cut).
 There is no persisted format, new Action, wire epoch or released/predecessor
 counterpart for this isolation retirement seam.
 
+## Live SCM rename reads (unreleased 0.3)
+
+Live `scm.diff.file` rename reads use the closed
+`{ renamed: { path, previousPath }, area?, ...SCM envelope }` selector. Its nested
+path pair is also closed. The omitted legacy top-level `path` makes older
+daemons refuse rather than silently ignore rename lineage and return an
+addition-only patch. Ordinary file requests retain their additive-open/drop
+shape. Matching UI and daemon readers load together; no wire epoch, runtime
+ABI or persisted format changes. The inspected 0.2 predecessor at
+`512915f3ccf4a29a8454b74ad9db6ca72079d916` has the required top-level `path`
+reader (scoped-clean `packages/protocol/src/scm.ts`).
+
+The Action owner normalizes this selector into the existing backend file request
+with `previousPath`. Git includes both paths for HEAD comparisons; pending-only
+diffs still compare the destination in the index. Captured selectors remain
+closed and continue reading their pinned evidence.
+
 ## Paged SCM capture reads (unreleased 0.3)
 
 Capture inputs add the closed `projection: { kind: 'index', cursor?, path? }`

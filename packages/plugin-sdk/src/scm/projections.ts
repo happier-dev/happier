@@ -565,6 +565,7 @@ export type ScmStatusSnapshotResponse = {
 
 export type ScmDiffFileRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     path: string;
+    previousPath?: string;
     area?: 'included' | 'pending' | 'both';
 };
 

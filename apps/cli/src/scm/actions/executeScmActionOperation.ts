@@ -256,7 +256,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                                 const groups = await Promise.all(status.snapshot.entries.map(async entry => {
                                     const areas = status.snapshot!.capabilities.supportedDiffAreas;
                                     return (await Promise.all(areas.map(async area => {
-                                        const diff = await selection.backend.diffFile({ context, request: { cwd: authorized.cwd, path: entry.path, area } });
+                                        const diff = await selection.backend.diffFile({ context, request: { cwd: authorized.cwd, path: entry.path, previousPath: entry.previousPath ?? undefined, area } });
                                         if (!diff.success) throw new Error('Live change evidence is unavailable');
                                         const layer = area === 'both' ? 'combined' : area === 'included' ? 'staged' : entry.kind === 'untracked' ? 'untracked' : 'unstaged';
                                         return buildReviewUnits(entry.path, layer, diff.diff ?? '').map(unit => unit.key);
@@ -400,18 +400,23 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                         ? response : { ...unavailable, error: 'Captured file evidence exceeds the socket response limit.' };
                 } catch { return unavailable; }
             }
+            let liveRequest: scm.ScmDiffFileRequest;
+            if ('renamed' in request && request.renamed) {
+                const { renamed, ...base } = request;
+                liveRequest = { ...base, ...renamed };
+            } else liveRequest = request;
             const response = await runScmRoute<scm.ScmDiffFileRequest, scm.ScmDiffFileResponse>({
-                request,
+                request: liveRequest,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<scm.ScmDiffFileResponse>(),
                 runWithBackend: async ({ context, selection }) => selection.backend.diffFile
-                    ? await selection.backend.diffFile({ context, request })
+                    ? await selection.backend.diffFile({ context, request: liveRequest })
                     : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' },
             });
-            if (!response.success || response.diff === undefined || request.area !== 'both') return response;
+            if (!response.success || response.diff === undefined || liveRequest.area !== 'both') return response;
             return {
                 ...response,
-                reviewUnits: buildReviewUnits(request.path, 'combined', response.diff).map(({ key, hunkIndex, runIndex, hunk }) => ({
+                reviewUnits: buildReviewUnits(liveRequest.path, 'combined', response.diff).map(({ key, hunkIndex, runIndex, hunk }) => ({
                     key, hunkIndex, runIndex,
                     oldStart: hunk.oldStart, oldLines: hunk.oldLines,
                     newStart: hunk.newStart, newLines: hunk.newLines,

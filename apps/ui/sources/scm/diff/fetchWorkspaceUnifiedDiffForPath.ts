@@ -2,7 +2,7 @@ import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import { machineScmDiffFile } from '@/sync/ops/scm/machineScm';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { decodeUtf8Base64 } from './fallbackUnifiedDiff';
-import { fetchUnifiedDiffForPath, type UnifiedDiffInput } from './fetchUnifiedDiffForPath';
+import { buildFileDiffRequest, fetchUnifiedDiffForPath, type UnifiedDiffInput } from './fetchUnifiedDiffForPath';
 
 type Input = Omit<UnifiedDiffInput, 'cacheKey' | 'loadDiff' | 'readFileForFallback'> & Readonly<{
     scope: WorkspaceScopeBase;
@@ -14,7 +14,7 @@ export function fetchWorkspaceUnifiedDiffForPath(input: Input): ReturnType<typeo
     return fetchUnifiedDiffForPath({
         ...input,
         cacheKey: input.snapshotSignature ? { sessionId: buildWorkspaceCacheKey(input.scope), snapshotSignature: input.snapshotSignature, diffArea: input.diffArea, path: input.path } : null,
-        loadDiff: () => machineScmDiffFile(input.scope.machineId, { cwd: input.scope.rootPath, path: input.path, area: input.diffArea }, { serverId: input.scope.serverId }),
+        loadDiff: () => machineScmDiffFile(input.scope.machineId, { cwd: input.scope.rootPath, ...buildFileDiffRequest(input) }, { serverId: input.scope.serverId }),
         readFileForFallback: input.readFileForFallback ?? (async () => {
             const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem/fileReadWrite');
             const response = await workspaceReadFile(input.scope, input.path);

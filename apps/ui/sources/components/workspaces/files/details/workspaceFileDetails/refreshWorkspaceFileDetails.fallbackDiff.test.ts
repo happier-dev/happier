@@ -68,6 +68,22 @@ describe('refreshWorkspaceFileDetails (fallback diff)', () => {
         expect(workspaceFileDetailsActionBoundary.read).toHaveBeenCalled();
     });
 
+    it('loads rename removal evidence in File details through the shared diff request', async () => {
+        const patch = 'diff --git a/a.txt b/renamed.txt\n--- a/a.txt\n+++ b/renamed.txt\n@@ -1 +1 @@\n-before\n+after\n';
+        machineScmDiffFileSpy.mockImplementationOnce(async (_machine, request: { renamed?: { previousPath: string } }) => ({
+            success: true,
+            diff: request.renamed?.previousPath === 'a.txt' ? patch : '',
+        }));
+        const { refreshWorkspaceFileDetails } = await import('./refreshWorkspaceFileDetails');
+        const input = {
+            scope: { serverId, machineId: 'm1', rootPath: '/repo' }, filePath: 'renamed.txt',
+            diffMode: 'included' as const, fileEntryKind: 'renamed' as const, filePreviousPath: 'a.txt',
+        };
+        const result = await refreshWorkspaceFileDetails(input);
+        expect(result.status).toBe('ready');
+        expect(result.diffContent).toBe(patch);
+    });
+
     it('returns a synthesized diff for untracked/added files when backend returns empty diff', async () => {
         machineScmDiffFileSpy.mockClear();
         workspaceFileDetailsActionBoundary.read.mockClear();

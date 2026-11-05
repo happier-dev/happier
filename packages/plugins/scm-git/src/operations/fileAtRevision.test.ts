@@ -1,3 +1,4 @@
+import { ScmDiffFileRequestSchema } from '@happier-dev/protocol/scm';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
@@ -34,6 +35,27 @@ describe('Git file-at-revision bytes through backend registration and the real p
         git(root, ['config', 'core.autocrlf', 'false']);
     });
     afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+
+    it.each(['included', 'both', 'pending'] as const)('preserves both sides of a renamed file in the %s layer', async (area) => {
+        const before = Array.from({ length: 30 }, (_, i) => `Fixture line ${i + 1}\n`).join('');
+        await writeFile(join(root, 'a.txt'), before);
+        git(root, ['add', 'a.txt']);
+        git(root, ['commit', '--quiet', '-m', 'before rename']);
+        git(root, ['mv', 'a.txt', 'renamed.txt']);
+        await writeFile(join(root, 'renamed.txt'), before.replace('Fixture line 11\n', 'Fixture edited rename line\n'));
+        if (area !== 'pending') git(root, ['add', 'renamed.txt']);
+        const handler = createGitScmBackendRuntimeRegistration().handlers.read?.diffFile;
+        if (!handler) throw new Error('Missing registered file diff reader');
+        const request = ScmDiffFileRequestSchema.parse({ path: 'renamed.txt', previousPath: 'a.txt', area });
+        const result = await runWithRealGitScmRuntime(() => handler({ context: { cwd: root, projectKey: root,
+            detection: { isRepo: true, rootPath: root, mode: '.git' } }, request }));
+        expect(result.success).toBe(true);
+        const beforePath = area === 'pending' ? 'renamed.txt' : 'a.txt';
+        expect(result.diff).toContain(`--- a/${beforePath}\n+++ b/renamed.txt`);
+        expect(result.diff).toContain('-Fixture line 11\n+Fixture edited rename line');
+        expect(result.diff).not.toContain('+Fixture line 1\n');
+        expect(await read({ path: beforePath, selector: { side: 'before', area } })).toEqual(expected(Buffer.from(before)));
+    });
 
     it('distinguishes HEAD, index and working-tree bytes, preserving binary bytes and full SHA256', async () => {
         const path = 'photo.bin';

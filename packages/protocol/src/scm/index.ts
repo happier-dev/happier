@@ -248,6 +248,8 @@ export type ScmStatusSnapshotTransportResponse = Omit<z.input<typeof ScmStatusSn
 
 export const ScmDiffFileRequestSchema = lazyZodSchema(() => z.extend(ScmRequestBaseSchema, {
   path: z.string(),
+  /** Snapshot rename source, needed alongside the destination for Git rename detection. */
+  previousPath: z.optional(z.string()),
   area: z.optional(ScmDiffAreaSchema),
 }));
 export type ScmDiffFileRequest = z.infer<typeof ScmDiffFileRequestSchema>;
@@ -260,13 +262,21 @@ const ScmCapturedDiffFileRequestSchema = lazyZodSchema(() => z.strictObject({
 }));
 const ScmLegacyDiffFileActionRequestSchema = lazyZodSchema(() => z.extend(ScmDiffFileRequestSchema, {
   captured: z.optional(z.never()),
+  renamed: z.optional(z.never()),
+  previousPath: z.optional(z.never()),
 }));
+const ScmRenamedDiffFileActionRequestSchema = lazyZodSchema(() => z.strictObject({
+  ...ScmRequestBaseSchema.shape,
+  renamed: z.strictObject({ path: z.string(), previousPath: z.string() }),
+  area: z.optional(ScmDiffAreaSchema),
+}));
+export type ScmLiveDiffFileRequest = z.infer<typeof ScmLegacyDiffFileActionRequestSchema> | z.infer<typeof ScmRenamedDiffFileActionRequestSchema>;
 /** Named arms bound declaration inference without widening either wire contract.
  * Missing legacy path makes old daemons refuse rather than return live worktree bytes. */
 export const ScmDiffFileActionRequestSchema: z.ZodMiniUnion<[
-  typeof ScmCapturedDiffFileRequestSchema, typeof ScmLegacyDiffFileActionRequestSchema,
+  typeof ScmCapturedDiffFileRequestSchema, typeof ScmRenamedDiffFileActionRequestSchema, typeof ScmLegacyDiffFileActionRequestSchema,
 ]> = lazyZodSchema(() => z.union([
-  ScmCapturedDiffFileRequestSchema, ScmLegacyDiffFileActionRequestSchema,
+  ScmCapturedDiffFileRequestSchema, ScmRenamedDiffFileActionRequestSchema, ScmLegacyDiffFileActionRequestSchema,
 ]));
 export type ScmDiffFileActionRequest = z.infer<typeof ScmDiffFileActionRequestSchema>;
 

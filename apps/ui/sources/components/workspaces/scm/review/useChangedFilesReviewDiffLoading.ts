@@ -224,7 +224,8 @@ export function useChangedFilesReviewDiffLoading(input: {
                 if (file?.status === 'added' || file?.status === 'untracked') baseText = '';
                 else if (scope && (!hasScopedDiffs || captured?.beforeBlobId)) {
                     const { fetchWorkspaceFileAtRevision } = await import('@/scm/files/fetchWorkspaceFileAtRevision');
-                    const read = await fetchWorkspaceFileAtRevision({ scope, path: captured?.previousPath ?? path,
+                    const read = await fetchWorkspaceFileAtRevision({ scope,
+                        path: captured?.previousPath ?? (diffArea !== 'pending' ? file?.oldPath : undefined) ?? path,
                         selector: captured?.beforeBlobId ? { blobId: captured.beforeBlobId } : { side: 'before', area: diffArea },
                         signal: contextRead.signal });
                     if (read.success && !read.bytes.includes(0)) baseText = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes);

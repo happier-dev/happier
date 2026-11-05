@@ -5,9 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { ScmDiffFileRequestSchema, ScmDiffFileResponseSchema } from '@happier-dev/protocol/scm';
+import { ScmDiffFileActionRequestSchema, ScmDiffFileRequestSchema, ScmDiffFileResponseSchema } from '@happier-dev/protocol/scm';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
-import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
+import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
+import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
 import { configuration } from '@/configuration';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
 import { deleteCapturedScmComparison, readCapturedScmComparison } from '../comparisons/captureScmComparison';
@@ -15,6 +19,36 @@ import { readStoredScmComparison } from '../comparisons/comparisonStorage';
 import { executeScmActionOperation } from './executeScmActionOperation';
 
 describe('captured file Action evidence', () => {
+  it('reads a staged rename through an explicit selector that legacy file readers refuse', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-rename-read-' });
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.backend.git/git',
+      executableDefinition: registration.runtime!, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
+    })]);
+    try {
+      const before = Array.from({ length: 30 }, (_, i) => `Fixture line ${i + 1}\n`).join('');
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), before);
+      runScmExecutable(fixture.rootPath, 'git', ['add', '--', fixture.trackedPath]);
+      runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'before rename']);
+      runScmExecutable(fixture.rootPath, 'git', ['mv', fixture.trackedPath, 'renamed.txt']);
+      await writeFile(join(fixture.rootPath, 'renamed.txt'), before.replace('Fixture line 11\n', 'Fixture edited rename line\n'));
+      runScmExecutable(fixture.rootPath, 'git', ['add', '--', 'renamed.txt']);
+      const wire = { cwd: fixture.rootPath, renamed: { path: 'renamed.txt', previousPath: fixture.trackedPath }, area: 'included' };
+      expect(ScmDiffFileRequestSchema.safeParse(wire).success).toBe(false);
+      expect(ScmDiffFileActionRequestSchema.safeParse({ ...wire, path: 'renamed.txt' }).success).toBe(false);
+      expect(ScmDiffFileActionRequestSchema.safeParse({ ...wire, renamed: { ...wire.renamed, unknown: true } }).success).toBe(false);
+      const input = ScmDiffFileActionRequestSchema.parse(wire);
+      const reply = ScmDiffFileResponseSchema.parse(await executeScmActionOperation({
+        actionId: 'scm.diff.file', workingDirectory: fixture.rootPath, registry, input,
+      }));
+      if (!reply.success) throw new Error(`${reply.errorCode}: ${reply.error}`);
+      expect(reply).toMatchObject({ success: true, diff: expect.stringContaining('-Fixture line 11\n+Fixture edited rename line') });
+      expect(reply.diff).not.toContain('+Fixture line 1\n');
+    } finally { await rm(fixture.rootPath, { recursive: true, force: true }); }
+  });
+
   it('admits repository-scoped captured bytes through the retained-scope owner', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-captured-repository-' });
     let comparisonId: string | undefined;

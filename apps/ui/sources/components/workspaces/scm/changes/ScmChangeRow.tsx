@@ -265,7 +265,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 />
             )}
 
-            {stacked || compact ? (
+            {stacked || compact || displayText.renamedFrom ? (
                 <InlineRepoPathLabel
                     layout={compact ? 'nameFirst' : 'stacked'}
                     fileName={file.fileName}

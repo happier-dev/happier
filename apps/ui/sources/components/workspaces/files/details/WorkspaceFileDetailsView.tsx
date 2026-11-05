@@ -764,6 +764,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         scope, filePath, diffMode,
         accountId: editorAccountScope?.accountId ?? null,
         fileEntryKind: fileEntry?.kind ?? null,
+        filePreviousPath: fileEntry?.previousPath,
         isBinaryContent: fileEntry?.stats.isBinary,
         fileHasIncludedDelta: fileEntry?.hasIncludedDelta,
         previewSlice: fileView.previewSlice,

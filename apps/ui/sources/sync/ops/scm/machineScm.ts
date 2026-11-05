@@ -22,7 +22,7 @@ import type {
     ScmCommitUndoLastResponse,
     ScmDiffCommitRequest,
     ScmDiffCommitResponse,
-    ScmDiffFileRequest,
+    ScmLiveDiffFileRequest,
     ScmDiffFileResponse,
     ScmFileAtRevisionRequest,
     ScmFileReadResponse,
@@ -249,10 +249,10 @@ export async function machineScmStatusSnapshot(
 
 export async function machineScmDiffFile(
     machineId: string,
-    request: ScmDiffFileRequest,
+    request: ScmLiveDiffFileRequest,
     options?: MachineScmCallOptions,
 ): Promise<ScmDiffFileResponse | ScmRpcFailure> {
-    return await callMachineScm<ScmDiffFileResponse, ScmDiffFileRequest>(machineId, RPC_METHODS.SCM_DIFF_FILE, request, options);
+    return await callMachineScm<ScmDiffFileResponse, ScmLiveDiffFileRequest>(machineId, RPC_METHODS.SCM_DIFF_FILE, request, options);
 }
 
 export async function machineScmDiffCommit(

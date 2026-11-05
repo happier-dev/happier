@@ -61,6 +61,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
     filePath: string;
     diffMode: FileDiffMode;
     fileEntryKind?: ScmEntryKind | null;
+    filePreviousPath?: string | null;
     isBinaryContent?: boolean;
     /** Explicit built-in alternative; display bytes without making them an editable buffer. */
     readAsText?: boolean;
@@ -267,7 +268,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                 scope: input.scope,
                 path: input.filePath,
                 diffArea: toScmDiffArea(input.diffMode),
-                file: input.fileEntryKind ? { status: input.fileEntryKind, hasIncludedDelta: input.fileHasIncludedDelta, isBinary: input.isBinaryContent } : null,
+                file: input.fileEntryKind ? { status: input.fileEntryKind, oldPath: input.filePreviousPath ?? undefined, hasIncludedDelta: input.fileHasIncludedDelta, isBinary: input.isBinaryContent } : null,
                 snapshotSignature: input.snapshotSignature,
                 forceRefresh: input.forceRefresh,
                 normalizeError: (value) => value instanceof Error ? value.message : String(value),

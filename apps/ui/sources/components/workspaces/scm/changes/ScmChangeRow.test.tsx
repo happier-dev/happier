@@ -11,6 +11,10 @@ import { DEFAULT_THEME_STYLE_SCALES } from '@/theme/themeStyleScales';
 (globalThis as any).__DEV__ = false;
 
 installSourceControlChangesCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock();
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -61,6 +65,15 @@ function createScmChangeRowTheme() {
 }
 
 describe('ScmChangeRow', () => {
+  it.each([false, true])('keeps the previous path visible in the inline Review header (phone=%s)', async (phone) => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const screen = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} layout="inline"
+      density="compact" showChangeMark={false} phone={phone}
+      file={{ fileName: 'renamed.txt', filePath: '', fullPath: 'renamed.txt', oldPath: 'a.txt',
+        status: 'renamed', isIncluded: true, linesAdded: 1, linesRemoved: 1 }} />);
+    expect(screen.getTextContent()).toContain('renamed.txt');
+    expect(screen.getTextContent()).toContain('a.txt');
+  });
   it('presents a captured header without an invented interactive target', async () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
     const screen = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} file={{ fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 3, linesRemoved: 1 }} />);

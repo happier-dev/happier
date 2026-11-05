@@ -22,7 +22,7 @@ import type {
     ScmCommitUndoLastResponse,
     ScmDiffCommitRequest,
     ScmDiffCommitResponse,
-    ScmDiffFileRequest,
+    ScmLiveDiffFileRequest,
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
@@ -185,10 +185,10 @@ export async function sessionScmStatusSnapshot(
 
 export async function sessionScmDiffFile(
     sessionId: string,
-    request: ScmDiffFileRequest,
+    request: ScmLiveDiffFileRequest,
     serverId?: string | null,
 ): Promise<ScmDiffFileResponse | ScmRpcFailure> {
-    return await callScmPreferMachine<ScmDiffFileResponse, ScmDiffFileRequest>(
+    return await callScmPreferMachine<ScmDiffFileResponse, ScmLiveDiffFileRequest>(
         sessionId,
         RPC_METHODS.SCM_DIFF_FILE,
         request,

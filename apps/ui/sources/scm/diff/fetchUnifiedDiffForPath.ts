@@ -1,4 +1,5 @@
 import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmLiveDiffFileRequest } from '@happier-dev/protocol/scm';
 
 import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import type { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
@@ -15,13 +16,19 @@ export type UnifiedDiffInput = Readonly<{
     loadDiff: () => Promise<{ success: boolean; diff?: string; error?: string }>;
     diffArea: ScmDiffArea;
     path: string;
-    file: Pick<ScmFileStatus, 'status' | 'hasIncludedDelta' | 'isBinary'> | null;
+    file: Pick<ScmFileStatus, 'status' | 'hasIncludedDelta' | 'isBinary' | 'oldPath'> | null;
     normalizeError: (input: unknown) => string;
     fallbackError: string;
     diffCache?: ScmDiffCache | null;
     forceRefresh?: boolean;
     readFileForFallback: () => Promise<string | null>;
 }>;
+
+export function buildFileDiffRequest(input: Pick<UnifiedDiffInput, 'path' | 'diffArea' | 'file'>): ScmLiveDiffFileRequest {
+    return input.file?.oldPath
+        ? { renamed: { path: input.path, previousPath: input.file.oldPath }, area: input.diffArea }
+        : { path: input.path, area: input.diffArea };
+}
 
 export async function fetchUnifiedDiffForPath(input: UnifiedDiffInput): Promise<Readonly<{ success: true; diff: string; emptyFile?: true }> | Readonly<{ success: false; error: string }>> {
     const cache = input.diffCache === undefined ? scmDiffCache : input.diffCache;

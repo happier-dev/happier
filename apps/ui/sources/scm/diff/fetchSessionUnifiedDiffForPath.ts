@@ -1,7 +1,7 @@
 import { sessionScmDiffFile } from '@/sync/ops';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { fetchWorkspaceUnifiedDiffForPath, invalidateWorkspaceUnifiedDiffPath } from './fetchWorkspaceUnifiedDiffForPath';
-import { fetchUnifiedDiffForPath, type UnifiedDiffInput } from './fetchUnifiedDiffForPath';
+import { buildFileDiffRequest, fetchUnifiedDiffForPath, type UnifiedDiffInput } from './fetchUnifiedDiffForPath';
 
 type Input = Omit<UnifiedDiffInput, 'cacheKey' | 'loadDiff' | 'readFileForFallback'> & Readonly<{
     sessionId: string;
@@ -16,7 +16,7 @@ export function fetchSessionUnifiedDiffForPath(input: Input): ReturnType<typeof 
     // share workspace authority or perform the workspace-backed file fallback.
     return fetchUnifiedDiffForPath({
         ...input,
-        loadDiff: () => sessionScmDiffFile(input.sessionId, { path: input.path, area: input.diffArea }),
+        loadDiff: () => sessionScmDiffFile(input.sessionId, buildFileDiffRequest(input)),
         readFileForFallback: input.readFileForFallback ?? (async () => null),
     });
 }

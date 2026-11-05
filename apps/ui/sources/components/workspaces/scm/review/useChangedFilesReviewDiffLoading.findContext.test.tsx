@@ -24,6 +24,7 @@ const baseText = Array.from({ length: 30 }, (_, i) => `coast ${i === 15 ? 'hidde
 const diff = '@@ -2,3 +2,3 @@\n coast 1\n-coast 2\n+changed 2\n coast 3\n@@ -27,3 +27,3 @@\n coast 26\n-coast 27\n+changed 27\n coast 28\n';
 const files: ScmFileStatus[] = [{ fullPath: 'coast.ts', fileName: 'coast.ts', filePath: '', status: 'modified',
     isIncluded: false, linesAdded: 2, linesRemoved: 2 }];
+const renamedFiles: ScmFileStatus[] = [{ ...files[0]!, status: 'renamed', oldPath: 'old-coast.ts' }];
 const workspaceScope = { serverId: 'home-a', machineId: 'machine-a', rootPath: '/coast' };
 const fetchDiff: NonNullable<Parameters<typeof useChangedFilesReviewDiffLoading>[0]['fetchUnifiedDiffForPath']> =
     input => fetchWorkspaceUnifiedDiffForPath({ ...input, scope: workspaceScope });
@@ -84,14 +85,15 @@ describe('review Find context loading', () => {
         expect(reveal).not.toHaveBeenCalled();
         unsubscribe();
     });
-    it.each(['workspace', 'captured'] as const)('reads the %s revision on Find demand through the real loader and matcher', async (kind) => {
+    it.each(['workspace', 'workspace-rename', 'workspace-pending-rename', 'captured'] as const)('reads the %s revision on Find demand through the real loader and matcher', async (kind) => {
         scm.diff.mockResolvedValue({ success: true, diff });
         const reading = createDeferred<unknown>();
         scm.read.mockReturnValue(reading.promise);
         let open = false;
         const hook = await renderHook(() => {
-            const loading = useChangedFilesReviewDiffLoading({ sessionId: '', isRepo: true, reviewFiles: files,
-                diffArea: 'pending', selectedPath: 'coast.ts', tooLarge: false, normalizeError: String, fallbackError: 'unavailable',
+            const loading = useChangedFilesReviewDiffLoading({ sessionId: '', isRepo: true,
+                reviewFiles: kind === 'workspace-rename' || kind === 'workspace-pending-rename' ? renamedFiles : files,
+                diffArea: kind === 'workspace-rename' ? 'both' : 'pending', selectedPath: 'coast.ts', tooLarge: false, normalizeError: String, fallbackError: 'unavailable',
                 fetchUnifiedDiffForPath: fetchDiff,
                 workspaceScope, findContext: open,
                 ...(kind === 'captured' ? { comparisonFiles: [capturedFile], providerDiffByPath: capturedDiffs } : {}) });
@@ -114,9 +116,12 @@ describe('review Find context loading', () => {
             expect(hook.getCurrent().find.status).toMatchObject({ kind: 'results', current: 1, total: 1, coverage: 'complete' });
         });
         expect(scm.read).toHaveBeenCalledWith('machine-a', expect.objectContaining({ cwd: '/coast',
-            path: kind === 'captured' ? 'old-coast.ts' : 'coast.ts',
-            selector: kind === 'captured' ? { blobId: 'fixed-before-blob' } : { side: 'before', area: 'pending' } }),
+            path: kind === 'workspace-rename' || kind === 'captured' ? 'old-coast.ts' : 'coast.ts',
+            selector: kind === 'captured' ? { blobId: 'fixed-before-blob' } : { side: 'before', area: kind === 'workspace-rename' ? 'both' : 'pending' } }),
             expect.objectContaining({ serverId: 'home-a' }));
+        if (kind === 'workspace-rename' || kind === 'workspace-pending-rename') expect(scm.diff).toHaveBeenCalledWith('machine-a', expect.objectContaining({
+            renamed: { path: 'coast.ts', previousPath: 'old-coast.ts' }, area: kind === 'workspace-rename' ? 'both' : 'pending',
+        }), expect.objectContaining({ serverId: 'home-a' }));
         open = false;
         await hook.rerender();
         expect(hook.getCurrent().diffStateSource.getDiffState('coast.ts')).not.toHaveProperty('context');
