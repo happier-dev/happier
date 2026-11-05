@@ -2789,7 +2789,7 @@ describe('SessionView (direct sessions)', () => {
     }
   });
 
-  it.each(['not_authenticated', 'agent_signed_out'] as const)('clears Continue loading and keeps the draft after replacement refuses %s', async errorCode => {
+  it.each(['not_authenticated'] as const)('clears Continue loading and keeps the draft after replacement refuses %s', async errorCode => {
     requireModelRestartAtSocketBoundary();
     featureEnabledState.providers = true;
     const real = await vi.importActual<typeof import('@/sync/ops/sessionRunnerRestart')>('@/sync/ops/sessionRunnerRestart');
@@ -2825,6 +2825,99 @@ describe('SessionView (direct sessions)', () => {
     const buttons = modalAlertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[] | undefined;
     await act(async () => { buttons?.find(button => button.text === 'approvals.technicalDetails')?.onPress?.(); });
     expect(modalAlertSpy.mock.calls.at(-1)?.[1]).toContain(errorCode);
+  });
+
+  async function pressContinueIntoRefusedReplacement(errorCode: string, machineListed = true) {
+    requireModelRestartAtSocketBoundary();
+    featureEnabledState.providers = true;
+    const real = await vi.importActual<typeof import('@/sync/ops/sessionRunnerRestart')>('@/sync/ops/sessionRunnerRestart');
+    restartProviderBindingSessionRunnerSpy.mockImplementation(request => real.restartSessionRunnerForProviderBindingChange(
+      request as Parameters<typeof real.restartSessionRunnerForProviderBindingChange>[0],
+    ));
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
+      state: { ...buildSessionRunnerRuntimeStatus({ sessionId: 's1', machineId: 'machine-1', versionState: 'stale' }),
+        plannedRestart: { supported: true, eligible: true } },
+      runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
+    });
+    pendingRestartReceipt = createDeferred<unknown>();
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const picker = await mountSessionModelPicker(screen);
+    await act(async () => picker.props.onSelect({ agentTargetKey: 'agent:happier.agent.codex/codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'provider-model' }));
+    await settleDirectSessionView();
+    if (!machineListed) await act(async () => { storage.setState({ machines: {}, machineListByServerId: {} }); });
+    await act(async () => { findAgentInput(screen).props.onChangeText('Keep my signed-out draft'); });
+    let pending!: Promise<void>;
+    await act(async () => { pending = findAgentInput(screen).props.onSend(); });
+    await waitForHomeGovernance(() => expect(externalRpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2)).toHaveLength(1));
+    expect(findAgentInput(screen).props.isSending).toBe(true);
+    await act(async () => {
+      pendingRestartReceipt!.resolve({ ok: false, status: 'spawn_failed', sessionId: 's1',
+        ...(errorCode === 'not_authenticated' || errorCode === 'agent_signed_out' ? { reasonCode: 'missing_credentials' } : {}),
+        diagnostics: { respawnTerminalReason: errorCode, detail: errorCode, errorCode } });
+      await pending;
+    });
+    expect(findAgentInput(screen).props.isSending).toBe(false);
+    expect(readComposerText(findAgentInput(screen))).toBe('Keep my signed-out draft');
+    expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
+    return screen;
+  }
+
+  async function expectMachineAgentSetupOffered(actionKey: 'machineAgents.actionSignIn' | 'machineAgents.setUp') {
+    const { router } = await import('expo-router');
+    const { machineCollectionHref } = await import('@/components/settings/machines/collection/machineCollectionModel');
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+    expect(buttons.some(button => button.text === 'approvals.technicalDetails')).toBe(false);
+    vi.mocked(router.push).mockClear();
+    await act(async () => { buttons.find(button => button.text === actionKey)?.onPress?.(); });
+    // The Agent's own Machine, never the Home Account's `/restore`.
+    expect(vi.mocked(router.push).mock.calls).toEqual([[machineCollectionHref({ machineId: 'machine-1', serverId: 'server-route-1' })]]);
+  }
+
+  it.each([
+    ['agent_signed_out', 'machineAgents.actionSignIn'],
+    ['agent_cli_missing', 'machineAgents.setUp'],
+  ] as const)('leads Continue refused with %s to the Machine Agent setup and keeps the draft', async (errorCode, actionKey) => {
+    storageState.machines['machine-1'] = createMachineFixture({ activeAt: Date.now() });
+    await pressContinueIntoRefusedReplacement(errorCode);
+    await expectMachineAgentSetupOffered(actionKey);
+  });
+
+  it('offers no Machine destination for a signed-out Agent on a Machine this person cannot open', async () => {
+    await pressContinueIntoRefusedReplacement('agent_signed_out', false);
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[];
+    expect(buttons.some(button => typeof button.onPress === 'function')).toBe(false);
+  });
+
+  it.each(['not_authenticated', 'backend_disabled'] as const)('keeps the exact code behind Technical details when Continue is refused with %s', async errorCode => {
+    await pressContinueIntoRefusedReplacement(errorCode);
+    expect(actionExecuteSpy).toHaveBeenCalledWith('session.runtime.refresh', expect.objectContaining({ sessionId: 's1' }), expect.anything());
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[] | undefined;
+    await act(async () => { buttons?.find(button => button.text === 'approvals.technicalDetails')?.onPress?.(); });
+    expect(modalAlertSpy.mock.calls.at(-1)?.[1]).toContain(errorCode);
+  });
+
+  it('leads the runner banner Restart refused with agent_signed_out to the Machine Agent setup', async () => {
+    installStaleSessionRunnerStatus();
+    const real = await vi.importActual<typeof import('@/sync/ops/sessionRunnerRestart')>('@/sync/ops/sessionRunnerRestart');
+    restartStaleSessionRunnerSpy.mockImplementation(request => real.restartSessionRunnerOnCurrentRuntime(
+      request as Parameters<typeof real.restartSessionRunnerOnCurrentRuntime>[0],
+    ));
+    pendingRestartReceipt = createDeferred<unknown>();
+    pendingRestartReceipt.resolve({ ok: false, status: 'spawn_failed', sessionId: 's1', reasonCode: 'missing_credentials',
+      diagnostics: { respawnTerminalReason: 'agent_signed_out', detail: 'agent_signed_out', errorCode: 'agent_signed_out' } });
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await pressTestInstanceAsync(screen.findByTestId('session-staleRunner-restart'));
+    await settleDirectSessionView();
+    await waitForHomeGovernance(() => expect(modalAlertSpy).toHaveBeenCalled());
+    await expectMachineAgentSetupOffered('machineAgents.actionSignIn');
+    // The refusal is presented once; the banner stays an ordinary Restart for after sign-in.
+    expect(screen.findByTestId('session-staleRunner-restart')).not.toBeNull();
+    expect(findAgentInput(screen).props.statusBadges?.find((badge: { key?: string }) => badge.key === 'stale-session-runner')?.label)
+      .not.toBe('session.staleRunner.status.failed');
   });
 
   it.each(['stale runner', 'provider binding'] as const)('retires a deferred %s restart observation when leaving the screen', async (kind) => {

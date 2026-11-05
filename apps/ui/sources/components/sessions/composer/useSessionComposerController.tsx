@@ -243,6 +243,7 @@ import { getMachineSentenceName } from "@/utils/sessions/machineDisplayNames";
 import { describeMachinePresenceLine } from "@/utils/sessions/machinePresenceLine";
 import { resolveHomeDisplayLabel } from "@/components/settings/server/homeDisplayName";
 import { machineCollectionHref } from "@/components/settings/machines/collection/machineCollectionModel";
+import { presentMachineAgentStartRefusal } from "@/components/machines/agents/presentMachineAgentStartRefusal";
 import { publishHomeAccountChange } from "@/sync/runtime/orchestration/homeAccountChange";
 import { classifyHomeActionOutcome } from "@/sync/ops/home/homeActionOutcome";
 import { createActionApprovalContinuation, resumeActionExecutionResult } from "@/components/approvals/actionApprovalContinuation";
@@ -2363,6 +2364,16 @@ export function useSessionComposerController({
         staleSessionRunnerPresentation,
         usageLimitRecoveryPresentation,
     ]);
+    const presentMachineAgentRefusal = useEventCallback((code: unknown, targetMachineId: string | null): boolean => presentMachineAgentStartRefusal({
+        code,
+        agentTitle: currentAgentLabel,
+        machineName: getMachineSentenceName(sessionMachineRecord),
+        // A Machine this person cannot open, or a frame without app routes, has nowhere to lead.
+        setupTarget: targetMachineId && sessionMachineRecord && embedded?.navigation !== 'none'
+            ? { machineId: targetMachineId, serverId: sessionRouteServerId }
+            : null,
+        openSetup: (href) => router.push(href),
+    }));
     const handleStaleSessionRunnerRestart = React.useCallback(async () => {
         if (sessionViewCaller.signal.aborted) return;
         if (!hasWriteAccess) {
@@ -2399,6 +2410,10 @@ export function useSessionComposerController({
             onSessionRunnerRuntimeStatusInvalidated();
             return;
         }
+        if (presentMachineAgentRefusal(result.diagnostics?.errorCode, staleSessionRunnerRuntimeState.machineId ?? null)) {
+            setStaleSessionRunnerOperationStatus(null);
+            return;
+        }
         setStaleSessionRunnerOperationStatus({
             fingerprint: staleSessionRunnerPresentation.fingerprint,
             status: { kind: 'result', result },
@@ -2407,6 +2422,7 @@ export function useSessionComposerController({
         actionExecutor,
         hasWriteAccess,
         onSessionRunnerRuntimeStatusInvalidated,
+        presentMachineAgentRefusal,
         sessionRouteServerId,
         sessionViewCaller,
         sessionId,
@@ -5615,7 +5631,7 @@ export function useSessionComposerController({
                     setModelTransitionActionRequired(null);
                     return true;
                 }
-                alertComposerRunnerRestartFailure(result);
+                if (!presentMachineAgentRefusal(result.diagnostics?.errorCode, restartMachineId)) alertComposerRunnerRestartFailure(result);
                 return false;
             } catch (error) {
                 if (sessionViewCaller.signal.aborted) return false;
@@ -5625,6 +5641,7 @@ export function useSessionComposerController({
             actionExecutor,
             effectiveModelTransitionActionRequired,
             openSessionModelPicker,
+            presentMachineAgentRefusal,
             providerBindingStatus.status,
             providerLaunchBinding,
             sessionRouteServerId,

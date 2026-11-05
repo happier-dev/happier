@@ -6,7 +6,7 @@ import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 import { Modal } from '@/modal';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
-import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { presentMachineAgentStartRefusal } from '@/components/machines/agents/presentMachineAgentStartRefusal';
 import { sync } from '@/sync/sync';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -1852,29 +1852,18 @@ export function useCreateNewSession(params: Readonly<{
                         current.setIsCreating(false);
                         return;
                     }
-                    // The agent isn't on the machine or is signed out (typed by the daemon's spawn
-                    // precondition): say which, keep the draft, and lead to its setup (lab agent-setup ST).
+                    const refusedAgentId = 'agentId' in actionResult.result ? actionResult.result.agentId : null;
                     if (
-                        (actionResult.result.code === 'agent_cli_missing' || actionResult.result.code === 'agent_signed_out')
-                        && actionResult.result.agentId
+                        refusedAgentId
                         && selectedMachineId
+                        && presentMachineAgentStartRefusal({
+                            code: actionResult.result.code,
+                            agentTitle: resolveAgentCatalogProjection(refusedAgentId, { enabledAgentIds: [] }).title,
+                            machineName: current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId,
+                            setupTarget: presentsInPlaceRef.current ? null : { machineId: selectedMachineId, serverId: resolvedTargetServerId },
+                            openSetup: (href) => current.router.push(href as never),
+                        })
                     ) {
-                        const agentTitle = resolveAgentCatalogProjection(actionResult.result.agentId, { enabledAgentIds: [] }).title;
-                        const machineName = current.selectedMachine ? getMachineSentenceName(current.selectedMachine) : selectedMachineId;
-                        const setupHref = machineCollectionHref({ machineId: selectedMachineId, serverId: resolvedTargetServerId });
-                        Modal.alert(
-                            actionResult.result.code === 'agent_cli_missing'
-                                ? t('machineAgents.spawnCliMissing', { agent: agentTitle, machine: machineName })
-                                : t('machineAgents.spawnSignedOut', { agent: agentTitle, machine: machineName }),
-                            t('machineAgents.draftKept'),
-                            [
-                                { text: t('machineAgents.actionCancel'), style: 'cancel' },
-                                ...(!presentsInPlaceRef.current ? [{
-                                    text: actionResult.result.code === 'agent_cli_missing' ? t('machineAgents.setUp') : t('machineAgents.actionSignIn'),
-                                    onPress: () => current.router.push(setupHref as never),
-                                }] : []),
-                            ],
-                        );
                         current.setIsCreating(false);
                         return;
                     }
