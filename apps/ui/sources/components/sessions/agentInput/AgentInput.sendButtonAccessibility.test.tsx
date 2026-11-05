@@ -884,6 +884,32 @@ describe('AgentInput (send button accessibility)', () => {
         featureEnabledState.voice = true;
     });
 
+    it.each([
+        { name: 'voice owns the empty submit button', onMicPress: vi.fn(), isSendDisabled: false },
+        { name: 'the empty submit button is disabled', onMicPress: undefined, isSendDisabled: true },
+    ])('keeps a separate stop available while controls are hidden when $name', async ({ onMicPress, isSendDisabled }) => {
+        featureEnabledState.voice = true;
+        const { AgentInput } = await import('./AgentInput');
+        const onAbort = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="" placeholder="Type" onChangeText={() => {}}
+            onSend={() => {}} onAbort={onAbort} showAbortButton
+            onMicPress={onMicPress} isSendDisabled={isSendDisabled}
+            agentType="codex" onAgentClick={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+
+        await screen.pressByTestIdAsync('agent-input-controls-toggle');
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        await screen.pressByTestIdAsync('agent-input-abort');
+        expect(onAbort).toHaveBeenCalledTimes(1);
+        if (onMicPress) {
+            expect(onMicPress).not.toHaveBeenCalled();
+        }
+
+        await screen.unmount();
+    });
+
     it('omits the disclosure for a stop-only composer', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
@@ -947,6 +973,7 @@ describe('AgentInput (send button accessibility)', () => {
 
         await screen.pressByTestIdAsync('agent-input-controls-toggle');
         expect(screen.findByTestId('agent-input-controls-toggle')?.props.accessibilityState?.expanded).toBe(false);
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(0);
 
         const send = screen.findByTestId('session-composer-send');
         expect(send).toBeTruthy();

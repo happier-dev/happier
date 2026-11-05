@@ -461,6 +461,11 @@ describe('AgentInput (action bar scroll layout)', () => {
         const toggle = tree.root.findByProps({ testID: 'agent-input-controls-toggle' });
         expect(toggle.props.accessibilityState.expanded).toBe(true);
         expect(getActionBarScrollViews(tree)).toHaveLength(2);
+        const [primaryRow, secondaryRow] = getActionBarScrollViews(tree);
+        act(() => {
+            primaryRow!.props.onScroll({ nativeEvent: { contentOffset: { x: 72, y: 0 } } });
+            secondaryRow!.props.onScroll({ nativeEvent: { contentOffset: { x: 128, y: 0 } } });
+        });
         act(() => toggle.props.onPress());
         expect(toggle.props.accessibilityState.expanded).toBe(false);
         expect(getActionBarScrollViews(tree)).toHaveLength(0);
@@ -470,7 +475,10 @@ describe('AgentInput (action bar scroll layout)', () => {
         expect(onSend).toHaveBeenCalledTimes(1);
         act(() => toggle.props.onPress());
         expect(toggle.props.accessibilityState.expanded).toBe(true);
-        expect(getActionBarScrollViews(tree)).toHaveLength(2);
+        const restoredRows = getActionBarScrollViews(tree);
+        expect(restoredRows).toHaveLength(2);
+        expect(restoredRows[0]?.props.contentOffset).toEqual({ x: 72, y: 0 });
+        expect(restoredRows[1]?.props.contentOffset).toEqual({ x: 128, y: 0 });
         act(() => tree.unmount());
     });
 

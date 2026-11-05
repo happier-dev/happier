@@ -406,7 +406,7 @@ describe('AgentInput (action menu popover props)', () => {
             autocompleteKinds={[]} autocompleteSuggestions={async () => []}
         />);
         await screen.pressByTestIdAsync('agent-input-action-menu-button');
-        expect(getCapturedActionMenuActions().length).toBeGreaterThan(0);
+        expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(true);
         await screen.pressByTestIdAsync('agent-input-controls-toggle');
         await screen.pressByTestIdAsync('agent-input-controls-toggle');
         expect(screen.findAllByType('Popover').some((node) => node.props.open)).toBe(false);

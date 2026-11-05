@@ -99,7 +99,7 @@ import { useTextInputCaretRect } from '@/hooks/ui/textInputCaretRect';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import type { PermissionModePickerStyles } from './components/permissionModePickerStyles';
 import { AgentInputAttentionRequests } from './components/AgentInputPermissionRequests';
-import { AgentInputSubmitButton } from './components/AgentInputSubmitButton';
+import { AgentInputSubmitButton, canAgentInputSubmitButtonStopRun } from './components/AgentInputSubmitButton';
 import {
     DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
     resolveChipOptionInteraction,
@@ -2343,6 +2343,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     } = useAgentInputSelectionAnchors();
     const [showActionMenu, setShowActionMenu] = React.useState(false);
     const [controlsExpanded, setControlsExpanded] = React.useState(true);
+    const primaryControlsScrollOffsetRef = React.useRef(0);
+    const secondaryControlsScrollOffsetRef = React.useRef(0);
     const statusBadgeAnchorRef = React.useRef<any>(null);
     const [uncontrolledActiveStatusBadgeKey, setUncontrolledActiveStatusBadgeKey] = React.useState<string | null>(null);
     const activeStatusBadgeKey = props.activeStatusBadgeKey !== undefined
@@ -2497,6 +2499,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasResume = Boolean(props.onResumeClick || props.resumePopover);
     const hasFiles = Boolean(props.sessionId && props.onFileViewerPress);
     const canStopFromComposer = Boolean(props.onAbort && props.showAbortButton);
+    const submitCanStopRun = canAgentInputSubmitButtonStopRun({
+        disabled: sendActionDisabled,
+        hasSendableContent,
+        canStop: canStopFromComposer,
+        hasMicPressHandler: Boolean(micPressHandler),
+        armedContinuationTarget: props.armedContinuationTarget,
+    });
     const hasStop = canStopFromComposer;
     const hasAnyActions = getHasAnyAgentInputActions({
         showPermissionChip,
@@ -3088,6 +3097,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 >
                     {!controlsExpanded ? <View style={styles.actionButtonsLeftScroll} /> : actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
+                            scrollOffsetRef={primaryControlsScrollOffsetRef}
                             containerStyle={styles.actionButtonsLeftScroll}
                             contentStyle={styles.actionButtonsLeftScrollContent}
                             fadeColor={actionBarFadeColor}
@@ -3115,7 +3125,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             <Icon name={controlsExpanded ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.composer.chipTint} />
                         </Pressable>
                     ) : null}
-                    {!controlsExpanded && canStopFromComposer && (hasSendableContent || props.armedContinuationTarget != null)
+                    {!controlsExpanded && canStopFromComposer && !submitCanStopRun
                         ? createAbortActionButton({
                             shakerRef,
                             isAborting,
@@ -3129,7 +3139,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionSend : AGENT_INPUT_TEST_IDS.newSessionSend}
                         sessionId={props.sessionId}
                         submitAccessibilityLabel={props.submitAccessibilityLabel}
-                        disabled={Boolean(props.disabled || props.isSendDisabled || props.isSending)}
+                        disabled={sendActionDisabled}
                         isSending={props.isSending}
                         isStopping={isAborting}
                         hasSendableContent={hasSendableContent}
@@ -3147,6 +3157,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     actionBarShouldScroll ? (
                         <AgentInputScrollableChipRow
                             key="row2"
+                            scrollOffsetRef={secondaryControlsScrollOffsetRef}
                             containerStyle={styles.actionButtonsSecondaryScroll}
                             contentStyle={styles.actionButtonsScrollViewportContent}
                             fadeColor={actionBarFadeColor}
