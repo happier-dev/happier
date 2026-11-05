@@ -73,7 +73,7 @@ import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from '../connect/configurationActionIdsV1.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
 import { ACTION_POLICY_ACTION_IDS } from './actionPolicyActionIds.js';
-import { APP_SHELL_ACTION_IDS } from './appShellActionFamily.js';
+import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 import { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
 import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
