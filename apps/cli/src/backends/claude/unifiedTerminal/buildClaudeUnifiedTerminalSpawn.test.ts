@@ -285,32 +285,37 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
   );
 
   it('preserves Windows verbatim argument handling from the resolved Claude invocation', async () => {
-    const spawn = await buildClaudeUnifiedTerminalSpawn({
-      path: 'C:\\workspace\\project',
-      first: {
-        message: 'hello',
-        mode: {
-          permissionMode: 'default',
+    patchProcessPlatform('win32');
+    await withPatchedEnv({ ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' }, async () => {
+      const spawn = await buildClaudeUnifiedTerminalSpawn({
+        path: 'C:\\workspace\\project',
+        first: {
+          message: 'hello',
+          mode: {
+            permissionMode: 'default',
+          },
         },
-      },
-      deps: {
-        resolveClaudeCliPath: () => 'C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd',
-        isClaudeCliJavaScriptFile: () => false,
-        ensureClaudeJsRuntimeExecutable: async () => 'C:\\happier\\runtime.exe',
-        claudeLocalLauncherPath: 'C:\\happier\\scripts\\claude_local_launcher.cjs',
-        terminalLaunchSpecRunnerPath: 'C:\\happier\\scripts\\terminal_launch_spec_runner.cjs',
-        resolveCommandInvocation: () => ({
-          command: 'C:\\Windows\\System32\\cmd.exe',
-          args: ['/d', '/s', '/c', '"C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd"'],
-          windowsVerbatimArguments: true,
-        }),
-      },
-    });
+        deps: {
+          resolveClaudeCliPath: () => 'C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd',
+          isClaudeCliJavaScriptFile: () => false,
+          ensureClaudeJsRuntimeExecutable: async () => 'C:\\happier\\runtime.exe',
+          claudeLocalLauncherPath: 'C:\\happier\\scripts\\claude_local_launcher.cjs',
+          terminalLaunchSpecRunnerPath: 'C:\\happier\\scripts\\terminal_launch_spec_runner.cjs',
+          resolveCommandInvocation: () => ({
+            command: 'C:\\Windows\\System32\\cmd.exe',
+            args: ['/d', '/s', '/c', '"C:\\Users\\alice\\AppData\\Roaming\\npm\\claude.cmd"'],
+            windowsVerbatimArguments: true,
+          }),
+        },
+      });
 
-    const launchSpec = await readLaunchSpecFromSpawn(spawn);
-    expect(launchSpec).toMatchObject({
-      command: 'C:\\Windows\\System32\\cmd.exe',
-      windowsVerbatimArguments: true,
+      const launchSpec = await readLaunchSpecFromSpawn(spawn);
+      expect(launchSpec).toMatchObject({
+        command: 'C:\\Windows\\System32\\cmd.exe',
+        windowsVerbatimArguments: true,
+      });
+      expect(launchSpec.env).toMatchObject({ ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' });
+      expect(spawn.spawnEnv).toMatchObject({ ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)' });
     });
   });
 

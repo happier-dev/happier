@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
+import { isWindowsSystemEnvKey } from '@/utils/env/windowsSystemEnv';
 import { toPowerShellStringLiteral } from '@/utils/powerShellCommand';
 
 type PowerShellInvocation = {
@@ -11,13 +12,8 @@ type PowerShellInvocation = {
 const WINDOWS_TERMINAL_HOST_ENV_KEYS = new Set([
   'PATH',
   'HOME',
-  'USERPROFILE',
   'TMP',
   'TEMP',
-  'SystemRoot',
-  'WINDIR',
-  'PATHEXT',
-  'ComSpec',
 ]);
 
 function quoteWindowsProcessArgument(value: string): string {
@@ -76,7 +72,7 @@ function buildWindowsTerminalProcessEnv(params: Readonly<{
 
   const base: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === 'string' && isAllowedExactEnvKey(key, WINDOWS_TERMINAL_HOST_ENV_KEYS, 'win32')) {
+    if (typeof value === 'string' && (isWindowsSystemEnvKey(key, 'win32') || isAllowedExactEnvKey(key, WINDOWS_TERMINAL_HOST_ENV_KEYS, 'win32'))) {
       base[key] = value;
     }
   }

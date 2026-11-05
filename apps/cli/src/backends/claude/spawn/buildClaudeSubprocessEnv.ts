@@ -8,6 +8,7 @@ import {
 } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
+import { isWindowsSystemEnvKey } from '@/utils/env/windowsSystemEnv';
 
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
 import { isolateClaudeRuntimeAuthEnv } from './isolateClaudeRuntimeAuthEnv';
@@ -60,12 +61,6 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
     HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
   ]);
 
-  if (process.platform === 'win32') {
-    for (const key of ['USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'WINDIR']) {
-      allowExact.add(key);
-    }
-  }
-
   const allowPrefixes = [
     'XDG_',
     'CLAUDE_',
@@ -85,10 +80,13 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
   ]);
 
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (!isValidEnvVarKey(key)) continue;
+    const windowsSystemKey = isWindowsSystemEnvKey(key);
+    // Windows defines system names such as ProgramFiles(x86), which are not
+    // valid POSIX shell assignment names. Do not widen explicit env validation.
+    if (!windowsSystemKey && !isValidEnvVarKey(key)) continue;
     if (denyExact.has(key)) continue;
     if (typeof value !== 'string') continue;
-    if (explicitSpawnEnvKeys.has(key) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
+    if (windowsSystemKey || explicitSpawnEnvKeys.has(key) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
       out[key] = value;
     }
   }

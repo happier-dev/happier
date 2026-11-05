@@ -72,6 +72,7 @@ describe('startProcessInWindowsTerminal', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     delete process.env.HAPPIER_WINDOWS_TERMINAL_SECRET_PROBE;
     if (originalPath === undefined) {
       delete process.env.Path;
@@ -81,6 +82,8 @@ describe('startProcessInWindowsTerminal', () => {
   });
 
   it('can launch with a minimal Windows host environment plus explicit child env', async () => {
+    vi.stubEnv('ProgramFiles', 'C:\\Program Files');
+    vi.stubEnv('ProgramFiles(x86)', 'C:\\Program Files (x86)');
     process.env.HAPPIER_WINDOWS_TERMINAL_SECRET_PROBE = 'must-not-leak';
     process.env.Path = 'C:\\Windows\\System32;C:\\Tools';
     const child = createFakeChildProcess();
@@ -106,5 +109,7 @@ describe('startProcessInWindowsTerminal', () => {
     expect(options?.env?.ZELLIJ_SOCKET_DIR).toBe('C:\\Temp\\zellij');
     expect(options?.env?.Path ?? options?.env?.PATH).toBe('C:\\Windows\\System32;C:\\Tools');
     expect(options?.env?.HAPPIER_WINDOWS_TERMINAL_SECRET_PROBE).toBeUndefined();
+    expect(options?.env?.ProgramFiles).toBe('C:\\Program Files');
+    expect(options?.env?.['ProgramFiles(x86)']).toBe('C:\\Program Files (x86)');
   });
 });

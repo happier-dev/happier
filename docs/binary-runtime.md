@@ -70,6 +70,13 @@ quoting, including npm JavaScript wrappers and wrappers whose target is missing
 or still a text placeholder. Recognition does not choose a different installation
 or modify the subprocess environment.
 
+In current development source (not yet released), filtered Claude and terminal
+launcher environments share `apps/cli/src/utils/env/windowsSystemEnv.ts` for the
+Windows system-variable baseline. They retain inherited installation and shared
+data paths, including `ProgramFiles` (used by Docker CLI plugin discovery) and
+`ProgramFiles(x86)`, with Windows case-insensitive key matching. This does not
+copy arbitrary ambient secrets or synthesize missing variables such as `HOME`.
+
 In current development source, vendor installers preserve the Windows process
 environment's `Path` spelling; cloning that environment and replacing it with an
 empty `PATH` prevents executable resolution. Only POSIX recipes prepend user
