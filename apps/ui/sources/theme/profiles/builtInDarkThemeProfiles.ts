@@ -307,7 +307,7 @@ export const sunsetDarkProfile = createBuiltInProfile('sunsetDark', 'Sunset Dark
         'control.permissionButton.selected.background': '#2A2222',
         'control.permissionButton.selected.border': 'rgba(255,255,255,0.090)',
         'control.permissionButton.selected.foreground': '#EFEFEF',
-        'message.user.background': '#302A29',
+        'message.user.background': '#292423',
         'message.user.foreground': '#EFEFEF',
         'message.agent.foreground': '#EFEFEF',
         'message.event.foreground': '#8A817C',

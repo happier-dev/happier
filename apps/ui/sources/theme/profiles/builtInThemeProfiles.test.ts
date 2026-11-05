@@ -68,7 +68,7 @@ const sunsetDarkSeed = {
     'control.permissionButton.inactive.foreground': '#8A817C',
     'control.permissionButton.selected.background': '#2A2222',
     'control.permissionButton.selected.border': 'rgba(255,255,255,0.090)',
-    'message.user.background': '#302A29',
+    'message.user.background': '#292423',
     'message.event.foreground': '#8A817C',
     'syntax.keyword': '#D06A49',
     'syntax.string': '#66DC7E',

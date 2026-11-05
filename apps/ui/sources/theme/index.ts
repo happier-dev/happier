@@ -758,7 +758,7 @@ const darkThemeBase = {
         // Message View colors
         message: {
             user: {
-                background: '#302A29',
+                background: '#292423',
                 foreground: '#EFEFEF',
             },
             agent: {

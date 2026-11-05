@@ -102,7 +102,7 @@ describe('canonical theme color shape', () => {
         expect(darkTheme.colors).toHaveProperty('state.active.background', 'rgba(158, 185, 255, 0.12)');
         expect(darkTheme.colors).toHaveProperty('state.active.border', 'rgba(158, 185, 255, 0.50)');
 
-        expect(darkTheme.colors).toHaveProperty('message.user.background', '#302A29');
+        expect(darkTheme.colors).toHaveProperty('message.user.background', '#292423');
         expect(darkTheme.colors).toHaveProperty('message.user.foreground', '#EFEFEF');
         expect(darkTheme.colors).toHaveProperty('message.agent.foreground', '#EFEFEF');
         expect(darkTheme.colors).toHaveProperty('message.event.foreground', '#8A817C');
