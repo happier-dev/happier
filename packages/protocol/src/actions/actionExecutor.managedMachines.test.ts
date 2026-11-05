@@ -4,10 +4,33 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
+import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } as const;
+
+describe('unexpected Action failure diagnostics', () => {
+  it('retains a closed child failureCause and enrollment phase while redacting the message and dropping opaque details', () => {
+    const error = Object.assign(new Error('token=PRIVATE_TOKEN'), { name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN',
+      details: { token: 'PRIVATE_TOKEN' },
+      failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN',
+        httpStatus: null, phase: 'machines.agentIsolation.preview' } });
+    const failure = normalizeActionExecutorThrownError(error);
+    expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: error.failureCause });
+    expect(failure).not.toHaveProperty('details');
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_TOKEN');
+    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
+    const privateFields = normalizeActionExecutorThrownError(Object.assign(new TypeError('token=PRIVATE_TOKEN'), {
+      code: 'PRIVATE_TOKEN', details: { token: 'PRIVATE_TOKEN', phase: 'PRIVATE_PHASE' },
+    }));
+    expect(privateFields).toMatchObject({ errorCode: 'action_failed',
+      failureCause: { errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+    expect(privateFields).not.toHaveProperty('details');
+    expect(JSON.stringify(privateFields)).not.toMatch(/PRIVATE_/);
+  });
+});
 
 describe('machine environment apply admission', () => {
   it('runs only the reviewed preset revision after confirmation through the machine transport', async () => {
@@ -44,6 +67,155 @@ const agentContext = {
 } as const;
 
 describe('managed Machine Action executor', () => {
+  it('preserves the closed controller authority comparison after prepared-task serialization', () => {
+    const message = 'The acquired enrollment runtime does not match the resolved Home authority (authorityReason descriptor; authorityPhase controller_approval; authorityCarrier https; authorityDescriptorPresent false).';
+    const failure = normalizeActionExecutorThrownError({ code: 'HOME_AUTHORITY_MISMATCH', message,
+      url: 'https://private', token: 'private' });
+    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual({ errorCode: 'HOME_AUTHORITY_MISMATCH', error: message,
+      failureCause: { phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null },
+      details: { kind: 'homeAuthorityMismatch', authorityReason: 'descriptor', authorityPhase: 'controller_approval',
+        authorityCarrier: 'https', authorityDescriptorPresent: false } });
+    const rejected = normalizeActionExecutorThrownError({ code: 'HOME_AUTHORITY_MISMATCH', message: message + ' token=PRIVATE_TOKEN' });
+    expect(rejected).not.toHaveProperty('details');
+    expect(JSON.stringify(rejected)).not.toContain('PRIVATE_TOKEN');
+  });
+  it.each([
+    { code: 'auth_enrollment_timeout', category: 'enrollment_deadline' },
+    { code: 'auth_request_expired', category: 'pairing_deadline' },
+    { code: 'cancelled', category: 'caller_abort' },
+  ])('keeps the controller $category diagnostic and refusal code in the Action and operation', async ({ code, category }) => {
+    const message = `Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus unknown; signal unknown; stdoutPresent unknown; stderrPresent unknown; elapsedBucket under_1s; requestEventSeen false; finalResultEventSeen false; guestCliCode unknown; guestAuthCategory unknown; controllerAbortCategory ${category})`;
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error(message), { code });
+    } } as ActionExecutorDeps);
+    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
+      .toEqual({ ok: false, errorCode: code, error: message,
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+  it.each([
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 1; signal unknown; stdoutPresent true; stderrPresent true; elapsedBucket at_least_600s; requestEventSeen true; finalResultEventSeen false; guestCliCode AUTH_ENROLL_REMOTE_TIMEOUT; guestAuthCategory deadline_elapsed; controllerAbortCategory none)', valid: true },
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 1; signal unknown; stdoutPresent true; stderrPresent true; elapsedBucket private_secret; requestEventSeen true; finalResultEventSeen false; guestCliCode AUTH_ENROLL_REMOTE_TIMEOUT; guestAuthCategory deadline_elapsed; controllerAbortCategory none)', valid: false },
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 137; signal SIGKILL-compatible; stdoutPresent false; stderrPresent false)', valid: true },
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 1; signal unknown; stdoutPresent false; stderrPresent true)', valid: true },
+    { message: 'Remote Home enrollment failed. (phase auth.request; exitStatus 137; signal SIGKILL-compatible; stdoutPresent false; stderrPresent false)', valid: true },
+    { message: 'Remote Home enrollment failed during auth wait (exit 1; code HOME_FEATURES_NETWORK; category auth_error).', valid: true },
+    { message: 'Remote Home enrollment failed during auth wait (exit 1; code private_secret; category auth_error).', valid: false },
+    { message: 'private stderr and pairing secrets', valid: false },
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 1; signal SIGKILL-compatible; stdoutPresent false; stderrPresent false)', valid: false },
+    { message: 'Remote Home enrollment failed. (phase private.secret; exitStatus 137; signal SIGKILL-compatible; stdoutPresent false; stderrPresent false)', valid: false },
+    { message: 'Remote Home enrollment failed. (phase auth.enroll-remote; exitStatus 137; signal SIGKILL-compatible; stdoutPresent false; stderrPresent false) private stderr', valid: false },
+  ])('retains only closed enrollment process facts at Action settlement ($valid)', async ({ message, valid }) => {
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error(message), { code: 'remote_command_failed' });
+    } } as ActionExecutorDeps);
+    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
+      .toEqual({ ok: false, errorCode: 'remote_command_failed', error: valid ? message : 'Remote command failed.',
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+
+  it.each([
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent true; stderrPresent false; guestCliCode service_start_timeout; serviceStep bootstrap; serviceStepStatus deadline_elapsed)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent true; stderrPresent false; guestCliCode service_ownership_failed; serviceStep wait; serviceStepStatus failed; serviceReason launchd_exited)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent true; stderrPresent false; guestCliCode private_secret; serviceStep bootstrap; serviceStepStatus failed)', valid: false },
+    { message: 'The SSH command failed. (phase auth.status; exitStatus 1; stdoutPresent true; stderrPresent false; guestCliCode service_start_timeout; serviceStep bootstrap; serviceStepStatus deadline_elapsed)', valid: false },
+    { message: 'The SSH command failed. (phase daemon.service.install; exitStatus 1; stdoutPresent false; stderrPresent true)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus unknown; stdoutPresent unknown; stderrPresent unknown)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent false; stderrPresent true; reason launchctl_io_error)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent false; stderrPresent true; reason launchctl_domain_unsupported)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent false; stderrPresent true; reason launchctl_service_missing)', valid: true },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent false; stderrPresent true; reason private_secret)', valid: false },
+    { message: 'The SSH command failed. (phase auth.status; exitStatus 1; stdoutPresent false; stderrPresent true; reason launchctl_io_error)', valid: false },
+    { message: 'The SSH command failed. (phase daemon.service.start; exitStatus 1; stdoutPresent false; stderrPresent true; reason launchctl_io_error) private stderr', valid: false },
+    { message: 'private output /Users/person/secret', valid: false },
+    { message: 'The SSH command failed. (phase private.secret; exitStatus 1; stdoutPresent false; stderrPresent true)', valid: false },
+    { message: 'The SSH command failed. (phase daemon.service.install; exitStatus 9007199254740992; stdoutPresent false; stderrPresent true)', valid: false },
+    { message: 'The SSH command failed. (phase daemon.service.install; exitStatus 1; stdoutPresent false; stderrPresent true) private output', valid: false },
+    { message: 'The SSH command failed. (phase daemon.service.install; exitStatus 1; stdoutPresent secret; stderrPresent true)', valid: false },
+  ])('retains only closed SSH command facts at public Action settlement ($valid, $message)', async ({ message, valid }) => {
+    // The installed CLI controller is outside Protocol's process boundary.
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error(message), { code: 'ssh_command_failed' });
+    } } as ActionExecutorDeps);
+    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
+      .toEqual({ ok: false, errorCode: 'ssh_command_failed', error: valid ? message : 'The SSH command failed.',
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+
+  it('retains closed bootstrap interpreter facts at public Action settlement without native content', async () => {
+    const diagnostic = { kind: 'managedBootstrap', phase: 'check', response: 'missing_result', exitStatus: 127,
+      stdoutPresent: false, stderrPresent: true };
+    let details: unknown = diagnostic;
+    // The installed controller is an external host boundary of Protocol's executor.
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error('token=PRIVATE_BOOTSTRAP_TOKEN'), { code: 'bootstrap_effect_unconfirmed', details });
+    } } as ActionExecutorDeps);
+    const input = { homeId: 'home', managedId: 'managed', expectedIntentRevision: 1 };
+    const context = { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } } as const;
+    const result = await executor.execute('machines.managed.bootstrap.retry', input, context);
+    expect(result).toEqual({ ok: false, errorCode: 'bootstrap_effect_unconfirmed', error: 'bootstrap_effect_unconfirmed', details,
+      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    expect(JSON.stringify(result)).not.toContain('private interpreter stderr');
+    details = { ...diagnostic, stderr: 'private interpreter stderr' };
+    const invalid = await executor.execute('machines.managed.bootstrap.retry', input, context);
+    expect(invalid).toMatchObject({ errorCode: 'action_failed', failureCause: { errorClass: 'Error' } });
+    expect(invalid).not.toHaveProperty('details');
+    expect(JSON.stringify(invalid)).not.toContain('PRIVATE_BOOTSTRAP_TOKEN');
+  });
+  it.each(['native_resource_unavailable', 'native_action_failed'])('keeps terminal native bootstrap reasons without forwarding diagnostics (%s)', async code => {
+    let entered = false;
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      entered = true;
+      throw Object.assign(new Error('private native diagnostic'), { code });
+    } } as ActionExecutorDeps);
+    const result = await executor.execute('machines.managed.bootstrap.retry', { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 },
+      { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
+    expect(entered).toBe(true);
+    expect(result).toEqual({ ok: false, errorCode: code, error: code,
+      failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+
+  it.each([
+    ['ssh_password_expired', 'The SSH login account requires a password change.'],
+    ['ssh_host_key_changed', 'The SSH host key could not be verified.'],
+    ['ssh_host_key_unverified', 'The SSH host key could not be verified.'],
+    ['ssh_command_failed', 'The SSH command failed.'],
+  ])('keeps SSH failure codes and fixed messages across the host boundary (%s)', async (code, message) => {
+    // The installed CLI controller is outside Protocol's process boundary.
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error('private host diagnostic'), { code });
+    } } as ActionExecutorDeps);
+    expect(await executor.execute('machines.managed.acquire', acquireInput, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
+      .toEqual({ ok: false, errorCode: code, error: message,
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+  });
+  it.each([
+    { code: 'provider_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'uniqueness_error' } },
+    { code: 'provider_unavailable', nativeCause: { localCause: 'native_options_changed' } },
+    { code: 'native_action_failed', nativeCause: { httpStatusClass: '5xx', code: 'service_error' } },
+    { code: 'native_access_refused', nativeCause: { grpcStatusCode: 7 } },
+    { code: 'native_access_refused', nativeCause: { sdkError: 'NotFoundError' } },
+  ] as const)('retains closed managed native diagnostics at Action settlement ($code, $nativeCause)', async ({ code, nativeCause }) => {
+    // The installed controller is an external host boundary of Protocol's executor.
+    let details: unknown = { kind: 'managedNative', nativeCause };
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error('token=PRIVATE_NATIVE_TOKEN'), { code, details });
+    } } as ActionExecutorDeps);
+    const context = { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } } as const;
+    expect(await executor.execute('machines.managed.acquire', acquireInput, context))
+      .toEqual({ ok: false, errorCode: code, error: code, details,
+        failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    details = { kind: 'managedNative', nativeCause: { ...nativeCause, message: 'private native response' } };
+    const invalid = await executor.execute('machines.managed.acquire', acquireInput, context);
+    expect(invalid).not.toHaveProperty('details.nativeCause');
+    expect(JSON.stringify(invalid)).not.toMatch(/nativeCause|PRIVATE_NATIVE_TOKEN/);
+  });
+
   it('retires only exact-target Delete approvals without opening unrelated bodies across pages', async () => {
     const actionArgs = { homeId: 'home', managedId: 'managed', when: 'now', expectedRevision: 4,
       intent: 'delete', reviewedDependencies: true } as const;
@@ -368,9 +540,10 @@ describe('managed Machine Action executor', () => {
     expect(await refused.execute('machines.managed.get', { homeId: 'home', managedId: 'managed' }, { surface: 'cli' }))
       .toEqual({ ok: false, errorCode: 'permission_denied', error: 'permission_denied' });
     const unavailable = createActionExecutor({ managedMachineAction: async () => {
-      throw Object.assign(new Error('private diagnostics'), { code: 'controller_unavailable' });
+      throw Object.assign(new Error('Controller unavailable at /repo/workspace'), { code: 'controller_unavailable' });
     } } as unknown as ActionExecutorDeps);
     expect(await unavailable.execute('machines.managed.list', { homeId: 'home' }, { surface: 'cli' }))
-      .toEqual({ ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' });
+      .toEqual({ ok: false, errorCode: 'controller_unavailable', error: 'Controller unavailable at /repo/workspace',
+        failureCause: { phase: 'machines.managed.list', errorClass: 'Error', errorCode: null, httpStatus: null } });
   });
 });

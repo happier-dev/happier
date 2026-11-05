@@ -4613,6 +4613,22 @@ and Action execution preserve that observation through the terminal operation.
 Response bodies, messages, headers, credentials and schema issue values are never
 part of this diagnostic. V1 continues projecting only `errorCode` and `error`.
 
+Unexpected Action exceptions in the development read retain optional `failureCause`
+on Action and operation failures: the producer phase, known exception class,
+allowlisted error code (or null), and HTTP status (or null). This replaces the
+`actionException` details kind, leaving domain details available alongside it.
+The Action owner projects at most one immediate native cause when the outer
+error has no known code; transport adapters preserve the producer's cause and
+phase. Managed enrollment preserves the administrator or isolation child phase.
+The existing `error` message uses the bug-report redactor, which removes secrets,
+tokens and labeled secret paths while deliberately retaining ordinary diagnostic
+paths. Stack traces, opaque exception fields and native output are excluded from
+the typed cause. Confidential continuation still exposes only its closed failure.
+The V1 operation projection omits diagnostics; existing failures without `failureCause`
+remain readable. Released 0.2 RPC readers select error and code and ignore this
+optional field. Accepted-spawn recovery identity remains in its existing details.
+No error-code family, wire epoch, migration or alternate operation owner is added.
+
 The unreleased Machine-provisioner V1 role schemas are exported through the public
 SDK and serialized into manifest V2 Action declarations. A current host accepts an
 older result-schema snapshot that omits optional properties, including nested facts;

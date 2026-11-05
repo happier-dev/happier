@@ -1,12 +1,13 @@
 import type { ManagedAgentIsolationFailureDetailsV1, ManagedBootstrapFailureDetailsV1, ManagedControllerRequestFailureDetailsV1, ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { ActionExceptionFailureDetailsV1Schema, projectActionExceptionFailureDetailsV1,
-    type ActionExecuteFailure, type ActionExceptionFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1,
+    type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export class ManagedMachineControllerError extends Error {
     constructor(readonly code: string, readonly status?: number,
-        readonly details?: ManagedControllerRequestFailureDetailsV1 | ManagedNativeFailureDetailsV1 | ManagedBootstrapFailureDetailsV1 | ManagedAgentIsolationFailureDetailsV1 | ActionExceptionFailureDetailsV1) {
+        readonly details?: ManagedControllerRequestFailureDetailsV1 | ManagedNativeFailureDetailsV1 | ManagedBootstrapFailureDetailsV1 | ManagedAgentIsolationFailureDetailsV1,
+        readonly failureCause?: ActionFailureCauseV1) {
         super(code);
         this.name = 'ManagedMachineControllerError';
     }
@@ -14,9 +15,8 @@ export class ManagedMachineControllerError extends Error {
     /** Child Actions return public failures, never raw exceptions or message text. */
     static fromActionFailure(failure: ActionExecuteFailure, phase: ActionId): ManagedMachineControllerError {
         const error = new ManagedMachineControllerError(failure.errorCode);
-        const cause = ActionExceptionFailureDetailsV1Schema.safeParse(failure.details);
         return new ManagedMachineControllerError(failure.errorCode, undefined,
-            cause.success ? { ...cause.data, phase } : projectActionExceptionFailureDetailsV1(error, phase));
+            undefined, failure.failureCause ?? projectActionFailureCauseV1(error, phase));
     }
 }
 

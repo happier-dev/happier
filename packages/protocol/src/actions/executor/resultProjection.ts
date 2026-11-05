@@ -2,6 +2,8 @@ import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { projectActionExecuteFailure } from '../actionExecutionResult.js';
 import { isRecord } from '../../inputs/inputRecords.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { isPluginError } from '../../plugins/errors.js';
+import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
 import { PublicProfileAccountScopeError } from './publicProfileActions.js';
 import { RegistryFetchErrorV1, RegistrySourceStatusV1Schema } from '../../registries/registryListV1.js';
@@ -20,8 +22,8 @@ import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProg
 import { MemoryDecisionSourceErrorCodeV1Schema } from '../../prompts/library/memoryActionsV1.js';
 import { SkillUnavailableReasonV1Schema } from '../../prompts/library/skills/skillLibraryItemV1.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { isActionOutcomeUnknownErrorCodeV1, ActionExceptionFailureDetailsV1Schema,
-  projectActionExceptionFailureDetailsV1 } from '../actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, ActionFailureCauseV1Schema,
+  projectActionFailureCauseV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunTransportErrorCodeSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
@@ -33,7 +35,17 @@ import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } f
 
 const RPC_ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(RPC_ERROR_CODES));
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: ActionId): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: false }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: false }> {
+  const failure = classifyActionExecutorThrownError(error);
+  let carriedCause: unknown;
+  try { carriedCause = isPluginError(error) ? error.data.failureCause : readRecord(error).failureCause; }
+  catch { /* A diagnostic carrier accessor cannot replace the original Action failure. */ }
+  const forwarded = ActionFailureCauseV1Schema.safeParse(carriedCause);
+  return { ...failure, error: redactBugReportSensitiveText(failure.error),
+    failureCause: forwarded.success ? forwarded.data : projectActionFailureCauseV1(error, phase) };
+}
+
+function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: false }> {
   if (error instanceof PublicProfileAccountScopeError) return { errorCode: error.code, error: error.code };
   if (error instanceof RegistryFetchErrorV1) {
     const status = RegistrySourceStatusV1Schema.safeParse(error.status);
@@ -169,11 +181,10 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: Actio
     };
   }
 
-  const cause = ActionExceptionFailureDetailsV1Schema.safeParse(rawDetails);
   return {
     errorCode: 'action_failed',
-    error: 'action_failed',
-    details: { ...(cause.success ? cause.data : projectActionExceptionFailureDetailsV1(error, phase)), ...details },
+    error: message || 'action_failed',
+    ...(details ? { details } : {}),
   };
 }
 

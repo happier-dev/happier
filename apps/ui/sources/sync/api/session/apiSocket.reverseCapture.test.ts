@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -99,6 +100,34 @@ afterEach(() => {
 });
 
 describe('apiSocket inbound machine-scoped reverse RPC (RU2 G1)', () => {
+    it.each(['plain', 'e2ee'] as const)('redacts thrown RPC messages and preserves producer causes in %s replies', async mode => {
+        const { socket } = createSocketStub();
+        const machineId = mode === 'plain' ? 'catch-plain-machine' : 'machine-1';
+        const machineEncryption = createMachineEncryption();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: mode })], true);
+        await bootApiSocket({ socket, getMachineEncryption: () => mode === 'plain' ? null : machineEncryption });
+        const content = mode === 'plain' ? { mode: 'plain' as const } : callerContent;
+        const receive = getRegisteredHandler(socket, SOCKET_RPC_EVENTS.REQUEST)!;
+        const producerCause = ActionFailureCauseV1Schema.parse({ phase: 'machine.setup.apply', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null });
+        for (const cause of [undefined, producerCause]) {
+            const method = `${machineId}:ui.throwing`;
+            const dispose = apiSocket.registerMachineScopedRpcHandler(machineId, 'ui.throwing', async () => {
+                throw cause ? Object.assign(new Error('request failed token=PRIVATE_TOKEN'), { failureCause: cause })
+                    : Object.assign(new Error('request failed token=PRIVATE_TOKEN'), { code: 'ECONNRESET' });
+            });
+            try {
+                const params = await socketRpcCodec.encodeParams(content, {}, { method, callId });
+                const ack = await new Promise<unknown>(resolve => receive({ method, params }, resolve));
+                const result = await socketRpcCodec.decodeResult(content, { ok: true, result: ack }, callId);
+                expect(result).toEqual({ error: expect.stringContaining('request failed'), failureCause: cause ?? {
+                    phase: 'rpc.handler', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null,
+                } });
+                expect(JSON.stringify(result)).not.toContain('PRIVATE_TOKEN');
+            } finally { dispose(); }
+        }
+    });
+
     it('fingerprints token-only admitted reads without exposing the bearer or merging replacement tokens', async () => {
         const { socket } = createSocketStub();
         socket.emitWithAck.mockResolvedValue({ ok: true, result: { ready: true } });

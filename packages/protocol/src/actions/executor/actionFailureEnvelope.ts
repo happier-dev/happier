@@ -2,6 +2,7 @@ import { normalizeSpawnSessionErrorDetail, SpawnSessionErrorCodeSchema } from '.
 import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
+import { ActionFailureCauseV1Schema } from '../actionExecutionResult.js';
 
 /** A received client refusal proves this write did not admit new work; a lost reply does not. */
 export function isConfirmedActionWriteRefusal(error: unknown): boolean {
@@ -27,14 +28,14 @@ export function readMachineActionRpcResult<T>(result: T): T {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
   const record = result as Readonly<Record<string, unknown>>;
   if (typeof record.error !== 'string'
-    || Object.keys(record).some(key => key !== 'error' && key !== 'errorCode' && key !== 'details' && key !== 'effectAttempted')) return result;
+    || Object.keys(record).some(key => key !== 'error' && key !== 'errorCode' && key !== 'details' && key !== 'effectAttempted' && key !== 'failureCause')) return result;
   if ('effectAttempted' in record && typeof record.effectAttempted !== 'boolean') return result;
   if ('errorCode' in record && (typeof record.errorCode !== 'string' || !record.errorCode.trim())) return result;
   // cli-v0.2.16 serializes untyped handler exceptions as { error } only.
   const failure = readActionFailureEnvelope({ ...record, ok: false, errorCode: record.errorCode ?? 'action_failed' })!;
   // Throw at this boundary so a typed adapter cannot parse the refusal as its
   // successful payload. The Action executor already preserves RpcError codes.
-  throw Object.assign(new RpcError(failure.error, failure.errorCode),
+  throw Object.assign(new RpcError(failure.error, failure.errorCode, failure.failureCause),
     failure.details === undefined ? {} : { details: failure.details },
     failure.effectAttempted === false ? { effectAttempted: false } : {});
 }
@@ -73,7 +74,9 @@ export function readActionFailureEnvelope(
   const error = rawError && rawError !== errorCode ? rawError : rawFallbackMessage || rawError || errorCode;
   const details = readFailureEnvelopeDetails(record);
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(record.goalControlFailure);
+  const failureCause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
   return { ok: false, errorCode, error, ...(details !== undefined ? { details } : {}),
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     ...(typeof record.effectAttempted === 'boolean' ? { effectAttempted: record.effectAttempted } : {}),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}) };
 }

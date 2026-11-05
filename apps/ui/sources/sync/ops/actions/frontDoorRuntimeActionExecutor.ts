@@ -19,7 +19,7 @@ export type UiActionOperation = Pick<UiActionExecutorContext,
 
 /** Retain typed refusal and pending custody instead of exposing either as a completed effect. */
 export function requireActionSuccess(result: ActionExecuteResult): asserts result is Extract<ActionExecuteResult, { ok: true }> {
-  if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode, details: result.details });
+  if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode, details: result.details, failureCause: result.failureCause });
   const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
   if (approval.success) throw new HappyError(approval.data.kind, false, { code: approval.data.kind, details: approval.data });
 }

@@ -4,11 +4,10 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   ActionOperationCancelV1Response,
-  ActionOperationFailureV1,
   ActionExecuteResult,
 } from '@happier-dev/protocol/actions';
 import { ActionOperationDomainRefV1Schema, ActionOperationFailureV1Schema, ActionOperationObservationV1Schema,
-  canRetainProjectSetupReviewV1, ManagedControllerRequestFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+  canRetainProjectSetupReviewV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -21,13 +20,13 @@ import type { ProjectServiceRelocateInputV1, ProjectServiceMoveStartClaimResultV
 
 import { MachineRebootResultV1Schema } from '@happier-dev/protocol';
 
+import { projectActionOperationFailure } from './actionOperationFailure';
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { createActionOperationSetupReview } from './actionOperationSetupReview';
 import { settleReviewedIsolationPredecessors } from './settleReviewedIsolationPredecessors';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { ActionOperationStore } from './actionOperationStore';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type {
   ActionOperationOwnerUpdate,
   ActionOperationProgressUpdate,
@@ -60,6 +59,7 @@ function terminalResult(snapshot: import('@happier-dev/protocol/actions').Action
       ok: false,
       errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
       error: snapshot.error?.error ?? 'action_operation_failed',
+      ...(snapshot.error?.failureCause ? { failureCause: snapshot.error.failureCause } : {}),
       ...(snapshot.error?.details ? { details: snapshot.error.details } : {}),
       ...metadata,
     };
@@ -72,21 +72,6 @@ function createCancellationRequestError(): Error {
   const error = new Error('Action operation cancellation requested');
   error.name = 'AbortError';
   return error;
-}
-
-function projectThrownFailure(error: unknown): ActionOperationFailureV1 {
-  const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
-    && typeof error.code === 'string' && error.code.trim()
-    ? error.code.trim()
-    : 'action_operation_failed');
-  const managed = ManagedControllerRequestFailureDetailsV1Schema.safeParse(error && typeof error === 'object' && 'details' in error ? error.details : undefined);
-  return {
-    errorCode: code,
-    error: error instanceof Error && error.message.trim()
-      ? error.message
-      : 'action_operation_failed',
-    ...(managed.success && (!managed.data.code || managed.data.code === code) ? { details: managed.data } : {}),
-  };
 }
 
 function isRecoverableIndeterminateHandoff(
@@ -362,7 +347,8 @@ export function createActionOperationRunner(deps: Readonly<{
               }
             }
           } else {
-            const failure = { errorCode: executionResult.errorCode, error: executionResult.error };
+            const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
             // Only named Project, Machine setup and managed-controller producers carry these
             // validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || action.actionId.startsWith('machines.managed.')
@@ -374,7 +360,7 @@ export function createActionOperationRunner(deps: Readonly<{
           return executionResult;
         } catch (error) {
           terminalSuccess = null;
-          const projected = projectThrownFailure(error);
+          const { ok: _ok, ...projected } = projectActionOperationFailure(error, 'action_operation_failed', action.actionId);
           const acceptedFinite = isFiniteProjectCommand(action.actionId)
             && deps.store.get(request.scope, operationId)?.domainRef?.kind === 'projectCommand';
           if (acceptedFinite) {

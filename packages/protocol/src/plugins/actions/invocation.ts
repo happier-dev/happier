@@ -13,6 +13,7 @@ import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonical
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from 'zod/mini';
 import { isPluginError } from '../errors.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import type {
   PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
@@ -429,6 +430,7 @@ export function readPluginActionError(error: unknown): Readonly<{
  * host read one payload the same way instead of each inventing a reader.
  */
 export type PluginActionFailureAuthorPayloadV1 = Readonly<{
+  failureCause?: import('../../actions/actionExecutionResult.js').ActionFailureCauseV1;
   details?: StrictJsonValue;
   remediation?: PluginDiagnosticRemediationV1;
   diagnostics?: readonly PluginDiagnosticDataV1[];
@@ -450,6 +452,7 @@ export function readPluginActionFailureAuthorPayload(
     return Object.freeze({});
   }
   const record = data as Readonly<Record<string, StrictJsonValue | undefined>>;
+  const failureCause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
   const remediation = record.remediation === undefined
     ? undefined
     : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation);
@@ -458,6 +461,7 @@ export function readPluginActionFailureAuthorPayload(
     : PluginActionFailureDiagnosticsV1Schema.safeParse(record.diagnostics);
   return Object.freeze({
     ...(record.details === undefined ? {} : { details: record.details }),
+    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     ...(remediation?.success ? { remediation: remediation.data } : {}),
     ...(diagnostics?.success ? { diagnostics: Object.freeze(diagnostics.data) } : {}),
   });

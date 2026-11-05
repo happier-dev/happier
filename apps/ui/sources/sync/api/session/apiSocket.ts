@@ -34,6 +34,8 @@ import {
     type SocketRpcAuthorizationContext,
 } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { handleUiBrowserRecordingCaptureFrameRequest } from '@/sync/domains/browser/recording/reverseCaptureHandler';
 import {
     createServerFetchAtEndpoint,
@@ -1881,9 +1883,13 @@ class ApiSocket {
             const result = await handler(decryptedParams, context);
             return await respond(result);
         } catch (error) {
+            const forwardedCause = ActionFailureCauseV1Schema.safeParse(
+                error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
+            );
             const response = {
-                error: error instanceof Error ? error.message : 'Unknown error',
+                error: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Unknown error'),
                 ...(readRpcErrorCode(error) ? { errorCode: readRpcErrorCode(error) } : {}),
+                failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.handler'),
             };
             return await respond(response);
         }

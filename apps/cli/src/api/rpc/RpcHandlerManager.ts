@@ -59,6 +59,8 @@ import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObs
 import { timeWebLatencyPhase, withStorageReadTrace, withWebLatencyTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { AgentModelsProbeObservationSchema, type AgentModelsProbeObservation } from '@happier-dev/protocol/capabilities';
 import { SpawnFailureV1Schema, type SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
@@ -1097,9 +1099,13 @@ export class RpcHandlerManager {
             }
             const rpcErrorCode = readRpcErrorCode(controller.signal.aborted ? controller.signal.reason : error)
                 ?? readRpcErrorCode(error);
+            const forwardedCause = ActionFailureCauseV1Schema.safeParse(
+                error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
+            );
             const errorResponse = {
-                error: error instanceof Error ? error.message : 'Unknown error',
+                error: redactBugReportSensitiveText(error instanceof Error ? error.message : 'Unknown error'),
                 ...(rpcErrorCode ? { errorCode: rpcErrorCode } : {}),
+                failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.handler'),
             };
             const outcomeCode = readOutcomeCode(controller.signal.aborted ? controller.signal.reason : error, true);
             const response = await respond(request, errorResponse);

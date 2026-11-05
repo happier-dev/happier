@@ -5,6 +5,7 @@ import {
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
 } from '@happier-dev/cli-common/machineSetup';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { MachineSetupUpdatesApplyInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
@@ -105,7 +106,7 @@ export function createMachineSetupUpdatesAction(params: Readonly<{
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : cancellationSignal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
-        return fail(code);
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.updates.apply'), errorCode: code };
       } finally {
         try { await custody.release(); }
         finally {

@@ -1780,7 +1780,7 @@ async function executeHostAction(
 
     const result = await binding.execute(actionId, input.input, mountedHostActionContext(input, caller, clientCaller, actionId));
     if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
-    return failure('unavailable', result.errorCode);
+    return failure('unavailable', result.errorCode, result.failureCause ? { details: result.failureCause } : undefined);
 }
 
 /** Execution and Resource admission stamp exactly the same mounted caller. */

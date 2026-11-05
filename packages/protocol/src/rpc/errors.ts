@@ -1,3 +1,5 @@
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+
 export const MACHINE_RPC_TIMEOUT_ERROR_CODE = 'MACHINE_RPC_TIMEOUT';
 
 /** Socket.IO's native ACK deadline and the portable ACK race share this error. */
@@ -67,11 +69,13 @@ export type RpcErrorCarrier = {
 
 export class RpcError extends Error {
   readonly rpcErrorCode: RpcErrorCode | string;
+  readonly failureCause?: ActionFailureCauseV1;
 
-  constructor(message: string, rpcErrorCode: RpcErrorCode | string) {
+  constructor(message: string, rpcErrorCode: RpcErrorCode | string, failureCause?: ActionFailureCauseV1) {
     super(message);
     this.name = 'RpcError';
     this.rpcErrorCode = rpcErrorCode;
+    if (failureCause !== undefined) this.failureCause = failureCause;
   }
 }
 
@@ -84,11 +88,12 @@ export function isRpcError(error: unknown): error is RpcError {
   return carrier.name === 'RpcError' && typeof carrier.rpcErrorCode === 'string' && carrier.rpcErrorCode.trim().length > 0;
 }
 
-export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined }): Error {
+export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown }): Error {
+  const failureCause = ActionFailureCauseV1Schema.safeParse(opts.failureCause);
   if (typeof opts.errorCode === 'string' && opts.errorCode.length > 0) {
-    return new RpcError(opts.error, opts.errorCode);
+    return new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined);
   }
-  return new Error(opts.error);
+  return Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {

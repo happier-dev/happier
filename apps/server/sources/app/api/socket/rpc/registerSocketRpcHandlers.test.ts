@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     RPC_ERROR_CODES,
     RPC_METHODS,
@@ -2857,6 +2858,27 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             type: "register",
             error: "Forbidden",
         }));
+    });
+
+    it.each([false, true])("redacts relay exception messages and preserves producer causes (forwarded=%s)", async forwarded => {
+        const producerCause = ActionFailureCauseV1Schema.parse({ phase: 'machine.setup.apply', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null });
+        const failure = forwarded ? Object.assign(new Error('database failed token=PRIVATE_TOKEN'), { failureCause: producerCause })
+            : Object.assign(new Error('database failed token=PRIVATE_TOKEN'), { code: 'ECONNRESET' });
+        // Genuine database boundary: the real Session access owner propagates a read failure.
+        sessionFindUniqueMock.mockRejectedValueOnce(failure);
+        const socket = createFakeSocket({ id: 'relay-catch-caller' });
+        const { io } = createIo();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+        const acknowledge = vi.fn();
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+            method: `sess_1:${CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD}`, params: { clientId: 'relay-catch-client' },
+        }, acknowledge);
+        expect(acknowledge).toHaveBeenCalledWith({ ok: false, error: expect.stringContaining('database failed'),
+            failureCause: forwarded ? producerCause : {
+                phase: 'rpc.relay', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null,
+            },
+        });
+        expect(JSON.stringify(acknowledge.mock.calls)).not.toContain('PRIVATE_TOKEN');
     });
 
     it("rejects malformed explicit deadlines before looking up or dispatching a target", async () => {

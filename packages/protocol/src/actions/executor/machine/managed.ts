@@ -113,16 +113,17 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           if (readRecord(error).code === 'action_outcome_unknown') {
             // The managed effect owner could not confirm a dispatched effect.
             // Preserve that existing Action outcome across thrown host errors.
-            return { ok: false, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown' };
+            return { ok: false, ...normalizeActionExecutorThrownError(error, managedMachineActionId),
+              errorCode: 'action_outcome_unknown' };
           }
           if (ManagedControllerRequestFailureDetailsV1Schema.safeParse(readRecord(error).details).success
             || ManagedNativeFailureDetailsV1Schema.safeParse(readRecord(error).details).success
             || ManagedBootstrapFailureDetailsV1Schema.safeParse(readRecord(error).details).success) {
-            return { ok: false, ...normalizeActionExecutorThrownError(error) };
+            return { ok: false, ...normalizeActionExecutorThrownError(error, managedMachineActionId) };
           }
           const refusal = ManagedRefusalCodeV1Schema.safeParse(readRecord(error).code);
-          if (refusal.success) return { ok: false, errorCode: refusal.data, error: refusal.data };
-          throw error;
+          if (refusal.success) return { ok: false, ...normalizeActionExecutorThrownError(error, managedMachineActionId), errorCode: refusal.data };
+          return { ok: false, ...normalizeActionExecutorThrownError(error, managedMachineActionId) };
         }
       }
 

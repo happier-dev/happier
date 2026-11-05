@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
@@ -29,6 +30,7 @@ export type PluginSurfaceActionDispatchOutcome =
         diagnostics?: readonly string[];
         layer?: PluginUiHostApiErrorPayloadV1['layer'];
         phase?: PluginUiHostApiErrorPayloadV1['phase'];
+        details?: ActionFailureCauseV1;
     }>;
 
 type Failure = Extract<PluginSurfaceActionDispatchOutcome, Readonly<{ ok: false }>>;
@@ -44,6 +46,7 @@ export function createPluginSurfaceActionFailure(code: string, reason: string, a
         ...(author?.diagnostics === undefined ? {} : { diagnostics: author.diagnostics }),
         ...(author?.layer === undefined ? {} : { layer: author.layer }),
         ...(author?.phase === undefined ? {} : { phase: author.phase }),
+        ...(author?.details === undefined ? {} : { details: author.details }),
     };
 }
 
@@ -60,6 +63,7 @@ export function createPluginSurfaceActionFailureError(outcome: Failure): PluginE
             ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason,
             outcome.diagnostics ?? [outcome.reason], outcome.message, outcome),
         ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
+        ...(outcome.details === undefined ? {} : { details: outcome.details }),
     });
 }
 

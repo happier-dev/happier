@@ -31,3 +31,20 @@ it('still refuses corrupt content and wrong reply correlation', async () => {
       .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
   }
 });
+
+it.each(['plain', 'e2ee'] as const)('retains the relay failure diagnostic without changing uncertain settlement in %s mode', async mode => {
+  const failureCause = { phase: 'rpc.relay', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
+  const content: SocketRpcContent = mode === 'plain' ? { mode } : { mode, cipher: {
+    encryptRaw: async () => 'ciphertext', decryptRaw: async () => { throw new Error('Refusal must not be opened'); },
+  } };
+  // The transport supplies a real negative ACK; the codec and call owner stay real.
+  const socket = { emit() {}, timeout: () => ({ emitWithAck: async () => ({ ok: false,
+    error: 'Relay request failed', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN, failureCause }) }) };
+  let failure: unknown;
+  try {
+    await callSocketRpc({ socket, target: { kind: 'machine', id: 'guest' }, method: 'actionOperation.list.v2',
+      params: {}, content, timeoutMs: 30_000 });
+  } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN, failureCause });
+  expect(readRpcRequestDisposition(failure)).toBe('outcomeUnknown');
+});

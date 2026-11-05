@@ -6,6 +6,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/meth
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
 import type { Socket } from 'socket.io-client';
@@ -1497,7 +1498,8 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     await expect(rpc.handleRequest({
       method: 'sess_1:demo.failure',
       params: {},
-    })).resolves.toEqual({ error: 'handler failed' });
+    })).resolves.toEqual({ error: 'handler failed',
+      failureCause: { phase: 'rpc.handler', errorClass: 'Error', errorCode: null, httpStatus: null } });
 
     expect(logger.mock.calls).toEqual([['[RPC] Request completed', expect.objectContaining({
       method: 'demo.failure', requestId: expect.any(String), outcomeCode: 'unclassified_error',
@@ -1536,30 +1538,47 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     if (outcomeCode === 'unclassified_error') expect(JSON.stringify(logger.mock.calls)).not.toContain(error);
   });
 
-  it('projects only explicit protocol RPC error codes into the plaintext response', async () => {
+  it.each(['plain', 'e2ee'] as const)('preserves RPC codes and native causes through redacted %s responses', async mode => {
+    const key = new Uint8Array(32).fill(23);
+    const content: SocketRpcContent = mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
+      encryptRaw: async value => encodeBase64(encrypt(key, 'dataKey', value)),
+      decryptRaw: async value => decrypt(key, 'dataKey', decodeBase64(value)),
+    } };
     const rpc = new RpcHandlerManager({
       scopePrefix: 'sess_1',
-      encryptionMode: 'plain',
+      ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionKey: key, encryptionVariant: 'dataKey' as const }),
       logger: () => {},
     });
     rpc.registerHandler('demo.typedFailure', async () => {
       throw new RpcError('workspace root is unsafe', 'workspace_root_unsafe');
     });
     rpc.registerHandler('demo.filesystemFailure', async () => {
-      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      throw Object.assign(new Error('permission denied token=PRIVATE_TOKEN'), { code: 'EACCES' });
     });
-
-    await expect(rpc.handleRequest({
-      method: 'sess_1:demo.typedFailure',
-      params: {},
-    })).resolves.toEqual({
+    const producerCause = ActionFailureCauseV1Schema.parse({ phase: 'machine.setup.apply', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null });
+    rpc.registerHandler('demo.forwardedFailure', async () => {
+      throw Object.assign(new Error('setup failed token=PRIVATE_TOKEN'), { failureCause: producerCause });
+    });
+    const invoke = async (name: string) => {
+      const method = `sess_1:${name}`;
+      const callId = '0123456789abcdef0123456789abcdef';
+      const params = await socketRpcCodec.encodeParams(content, {}, { method, callId });
+      const result = await rpc.handleRequest({ method, params });
+      return socketRpcCodec.decodeResult(content, { ok: true, result }, callId);
+    };
+    await expect(invoke('demo.typedFailure')).resolves.toEqual({
       error: 'workspace root is unsafe',
       errorCode: 'workspace_root_unsafe',
+      failureCause: { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: null, httpStatus: null },
     });
-    await expect(rpc.handleRequest({
-      method: 'sess_1:demo.filesystemFailure',
-      params: {},
-    })).resolves.toEqual({ error: 'permission denied' });
+    const native = await invoke('demo.filesystemFailure');
+    expect(native).toMatchObject({ error: expect.stringContaining('permission denied'),
+      failureCause: { phase: 'rpc.handler', errorCode: 'EACCES', httpStatus: null } });
+    expect(native).not.toHaveProperty('errorCode');
+    expect(JSON.stringify(native)).not.toContain('PRIVATE_TOKEN');
+    const forwarded = await invoke('demo.forwardedFailure');
+    expect(forwarded).toEqual({ error: expect.stringContaining('setup failed'), failureCause: producerCause });
+    expect(JSON.stringify(forwarded)).not.toContain('PRIVATE_TOKEN');
   });
 
   it.each(['plain', 'e2ee'] as const)('refuses an unavailable private continuation without disclosing its operand in %s replies or logs', async mode => {
@@ -1596,6 +1615,7 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
       const failureResponse = await rpc.handleRequest({ method: `machine:${method}`,
         params: mode === 'plain' ? params : await sealRpcRequest(key, `machine:${method}`, params) });
       const failure = mode === 'plain' ? failureResponse : await openRpcResponse(key, failureResponse);
+      expect(failure).toEqual({ error: 'confidential_continuation_failed', errorCode: 'confidential_continuation_failed' });
       expect(JSON.stringify({ failure, logs })).not.toContain('COOKIE_SENTINEL');
       rpc.registerHandler(method, () => ({ status: 'ready', cookies: [{ value: 'COOKIE_SENTINEL' }] }));
       const response = await rpc.handleRequest({ method: `machine:${method}`,

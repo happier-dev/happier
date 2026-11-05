@@ -13,6 +13,26 @@ import {
 } from './errors.js';
 
 describe('rpcErrors', () => {
+  it.each([RPC_ERROR_CODES.OUTCOME_UNKNOWN, undefined])('keeps typed diagnostics separate from native Error.cause (%s)', errorCode => {
+    const failureCause = { phase: 'rpc.relay', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: null };
+    const error = createRpcCallError({ error: 'Relay failed', errorCode, failureCause });
+    expect(error).toMatchObject({ failureCause });
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('allows a transport subclass to retain the underlying Error alongside the diagnostic carrier', () => {
+    const failureCause = { phase: 'rpc.relay', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
+    class DisconnectedError extends RpcError {
+      constructor(readonly cause: Error) {
+        super(cause.message, RPC_ERROR_CODES.OUTCOME_UNKNOWN, failureCause);
+      }
+    }
+    const native = new Error('Connection closed');
+    const error = new DisconnectedError(native);
+    expect(error.cause).toBe(native);
+    expect(error).toMatchObject({ failureCause });
+  });
+
   it('uses the typed missing-method result before the legacy message', () => {
     expect(isRpcMethodNotFoundResult({ errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND })).toBe(false);
     expect(isRpcMethodNotFoundResult({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'Unavailable' })).toBe(true);
@@ -74,6 +94,8 @@ describe('rpcErrors', () => {
   it('reads rpcErrorCode when available', () => {
     expect(readRpcErrorCode(new RpcError('nope', RPC_ERROR_CODES.METHOD_NOT_FOUND))).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
     expect(readRpcErrorCode({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND })).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
+    expect(readRpcErrorCode({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, code: 'EACCES' })).toBe(RPC_ERROR_CODES.FORBIDDEN);
+    expect(readRpcErrorCode(Object.assign(new Error('permission denied'), { code: 'EACCES' }))).toBeUndefined();
     expect(readRpcErrorCode(new Error('x'))).toBeUndefined();
   });
 });

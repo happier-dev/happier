@@ -8,9 +8,10 @@ import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeB
 import { createPluginInvocationServiceBinding } from '../invocation/services/factory';
 import type { PluginInvocationServiceBinding } from '../invocation/services/types';
 import { createConnectedAccountPluginHttpPurposeHost } from './connectedAccountPurpose';
+import { logger } from '@/ui/logger';
 
 it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materialization-failure', 'invocation-withdrawal', 'cloudflare-expiry',
-    'cancelled-seed', 'cancelled-fragment', 'cancelled-stream-seed', 'cancelled-stream-fragment'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
+    'cancelled-seed', 'cancelled-fragment', 'cancelled-stream-seed', 'cancelled-stream-fragment', 'request-failure', 'stream-request-failure'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
     const pluginId = 'acme.purpose';
     const consumer = { pluginId, localId: 'read' };
     const purpose = { consumer, purpose: 'read-api' };
@@ -85,6 +86,32 @@ it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materializati
     const serviceBinding: PluginInvocationServiceBinding = { ...base,
         connectedAccountScopes: [{ purpose: purpose.purpose, serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] }],
     };
+    if (scenario === 'request-failure' || scenario === 'stream-request-failure') {
+        // The file-log sink and HTTP transport are system boundaries; custody remains real.
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const causeCode = 'ECONNREFUSED';
+        const cause = Object.assign(new Error(secret), { code: causeCode });
+        const failure = new TypeError(secret, { cause });
+        const input = { seed, serviceBinding, signal: seed.signal,
+            request: { url: `${origin}/projects`, method: 'GET', redirect: 'error',
+                credentialBinding: { kind: 'connectedAccountPurpose', purpose: purpose.purpose,
+                    origin, method: 'GET', headerNames: ['authorization'] } } satisfies Parameters<typeof host.request>[0]['request'],
+            async execute(): Promise<never> { sends++; throw failure; } };
+        try {
+            const pending = scenario === 'request-failure' ? host.request(input) : host.requestStream(input);
+            await expect(pending).rejects.toMatchObject({ code: 'outcome_unknown', message: 'outcome_unknown', data: {
+                failureCause: { phase: 'connected_account.http.execute', errorClass: 'TypeError', errorCode: causeCode, httpStatus: null },
+            } });
+            expect(acquisitions).toBe(1);
+            expect(sends).toBe(1);
+            expect(log.mock.calls).toContainEqual(['[connected-account-http-failure]', {
+                phase: 'connected_account.http.execute', errorClass: 'TypeError', errorCode: causeCode, httpStatus: null,
+            }]);
+            expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+            expect(JSON.stringify(log.mock.calls)).not.toContain(origin);
+        } finally { log.mockRestore(); }
+        return;
+    }
     if (scenario === 'cancelled-seed' || scenario === 'cancelled-fragment'
         || scenario === 'cancelled-stream-seed' || scenario === 'cancelled-stream-fragment') {
         const fragmentAbort = new AbortController();

@@ -1525,8 +1525,10 @@
 | `./contributions` | `TargetedContributionPointRef` | type | any |
 | `./contributions` | `defineContributionPoint` | value | any |
 | `./contributions` | `defineContributionProtocol` | value | any |
+| `./errors` | `ActionFailureCauseV1Schema` | value | any |
 | `./errors` | `PluginError` | value | any |
 | `./errors` | `isPluginError` | value | any |
+| `./errors` | `readUnexpectedActionErrorDiagnosticV1` | value | any |
 | `./events` | `EventContribution` | type | any |
 | `./events` | `EventSubscriptionTarget` | type | any |
 | `./events` | `EventsService` | type | any |

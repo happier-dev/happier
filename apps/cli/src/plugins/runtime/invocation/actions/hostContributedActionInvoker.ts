@@ -137,6 +137,7 @@ export function createHostContributedActionInvoker(params: Readonly<{
             ok: false,
             errorCode: result.code,
             error: result.message,
+            ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
             details: error.data,
         };
     };

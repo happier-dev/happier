@@ -1,7 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
 import { ActionOperationFailureV1Schema } from './operations/v1.js';
-import { ActionExceptionFailureDetailsV1Schema, projectActionExceptionFailureDetailsV1, readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
+import * as actionResults from './actionExecutionResult.js';
+
+describe('Action failure cause projection', () => {
+  it('reads only one immediate cause and never carries text or traverses a deeper wrap', () => {
+    let reads = 0;
+    const error = new TypeError('token=PRIVATE_TOKEN');
+    Object.defineProperty(error, 'cause', { get() { reads++; return Object.assign(new Error('private'), {
+      code: 'ECONNRESET', status: 503, cause: Object.assign(new Error('deeper'), { code: 'ENOSPC' }),
+    }); } });
+    expect(actionResults.projectActionFailureCauseV1(error, 'rpc.handler')).toEqual({
+      phase: 'rpc.handler', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503,
+    });
+    expect(reads).toBe(1);
+  });
+  it('keeps an outer code without reading the immediate cause', () => {
+    const error = Object.assign(new Error('private'), { code: 'ENOSPC' });
+    Object.defineProperty(error, 'cause', { get() { throw new Error('must not read'); } });
+    expect(actionResults.projectActionFailureCauseV1(error, 'machines.setup.apply')).toMatchObject({ errorCode: 'ENOSPC' });
+    expect(normalizeActionExecutorThrownError(error, 'machines.setup.apply')).toMatchObject({
+      failureCause: { phase: 'machines.setup.apply', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null },
+    });
+  });
+  it('accepts its one-hop JSON-RPC code while retaining the outer exception class', () => {
+    const error = new TypeError('request failed', { cause: Object.assign(new Error('native failure'), {
+      name: 'JsonRpcApplicationError', code: -32603,
+    }) });
+    const cause = projectActionFailureCauseV1(error, 'rpc.handler');
+    expect(cause).toEqual({ phase: 'rpc.handler', errorClass: 'TypeError', errorCode: '-32603', httpStatus: null });
+    expect(ActionFailureCauseV1Schema.safeParse(cause).success).toBe(true);
+  });
+});
 
 describe('code-only JSON-RPC failure diagnostics', () => {
   it.each(['database_transaction_conflict_exhausted', 'database_connection_unavailable', 'database_transaction_timeout'])('retains the known Home refusal %s without its body', code => {
@@ -39,14 +70,14 @@ describe('managed controller failure causes', () => {
     const result = readUnexpectedActionErrorDiagnosticV1(error);
     expect(result).toMatchObject({ errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
-    expect(projectActionExceptionFailureDetailsV1(error, 'machines.managed.acquire')).toEqual({
-      kind: 'actionException', phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
+    expect(projectActionFailureCauseV1(error, 'machines.managed.acquire')).toEqual({
+      phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
       errorCode: 'native_acquisition_unconfirmed', httpStatus: null });
-    expect(ActionExceptionFailureDetailsV1Schema.safeParse(projectActionExceptionFailureDetailsV1(error, 'machines.managed.acquire')).success).toBe(true);
+    expect(ActionFailureCauseV1Schema.safeParse(projectActionFailureCauseV1(error, 'machines.managed.acquire')).success).toBe(true);
     // The detached operation stores exactly this projection, so its readers see the code.
     const failure = normalizeActionExecutorThrownError(error, 'machines.managed.acquire');
     expect(ActionOperationFailureV1Schema.parse(failure)).toMatchObject({ errorCode: 'action_failed',
-      details: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' } });
+      failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' } });
   });
   it.each([
     { name: 'ManagedMachineControllerError', code: 'Has Spaces And PRIVATE_TOKEN' },

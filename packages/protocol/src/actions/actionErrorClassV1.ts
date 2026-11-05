@@ -7,6 +7,6 @@ export const ActionErrorClassV1Schema = lazyZodSchema(() => z.enum([
   'AxiosError', 'HttpStatusError', 'AbortError', 'PrismaClientKnownRequestError', 'PrismaClientUnknownRequestError',
   'PrismaClientValidationError', 'PrismaClientInitializationError', 'TransactionConflictExhaustedError',
   'TransactionAcquisitionUnavailableError', 'TransactionDeadlineExceededError', 'ManagedMachineError',
-  'JsonRpcApplicationError', 'ManagedMachineControllerError', 'UnknownThrownValue',
+  'JsonRpcApplicationError', 'ManagedMachineControllerError', 'RpcError', 'UnknownThrownValue',
 ]));
 export type ActionErrorClassV1 = z.infer<typeof ActionErrorClassV1Schema>;

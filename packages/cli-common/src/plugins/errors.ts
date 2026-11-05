@@ -1,4 +1,5 @@
 import { isPluginError as isCanonicalPluginError } from '@happier-dev/protocol/plugins/errors';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginContributionRef } from './registration/contracts.js';
@@ -33,6 +34,7 @@ export type PluginErrorData = Readonly<{
     details?: JsonValue;
     remediation?: PluginRemediationData;
     diagnostics?: readonly PluginDiagnosticData[];
+    failureCause?: ActionFailureCauseV1;
     actionHandlerInvocation?: PluginActionHandlerInvocation;
     /** Host Exec refused this launch before the requested process was started. */
     execLaunch?: 'notStarted';
@@ -85,6 +87,7 @@ export class PluginError extends Error {
             ...(data.message === undefined ? {} : { message: data.message }),
             ...(data.retryable === undefined ? {} : { retryable: data.retryable }),
             ...(data.details === undefined ? {} : { details: data.details }),
+            ...(data.failureCause === undefined ? {} : { failureCause: data.failureCause }),
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
         };

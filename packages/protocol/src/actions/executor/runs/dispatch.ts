@@ -156,7 +156,7 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
             const failure = normalizeActionExecutorThrownError(error);
             const details = readFailureEnvelopeDetails(readRecord(error));
             return classifyExecutionRunStartFailure(
-              { ok: false, errorCode: failure.errorCode, error: failure.error, ...(details !== undefined ? { details } : {}) },
+              { ok: false, errorCode: failure.errorCode, error: failure.error, failureCause: failure.failureCause, ...(details !== undefined ? { details } : {}) },
               readExecutionRunStartRunCreation(details),
               error,
             );

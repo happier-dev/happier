@@ -7,6 +7,8 @@ import { isLiveCliApprovalOriginMethod } from '@happier-dev/protocol/approvals/a
 import type { Server, Socket } from "socket.io";
 
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization, type SocketRpcAuthorizationContext, type SocketRpcCurrentSessionPresentationOriginAuthorizationContext, type SessionPermissionDecisionAuthenticationV1 } from '@happier-dev/protocol/socketRpc';
@@ -2275,9 +2277,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     result: "error",
                 });
             }
+            const forwardedCause = ActionFailureCauseV1Schema.safeParse(
+                error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
+            );
             callback?.({
                 ok: false,
-                error: error instanceof Error ? error.message : "Internal error",
+                error: redactBugReportSensitiveText(error instanceof Error ? error.message : "Internal error"),
+                failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.relay'),
             });
         } finally {
             if (callerTraceId) {

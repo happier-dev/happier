@@ -19,7 +19,7 @@ import { LocalServiceManagedServiceActionTargetV1Schema, ProjectServiceDeclarati
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
-import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionExceptionFailureDetailsV1Schema } from '../actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 
 /** Existing operations that may hold their original Project setup invocation. */
@@ -181,13 +181,12 @@ export const MachineSetupFailureDetailsV1Schema = lazyZodSchema(() => z.strictOb
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
-    ManagedAgentIsolationFailureDetailsV1Schema, ActionExceptionFailureDetailsV1Schema])),
+    ManagedAgentIsolationFailureDetailsV1Schema])),
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
   ? failure.errorCode === 'approval_stale'
-  : failure.details.kind === 'actionException'
-  ? failure.errorCode === 'action_failed'
   : failure.details.kind === 'machineSetup'
   ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
     || failure.errorCode === 'platform_unsupported'

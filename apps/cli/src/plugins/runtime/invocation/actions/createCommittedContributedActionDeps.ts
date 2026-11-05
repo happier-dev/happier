@@ -2,6 +2,7 @@ import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDe
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionDefinitionV1, WorkflowAcceptedAuthorizationV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
@@ -169,7 +170,11 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         return { ok: false, errorCode: attempt.result.errorCode, error: attempt.result.error,
           details: attempt.result.data };
       }
-      return attempt.result;
+      if (attempt.result.details !== undefined) return attempt.result;
+      const error = new PluginError({ code: attempt.result.errorCode, message: attempt.result.error,
+        ...(attempt.result.retryable === undefined ? {} : { retryable: attempt.result.retryable }),
+        ...readPluginActionFailureAuthorPayload(attempt.result.data) });
+      return { ...attempt.result, ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
     } finally {
       await lease.release();
     }

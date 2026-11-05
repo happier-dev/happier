@@ -1,3 +1,5 @@
+import type { ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+
 /**
  * The canonical serialized PluginError payload. Recognition only needs the
  * closed identity and consistency fields; the SDK owns the author vocabulary
@@ -8,6 +10,7 @@ export type PluginErrorContractData = Readonly<{
   code: string;
   message?: string;
   retryable?: boolean;
+  failureCause?: ActionFailureCauseV1;
 }>;
 
 /**

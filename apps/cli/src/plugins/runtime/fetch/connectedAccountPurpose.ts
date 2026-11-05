@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { ConnectedAccountHttpHeadersRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { SavedSecretOperationAdmissionFailureReasonV1Schema } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -100,8 +102,18 @@ export function createConnectedAccountPluginHttpPurposeHost(owner: StablePluginC
         if (error instanceof CredentialRequestRedirectError) throw error;
         const code = isPluginError(error) && !containsSensitiveValue(error.code)
             ? error.code : entered ? 'outcome_unknown' : 'credential_unavailable';
+        const failureCause = isPluginError(error) && error.data.failureCause ? error.data.failureCause
+            : projectActionFailureCauseV1(error, entered ? 'connected_account.http.execute' : 'connected_account.http.materialize');
+        if (code === 'outcome_unknown' || !isPluginError(error)) {
+            // Native fetch errors keep their transport code on cause. Record only
+            // the existing closed diagnostic vocabulary, never messages or URLs.
+            try {
+                logger.warnLocalFile('[connected-account-http-failure]', failureCause);
+            } catch { /* Diagnostics cannot change the redacted failure. */ }
+        }
         const details = !entered && isPluginError(error) ? readMaterialSourceFailureDetails(error.details) : undefined;
         throw new PluginError({ code, message: code === 'credential_unavailable' ? 'Sign in again, then retry.' : code,
+            failureCause,
             ...(details ? { details } : {}) });
     };
     return {

@@ -8361,6 +8361,12 @@ export type ActionExecuteResult = Readonly<{
     error: string;
     effectAttempted?: boolean | undefined;
     details?: unknown;
+    failureCause?: Readonly<{
+        phase: string;
+        errorClass: '$ZodError' | 'AbortError' | 'AxiosError' | 'Error' | 'HttpStatusError' | 'JsonRpcApplicationError' | 'ManagedMachineControllerError' | 'ManagedMachineError' | 'PrismaClientInitializationError' | 'PrismaClientKnownRequestError' | 'PrismaClientUnknownRequestError' | 'PrismaClientValidationError' | 'RangeError' | 'RpcError' | 'SyntaxError' | 'TransactionAcquisitionUnavailableError' | 'TransactionConflictExhaustedError' | 'TransactionDeadlineExceededError' | 'TypeError' | 'UnknownThrownValue' | 'ZodError';
+        errorCode: null | string;
+        httpStatus: null | number;
+    }> | undefined;
     goalControlFailure?: {
         phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';
     } | undefined;

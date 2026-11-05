@@ -7,10 +7,32 @@ import { ActionOperationCredentialUseV1Schema } from '@happier-dev/protocol/acti
 import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from './testFixtures/predecessorActionOperationV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it('retains the child failureCause on the managed operation and projects it away for a predecessor reader', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.managed.acquire');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'failed-acquire',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const failure = normalizeActionExecutorThrownError(ManagedMachineControllerError.fromActionFailure({ ok: false,
+      errorCode: 'RPC_FORBIDDEN', error: 'token=PRIVATE_TOKEN', details: { token: 'PRIVATE_TOKEN' },
+    }, 'machines.agentIsolation.preview'));
+    await runner.observe({ actionId: spec.id, scope, requestId: 'creation', input: {}, execute: async () => ({ ok: false, ...failure }) });
+    const snapshot = store.get(scope, 'failed-acquire');
+    expect(snapshot).toMatchObject({ state: 'failed', error: { errorCode: 'action_failed', error: 'RPC_FORBIDDEN', failureCause: {
+      errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
+    } } });
+    if (!snapshot) throw new Error('Missing retained failure');
+    const predecessor = projectActionOperationSnapshotForV1Reader(snapshot);
+    expect(PredecessorSnapshotSchema.safeParse(predecessor).success).toBe(true);
+    expect(predecessor.error).not.toHaveProperty('details');
+    expect(predecessor.error).not.toHaveProperty('failureCause');
+    expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_TOKEN');
+  });
   it('retains a typed RPC refusal thrown by a managed Action in its terminal operation', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.managed.power.set');

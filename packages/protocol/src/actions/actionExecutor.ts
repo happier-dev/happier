@@ -6735,6 +6735,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ok: false,
         errorCode: normalized.errorCode,
         error: normalized.error,
+        failureCause: normalized.failureCause,
         ...(normalized.details !== undefined ? { details: normalized.details } : {}),
         ...(normalized.effectAttempted === false ? { effectAttempted: false } : {}),
       };

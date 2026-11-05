@@ -300,8 +300,8 @@ describe('creation environment stage', () => {
         });
         if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
         else if (outcome === 'previewRefusal') {
-            await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', details: {
-                kind: 'actionException', errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
+            await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', failureCause: {
+                errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
             } });
             await execution.catch(error => expect(JSON.stringify(error)).not.toMatch(/PRIVATE_/));
             expect(phases.at(-1)).toBe('machines.agentIsolation.preview');

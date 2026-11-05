@@ -209,10 +209,16 @@ describe('createActionExecutor (session control)', () => {
     expect(settingsDeclarationAction).not.toHaveBeenCalled();
   });
   it.each([
-    { kind: 'typed domain refusal', failure: new RpcError('native refused', 'permission_request_not_found'), expectedCode: 'permission_request_not_found' },
-    { kind: 'untyped domain carrier', failure: { rpcErrorCode: 'permission_request_not_found', message: 'native refused', details: { private: 'do-not-publish' } }, expectedCode: 'action_failed' },
-    { kind: 'transport carrier', failure: { rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, message: 'native refused' }, expectedCode: RPC_ERROR_CODES.FORBIDDEN },
-  ])('preserves admitted Session RPC refusal identity for $kind', async ({ failure, expectedCode }) => {
+    { kind: 'typed domain refusal', failure: new RpcError('native refused', 'permission_request_not_found'),
+      expected: { ok: false, errorCode: 'permission_request_not_found', error: 'native refused', failureCause: {
+        phase: 'dispatch', errorClass: 'RpcError', errorCode: null, httpStatus: null } } },
+    { kind: 'untyped domain carrier', failure: { rpcErrorCode: 'permission_request_not_found', message: 'native refused', details: { private: 'do-not-publish' } },
+      expected: { ok: false, errorCode: 'action_failed', error: 'native refused', failureCause: {
+        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null } } },
+    { kind: 'transport carrier', failure: { rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, message: 'native refused' },
+      expected: { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'native refused', failureCause: {
+        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null } } },
+  ])('preserves admitted Session RPC refusal identity for $kind', async ({ failure, expected }) => {
     // Only the declared host's Session delivery boundary is replaced; Action
     // input, caller authority, approval and thrown-result admission stay real.
     const executor = createActionExecutor({ sessionPermissionRespond: async () => { throw failure; } });
@@ -221,7 +227,7 @@ describe('createActionExecutor (session control)', () => {
     }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': ['ui'] } }),
     });
-    expect(result).toEqual({ ok: false, errorCode: expectedCode, error: 'native refused' });
+    expect(result).toEqual(expected);
   });
   it.each([
     { error: 'Session not found or not owned by user', code: 'session_absent' },
@@ -2529,6 +2535,7 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toMatchObject({
       ok: false,
       error: 'session_spawn_resolve_unsupported',
+      failureCause: { errorClass: 'Error', errorCode: null, phase: 'dispatch' },
       details: { spawnNonce: 'stable-attempt-1', accepted: true },
     });
   });
@@ -2547,7 +2554,8 @@ describe('createActionExecutor (session control)', () => {
     // Without the host-stamped authority this reached invalid_parameters, which
     // also carries no details and made the assertion vacuous. Keep the canonical
     // witness so the redaction is proven on the real thrown-error path.
-    expect(res).toMatchObject({ ok: false, error: 'action failed' });
+    expect(res).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'action failed',
+      failureCause: { errorClass: 'Error', errorCode: null, phase: 'dispatch' } });
     expect(res).not.toHaveProperty('details');
     expect(JSON.stringify(res)).not.toContain('do-not-leak');
   });

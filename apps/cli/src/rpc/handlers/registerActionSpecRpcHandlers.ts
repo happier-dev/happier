@@ -175,7 +175,8 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         if (source.success && source.data.type === 'success' && preparation.success) {
             const projected = projectSessionFollowSourceKeyPreparationAfterSetV1({ source: source.data }, preparation.data);
             if ('ok' in projected) {
-                return { ok: false, errorCode: result.errorCode, error: result.error, details: projected.details };
+                return { ok: false, errorCode: result.errorCode, error: result.error,
+                    ...(result.failureCause ? { failureCause: result.failureCause } : {}), details: projected.details };
             }
         }
     }
@@ -183,6 +184,7 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         ok: false,
         errorCode: result.errorCode,
         error: result.error,
+        ...(result.failureCause ? { failureCause: result.failureCause } : {}),
         ...(details !== undefined ? { details } : {}),
     };
 }

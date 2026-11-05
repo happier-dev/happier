@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
@@ -102,7 +103,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : (signal ?? context.signal)?.aborted ? 'cancelled' : 'machine_setup_request_failed';
-        return fail(code);
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan'), errorCode: code };
       }
     }
     const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
@@ -399,8 +400,12 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         await custody.release();
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : cancellationSignal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
-        try { if (reportedRunning) await report('failed', code); } catch { return fail('machine_setup_report_failed'); }
-        return fail(code);
+        const phase = mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply';
+        try { if (reportedRunning) await report('failed', code); }
+        catch (reportError) {
+          return { ok: false, ...normalizeActionExecutorThrownError(reportError, phase), errorCode: 'machine_setup_report_failed' };
+        }
+        return { ok: false, ...normalizeActionExecutorThrownError(error, phase), errorCode: code };
       } finally {
         try { await recipeLease?.release(); }
         finally {
