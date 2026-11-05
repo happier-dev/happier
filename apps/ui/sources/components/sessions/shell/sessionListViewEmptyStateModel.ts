@@ -1,3 +1,5 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+
 import type { SessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 
 import {
@@ -57,8 +59,18 @@ function equalSets(left: ReadonlySet<string>, right: ReadonlySet<string>): boole
     return true;
 }
 
+function readOtherStructuralFacets(filters: SessionListViewFilters) {
+    // These facets have their own empty-state recovery or set comparison below.
+    const {
+        searchQuery: _searchQuery, scope: _scope, attention: _attention, includeInactive: _includeInactive,
+        homeServerIds: _homeServerIds, audiences: _audiences, tagIds: _tagIds,
+        ...facets
+    } = filters;
+    return facets;
+}
+
 function hasChangedStructuralFacet(filters: SessionListViewFilters, defaults: SessionListViewFilters): boolean {
-    return filters.source !== defaults.source
+    return !sameStrictJsonValue(readOtherStructuralFacets(filters), readOtherStructuralFacets(defaults))
         || !equalSets(new Set(filters.homeServerIds), new Set(defaults.homeServerIds))
         || !equalSets(
             new Set(filters.audiences.map(buildQualifiedAudienceSelectionKey)),

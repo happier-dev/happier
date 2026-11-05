@@ -337,7 +337,9 @@ function VisibleSessionsListViewContent(
     const safeArea = useChromeSafeAreaInsets();
     const sourceScopeKey = props.filterController.retentionScopeKey;
     const surfaceOwnership = props.surfaceOwnership;
-    const showSessionSections = props.corpusStorage === 'active' && props.filterController.displayFilters.show !== 'runs';
+    const showSessionSections = props.corpusStorage === 'active'
+        && props.filterController.displayFilters.show !== 'runs'
+        && !props.filterController.filterControlsRequired;
     const layout = useSessionListLayoutChoice();
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     const pageScrollDemandRef = React.useRef(false);

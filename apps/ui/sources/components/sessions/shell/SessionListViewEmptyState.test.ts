@@ -15,6 +15,25 @@ const globalDefaults = {
 } as const;
 
 describe('resolveSessionListViewEmptyState', () => {
+    it.each([
+        { coordinator: 'coordinator' as const },
+        { statuses: ['failed' as const] },
+        { coordinator: 'coordinator' as const, statuses: ['failed' as const] },
+    ])('uses the existing filtered-empty recovery for work facets %j', (selection) => {
+        const input = {
+            visibleSessionCount: 0,
+            filters: { ...globalDefaults, ...selection },
+            defaults: globalDefaults,
+            viewContext: { kind: 'global' as const },
+            includeInactive: true,
+            hasHiddenInactiveSessions: false,
+        };
+        expect(resolveSessionListViewEmptyState({ ...input, presentation: { kind: 'ready', complete: true } }))
+            .toMatchObject({ mode: 'empty', titleKey: 'sessionsList.queryNoMatchesTitle', action: 'clear_filters' });
+        expect(resolveSessionListViewEmptyState({ ...input, presentation: { kind: 'ready', complete: false } }))
+            .toMatchObject({ mode: 'empty', titleKey: 'sessionsList.queryNoMatchesLoadedTitle', action: 'load_more' });
+    });
+
     it('keeps an incomplete text-search zero explicitly limited to loaded Sessions', () => {
         expect(resolveSessionListViewEmptyState({
             presentation: { kind: 'ready', complete: false },
