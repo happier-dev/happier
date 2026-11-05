@@ -4,8 +4,10 @@ import type { ExternalSessionsSource, PluginAgentContributionV2 } from '@happier
 
 import { createPluginExternalSessionsAdapter } from '@/session/external/pluginExternalSessionsAdapter';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
+import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
+import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import type { HostExternalTranscriptFollowEvent } from '@/session/external/privateContract';
-import { getSessionCommittedTranscriptLocalIds, loadCommittedTranscriptLocalIdBaseline } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
+import { getSessionCommittedTranscriptLocalIds, loadCommittedTranscriptLocalIdBaseline, shareSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { projectRuntimeTranscriptEvent, type RuntimeTranscriptProjectionSession } from '../transcripts/projectRuntimeTranscriptEvent';
 
 import { createHostTerminalTranscriptFollowService } from './transcriptFollow';
@@ -22,7 +24,81 @@ const loadCompleteBaseline = async () => ({
 });
 
 describe('createHostTerminalTranscriptFollowService', () => {
-    it('shares committed identities with live projection while initial follow is admitting', async () => {
+    it('reuses user custody and its exact delivery result when native source replay has an older timestamp', async () => {
+        const writes: unknown[] = [];
+        const session: RuntimeTranscriptProjectionSession = { sessionId: 'user-custody',
+            enqueueUserTextMessageCommitted: async (_text, options) => {
+                writes.push(options);
+                return { persisted: true, delivered: false };
+            },
+        };
+        const event = { kind: 'transcript-message-committed', role: 'user', messageId: 'native-user',
+            text: 'Retained user', sequence: 1, sessionId: session.sessionId, emittedAtMs: 11 };
+        await projectRuntimeTranscriptEvent({ session, event });
+        await expect(projectRuntimeTranscriptEvent({ session, event: { ...event, emittedAtMs: 10 },
+            admission: { signal: new AbortController().signal, requireDelivery: true },
+        })).rejects.toMatchObject({ reason: 'delivery_not_confirmed' });
+        expect(writes).toEqual([expect.objectContaining({ localId: 'native-user', createdAt: 11 })]);
+    });
+    it.each(['session', 'run-target'] as const)('keeps replay display custody at the writer while observing every source fact and preserving live corrections (%s)', async target => {
+        const observations: string[] = [];
+        const writes: Array<{ localId: string; createdAt?: number }> = [];
+        const session: RuntimeTranscriptProjectionSession = {
+            sessionId: 'writer-replay',
+            enqueueUserTextMessageCommitted: async (_text, options) => {
+                writes.push(options);
+                return { persisted: true, delivered: true };
+            },
+            enqueueAgentMessageCommitted: async (_provider, _body, options) => {
+                writes.push(options);
+                return { persisted: true, delivered: true };
+            },
+        };
+        const baselineOwner = target === 'run-target' ? {} : session;
+        if (target === 'run-target') shareSessionCommittedTranscriptLocalIds(session, baselineOwner);
+        const baseline = getSessionCommittedTranscriptLocalIds(baselineOwner);
+        baseline.add('retained-user');
+        baseline.add('retained-tool');
+        baseline.add('retained-assistant');
+        baseline.add(createAcpToolIdentity({ sessionId: session.sessionId, turnId: 'canonical-tool',
+            sidechainId: null, toolCallId: 'canonical-tool' }).resultLocalId);
+        const publish = createExternalSessionTerminalFollowProjector({ sessionId: session.sessionId, agentId: 'agent',
+            observeSourceTranscript: async input => { observations.push(input.sourceId); },
+            projectRuntimeEvent: (event, admission, sourceReplayLocalId?: string) => projectRuntimeTranscriptEvent({
+                session, provider: 'agent', event, admission, sourceReplayLocalId,
+            }),
+        });
+        const items: Extract<HostExternalTranscriptFollowEvent, { kind: 'data' }>['items'] = [
+            { id: 'retained-user', localId: 'retained-user', timestampMs: 10, kind: 'user' as const,
+                userProjection: 'source_fact' as const, data: { role: 'user', content: { type: 'text', text: 'older user' } } },
+            { id: 'retained-tool', localId: 'retained-tool', timestampMs: 10, kind: 'event' as const,
+                data: { role: 'agent', content: { type: 'tool-result', callId: 'native-tool', output: 'old result' } } },
+            { id: 'retained-assistant', localId: 'retained-assistant', timestampMs: 10, kind: 'agent' as const,
+                data: { role: 'agent', content: { type: 'message', message: 'older assistant' } } },
+            { id: 'native-proof', timestampMs: 10, kind: 'source_observation' as const, data: { native: true } },
+            { id: 'new-assistant', localId: 'new-assistant', timestampMs: 12, kind: 'agent' as const,
+                data: { role: 'agent', content: { type: 'message', message: 'new assistant' } } },
+            { id: 'native-canonical-tool-row', localId: 'native-canonical-tool-fact', timestampMs: 10, kind: 'event' as const,
+                data: { role: 'agent', content: { type: 'tool-result', callId: 'canonical-tool', output: 'canonical result' } } },
+        ];
+        // The actual writer must enforce replay custody even without the follow
+        // adapter. Rewriting these identities at time 10 would invalidate the
+        // retained Home observations whose original creation time is 11.
+        await publish({ kind: 'data', phase: 'initial_replay', providerSessionId: 'native-session',
+            fromCursor: null, nextCursor: 'replay-tail', items });
+        expect(writes).toEqual([expect.objectContaining({ localId: 'new-assistant', createdAt: 12 })]);
+        expect(observations).toEqual(['native-proof']);
+        await publish({ kind: 'data', phase: 'initial_replay', providerSessionId: 'native-session',
+            fromCursor: null, nextCursor: 'replay-tail', items });
+        expect(writes).toHaveLength(1);
+        expect(observations).toEqual(['native-proof', 'native-proof']);
+        await publish({ kind: 'data', providerSessionId: 'native-session', fromCursor: 'replay-tail', nextCursor: 'live-tail',
+            items: [{ ...items[1], timestampMs: 20, data: { role: 'agent', content: {
+                type: 'tool-result', callId: 'native-tool', output: 'corrected result',
+            } } }] });
+        expect(writes).toHaveLength(2);
+    });
+    it('forwards replay to the writer when live projection committed during admission', async () => {
         const published: HostExternalTranscriptFollowEvent[] = [];
         const session: RuntimeTranscriptProjectionSession = {
             sessionId: 'shared-session',
@@ -50,7 +126,8 @@ describe('createHostTerminalTranscriptFollowService', () => {
         try {
             await expect(service.bindProviderSession({ agentId: 'external-agent', providerSessionId: 'native-session' }))
                 .resolves.toMatchObject({ status: 'following' });
-            expect(published).toEqual([{ kind: 'data', phase: 'initial_replay', fromCursor: null, nextCursor: 'tail', items: [] }]);
+            expect(published).toEqual([{ kind: 'data', phase: 'initial_replay', fromCursor: null, nextCursor: 'tail',
+                items: [{ id: 'native-live', localId: 'native-live', kind: 'agent', data: { role: 'agent', text: 'Already recorded.' } }] }]);
         } finally {
             await service.releaseActiveBindings();
         }
@@ -203,12 +280,15 @@ describe('createHostTerminalTranscriptFollowService', () => {
         expect(result.status).toBe('following');
         expect(published).toEqual([{
             kind: 'data', phase: 'initial_replay', providerSessionId: 'native-1',
-            fromCursor: null, nextCursor: 'tail', items: [sourceObservation],
+            fromCursor: null, nextCursor: 'tail', items: [
+                { id: 'display-row', localId: 'committed-fact', kind: 'agent', data: { role: 'agent', text: 'already retained' } },
+                sourceObservation,
+            ],
         }]);
         await service.releaseActiveBindings();
     });
 
-    it('deduplicates fresh admission against durable custody without losing proof or later updates', async () => {
+    it('forwards fresh replay and live updates for the canonical writer to decide', async () => {
         const published: HostExternalTranscriptFollowEvent[] = [];
         const display = { id: 'native-row', localId: 'committed-fact', timestampMs: 10,
             kind: 'agent' as const, data: { role: 'agent', text: 'already retained' } };
@@ -229,7 +309,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         });
         const binding = await service.bindProviderSession({ agentId: 'plugin-agent', providerSessionId: 'native-1', replay: 'fresh' });
         expect(binding.status).toBe('following');
-        expect(published).toEqual([{ kind: 'data', items: [sourceObservation, newDisplay], fromCursor: null, nextCursor: 'tail' }]);
+        expect(published).toEqual([{ kind: 'data', items: [display, sourceObservation, newDisplay], fromCursor: null, nextCursor: 'tail' }]);
         const update = { ...display, timestampMs: 20, data: { role: 'agent', text: 'updated' } };
         await consume({ kind: 'data', items: [update], fromCursor: 'tail', nextCursor: 'updated-tail' });
         expect(published.at(-1)).toEqual({ kind: 'data', items: [update], fromCursor: 'tail', nextCursor: 'updated-tail' });
@@ -280,7 +360,7 @@ describe('createHostTerminalTranscriptFollowService', () => {
         if (second.status === 'following') await second.binding.dispose();
     });
 
-    it('follows after reading over 5,000 committed rows without rewriting old display or losing source Activity', async () => {
+    it('forwards replay after reading over 5,000 committed rows for canonical writer custody', async () => {
         const published: HostExternalTranscriptFollowEvent[] = [];
         const observation = { id: 'proof', timestampMs: 10, kind: 'source_observation' as const,
             data: { type: 'assistant', uuid: 'fact-1' } };
@@ -309,7 +389,8 @@ describe('createHostTerminalTranscriptFollowService', () => {
             await expect(service.bindProviderSession({ agentId: 'external-plugin-agent', providerSessionId: 'native-long' }))
                 .resolves.toMatchObject({ status: 'following' });
             expect(published).toEqual([{ kind: 'data', phase: 'initial_replay', fromCursor: null, nextCursor: 'tail',
-                items: [observation, { id: 'new-display', localId: 'new-fact', kind: 'agent', data: { role: 'agent', text: 'new' } }] }]);
+                items: [{ id: 'old-display', localId: 'fact-1', kind: 'agent', data: { role: 'agent', text: 'already committed' } },
+                    observation, { id: 'new-display', localId: 'new-fact', kind: 'agent', data: { role: 'agent', text: 'new' } }] }]);
         } finally {
             await service.releaseActiveBindings();
         }

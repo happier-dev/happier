@@ -84,6 +84,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
         messageId: 'agent-1',
       }),
       { ...admission, requireDelivery: true },
+      'agent-1',
     );
   });
 

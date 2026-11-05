@@ -12,7 +12,10 @@ export type ExternalSessionTerminalRuntimeEventProjectionResult =
   | Readonly<{ projected: true }>
   | Readonly<{ projected: false; reason: string }>;
 
-export type ExternalSessionTerminalFollowProjectionAdmission = CommittedTranscriptAdmission;
+export type ExternalSessionTerminalFollowProjectionAdmission = CommittedTranscriptAdmission & Readonly<{
+  /** The follow owner captured fresh catch-up before its source admission settled. */
+  replay?: true;
+}>;
 
 export type ExternalSessionTerminalFollowProjector = (
   event: HostExternalTranscriptFollowEvent,
@@ -189,6 +192,7 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
   projectRuntimeEvent(
     event: AgentSessionRuntimeEvent,
     admission?: ExternalSessionTerminalFollowProjectionAdmission,
+    sourceReplayLocalId?: string,
   ): Promise<ExternalSessionTerminalRuntimeEventProjectionResult>;
 }>): ExternalSessionTerminalFollowProjector {
   let sequence = 0;
@@ -218,7 +222,8 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
       if (!runtimeEvent) continue;
       const result = await params.projectRuntimeEvent(runtimeEvent, admission
         ? { ...admission, requireDelivery: true }
-        : undefined);
+        : undefined, event.phase === 'initial_replay' || admission?.replay
+          ? item.localId ?? item.id : undefined);
       if (!result.projected) {
         throw new Error('external_session_terminal_transcript_projection_rejected');
       }

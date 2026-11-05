@@ -79,6 +79,7 @@ import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/role
 import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
+import { shareSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { logger } from '@/ui/logger';
 import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/runnerAgentProjectLaunch';
@@ -701,6 +702,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                     // target re-reads controller custody per write and refuses there,
                                     // so no path silently reaches the parent's main transcript.
                                     const runTranscriptSession = runScope?.projectRunTranscriptSession() ?? null;
+                                    if (runTranscriptSession) shareSessionCommittedTranscriptLocalIds(runTranscriptSession, host.session);
                                     const externalSessionHostOperations = params.externalSessionHostOperations?.bindSession(sessionId) ?? null;
                                     const providerOps = readConfiguredExternalSessionProviderOps(params.executionSurfaces.externalSession);
                                     const loadBaseline = host.session.fetchCommittedTranscriptLocalIdBaseline;
@@ -734,8 +736,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                                     if (!session?.observeSourceTranscript) throw new Error('external_session_terminal_source_observation_unavailable');
                                                     await session.observeSourceTranscript(input);
                                                 },
-                                                projectRuntimeEvent: (event, admission) => projectRuntimeTranscriptEvent({
+                                                projectRuntimeEvent: (event, admission, sourceReplayLocalId) => projectRuntimeTranscriptEvent({
                                                     session: runTranscriptSession, provider: nativeIdentity.agentId, event,
+                                                    ...(sourceReplayLocalId === undefined ? {} : { sourceReplayLocalId }),
                                                     ...(admission ? { admission } : {}),
                                                 }),
                                             }),

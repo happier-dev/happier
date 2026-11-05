@@ -17,6 +17,11 @@ export function getSessionCommittedTranscriptLocalIds(session: object): Set<stri
   return localIds;
 }
 
+/** A new Run transcript target writes through its parent Session's durable identity owner. */
+export function shareSessionCommittedTranscriptLocalIds(target: object, session: object): void {
+  committedLocalIdsBySession.set(target, getSessionCommittedTranscriptLocalIds(session));
+}
+
 type TranscriptLocalIdBaselinePage = Readonly<{
   messages: readonly Readonly<{
     seq?: unknown;

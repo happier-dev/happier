@@ -144,7 +144,7 @@ type AdmittedRuntimeTranscriptProjectionParams = Omit<RuntimeTranscriptProjectio
   event: AgentSessionRuntimeEvent;
 }>;
 type CommittedNativeTranscript = Readonly<{
-  role: 'assistant' | 'reasoning';
+  role: 'assistant' | 'reasoning' | 'user';
   sidechainId: string | null;
   hasText: boolean;
   result: Promise<TranscriptMessageCommitResult>;
@@ -599,7 +599,7 @@ async function commitRequiredRuntimeTranscriptUserText(params: Readonly<{
   provenance?: SessionTranscriptObservationProvenanceV1;
   eventKind: string;
   admission?: CommittedTranscriptAdmission;
-}>): Promise<void> {
+}>): Promise<TranscriptMessageCommitResult> {
   assertRequiredTranscriptAdmission(params.admission, params.eventKind);
   if (!params.session.enqueueUserTextMessageCommitted) {
     throw new RuntimeTranscriptRequiredAdmissionError('durable_enqueue_unavailable', params.eventKind);
@@ -620,6 +620,7 @@ async function commitRequiredRuntimeTranscriptUserText(params: Readonly<{
     if (!result.persisted) {
       throw new RuntimeTranscriptRequiredAdmissionError('durable_custody_rejected', params.eventKind);
     }
+    return result;
   } catch (error) {
     if (error instanceof RuntimeTranscriptRequiredAdmissionError) throw error;
     if (error instanceof CommittedTranscriptAdmissionExpiredError) {
@@ -682,6 +683,8 @@ export function projectRuntimeTranscriptEvent(params: Readonly<{
   provider?: ACPProvider;
   runtimeMessageDeltaBridge?: RuntimeMessageDeltaBridge;
   admission?: CommittedTranscriptAdmission;
+  /** Native replay identity, carried by the host follow adapter without filtering source evidence. */
+  sourceReplayLocalId?: string;
   normalizedToolTurnChangeTracker?: NormalizedToolTurnChangeTracker;
   /** Foreground checkpoint finalization joins native evidence before publishing the single card. */
   publishTurnChangeSet?: (publication: RuntimeTurnChangeSetPublication) => Promise<void>;
@@ -717,6 +720,28 @@ async function projectRuntimeTranscriptEventNow(
   if (event.sessionId !== params.session.sessionId) {
     return { projected: false, reason: 'session_mismatch' };
   }
+  const replayLocalId = params.sourceReplayLocalId;
+  if (!replayLocalId || event.kind !== 'tool-call' && event.kind !== 'tool-result') {
+    return projectRuntimeTranscriptEventContent(params, cancellationMarker);
+  }
+  const committedLocalIds = getSessionCommittedTranscriptLocalIds(params.session);
+  assertRequiredTranscriptAdmission(params.admission, event.kind);
+  // Text/user facts use their native message ID and the receipt owner below.
+  // Tools also accept the native identity retained by historical import.
+  if (committedLocalIds.has(replayLocalId)
+    || committedLocalIds.has(buildRuntimeToolLocalId(event, event.kind))) {
+    return { projected: true, kind: event.kind };
+  }
+  const result = await projectRuntimeTranscriptEventContent(params, cancellationMarker);
+  if (result.projected) committedLocalIds.add(replayLocalId);
+  return result;
+}
+
+async function projectRuntimeTranscriptEventContent(
+  params: AdmittedRuntimeTranscriptProjectionParams,
+  cancellationMarker?: Promise<TranscriptMessageCommitResult>,
+): Promise<RuntimeTranscriptProjectionResult> {
+  const event = params.event;
   if (event.kind === 'context-compaction') return projectRuntimeCompactionEvent({ ...params, event });
   if (event.kind === 'skill-usage') {
     if (!params.usageAccount) return { projected: false, reason: 'unsupported_event' };
@@ -1060,22 +1085,7 @@ async function projectRuntimeTranscriptEventNow(
     await marker;
     return { projected: true, kind: event.kind, ...assistantReceipt };
   }
-  if (event.kind === 'transcript-message-committed' && event.role === 'user') {
-    const observation = resolveCommittedTranscriptObservation(event);
-    await commitRequiredRuntimeTranscriptUserText({
-      session: params.session,
-      text: event.text,
-      localId: event.messageId,
-      meta: {
-        happierProvenanceV1: buildSessionTranscriptMessageProvenanceV1('runtimeTranscript'),
-      },
-      ...observation,
-      eventKind: event.kind,
-      ...(params.admission === undefined ? {} : { admission: params.admission }),
-    });
-    return { projected: true, kind: event.kind };
-  }
-  if (event.kind !== 'transcript-message-committed' || !params.provider) {
+  if (event.kind !== 'transcript-message-committed' || event.role !== 'user' && !params.provider) {
     return { projected: false, reason: 'unsupported_event' };
   }
 
@@ -1099,18 +1109,32 @@ async function projectRuntimeTranscriptEventNow(
   }
   if (committedLocalIds.has(event.messageId)) return { projected: true, kind: event.kind };
   const provider = params.provider;
-  const channel = event.role === 'reasoning' ? 'reasoning' : 'assistant';
+  const channel = event.role;
   const commit = async (): Promise<TranscriptMessageCommitResult> => {
+    if (event.role === 'user') {
+      const result = await commitRequiredRuntimeTranscriptUserText({
+        session: params.session,
+        text: event.text,
+        localId: event.messageId,
+        meta: { happierProvenanceV1: buildSessionTranscriptMessageProvenanceV1('runtimeTranscript') },
+        ...observation,
+        eventKind: event.kind,
+        ...(params.admission === undefined ? {} : { admission: params.admission }),
+      });
+      committedLocalIds.add(event.messageId);
+      return result;
+    }
+    if (!provider) throw new RuntimeTranscriptRequiredAdmissionError('durable_enqueue_unavailable', event.kind);
     // Peer-delivered text is a whole message from another agent, never a stream segment of this Agent's reply.
     if (params.runtimeMessageDeltaBridge && !event.peer) {
       assertRequiredTranscriptAdmission(params.admission, event.kind);
       const summary = await params.runtimeMessageDeltaBridge.finalizeSegment({
-        ...buildRuntimeMessageStreamArgs(event, channel),
-        channel,
+        ...buildRuntimeMessageStreamArgs(event, event.role),
+        channel: event.role,
         text: event.text,
         sourceMessageId: event.messageId,
         ...(isForegroundTurnRuntimeTranscriptEvent(event)
-          ? { unnamedStreamKey: buildRuntimeMessageStreamArgs(event, channel, null).streamKey }
+          ? { unnamedStreamKey: buildRuntimeMessageStreamArgs(event, event.role, null).streamKey }
           : {}),
         ...(params.admission ? { admission: params.admission } : {}),
       });

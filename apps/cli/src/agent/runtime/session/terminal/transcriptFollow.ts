@@ -160,7 +160,6 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                 if (!committedBaseline.complete) {
                     throw terminalFollowFailure('plugin_external_follow_unavailable', 'Committed transcript baseline is incomplete');
                 }
-                const committedLocalIds = committedBaseline.localIds;
                 let admittingSource = true;
                 result = await params.followProviderSession(
                     {
@@ -178,23 +177,9 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                         const isFreshAdmission = event.kind === 'data'
                             && event.phase === undefined
                             && admittingSource && request.replay === 'fresh';
-                        let publishEvent = event;
-                        if (isInitialReplay || isFreshAdmission) {
-                            const items = event.items.filter((item) => {
-                                // Correlation belongs to the current observer even when
-                                // its display row already has durable custody.
-                                if (item.kind === 'source_observation') return true;
-                                const localId = item.localId ?? item.id;
-                                return !committedLocalIds.has(localId);
-                            });
-                            publishEvent = Object.freeze({
-                                ...event,
-                                items: Object.freeze(items),
-                            });
-                        }
                         try {
                             if (!admittingSource) {
-                                await params.publish(publishEvent, { signal });
+                                await params.publish(event, { signal });
                             } else {
                                 const publication =
                                     await invokeBoundedExternalSessionsOperation({
@@ -207,9 +192,10 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                                             deadlineAtMs,
                                         ) => {
                                             try {
-                                                await params.publish(publishEvent, {
+                                                await params.publish(event, {
                                                     signal: publicationSignal,
                                                     deadlineAtMs,
+                                                    ...(isInitialReplay || isFreshAdmission ? { replay: true as const } : {}),
                                                 });
                                                 return undefined;
                                             } catch (error) {
@@ -260,14 +246,6 @@ export function createHostTerminalTranscriptFollowService(params: Readonly<{
                         } catch (error) {
                             reportFailure(error);
                             throw error;
-                        }
-                        if (event.kind === 'data') {
-                            for (const item of event.items) {
-                                const localId = item.localId ?? item.id;
-                                if (localId.trim().length > 0) {
-                                    committedLocalIds.add(localId);
-                                }
-                            }
                         }
                         if (
                             event.kind === 'terminated'

@@ -778,14 +778,15 @@ identity. If a Stop hook names a reply not yet observed there, its completion
 evidence waits for that reply; it does not start structured-output repair with an
 empty Run buffer. Historical replay and native sidechains do not close that turn.
 
-For main Sessions and Session-owned Runs, the terminal-follow producer uses
-that complete durable baseline for both
-historical replay and fresh initial admission. Native display facts already
-committed through the SDK are not rewritten with a different native-source
-timestamp. Source-observation receipts still reach the current native observer,
-new display facts are published, and later live updates retain their normal
-publication path. Home's same-identity timestamp and provenance checks are
-unchanged.
+For main Sessions and Session-owned Runs, the canonical ordered transcript writer
+uses that shared durable baseline for historical replay and fresh initial
+admission. The follow producer does not filter display rows or own another
+deduplication decision. Actual Home acknowledgements update the same Session
+identity set, including direct SDK commits. Native display facts already committed
+through the SDK are not rewritten with a different native-source timestamp.
+Source-observation receipts still reach the current native observer, new display
+facts are published, and later live updates retain their normal publication path.
+Home's same-identity timestamp and provenance checks are unchanged.
 The committed local-ID reader pages all Session scopes to completion under the
 containing follow admission's cancellation and deadline, retaining identities
 rather than message bodies. Total committed-history length does not make a

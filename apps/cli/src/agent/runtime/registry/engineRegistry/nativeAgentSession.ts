@@ -5625,10 +5625,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             }
                             await session.observeSourceTranscript(input);
                         },
-                        projectRuntimeEvent: async (event, admission) => await projectRuntimeTranscriptEvent({
+                        projectRuntimeEvent: async (event, admission, sourceReplayLocalId) => await projectRuntimeTranscriptEvent({
                             session: hostRuntimeParams.session,
                             provider: identity.agentId,
                             event,
+                            ...(sourceReplayLocalId === undefined ? {} : { sourceReplayLocalId }),
                             ...(admission === undefined ? {} : { admission }),
                         }),
                     }),
