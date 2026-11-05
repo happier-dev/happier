@@ -104,6 +104,9 @@ type FeatureProtocolProtocolAuthoringImportAudience =
  * documents its two public-but-not-feature-protocol symbols.
  */
 const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
+    ScmHostingRepositoryIdentityV1ProtocolSchema: 'feature-protocol',
+    FileDownloadDestinationV1ProtocolSchema: 'feature-protocol',
+    FileDownloadResultV1ProtocolSchema: 'feature-protocol',
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1: 'feature-protocol',
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1: 'feature-protocol',
     TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1: 'feature-protocol',

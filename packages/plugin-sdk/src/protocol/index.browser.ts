@@ -51,3 +51,7 @@ export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
 export { encodeBase64 } from './encoding.js';
 export { pluginJsonValuesEqual } from './protocolFacade.js';
 export { projectNativeJsonValueForTransport } from './strictJsonValue.js';
+export type { FileDownloadDestinationV1 } from './fileDownload.js';
+export { FileDownloadDestinationV1ProtocolSchema } from './fileDownload.js';
+export type { FileDownloadResultV1 } from './fileDownload.js';
+export { FileDownloadResultV1ProtocolSchema } from './fileDownload.js';

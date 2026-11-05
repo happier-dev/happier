@@ -78,6 +78,9 @@ export {
 
 
 
+/** Receiver destinations and transfer outcomes retain the filesystem Action's authority. */
+export type { FileDownloadDestinationV1, FileDownloadResultV1 } from './fileDownload.js';
+export { FileDownloadDestinationV1ProtocolSchema, FileDownloadResultV1ProtocolSchema } from './fileDownload.js';
 export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 
 export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';

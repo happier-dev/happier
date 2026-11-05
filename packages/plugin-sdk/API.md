@@ -2006,6 +2006,10 @@
 | `./notifications` | `NotificationsService` | type | daemon |
 | `./notifications` | `PluginNotificationRegistrationApi` | type | daemon |
 | `./protocol` | `CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1` | value | any |
+| `./protocol` | `FileDownloadDestinationV1` | type | any |
+| `./protocol` | `FileDownloadDestinationV1ProtocolSchema` | value | any |
+| `./protocol` | `FileDownloadResultV1` | type | any |
+| `./protocol` | `FileDownloadResultV1ProtocolSchema` | value | any |
 | `./protocol` | `MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1` | value | any |
 | `./protocol` | `MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1` | value | any |
 | `./protocol` | `PluginJsonSchema` | type | any |
