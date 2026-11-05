@@ -17,13 +17,12 @@ import { getActivePluginAccountPackageAssetSource } from '@/sync/api/plugins/ava
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { BUNDLED_PLUGIN_BRAND_MARKS } from '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts';
+import { getAgentUiConfig } from '@/agents/registry/registryUi';
+import { resolveBundledAgentIdFromPluginId } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
+import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 
 /** A host-safe packaged brand fact: name is always projection-owned; bytes are optional. */
-export type InstalledPluginBrandPresentation = Readonly<{
-    displayName: string;
-    bytes?: Uint8Array;
-    monochrome?: boolean;
-}>;
+export type InstalledPluginBrandPresentation = HostCatalogMark;
 
 /**
  * The portable branch receives only Availability currentness and the one
@@ -96,30 +95,54 @@ function admittedBrandPresentation(
 }
 
 /** Exact first-party package identity, using only bytes emitted by the app byte publisher. */
-export function readBundledPluginBrandPresentation(pluginId: string | null | undefined): InstalledPluginBrandPresentation | null {
-    const matches = BUNDLED_PLUGIN_BRAND_MARKS.filter((mark) => mark.pluginId === pluginId);
-    const mark = matches.length === 1 ? matches[0] : null;
-    return mark ? admittedBrandPresentation(mark.displayName, mark.bytes, mark.monochrome) : null;
+function readBundledAgentArtwork(pluginId: string | null | undefined, displayName?: string, iconAgentId?: string | null): InstalledPluginBrandPresentation | null {
+    const agentId = iconAgentId ?? resolveBundledAgentIdFromPluginId(pluginId);
+    const artwork = agentId ? getAgentUiConfig(agentId).brandArtwork : undefined;
+    return artwork && displayName ? Object.freeze({ displayName, ...artwork }) : null;
 }
 
-/** Admission stays off the render path, including chrome without a machine projection. */
-export function useBundledPluginBrandPresentation(pluginId: string | null | undefined): InstalledPluginBrandPresentation | null {
-    const [state, setState] = React.useState<Readonly<{ pluginId: typeof pluginId; presentation: InstalledPluginBrandPresentation | null }> | null>(null);
+export function readBundledPluginBrandPresentation(pluginId: string | null | undefined, displayName?: string, iconAgentId?: string | null): InstalledPluginBrandPresentation | null {
+    const matches = BUNDLED_PLUGIN_BRAND_MARKS.filter((mark) => mark.pluginId === pluginId);
+    const mark = matches.length === 1 ? matches[0] : null;
+    return (mark ? admittedBrandPresentation(mark.displayName, mark.bytes, mark.monochrome) : null)
+        ?? readBundledAgentArtwork(pluginId, displayName, iconAgentId);
+}
+
+const admittedBundledBrands = new Map<string, InstalledPluginBrandPresentation>();
+const bundledBrandKey = (pluginId: string | null | undefined, displayName?: string, iconAgentId?: string | null) =>
+    JSON.stringify([pluginId ?? null, displayName ?? null, iconAgentId ?? null]);
+
+/**
+ * Admission stays off the render path, including chrome without a machine projection. A mark already admitted
+ * for these facts is drawn on the first render: a mark that mounts again (a list returning, a second page) never
+ * flashes its neutral text identity before its artwork.
+ */
+export function useBundledPluginBrandPresentation(pluginId: string | null | undefined, displayName?: string, iconAgentId?: string | null): InstalledPluginBrandPresentation | null {
+    const [state, setState] = React.useState<Readonly<{ pluginId: typeof pluginId; displayName: typeof displayName; iconAgentId: typeof iconAgentId; presentation: InstalledPluginBrandPresentation | null }> | null>(null);
+    const cached = admittedBundledBrands.get(bundledBrandKey(pluginId, displayName, iconAgentId)) ?? null;
     React.useEffect(() => {
-        const presentation = readBundledPluginBrandPresentation(pluginId);
-        if (presentation) setState({ pluginId, presentation });
-    }, [pluginId]);
-    return state && state.pluginId === pluginId ? state.presentation : null;
+        const key = bundledBrandKey(pluginId, displayName, iconAgentId);
+        // Already admitted: the render drew that same mark, so a remount neither re-admits nor re-renders.
+        if (cached) return;
+        // A sibling may have admitted it since this consumer rendered without the mark.
+        const presentation = admittedBundledBrands.get(key) ?? readBundledPluginBrandPresentation(pluginId, displayName, iconAgentId);
+        if (!presentation) return;
+        admittedBundledBrands.set(key, presentation);
+        setState({ pluginId, displayName, iconAgentId, presentation });
+    }, [pluginId, displayName, iconAgentId, cached]);
+    const held = state && state.pluginId === pluginId && state.displayName === displayName && state.iconAgentId === iconAgentId ? state.presentation : null;
+    return held ?? cached;
 }
 
 function readInstalledBundledBrandPresentation(installedPackage: PluginProjectionInstalledPackageV2): InstalledPluginBrandPresentation | null {
     const mark = BUNDLED_PLUGIN_BRAND_MARKS.find((entry) => entry.pluginId === installedPackage.id);
-    if (!mark || installedPackage.version !== mark.releaseVersion) return null;
+    const artwork = readBundledAgentArtwork(installedPackage.id, installedPackage.displayName);
+    if (!mark || installedPackage.version !== mark.releaseVersion) return artwork;
     const brand = installedPackage.brand;
     if (brand && (brand.state !== 'available'
         || brand.resource.pluginId !== mark.pluginId
         || brand.resource.localId !== mark.resourceId
-        || brand.digest !== mark.digest)) return null;
+      || brand.digest !== mark.digest)) return artwork;
     const presentation = readBundledPluginBrandPresentation(installedPackage.id);
     return presentation ? Object.freeze({ ...presentation, displayName: installedPackage.displayName }) : null;
 }
@@ -492,6 +515,8 @@ export function useInstalledPluginBrandPresentation(
                     && current.packageAssets?.source === capturedState.packageAssets?.source
                     && current.presentation?.displayName === presentation?.displayName
                     && current.presentation?.bytes === presentation?.bytes
+                    && current.presentation?.light === presentation?.light
+                    && current.presentation?.dark === presentation?.dark
                     && current.presentation?.monochrome === presentation?.monochrome) return current;
                 return {
                     key: capturedState.key,

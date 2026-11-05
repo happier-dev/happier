@@ -1,6 +1,7 @@
 import {
     PluginProjectionInstalledPackageV2Schema,
 } from '@happier-dev/protocol';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import {
     PluginUiArtifactDigestV1Schema,
     type PluginUiArtifactDigestV1,
@@ -59,6 +60,7 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
 
 import {
     readInstalledPluginBrandPresentation,
+    useBundledPluginBrandPresentation,
     useInstalledPluginBrandPresentation,
 } from './installedPluginBrandPresentation';
 
@@ -232,6 +234,33 @@ describe('installed package brand presentation', () => {
     });
     afterEach(() => browserStorage.restore());
 
+    it.each(['claude', 'codex', 'coderabbit'] as const)('keeps the same admitted %s mark in flat and by-kind installed views', async (agentId) => {
+        const pluginId = BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId].pluginId;
+        const input = readInput({
+            installedPackage: PluginProjectionInstalledPackageV2Schema.parse({
+                id: pluginId, displayName: agentId, version: '0.0.0', enabled: true,
+                source: { kind: 'bundled', locator: pluginId },
+            }),
+            machineId: null,
+        });
+        // The flat path has no Machine projection; the by-kind path carries its installed package.
+        const hook = await renderHook(() => ({
+            flat: useBundledPluginBrandPresentation(pluginId, agentId, agentId),
+            byKind: useInstalledPluginBrandPresentation(input),
+        }));
+        try {
+            const { flat, byKind } = hook.getCurrent();
+            expect(flat?.light).toBeDefined();
+            expect(byKind?.light).toBe(flat?.light);
+            expect(byKind?.dark).toBe(flat?.dark);
+            expect(byKind?.bytes).toBe(flat?.bytes);
+            expect(byKind?.monochrome).toBe(flat?.monochrome);
+            expect(rpc.read).not.toHaveBeenCalled();
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('admits bundled artwork in the mount commit without waiting for an asynchronous resource read', () => {
         const input = readInput({
             installedPackage: PluginProjectionInstalledPackageV2Schema.parse({
@@ -253,6 +282,49 @@ describe('installed package brand presentation', () => {
         } finally {
             act(() => tree?.unmount());
         }
+    });
+
+    it('updates every cold consumer when a sibling admits their shared bundled mark', () => {
+        const seen: Array<ReturnType<typeof useBundledPluginBrandPresentation>> = [null, null];
+        function Probe({ slot }: { slot: number }) {
+            seen[slot] = useBundledPluginBrandPresentation('happier.inspector', 'Concurrent Inspector');
+            return null;
+        }
+        let tree: ReactTestRenderer | undefined;
+        try {
+            act(() => { tree = create(createElement('probes', null,
+                createElement(Probe, { slot: 0 }), createElement(Probe, { slot: 1 }))); });
+            expect(seen[0]?.bytes).toEqual(createValidPluginBrandPngFixture());
+            expect(seen[1]).toBe(seen[0]);
+            expect(rpc.read).not.toHaveBeenCalled();
+        } finally {
+            act(() => tree?.unmount());
+        }
+    });
+
+    it('draws a bundled mark that was admitted before on the first render of its next mount, never its text identity first', () => {
+        const rendered: Array<ReturnType<typeof useBundledPluginBrandPresentation>> = [];
+        function Probe() {
+            rendered.push(useBundledPluginBrandPresentation('happier.inspector', 'Inspector'));
+            return null;
+        }
+        const mountOnce = () => {
+            rendered.length = 0;
+            let tree: ReactTestRenderer | undefined;
+            act(() => { tree = create(createElement(Probe)); });
+            act(() => tree?.unmount());
+            return [...rendered];
+        };
+        // Admission is off the render path, so the first-ever mount commits without the mark and then receives it.
+        const first = mountOnce();
+        expect(first[0]).toBeNull();
+        expect(first.at(-1)).toMatchObject({ displayName: 'Inspector' });
+        const second = mountOnce();
+        expect(second[0]).toMatchObject({ displayName: 'Inspector' });
+        // A remount of an admitted mark is one render of the same mark: no second admission, no new
+        // identity for the image below it (a list returning or switching tabs remounts every row).
+        expect(second).toHaveLength(1);
+        expect(second[0]).toBe(first.at(-1));
     });
 
     it.each(['server-a', 'other-home'])('uses only the already-applied Home lifetime for immediate brand admission (%s)', async (serverId) => {
@@ -913,4 +985,5 @@ describe('installed package brand presentation', () => {
         });
         await hook.unmount();
     });
+
 });

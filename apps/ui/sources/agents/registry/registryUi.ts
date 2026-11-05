@@ -2,7 +2,8 @@ import type { ImageSourcePropType } from 'react-native';
 
 import type { CanonicalAgentId } from './registryCore';
 import { isBundledAgentId } from './registryCore';
-import type { Theme } from '@/theme';
+import { lightTheme, darkTheme, type Theme } from '@/theme';
+import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 
 import { BUNDLED_CANONICAL_AGENTS_UI } from './generatedBundledPluginEntries';
 
@@ -39,9 +40,21 @@ export type AgentUiConfig = Readonly<{
 
 export const CANONICAL_AGENTS_UI = BUNDLED_CANONICAL_AGENTS_UI;
 
-export const AGENTS_UI: Readonly<Partial<Record<CanonicalAgentId, AgentUiConfig>>> = Object.freeze({
-    ...CANONICAL_AGENTS_UI,
-});
+type AdmittedAgentUiConfig = AgentUiConfig & Readonly<{ brandArtwork?: Omit<HostCatalogMark, 'displayName'> }>;
+
+// Owned artwork is materialized once when the bundled catalog is admitted.
+// Renderers receive platform sources, never XML or a theme-dependent converter.
+export const AGENTS_UI: Readonly<Partial<Record<CanonicalAgentId, AdmittedAgentUiConfig>>> = Object.freeze(
+    Object.fromEntries(Object.entries(CANONICAL_AGENTS_UI).map(([id, config]) => {
+        const source = (theme: Theme) => config.svgIconXml
+            ? Object.freeze({ uri: `data:image/svg+xml;utf8,${encodeURIComponent(config.svgIconXml(theme))}` })
+            : config.icon ?? undefined;
+        const light = source(lightTheme);
+        const dark = config.svgIconXml ? source(darkTheme) : light;
+        return [id, { ...config, ...(light || dark ? { brandArtwork: Object.freeze({ light, dark,
+            ...(config.tintColor ? { monochrome: true } : {}) }) } : {}) }];
+    })),
+);
 
 const UNKNOWN_AGENT_UI: AgentUiConfig = Object.freeze({
     id: '__unknown__',
@@ -56,12 +69,12 @@ const UNKNOWN_AGENT_UI: AgentUiConfig = Object.freeze({
     cliGlyph: '?',
 });
 
-export function getAgentUiConfig(agentId: string | null | undefined): AgentUiConfig {
+export function getAgentUiConfig(agentId: string | null | undefined): AdmittedAgentUiConfig {
     // `isBundledAgentId` narrows to the key of the bundled record. An externally
     // installed Agent legitimately has no bundled presentation entry, so it gets
     // the neutral placeholder rather than an `undefined` masquerading as a config.
     if (isBundledAgentId(agentId)) {
-        return CANONICAL_AGENTS_UI[agentId] ?? UNKNOWN_AGENT_UI;
+        return AGENTS_UI[agentId] ?? UNKNOWN_AGENT_UI;
     }
     return UNKNOWN_AGENT_UI;
 }
