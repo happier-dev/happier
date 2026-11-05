@@ -24,7 +24,8 @@ describe('trigger-run fold presentation (07 S15)', () => {
         expect(settled({ kind: 'stop_condition', arm: 1 }).details[1]).toBe('workflows.triggerRunFold.outOfBudget');
         expect(settled({ kind: 'stop_condition', arm: 2 }, { inputs: { strikes: 2 } }).details[1])
             .toBe('workflows.triggerRunFold.noProgress:{"count":2}');
-        expect(settled({ kind: 'exhausted', rounds: 2 }).details[1]).toBe('workflows.triggerRunFold.stoppedAfterRounds:{"count":2}');
+        // A round limit is said in rounds alone; a turn count beside it read as a second, disagreeing count (M8).
+        expect(settled({ kind: 'exhausted', rounds: 2 }).details).toEqual(['workflows.triggerRunFold.stoppedAfterRounds:{"count":2}']);
         expect(settled({ kind: 'stop_condition', arm: 0 }, { secondOpinionDisagreed: true }).details[1])
             .toBe('workflows.triggerRunFold.secondOpinionDisagreed');
     });
@@ -42,6 +43,10 @@ describe('trigger-run fold presentation (07 S15)', () => {
         const custom = settled(undefined, { catalogRef: null, workflowTitle: 'Nightly triage', run: { state: 'running', workflowCustodyState: null } });
         expect(custom).toMatchObject({ verb: 'Nightly triage', purpose: null });
         expect(custom.details).toEqual(['workflows.triggerRunFold.turns:{"count":3}', 'workflows.runState.running']);
+        // No turns yet is no fact: a just-started fold says only its state, in the same anatomy (M8).
+        expect(settled(undefined, { turnCount: 0, run: { state: 'running', workflowCustodyState: null } }).details).toEqual(['workflows.runState.running']);
+        expect(settled(undefined, { catalogRef: null, workflowTitle: 'Nightly triage', turnCount: 0,
+            run: { state: 'running', workflowCustodyState: null } }).details).toEqual(['workflows.runState.running']);
         // A settled Keep going whose result is not read yet never guesses an arm.
         expect(settled(undefined).details[1]).not.toMatch(/goalReached|outOfBudget|noProgress|stoppedAfter/);
         expect(settled({ kind: 'stop_condition', arm: 0 }, { run: { state: 'failed', workflowCustodyState: 'settled' } }).details[1])

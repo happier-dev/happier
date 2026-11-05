@@ -118,7 +118,9 @@ export function describeWorkflowTriggerRunFold(
         workflowCustodyState: input.run.workflowCustodyState,
       }).label
     : null;
-  const turns = t('workflows.triggerRunFold.turns', { count: input.turnCount });
+  // One anatomy for every fold: "{n} turns · {outcome}". No turns yet is not a fact worth saying.
+  const turns = input.turnCount > 0 ? t('workflows.triggerRunFold.turns', { count: input.turnCount }) : null;
+  const line = (...parts: readonly (string | null)[]) => parts.filter((part): part is string => part !== null && part !== '');
 
   if (entry?.id === 'builtin:keep-going') {
     const said =
@@ -143,7 +145,8 @@ export function describeWorkflowTriggerRunFold(
                 : stateWord;
     return {
       verb: t('workflows.triggerRunFold.keptGoing'),
-      details: said ? [turns, said] : [turns],
+      // A round limit is counted in rounds alone; turns beside it read as a second, disagreeing count.
+      details: outcome?.kind === 'exhausted' ? line(said) : line(turns, said),
       meta,
       purpose: entry.purpose,
     };
@@ -173,7 +176,7 @@ export function describeWorkflowTriggerRunFold(
   }
   return {
     verb: workflowName ?? t('workflows.run.untitled'),
-    details: stateWord ? [turns, stateWord] : [turns],
+    details: line(turns, stateWord),
     meta: trigger,
     purpose: entry?.purpose ?? null,
   };
