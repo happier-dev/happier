@@ -18,7 +18,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
+import type { SavedSecretCatalogResourceInputV1, SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import {
   prepareLeasedAgentProviderBinding,
   readLeasedAgentProviderBindingAdapter,
@@ -229,6 +229,7 @@ export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   agentId: string;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   /** Current Team source identity supplied by its owning resource admission. */
   teamCredentialResource?: Parameters<typeof resolveProviderModelCompatibility>[0]['teamCredentialResource'];
@@ -297,6 +298,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
   request: ProviderProbeAuthorizationRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   /** A caller-owned point-in-time parse for one bulk Provider projection. */
   settingsRead?: ProviderSettingsReadResultV1;
@@ -515,6 +517,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         providerSettings,
         accountSettings: input.accountSettings,
         savedSecretResources: input.savedSecretResources,
+        savedSecretMaterializer: input.savedSecretMaterializer,
         connectionId: record.connectionId,
         machineId: input.request.machineId,
         credentialSlotId: facts.credential.slotId,
@@ -571,6 +574,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
   request: ProviderModelLoadHostRequest;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
@@ -623,6 +627,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
         providerSettings,
         accountSettings: input.accountSettings,
         savedSecretResources: input.savedSecretResources,
+        savedSecretMaterializer: input.savedSecretMaterializer,
         connectionId: record.connectionId,
         machineId: input.request.machineId,
         credentialSlotId: credential.slotId,
@@ -1185,6 +1190,7 @@ export function resolveProviderSpawnAuthorization(
         providerSettings,
         accountSettings: input.accountSettings,
         savedSecretResources: input.savedSecretResources,
+        savedSecretMaterializer: input.savedSecretMaterializer,
         connectionId,
         machineId: input.machineId,
         credentialSlotId: facts.credential.slotId,

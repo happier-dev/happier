@@ -26,7 +26,7 @@ import {
 } from '../managed/resolvePurposeBindingSnapshot';
 import { createProviderCatalogRefreshFingerprint } from '../probe/catalog';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
-import type { SavedSecretCatalogResourceInputV1 } from '@/settings/secrets/savedSecretCatalog';
+import type { SavedSecretCatalogResourceInputV1, SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
 export type ProviderRuntimeCatalogModelObservation = Readonly<{
   model: ProviderModelDescriptorV1;
@@ -113,6 +113,7 @@ type ResolveProviderRuntimeCatalogModelInput = Readonly<{
   machineId: string;
   accountSettings: unknown;
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
   providerSettings: ProviderSettingsV1;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
@@ -295,6 +296,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         managedPurposeBindingSnapshot: purposeBindings,
         accountSettings: input.accountSettings,
         savedSecretResources: input.savedSecretResources,
+        savedSecretMaterializer: input.savedSecretMaterializer,
         providerSettings: input.providerSettings,
         registry: input.registry,
         dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
@@ -355,6 +357,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       },
       accountSettings: input.accountSettings,
       savedSecretResources: input.savedSecretResources,
+      savedSecretMaterializer: input.savedSecretMaterializer,
       providerSettings: input.providerSettings,
       registry: input.registry,
       dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,

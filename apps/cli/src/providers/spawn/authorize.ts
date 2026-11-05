@@ -62,7 +62,7 @@ import {
 } from '../sessions/retainedManagedProviderPolicy';
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 import { admitRuntimeProviderSavedSecret, providerSavedSecretAdmissionError } from './runtimeCredential';
-import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { logger } from '@/ui/logger';
@@ -840,6 +840,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           machineId: input.machineId,
           accountSettings: snapshot.settings,
           savedSecretResources: snapshot.savedSecretResources,
+          savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+            isCurrent: () => !admissionLifetime.signal?.aborted,
+          }),
           providerSettings,
           registry,
           dnsEvidenceByEndpointUrl,
@@ -879,6 +882,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       agentId: input.agentId,
       accountSettings: snapshot.settings,
       savedSecretResources: snapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+        isCurrent: () => !admissionLifetime.signal?.aborted,
+      }),
       providerSettings,
       registry,
       dnsEvidenceByEndpointUrl,

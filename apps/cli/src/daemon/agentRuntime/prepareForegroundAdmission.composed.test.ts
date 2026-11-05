@@ -156,7 +156,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
     });
   });
 
-  it('binds Profile scope/version through final claim and redacts successful plaintext for admission lifetime', async () => {
+  it('binds Profile scope/version through final claim', async () => {
     await withForegroundProviderFixture({}, async (fixture) => {
       const admitted = await fixture.prepare({ selection: undefined });
       expect(admitted.ok, !admitted.ok ? JSON.stringify(admitted.error) : undefined).toBe(true);
@@ -168,12 +168,19 @@ describe('foreground admission composed real Provider authorization seam', () =>
       })).resolves.toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
       await admitted.prepared.cleanup();
     });
-    await withForegroundProviderFixture({}, async (fixture) => {
+  });
+
+  it.each([
+    { providerSecretMode: 'plain' as const, requesterCustody: false },
+    { providerSecretMode: 'e2ee' as const, requesterCustody: false },
+    { providerSecretMode: 'e2ee' as const, requesterCustody: true },
+  ])('claims the real Codex binding from a $providerSecretMode Saved Secret with requester custody $requesterCustody', async options => {
+    await withForegroundProviderFixture(options, async (fixture) => {
       const admitted = await fixture.prepare();
       expect(admitted.ok, !admitted.ok ? JSON.stringify(admitted.error) : undefined).toBe(true);
       if (!admitted.ok) throw new Error(admitted.error.code);
       const claimed = await admitted.prepared.claim({
-        canonicalSessionId: 'canonical-session-plaintext', httpPort: 40123,
+        canonicalSessionId: options.requesterCustody ? 'session-1' : 'canonical-session-plaintext', httpPort: 40123,
         foregroundSatisfiedProfileSecretRequirementNames: [],
       });
       expect(claimed.ok, !claimed.ok ? JSON.stringify(claimed.error) : undefined).toBe(true);

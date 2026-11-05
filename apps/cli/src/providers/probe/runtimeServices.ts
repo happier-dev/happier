@@ -102,6 +102,7 @@ import type {
 import type { ProviderLocalCatalogFallbackResult } from './localCommand';
 import type { ProviderProbeOperationScope } from './authorization';
 import { admitRuntimeProviderSavedSecret } from '@/providers/spawn/runtimeCredential';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
@@ -704,6 +705,11 @@ export function createRuntimeProviderServices(input: Readonly<{
       lifetime,
       resolveManagedPurposeBindingIntent,
     } = context;
+    let savedSecretMaterializer = context.snapshot
+      ? createSavedSecretMaterializerFromSnapshotV1(context.snapshot, {
+          isCurrent: () => !lifetime.signal?.aborted,
+        })
+      : undefined;
     if (!isProviderFeatureEnabled()) {
       return { ok: false, error: providerFeatureDisabled(identity).error };
     }
@@ -928,6 +934,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           },
           managedPurposeBindingSnapshot: purposeBindingResolution,
           accountSettings,
+          savedSecretMaterializer,
           providerSettings,
           settingsRead,
           registry,
@@ -978,6 +985,9 @@ export function createRuntimeProviderServices(input: Readonly<{
       const admission = await admitSelectedCredentials(additionalCredentials);
       if (!admission.ok) return admission;
       savedSecretResources = admission.snapshot.savedSecretResources;
+      savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(admission.snapshot, {
+        isCurrent: () => !lifetime.signal?.aborted,
+      });
     }
     const endpoints: ProviderProbeEndpoint[] = connection.endpoints.map((endpoint) => ({
       endpointTemplateId: endpoint.endpointTemplateId,
@@ -1011,6 +1021,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         },
         accountSettings,
         savedSecretResources,
+        savedSecretMaterializer,
         providerSettings,
         settingsRead,
         registry,

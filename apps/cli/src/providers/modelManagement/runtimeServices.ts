@@ -32,6 +32,7 @@ import type {
 } from '@/providers/probe/runtimeServices';
 import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import {
@@ -1644,6 +1645,9 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
                 machineId: request.machineId,
                 accountSettings: snapshot.settings,
                 savedSecretResources: snapshot.savedSecretResources,
+                savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+                  isCurrent: () => !operationLifetime.signal?.aborted,
+                }),
                 providerSettings,
                 registry,
                 dnsEvidenceByEndpointUrl,
@@ -1667,6 +1671,10 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             agentTargetKey: request.agentTargetKey,
             agentId,
             accountSettings: snapshot.settings,
+            savedSecretResources: snapshot.savedSecretResources,
+            savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+              isCurrent: () => !operationLifetime.signal?.aborted,
+            }),
             providerSettings,
             registry,
             dnsEvidenceByEndpointUrl,

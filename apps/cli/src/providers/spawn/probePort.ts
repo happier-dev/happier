@@ -5,6 +5,7 @@ import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/p
 import type { AssessedProviderEndpoint, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import type {
   ProviderProbeAuthorizationPort,
   ProviderProbeOperationScope,
@@ -399,6 +400,9 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       request,
       accountSettings: reuseSettingsRead ? admittedSettingsBasis.accountSettings : currentSnapshot.settings,
       savedSecretResources: currentSnapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(currentSnapshot, {
+        isCurrent: () => !operationScope.lifetime.signal?.aborted,
+      }),
       providerSettings: currentSettingsRead.settings,
       settingsRead: currentSettingsRead,
       registry,
@@ -566,6 +570,9 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
       request,
       accountSettings: currentSnapshot.settings,
       savedSecretResources: currentSnapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(currentSnapshot, {
+        isCurrent: () => !operationScope.lifetime.signal?.aborted,
+      }),
       providerSettings: readProviderSettingsForCli(currentSnapshot).settings,
       registry,
       dnsEvidenceByEndpointUrl,

@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import tweetnacl from 'tweetnacl';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -15,6 +16,7 @@ import {
   buildBackendTargetKeyV2,
   encryptSecretStringV1,
   sealAccountScopedBlobCiphertext,
+  sealEncryptedDataKeyEnvelopeV1,
   sealSavedSecretResourceStoredContentV1,
   type SavedSecretCatalogMaterialStatusV1,
 } from '@happier-dev/protocol';
@@ -32,7 +34,10 @@ import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { beginActiveSavedSecretCatalogRefresh, getActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { deriveSettingsSecretsKeyForCredentials } from '@/settings/secrets/settingsSecretsKey';
+import { deriveKey } from '@/utils/deriveKey';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { ProfileRecordV1Schema, sealProfileRecordContentV1, type ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -50,6 +55,13 @@ import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrat
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
   sealProviderConnectionsContentV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { prepareRequesterSessionBootstrap, type RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
+import { createRequesterSessionRuntimeContext } from '../sessionEncryption/createRequesterSessionRuntimeContext';
+import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
+import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
+import type { TrackedSession } from '../types';
 
 type BaseContext = Parameters<Parameters<typeof withRealForegroundAdmissionFixture>[1]>[0];
 type RequestOverrides = NonNullable<Parameters<BaseContext['prepare']>[0]>;
@@ -70,6 +82,8 @@ type FixtureOptions = Readonly<{
   sharedSecretRevision?: number;
   sharedSecretFailure?: SharedFailure;
   sharedSecretHttpStatus?: number;
+  providerSecretMode?: 'plain' | 'e2ee';
+  requesterCustody?: boolean;
 }>;
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
@@ -125,13 +139,27 @@ function configFileAgentPlugin() {
   };
 }
 
-function sharedMaterial(options: FixtureOptions, settings: SettingsOptions) {
+async function sharedMaterial(options: FixtureOptions, settings: SettingsOptions, accountSecret: Uint8Array) {
   const statuses: Readonly<Record<Exclude<SharedFailure, 'reference_corrupt'>, SavedSecretCatalogMaterialStatusV1>> = {
     reference_forbidden: 'access_removed', reference_deleted: 'deleted',
     reference_mode_incompatible: 'recipient_mode_unsupported', reference_repair_required: 'update_required',
   };
   const status = options.sharedSecretFailure && options.sharedSecretFailure !== 'reference_corrupt'
     ? statuses[options.sharedSecretFailure] : 'ready';
+  const providerSecretMode = options.providerSecretMode ?? 'plain';
+  const resourceDataKey = new Uint8Array(32).fill(11);
+  const recipientEnvelope = providerSecretMode === 'e2ee' ? {
+    encryptedDataKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+      dataKey: resourceDataKey,
+      recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(await deriveKey(accountSecret, 'Happy EnCoder', ['content'])).publicKey,
+      randomBytes: length => new Uint8Array(length).fill(13),
+    })).toString('base64'),
+    recipientContentPublicKeyFingerprint: createAccountScopedCryptoMaterialSnapshotV1({
+      accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret: accountSecret },
+    }).contentPublicKeyFingerprint,
+  } : null;
+  const providerContent = { v: 1 as const, name: 'Provider secret', kind: 'apiKey' as const,
+    value: settings.providerSecretValue ?? 'provider-plaintext' };
   return SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
     resourceId: 'resource-profile-shared', encryptionMode: 'plain', recipientEnvelope: null,
     entry: { ref: sharedReference, source: 'shared_resource', relationship: 'recipient', name: 'Shared Profile secret',
@@ -144,12 +172,14 @@ function sharedMaterial(options: FixtureOptions, settings: SettingsOptions) {
         kind: 'apiKey', value: 'shared-profile-plaintext' },
     }) : null,
   }, {
-    resourceId: 'resource-provider', encryptionMode: 'plain', recipientEnvelope: null,
+    resourceId: 'resource-provider', encryptionMode: providerSecretMode, recipientEnvelope,
     entry: { ref: providerSecretReference, source: 'shared_resource', relationship: 'recipient', name: 'Provider secret',
       kind: 'apiKey', ownerAccountId: 'owner-account', revision: settings.providerSecretUpdatedAt ?? 1, materialStatus: 'ready',
       capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
-    storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-provider', mode: 'plain',
-      content: { v: 1, name: 'Provider secret', kind: 'apiKey', value: settings.providerSecretValue ?? 'provider-plaintext' } }),
+    storedContent: providerSecretMode === 'e2ee'
+      ? sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-provider', mode: 'e2ee', resourceDataKey,
+        randomBytes: length => new Uint8Array(length).fill(12), content: providerContent })
+      : sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-provider', mode: 'plain', content: providerContent }),
   }] });
 }
 
@@ -198,9 +228,15 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
   }, async (base) => {
     const app = fastify();
     let restoreAxios: (() => void) | null = null;
+    let requester: RequesterSessionRuntimeContext | null = null;
+    let requesterBootstrap: Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>> = null;
+    let requesterHost: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
+    let requesterChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>> | null = null;
     const originalFetch = globalThis.fetch;
     const accountSecret = new Uint8Array(32).fill(5);
-    const credentials: Credentials = { token: 'foreground-account-token', encryption: { type: 'legacy', secret: accountSecret } };
+    const credentials: Credentials = { token: options.requesterCustody
+      ? `e30.${Buffer.from(JSON.stringify({ sub: 'foreground-account' })).toString('base64url')}.fixture`
+      : 'foreground-account-token', encryption: { type: 'legacy', secret: accountSecret } };
     const material = { type: 'legacy' as const, secret: accountSecret };
     const initialProfile = ProfileRecordV1Schema.parse({ v: 1, id: 'profile-1', enabled: true,
       definition: { kind: 'inline', profile: { v: 2, id: 'profile-1', name: 'Profile', createdAt: 1, updatedAt: 1,
@@ -226,6 +262,9 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     app.get('/v2/account/settings', async () => settingsResponse);
     app.get('/v1/artifacts', async (request) => artifactListResponse(request.url, []));
     app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 0 }));
+    app.get('/v1/account/profile', async () => ({ id: 'foreground-account' }));
+    app.get('/v1/account/entity-rows/connected-accounts/purposes', async () => ({ status: 'absent' }));
+    app.get('/v1/account/entity-rows/connected-accounts/configurations', async () => ({ status: 'absent' }));
     app.get('/v1/account/encryption/currentness', async () => ({ mode: 'e2ee', version: 1, updatedAt: 0,
       signingKeyFingerprint: null, contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
         createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
@@ -256,7 +295,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     app.get(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, async () => providerRow);
     app.get('/v1/account/saved-secrets/resources/materials', async (_request, reply) => {
       if (options.sharedSecretHttpStatus) return reply.code(options.sharedSecretHttpStatus).send({ error: 'access_removed' });
-      return sharedMaterial(options, publishedSettings);
+      return sharedMaterial(options, publishedSettings, accountSecret);
     });
     try {
       await app.ready();
@@ -322,6 +361,55 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
       };
       resetInMemoryAccountSettingsContextForTests();
       await publishSettings(options.settings ?? { version: 1 });
+      if (options.requesterCustody) {
+        requesterChannel = await createRequesterCurrentnessSocketHarness();
+        requesterBootstrap = await prepareRequesterSessionBootstrap({ credentials,
+          attribution: { serverId: configuration.activeServerId, accountId: 'foreground-account',
+            machineId: 'machine-1', installationId: 'fixture-installation' },
+          boundary: { serverId: configuration.activeServerId, serverHttpBaseUrl: origin, happyHomeDir: base.home },
+          preparedSessionId: 'session-1', boundSessionId: 'session-1',
+          verifyMachineAdmissionCurrent: async () => true,
+        });
+        if (!requesterBootstrap) throw new Error('Requester Provider fixture bootstrap unavailable');
+        const registry = new ConnectedServiceRuntimeRegistry();
+        const trackedSessions = new Map<number, TrackedSession>();
+        requesterHost = await createRequesterSessionControlRuntimeFixture({
+          happyHomeDir: base.home, activeServerDir: configuration.activeServerDir,
+          serverId: configuration.activeServerId, serverHttpBaseUrl: origin, machineId: 'machine-1',
+          custodianAccountId: 'foreground-account', credentials,
+          connectedServicesMaterializationBaseDir: join(base.home, 'connected-services'),
+          registry, trackedSessions, getRequester: () => requester,
+          resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
+        });
+        requester = await createRequesterSessionRuntimeContext({ bootstrap: requesterBootstrap.admitted,
+          providerAccountUsageStore: createProviderAccountUsageStore(), activeServerDir: configuration.activeServerDir,
+          connectedServicesMaterializationBaseDir: join(base.home, 'connected-services'),
+          resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
+          coordinatorInput: { machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'fixture',
+            happyHomeDir: base.home, logger: { debug: () => {}, info: () => {}, warn: () => {} },
+            processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
+            pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+            connectedServiceAuthGroupPreTurnSwitchCoordinator: requesterHost.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator },
+        });
+        if (!requester) throw new Error('Requester Provider fixture runtime unavailable');
+        const privateSnapshot = requester.readAccountSettingsSnapshot();
+        if (privateSnapshot.settings !== getActiveAccountSettingsSnapshot()?.settings) {
+          throw new Error('Requester fixture did not reuse the ambient Settings projection');
+        }
+        await refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
+          operationContext: requester.bootstrap.savedSecretOperationContext,
+          references: [{ ref: providerSecretReference }] });
+        if (requester.readAccountSettingsSnapshot().savedSecretCatalogState !== 'ready') {
+          throw new Error('Requester fixture private Saved Secret admission did not succeed');
+        }
+        if (!beginActiveSavedSecretCatalogRefresh({ scopeKey,
+          lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() })) {
+          throw new Error('Requester fixture ambient Saved Secret refresh did not begin');
+        }
+        if (getActiveAccountSettingsSnapshot()?.savedSecretCatalogState !== 'temporarily_unavailable') {
+          throw new Error('Requester fixture ambient Saved Secret catalog was not withdrawn');
+        }
+      }
       const request = (overrides: RequestOverrides = {}) => {
         const profileId = Object.hasOwn(overrides, 'profileId') ? overrides.profileId : 'profile-1';
         return base.request({
@@ -341,6 +429,8 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
         },
         prepare: (overrides = {}, dependencies = {}) => base.prepare(request(overrides), {
           connectedServicesMaterializationBaseDir: join(base.home, 'connected-services'),
+          ...(requester ? { requesterSessionBootstrap: requester.bootstrap, requesterSessionRuntimeContext: requester,
+            subscribeAccountSettingsSnapshot: requester.subscribeAccountSettingsSnapshot } : {}),
           ...dependencies,
         }),
         async bootstrapFiles() {
@@ -350,6 +440,10 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
         },
       });
     } finally {
+      await requester?.dispose();
+      await requesterBootstrap?.admitted.dispose();
+      await requesterHost?.dispose();
+      await requesterChannel?.close();
       withdrawActiveProjectAccountRowsSnapshot();
       restoreAxios?.();
       vi.stubGlobal('fetch', originalFetch);
