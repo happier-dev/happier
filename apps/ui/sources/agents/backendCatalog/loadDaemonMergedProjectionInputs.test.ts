@@ -168,6 +168,60 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it('publishes retained plugin Network Join choices through the passive section reader without unrelated catalog renders', async () => {
+        const { act } = await import('react-test-renderer');
+        const { renderHook } = await import('@/dev/testkit');
+        const { useMachineNetworkFacts } = await import('@/components/machines/security/network/useMachineNetworkFacts');
+        const { relayAccessProviderDescriptorsById } = await import('@happier-dev/cli-common/relayAccess/catalog');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const selection = { provider: { pluginId: 'example.network', localId: 'netbird' }, config: {}, credentialRefs: [] };
+        const base = createMachineFixture({ id: projectionScope.machineId });
+        storage.getState().applyMachines([{ ...base, metadata: { ...base.metadata!, accessProviderSelections: [selection] } }],
+            true, { sourceServerId: projectionScope.serverId });
+        const accessProviders = { family: 'accessProviders', entriesById: {
+            'example.network/netbird': { id: 'example.network/netbird', pluginId: 'example.network', pluginVersion: '1.0.0',
+                definition: { ...relayAccessProviderDescriptorsById.tailscale!.definition, id: 'netbird',
+                    actions: { inspect: 'inspect', join: 'join', leave: 'leave' } } },
+        } };
+        const snapshotFor = (generation: number, includeNetwork: boolean) => buildDeferredDaemonProjectionSections(
+            DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                projectionDigest: String(generation).repeat(64), projection: { ...daemonProjection(generation),
+                    agentsById: { codex: { id: 'codex', title: `Codex ${generation}` } },
+                    familiesById: includeNetwork ? { accessProviders } : {},
+                } }));
+        let snapshot = snapshotFor(1, true);
+        network.setRpcAckResponder(async call => {
+            const read = (call.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            return { ok: true, result: read ? snapshot.read(read.digest, read.offset, read.includeDigests) : snapshot.manifest };
+        });
+        let renders = 0;
+        const hook = await renderHook(() => {
+            renders++;
+            return useMachineNetworkFacts({ ...projectionScope, enabled: true });
+        });
+        try {
+            expect(hook.getCurrent().access?.joinablePrivateNetworkSelections).toEqual([]);
+            expect(network.requests).toHaveLength(0);
+            await act(async () => { await loadDaemonMergedProjectionCacheEntry({ ...projectionScope,
+                accountLifetime: account.lifetime, sections: ['familiesById.accessProviders'] }); });
+            expect(hook.getCurrent().access?.joinablePrivateNetworkSelections).toEqual([selection]);
+            const initial = hook.getCurrent().access;
+            renders = 0;
+            snapshot = snapshotFor(2, true);
+            await act(async () => { await loadDaemonMergedProjectionCacheEntry({ ...projectionScope,
+                accountLifetime: account.lifetime, sections: ['agentsById', 'familiesById.accessProviders'] }); });
+            expect(renders).toBe(0);
+            expect(hook.getCurrent().access).toBe(initial);
+            snapshot = snapshotFor(3, false);
+            await act(async () => { await loadDaemonMergedProjectionCacheEntry({ ...projectionScope,
+                accountLifetime: account.lifetime, sections: ['familiesById.accessProviders'] }); });
+            expect(hook.getCurrent().access?.joinablePrivateNetworkSelections).toEqual([]);
+            expect(renders).toBe(1);
+        } finally { await hook.unmount(); }
+    });
+
     it('hydrates Machine Store kinds for AppShell UI demand without fetching unrelated catalogs or rereading on reopen', async () => {
         // JQ-R16: the admitted source exists, but AppShell's section demand
         // omitted Store declarations before the union ever received them.

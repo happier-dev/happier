@@ -14,9 +14,10 @@ const TITLE_SECTIONS = ['familiesById.accessProviders', 'familiesById.pluginUi']
 export function useMachineNetworkProviderTitle(input: Readonly<{
   serverId: string; machineId: string; enabled: boolean; facts: MachineNetworkFacts;
 }>): MachineNetworkProviderTitle {
-  const { posture, observation } = input.facts;
+  const { posture, observation, selections } = input.facts;
   const saved = posture?.defaultServiceIngress;
   const needsPluginTitles = (saved?.kind === 'provider' && !('kind' in saved.selection.provider))
+    || selections?.some(selection => !('kind' in selection.provider))
     || observation?.management.providers.some(entry => !('kind' in entry.provider))
     || observation?.ingress.some(entry => !('kind' in entry.provider))
     || observation?.privateNetworks.some(entry => !('kind' in entry.provider));

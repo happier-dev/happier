@@ -72,6 +72,15 @@ type OwnedProjectionInput = Readonly<{
     setupSelections: readonly Readonly<{ row: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1; publication: ReturnType<typeof createPluginActionInputSelectionFactsPublication> }>[];
 }>;
 
+/** Stable admitted family from this publisher; unpublished inputs have no owned family. */
+export function readPublishedDaemonProjectionFamily<K extends keyof PluginProjectionV2['familiesById']>(
+    inputs: DaemonMergedProjectionInputs,
+    familyId: K,
+): PluginProjectionV2['familiesById'][K] | null {
+    const owned = Object.getOwnPropertyDescriptor(inputs, ownedProjectionInput)?.value as OwnedProjectionInput | undefined;
+    return owned?.owner === inputs ? owned.projection.familiesById[familyId] ?? null : null;
+}
+
 /** Own only changed wire fields; equality is decided once before deriving presentation. */
 function publishProjectionFields<T extends Readonly<Record<string, unknown>>>(input: T, previous?: T): T {
     const fields: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(input).flatMap(([key, value]) =>
