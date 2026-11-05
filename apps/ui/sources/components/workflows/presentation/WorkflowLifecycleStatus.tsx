@@ -145,6 +145,8 @@ export function WorkflowRunStateMark(props: Readonly<{
     state: WorkflowRunStateV1;
     inAttentionWindow?: boolean;
     context?: Parameters<typeof describeWorkflowRunState>[1];
+    /** The mark's size where it stands in a quiet meta line (a Discussion run's end row); the outcome line's by default. */
+    size?: number;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -158,7 +160,7 @@ export function WorkflowRunStateMark(props: Readonly<{
             <WorkflowStatusMarker
                 marker={presentation.marker}
                 color={theme.colors.state[presentation.variant].foreground}
-                size={ICON_SIZE.md}
+                size={props.size ?? ICON_SIZE.md}
             />
         </View>
     );
