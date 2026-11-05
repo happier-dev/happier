@@ -1,13 +1,16 @@
 import * as React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue, WorkflowProgressEnvelopeV1, WorkflowResultContract } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalProvider } from '@/modal';
 import { WorkflowReviewCard, type WorkflowReviewCardProps } from './WorkflowReviewCard';
 
 const retireCards: Array<() => Promise<void>> = [];
+beforeEach(() => {
+    installBrowserClipboardBoundary(async text => { await Clipboard.setStringAsync(text); });
+});
 afterEach(async () => {
     for (const retire of retireCards.splice(0)) await retire();
     await standardCleanup();

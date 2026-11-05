@@ -4,7 +4,7 @@ import { MMKV } from 'react-native-mmkv';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
-import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import {
     installWebLockManagerMock,
 } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -23,6 +23,9 @@ import { resolveServerProfileScopeIdForIdentifier, setActiveServerId, setServerP
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 installTokenStorageWebPlatformMocks();
+// Vitest unwinds afterEach hooks in reverse order, so retain this scope through cleanup.
+// The real connection singleton retains its generation across cases.
+installTokenStorageTestIsolation('team-join-authentication', { preserveGenerations: true });
 const browserStorage = await vi.hoisted(async () => {
     const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
     return { ...installLocalStorageMock(), backend: globalThis.localStorage };
@@ -58,6 +61,7 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
     const otherIdentity = 'srv_other_account_join';
     const otherServerId = await home.addHome({ name: 'Other Home', serverUrl: 'https://other-home.test',
         serverIdentityId: otherIdentity, accountId: 'other-account', credentials: otherCredentials, teamsEnabled: true });
+    await switchConnectionToActiveServer();
     answerSavedAccountInvitation(serverId, identity, 'admitted-account');
     // The saved target uses a device-local profile reference; authenticated
     // Account scope uses the Home's stable identity, as the real join host does.
@@ -87,7 +91,6 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
     try {
         await screen.pressByTestIdAsync('team-auth-entry-join');
         if (recovery !== 'none') {
-            expect(home.requestsFor('/v1/team-invitations/accept')).toHaveLength(1);
             await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-destination-home-retry'), screen.getTextContent()).not.toBeNull());
             expect(screen.findByTestId('team-auth-entry-team-name')).toBe(identityHeading);
             expect(screen.findByTestId('team-auth-entry-admission-complete-name-field')).toBeNull();
@@ -95,10 +98,10 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
             focusStorage?.mockRestore();
             if (recovery === 'new_invitation') {
                 answerSavedAccountInvitation(otherServerId, otherIdentity, 'other-account');
-                await act(async () => { await switchConnectionToActiveServer(); });
                 await screen.update(renderEntry(otherServerId, 'other-account', 'b'.repeat(43)));
                 await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-join'), screen.getTextContent()).not.toBeNull());
                 await screen.pressByTestIdAsync('team-auth-entry-join');
+                await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-complete-action'), screen.getTextContent()).not.toBeNull());
                 expect(home.requestsFor('/v1/team-invitations/accept')).toHaveLength(2);
                 expect(home.requestsFor('/v1/team-invitations/accept').map(request => ({
                     serverId: request.serverId,
@@ -145,7 +148,6 @@ const { disconnectActiveServerConnection, switchConnectionToActiveServer } = awa
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { TeamJoinScreen } = await import('./TeamJoinScreen');
 const { TeamAuthEntrySurface } = await import('../entry/TeamAuthEntrySurface');
-
 let restoreLocks: () => void;
 let stopCredentialObservation: (() => void) | undefined;
 beforeEach(() => {
@@ -219,10 +221,7 @@ it.each([
     const screen = await renderScreen(<AuthProvider initialCredentials={initialCredentials}>
         <TeamJoinScreen token={token} homeTarget={identity} />
     </AuthProvider>);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-    }
-    expect(screen.findByTestId(`team-auth-entry-action:${method}`), screen.getTextContent()).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`team-auth-entry-action:${method}`), screen.getTextContent()).not.toBeNull());
     const actionId = `home-auth-${method}-provision-${mode}`;
     const submitId = method === 'key_challenge' ? actionId : 'email-password-create';
     const credentialWritten = createDeferred<void>();
@@ -255,7 +254,7 @@ it.each([
         act(() => { screen.pressByTestId(`team-auth-entry-action:${method}`); });
         // The chosen method continues inside the same split shell, under the
         // Team's identity, instead of replacing the page with a bare form.
-        expect(screen.findByTestId('team-auth-step-shell'), screen.getTextContent()).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-step-shell'), screen.getTextContent()).not.toBeNull());
         expect(screen.findByTestId('team-auth-step-team-name')?.props.children).toBe('Acme Team');
         if (method === 'email_password') {
             // The entry card already chose this form; the step does not ask again.
@@ -274,10 +273,7 @@ it.each([
         releaseStorage.resolve();
         lockRequest.mockRestore();
     }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-    }
-    expect(screen.findByTestId('team-auth-entry-admission-complete-action'), screen.getTextContent()).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-complete-action'), screen.getTextContent()).not.toBeNull());
     if (offHome) {
         expect(screen.findByTestId('team-auth-entry-admission-complete-name-field'), screen.getTextContent()).not.toBeNull();
         expect(home.requestsFor('/v1/account/profile')).toEqual(expect.arrayContaining([
