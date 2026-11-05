@@ -5,7 +5,11 @@ import { verifyCurrentExternalActionPrincipalInTx } from "@/app/auth/externalAct
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import type { Tx } from "@/storage/inTx";
 import { DiscussionModelSessionCreationProofV1Schema, buildDiscussionModelSessionCreationProofPayloadV1,
-    type DiscussionModelSessionCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+    SessionActionChildCreationProofV1Schema, buildSessionActionChildCreationProofPayloadV1,
+    deriveDeploymentPrepareSessionCreationIdentityV1,
+    type SessionActionChildCreationProofV1, type DiscussionModelSessionCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { DeploymentPrepareInputV1Schema, buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { verifyExternalActionMachineRpcRequestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SessionDiscussionParticipantV1Schema } from '@happier-dev/protocol/sessions/creation/sessionDiscussionParticipantV1';
@@ -27,6 +31,9 @@ export type SessionCreationExecutionAuthorization = ExternalActionExecutionAutho
     templateRequesterBirth: true;
 }> | Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1;
+    prepareBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: SessionActionChildCreationProofV1 }>;
+}> | Readonly<{
+    binding: ExternalActionExecutionAuthorizationBindingV1;
     modelBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: DiscussionModelSessionCreationProofV1; env: NodeJS.ProcessEnv }>;
 }> | Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1;
@@ -34,6 +41,54 @@ export type SessionCreationExecutionAuthorization = ExternalActionExecutionAutho
     reviewedChildAdmission: ReviewedActionChildHttpProofV1;
     effectActionId: 'session.spawn_new';
 }>;
+
+/** The admitted installation signs the one local child and its exact birth body. */
+async function isDeploymentPrepareBirthInTx(tx: Tx, accountId: string,
+    authorization: Extract<SessionCreationExecutionAuthorization, { prepareBirth: unknown }>): Promise<boolean> {
+    const { binding, prepareBirth: { body, proof: rawProof } } = authorization;
+    const parsed = SessionActionChildCreationProofV1Schema.safeParse(rawProof);
+    const identity = deriveDeploymentPrepareSessionCreationIdentityV1(binding);
+    if (!parsed.success || !identity || binding.accountId !== accountId || body.tag !== identity.sessionCreationTag) return false;
+    const { sourceExecution, machineAdmission, proof } = parsed.data;
+    const execution = sourceExecution.externalActionExecution;
+    const envelope = sourceExecution.originalActionEnvelope;
+    if (!envelope || !sameStrictJsonValue(execution.authorization.binding, binding)
+        || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope })
+        || sourceExecution.requestId !== identity.requestId || execution.effectActionId !== 'session.spawn_new'
+        || !sameStrictJsonValue(execution.target, binding.target)
+        || machineAdmission.actorAccountId !== accountId || machineAdmission.machineId !== binding.machineId
+        || machineAdmission.installationId !== binding.installationId || execution.installationId !== binding.installationId
+        || machineAdmission.custodianAccountId !== binding.custodianAccountId) return false;
+    if (binding.sessionActionOrigin) {
+        if (body.originKind !== 'session' || body.originSessionId !== binding.sessionActionOrigin.caller.sessionId
+            || body.originRunId !== undefined) return false;
+    } else return false;
+    if (envelope.v === 1) {
+        const root = DeploymentPrepareInputV1Schema.safeParse(envelope.input);
+        const spawn = SessionSpawnNewActionInputV2Schema.safeParse(sourceExecution.params);
+        if (!root.success || root.data.sessionRef !== undefined || !spawn.success
+            || spawn.data.executionTarget.machineId !== binding.machineId
+            || spawn.data.executionTarget.serverId !== root.data.workspace.serverId
+            || !sameStrictJsonValue(sourceExecution.params, {
+                executionTarget: spawn.data.executionTarget, directory: spawn.data.directory, agentTarget: spawn.data.agentTarget,
+                initialInput: { text: buildDeploymentPreparationBriefV1(root.data) },
+            })) return false;
+    } else if (binding.accountEncryptionMode !== 'e2ee'
+        || sourceExecution.params !== undefined && typeof sourceExecution.params !== 'string') return false;
+    // Root admission already chose this installation. Birth verifies its current
+    // key and custody, without introducing another permission decision.
+    const machine = await tx.machine.findUnique({ where: { id: binding.machineId } });
+    return !!machine?.installationPublicKey && machine.installationId === binding.installationId
+        && machine.accountId === binding.custodianAccountId
+        && verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
+            authorizationToken: execution.authorization.token, requesterAccountContext: execution.authorization.requesterAccountContext,
+            effectActionId: execution.effectActionId, target: execution.target, installationId: execution.installationId,
+            method: sourceExecution.method, requestId: sourceExecution.requestId,
+            ...(sourceExecution.params === undefined ? {} : { params: sourceExecution.params }),
+            publicKey: machine.installationPublicKey, signature: execution.machineSignature })
+        && verifyMachineInstallationProof({ publicKey: machine.installationPublicKey, proof,
+            payload: buildSessionActionChildCreationProofPayloadV1({ sourceExecution, machineAdmission, body }) });
+}
 
 async function isCurrentDiscussionModelBirthInTx(tx: Tx, accountId: string,
     authorization: Extract<SessionCreationExecutionAuthorization, { modelBirth: unknown }>): Promise<boolean> {
@@ -110,7 +165,8 @@ export async function readSessionCreationApiTokenIdInTx(
     await acquireAccountSessionOwnerMetadataFenceInTx(tx, accountId, "content");
     const binding = 'binding' in authorization ? authorization.binding : authorization;
     const principal = await verifyCurrentExternalActionPrincipalInTx(tx, binding);
-    if (binding.accountId !== accountId || !principal || ('modelBirth' in authorization
+    if (binding.accountId !== accountId || !principal || ('prepareBirth' in authorization
+        ? !await isDeploymentPrepareBirthInTx(tx, accountId, authorization) : 'modelBirth' in authorization
         ? !await isCurrentDiscussionModelBirthInTx(tx, accountId, authorization)
         : !('reviewedChildAdmission' in authorization) && binding.actionId !== 'session.spawn_new')) {
         throw new ApiTokenOperationError("invalid_token");

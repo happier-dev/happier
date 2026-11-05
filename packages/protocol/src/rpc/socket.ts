@@ -180,6 +180,9 @@ export const WorkspaceSyncSourceExecutionV1Schema = lazyZodSchema(() => z.strict
       || value.method.endsWith(`:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`))
   || isMachineSetupPlanRpcChildV1({ rootActionId: value.externalActionExecution.authorization.binding.actionId,
     effectActionId: value.externalActionExecution.effectActionId, method: value.method.slice(value.method.indexOf(':') + 1) })
+  || value.externalActionExecution.authorization.binding.actionId === 'deployments.prepare'
+    && value.externalActionExecution.effectActionId === 'session.spawn_new'
+    && value.method.endsWith(`:${RPC_METHODS.SESSION_SPAWN_NEW}`)
   || value.externalActionExecution.deploymentChildRouting !== undefined
     && value.method === `${value.externalActionExecution.deploymentChildRouting.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`
     && value.externalActionExecution.effectActionId === value.externalActionExecution.deploymentChildRouting.actionId

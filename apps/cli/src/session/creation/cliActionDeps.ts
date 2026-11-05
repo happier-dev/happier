@@ -2,7 +2,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { createReviewedSecondOpinionSessionCreationAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { createPrepareSessionCreationAuthorization, createReviewedSecondOpinionSessionCreationAuthorization } from '@/api/externalActionExecutionAuthorization';
 import type { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { resolveCliPromptStackSystemAppendBlocks } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -428,13 +428,19 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         && context.originalActionEnvelope
         ? { authorization: context.externalActionExecutionAuthorization, originalActionEnvelope: context.originalActionEnvelope }
         : undefined;
-      const creationAuthorization = context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start'
+      const prepareSpawn = context?.externalActionExecutionAuthorization?.binding.actionId === 'deployments.prepare';
+      const creationAuthorization = prepareSpawn
+        ? input.admittedInput && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
+          ? createPrepareSessionCreationAuthorization({ context: context!, publicInput: input.admittedInput,
+            installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey })
+          : null
+        : context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start'
         ? input.admittedInput && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey
           ? createReviewedSecondOpinionSessionCreationAuthorization({ context, publicInput: input.admittedInput,
             installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey })
           : null
         : admittedCreationAuthorization;
-      if (context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start' && !creationAuthorization) {
+      if ((prepareSpawn || context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start') && !creationAuthorization) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
       let initialSessionRolesV1 = requestedInitialSessionRolesV1;

@@ -124,6 +124,14 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     })) return reply.code(401).send({ error: 'invalid_token' });
                 const { creationAuthorizationProof: _proof, ...body } = request.body;
                 sessionCreationAuthorization = { binding, modelBirth: { body, proof: nativeProof, env: await readRequestHomeEnv(request) } };
+            } else if (binding.actionId === 'deployments.prepare' && nativeProof && 'sharedMetadata' in request.body) {
+                const source = nativeProof.sourceExecution;
+                if (source.externalActionExecution.authorization.token !== creationHeader
+                    || !sameStrictJsonValue(source.externalActionExecution.authorization.binding, binding)) {
+                    return reply.code(401).send({ error: 'invalid_token' });
+                }
+                const { creationAuthorizationProof: _proof, ...body } = request.body;
+                sessionCreationAuthorization = { binding, prepareBirth: { body, proof: nativeProof } };
             } else if (binding.actionId === 'session.spawn_new' && !nativeProof) {
                 sessionCreationAuthorization = binding;
             } else return reply.code(401).send({ error: 'invalid_token' });

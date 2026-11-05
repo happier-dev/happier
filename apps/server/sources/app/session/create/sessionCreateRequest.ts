@@ -6,7 +6,7 @@ import { SessionInitialTriggerAdmissionV1Schema } from '@happier-dev/protocol/se
 import { SessionCreateOriginFieldsV1Schema, refineSessionCreateOriginFieldsV1 } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
 import { SessionManagerV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
-import { DiscussionModelSessionCreationProofV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { SessionActionChildCreationProofV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 
 /** The ordinary birth route and signed effect admission consume one exact body contract. */
@@ -33,7 +33,7 @@ export const SessionCreateRequestSchema = z.union([z.strictObject({
     primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
     teamCredentialBindings: z.optional(SessionTeamCredentialBindingIntentsV1Schema),
     manager: z.optional(SessionManagerV1Schema),
-    creationAuthorizationProof: z.optional(DiscussionModelSessionCreationProofV1Schema),
+    creationAuthorizationProof: z.optional(SessionActionChildCreationProofV1Schema),
     templateRequesterAuthorization: z.optional(z.strictObject({
         authorization: ExternalActionExecutionAuthorizationV1Schema,
         originalActionEnvelope: ExternalActionRequestEnvelopeSchema,

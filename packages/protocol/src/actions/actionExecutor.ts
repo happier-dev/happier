@@ -2,7 +2,7 @@ import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1 } from '.
 import { isScreenCaptureActionId } from './screenCaptureActionIds.js';
 import { executeSessionDelete } from './executor/session/delete.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';
-import { createHostReviewedChildPortV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
@@ -70,7 +70,7 @@ import { readApprovalReplayResult } from './executor/approvalResults.js';
 import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { readPluginPublicationApprovalSubject } from '../approvals/creation.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../projects/projectOrganizationV1.js';
-import { deriveWorkflowDiscussionReplyLocalIdV1, deriveWorkflowReplacementId } from '../workflows/workflowInvocationIdentityV1.js';
+import { deriveActionChildRequestIdV1, deriveWorkflowDiscussionReplyLocalIdV1, deriveWorkflowReplacementId } from '../workflows/workflowInvocationIdentityV1.js';
 import { captureWorkflowDefinitionV1 } from './executor/workflowDefinitionCapture.js';
 import { LocalServiceStartApprovalReviewV1Schema } from '../local/services/launcher/v1.js';
 import { actionInputIssueFailure, actionInputValidationFailure } from './executor/actionInputValidation.js';
@@ -2032,7 +2032,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       childPositions.set(childId, position + 1);
       const parentRequestId = normalizeId(childContext.actionRequestId);
       return executeInvocation(childId, childInput, parentRequestId ? { ...childContext,
-        actionRequestId: deriveWorkflowReplacementId(['action.child', parentRequestId, actionId, childId, position]),
+        actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
+          childActionId: childId, position }),
       } : childContext, true);
     };
     const stopThenArchiveSession = async (sessionId: string, childContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
@@ -5537,7 +5538,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const input = DeploymentActionInputSchemasV1[actionId].parse(data);
           if (!isSameHome(input.workspace.serverId, ctx.serverId, ctx))
             return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
-          const result = await deps.deploymentPrepare(input, ctx);
+          const result = await deps.deploymentPrepare(input, ctx,
+            (childId, childInput) => invokeHostReviewedChildV1({
+              parent: { actionId, input: projectNativeJsonValueForTransport(input) as Record<string, JsonValue> },
+              context: ctx, child: { action: childId, role: 'prepare-session', input: projectNativeJsonValueForTransport(childInput) },
+              admittedReview: { action: childId, role: 'prepare-session', surface: ctx.surface ?? 'cli' },
+              execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput,
+                { ...childContext, serverId: ctx.externalActionExecutionAuthorization?.binding.serverIdentityId ?? childContext.serverId }),
+            }));
           return 'errorCode' in result ? result : { ok: true, result };
         }
         if (isDeploymentActionIdV1(actionId)) {

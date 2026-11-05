@@ -1285,7 +1285,8 @@ export type ActionExecutorDeps = Readonly<{
   deploymentPublish?: (input: DeploymentPublishInputV1, context: ActionExecutorContext) =>
     Promise<DeploymentPublishResultV1 | ActionExecuteFailure>;
 
-  deploymentPrepare?: (input: DeploymentPrepareInputV1, context: ActionExecutorContext) =>
+  deploymentPrepare?: (input: DeploymentPrepareInputV1, context: ActionExecutorContext,
+    executeCanonicalAction?: (actionId: 'session.spawn_new' | 'session.message.send', input: unknown) => Promise<ActionExecuteResult>) =>
     Promise<DeploymentPrepareResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
 
   deploymentTemplateInstantiate?: (input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,

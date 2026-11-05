@@ -16,7 +16,7 @@ import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptTransportInputV1Schema, D
 import { DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1 } from '@happier-dev/protocol/discussions/secondOpinion';
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
@@ -30,6 +30,17 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { DiscussionListInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { createSignedDiscussionHttpFixture as fixture, createSignedDiscussionModelBirthFixture } from './discussionExecutionAuthorization.testkit';
+
+import { buildSessionSpawnNewArgs } from '../../../../../../../packages/protocol/src/actions/executor/sessionSpawn';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { DeploymentPrepareInputV1Schema, buildDeploymentPreparationBriefV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { deriveDeploymentPrepareSessionCreationIdentityV1, buildSessionActionChildCreationProofPayloadV1,
+    type SessionActionChildCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { inTx } from '@/storage/inTx';
 
 // Runtime composition uses the CLI Vitest resolver, not the Server compiler's
 // rootDir/aliases. Both composed flows retain the shared typed Action port.
@@ -56,6 +67,9 @@ describe('signed Account Discussion HTTP admission', () => {
                 HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: 'true',
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
                 HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: '1',
+                HAPPIER_FEATURE_DEPLOYMENTS__ENABLED: '1',
+                HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1',
+                HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
             },
         });
     }, 300_000);
@@ -247,6 +261,141 @@ describe('signed Account Discussion HTTP admission', () => {
                 sharedByUserId: f.account.id, sharedWithUserId: bob.id, accessLevel: 'view' } });
             expect(await execute('discussion.read', 1)).toMatchObject({ messages: expect.arrayContaining([
                 expect.objectContaining({ id: inherited.value.message.id })]) });
+        } finally { await f.app.close(); }
+    });
+
+    it.each(['Session', 'E2EE Session'] as const)('creates exactly the Prepare child at the real Session birth boundary using the unchanged signed root (%s)', async callerKind => {
+        const f = await fixture();
+        try {
+            const encrypted = callerKind === 'E2EE Session';
+            const contentKeys = tweetnacl.box.keyPair();
+            const contentKey = encrypted ? createMachineDataEncryptionKeyV1({ material: { type: 'dataKey', machineKey: contentKeys.secretKey },
+                dataKeyPublicKey: contentKeys.publicKey, randomBytes: tweetnacl.randomBytes }) : undefined;
+            if (contentKey) {
+                await db.account.update({ where: { id: f.account.id }, data: {
+                    encryptionMode: 'e2ee', ...createSignedAccountContentBinding(contentKeys.publicKey),
+                } });
+                const metadata = sealSessionStoredContent({ mode: 'e2ee',
+                    ctx: { encryptionKey: contentKey.encryptionKey, encryptionVariant: 'dataKey' },
+                    payload: decodePlainMachineStoredContent(f.machine.metadata) });
+                if (metadata.t !== 'encrypted') throw new Error('Expected encrypted Prepare Machine');
+                await db.machine.update({ where: { id: f.machine.id }, data: {
+                    metadata: metadata.c, dataEncryptionKey: new Uint8Array(contentKey.dataEncryptionKey),
+                } });
+            }
+            const serverId = await getOrCreateServerIdentityId();
+            const created = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
+                requestKey: randomUUID(), name: 'Prepare birth',
+                repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                    repository: { nameWithOwner: 'example/prepare', cloneUrl: 'https://github.com/example/prepare.git' }, protocol: 'https' } }));
+            if (!created.ok) throw new Error(created.error);
+            const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId: created.source.id, sourceRevision: created.source.revision,
+                repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/prepare' },
+                baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'prepare-workspace' } });
+            const caller = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+            await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.machine.id, sessionId: caller.id, data: 'source' } });
+            const sessionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller: { kind: 'session', sessionId: caller.id,
+                starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'prepare-turn', callerPermissionMode: 'default',
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' }, requestId: randomUUID() });
+            const actionCaller = sessionOrigin.caller;
+            const origin = sessionOrigin;
+            const buildEnvelope = (rootInput: typeof input) => encrypted
+                ? sealExternalActionRequestV2({ binding: { serverIdentityId: serverId, accountId: f.account.id,
+                    actionId: 'deployments.prepare', requestId: origin.requestId,
+                    target: { kind: 'machine', machineId: f.machine.id }, authentication: { kind: 'account', tokenEpoch: 0 } },
+                    input: rootInput, material: { type: 'dataKey', machineKey: contentKeys.secretKey }, randomBytes: tweetnacl.randomBytes })
+                : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+                    target: { kind: 'machine', machineId: f.machine.id }, input: rootInput });
+            const envelope = buildEnvelope(input);
+            const source = { machineId: f.machine.id, installationId: f.machine.installationId! };
+            const minted = await f.app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('deployments.prepare'),
+                headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: { v: 1, machineId: f.machine.id, envelope,
+                    sessionActionOrigin: sessionOrigin, sessionActionSource: source,
+                    installationProof: signMachineInstallationProof({ privateKey: f.keyPair.secretKey, payload: { version: 1,
+                        accountId: f.account.id, ...source, externalActionOrigin: { homeId: serverId, actionId: 'deployments.prepare',
+                            requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const identity = deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
+            if (!identity) throw new Error('missing_prepare_child_identity');
+            const spawn = SessionSpawnNewActionInputV2Schema.parse({ executionTarget: { serverId, machineId: f.machine.id },
+                directory: { kind: 'path', path: '/prepare' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                initialInput: { text: buildDeploymentPreparationBriefV1(input) } });
+            const args = buildSessionSpawnNewArgs(spawn, { serverId, runtimeAccountId: f.account.id,
+                authority: 'account_automation', surface: 'agent', defaultSessionId: caller.id,
+                actionRequestId: identity.requestId, agentStartWorkDepth: 1, actionCaller, externalActionExecutionAuthorization: authorization });
+            expect(args).not.toBeNull();
+            if (!args?.creationAuthorization) throw new Error('missing_real_spawn_creation_authorization');
+            const sessionContent = contentKey ? sealSessionStoredContent({ mode: 'e2ee',
+                ctx: { encryptionKey: contentKey.encryptionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } })
+                : { t: 'plain' as const, v: { v: 1 } };
+            const body = { tag: args.sessionCreationTag, metadataLayoutVersion: 1, encryptionMode: encrypted ? 'e2ee' : 'plain',
+                sharedMetadata: { ciphertext: sessionContent.t === 'encrypted' ? sessionContent.c : JSON.stringify(sessionContent.v) },
+                ownerMetadata: encrypted ? sealSessionOwnerMetadataEnvelopeV1({
+                    material: { type: 'dataKey', machineKey: contentKeys.secretKey }, ownerMetadata: { v: 1 },
+                    randomBytes: tweetnacl.randomBytes }) : sessionContent,
+                dataEncryptionKey: contentKey ? encodeBase64(contentKey.dataEncryptionKey, 'base64') : null,
+                originKind: args.originKind,
+                ...(args.originSessionId === undefined ? {} : { originSessionId: args.originSessionId }),
+                ...(args.originRunId === undefined ? {} : { originRunId: args.originRunId }), workDepth: args.workDepth };
+            const machineAdmission = { machineId: f.machine.id, installationId: f.machine.installationId!, actorAccountId: f.account.id,
+                custodianAccountId: f.machine.accountId, role: 'manage' as const, encryptionMode: encrypted ? 'e2ee' as const : 'plain' as const };
+            const method = `${f.machine.id}:${RPC_METHODS.SESSION_SPAWN_NEW}`;
+            const makeProof = (requestBody: Readonly<Record<string, unknown>>, params: SessionActionChildCreationProofV1['sourceExecution']['params'] = encrypted ? undefined : spawn,
+                admission = machineAdmission, requestId = identity.requestId, originalActionEnvelope = envelope): SessionActionChildCreationProofV1 => {
+                const sourceExecution = { method, requestId, ...(params === undefined ? {} : { params }), originalActionEnvelope,
+                    externalActionExecution: { v: 1 as const, authorization, effectActionId: 'session.spawn_new',
+                        target: authorization.binding.target, installationId: f.machine.installationId!,
+                        machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                            effectActionId: 'session.spawn_new', target: authorization.binding.target,
+                            installationId: f.machine.installationId!, method, requestId, ...(params === undefined ? {} : { params }),
+                            privateKey: f.keyPair.secretKey }) } };
+                return { v: 1, machineAdmission: admission, sourceExecution, proof: signMachineInstallationProof({
+                    privateKey: f.keyPair.secretKey,
+                    payload: buildSessionActionChildCreationProofPayloadV1({ machineAdmission: admission, sourceExecution, body: requestBody }) }) };
+            };
+            const send = (payload: unknown) => f.app.inject({ method: 'POST', url: '/v1/sessions',
+                headers: { authorization: `Bearer ${f.presentUserToken}`, 'content-type': 'application/json', 'x-happier-account-stored-content-protocol': '2',
+                    [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: authorization.token }, payload: JSON.stringify(payload) });
+            const rootOnly = await send(body);
+            expect(rootOnly.statusCode, rootOnly.body).toBe(401);
+            expect(rootOnly.json()).toMatchObject({ error: 'invalid_token' });
+            const foreignOrigin = { ...body, originSessionId: 'cmvforeignparent' };
+            const secondChild = { ...body, tag: randomUUID() };
+            const forged = makeProof(body);
+            forged.proof = signMachineInstallationProof({ privateKey: tweetnacl.sign.keyPair().secretKey,
+                payload: buildSessionActionChildCreationProofPayloadV1({ machineAdmission, sourceExecution: forged.sourceExecution, body }) });
+            for (const payload of [
+                { ...body, creationAuthorizationProof: forged },
+                { ...foreignOrigin, creationAuthorizationProof: makeProof(foreignOrigin) },
+                { ...secondChild, creationAuthorizationProof: makeProof(secondChild) },
+                { ...body, creationAuthorizationProof: makeProof(body, spawn, { ...machineAdmission, custodianAccountId: randomUUID() }) },
+                { ...body, creationAuthorizationProof: makeProof(body, spawn, { ...machineAdmission, installationId: randomUUID() }) },
+                { ...body, creationAuthorizationProof: makeProof(body, { ...spawn, executionTarget: { ...spawn.executionTarget, serverId: 'foreign-home' } }) },
+                { ...body, creationAuthorizationProof: makeProof(body, spawn, machineAdmission, identity.requestId,
+                    buildEnvelope({ ...input, workspace: { ...input.workspace, id: 'foreign-workspace' } })) },
+                { ...body, creationAuthorizationProof: makeProof(body, spawn, machineAdmission, randomUUID()) },
+                ...(!encrypted ? [{ ...body, creationAuthorizationProof: makeProof(body, 'opaque-child-input') }] : []),
+                { ...body, creationAuthorizationProof: makeProof(body, { ...spawn, initialInput: { text: 'different brief' } }) },
+            ]) {
+                const refused = await send(payload);
+                expect(refused.statusCode, refused.body).toBe(401);
+            }
+            expect(await db.session.count({ where: { accountId: f.account.id } })).toBe(1);
+            const proof = makeProof(body);
+            if (encrypted) {
+                expect(envelope).not.toHaveProperty('input');
+                expect(proof.sourceExecution).not.toHaveProperty('params');
+                expect(JSON.stringify(proof)).not.toContain(buildDeploymentPreparationBriefV1(input));
+            }
+            const response = await send({ ...body, creationAuthorizationProof: proof });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ created: true });
+            const retry = await send({ ...body, creationAuthorizationProof: proof });
+            expect(retry.statusCode, retry.body).toBe(200);
+            expect(retry.json().session.id).toBe(response.json().session.id);
+            expect(await db.session.count({ where: { accountId: f.account.id } })).toBe(2);
         } finally { await f.app.close(); }
     });
 

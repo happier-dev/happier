@@ -47,6 +47,10 @@ import { SessionLookupByTagsRequestV2Schema } from '@happier-dev/protocol/sessio
 import { managedMachineActionEndpointPathV1, ManagedListInputV1Schema, ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 
+import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
+import { readSessionInputRequest } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+
 afterEach(() => {
   vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllGlobals();
   resetActiveAccountSettingsSnapshotForTests(); withdrawActiveProjectAccountRowsSnapshot();
@@ -211,7 +215,8 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     setActionsSettings(next: typeof actionsSettings) { actionsSettings = next; },
     denySource() { denySource = true; }, setSourceRevision(value: number) { sourceRevision = value; },
     admit: async (foreignCustodian = false, next: DeploymentPrepareInputV1 = input, origin?: SessionActionRpcOriginV1,
-      workflowOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin']) => {
+      workflowOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'],
+      getCurrentTurnWorkDepth?: (turnId?: string) => number | undefined) => {
       machineCustodianAccountId = foreignCustodian ? 'daemon-owner' : 'prepare-account';
       const socket = await createRequesterCurrentnessSocketHarness();
       onTestFinished(() => socket.close());
@@ -250,6 +255,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
         sessionId: '', mode: 'plain', ctx: null, serverId: workspace.serverId, serverIdentityId: workspace.serverId,
         savedSecretOperationContext: admitted.savedSecretOperationContext,
         isCredentialCurrent: admitted.isCurrent,
+        ...(getCurrentTurnWorkDepth ? { getCurrentTurnWorkDepth } : {}),
         externalActionMachineInstallationId: 'workspace-installation', externalActionMachineRequestPrivateKey: installationKeys.secretKey,
         sessionSpawnDirectTargetTransport: { machineId: workspace.machineId,
           prepare: (request, options) => prepareSessionCreationTarget({ request, signal: options?.signal }),
@@ -296,6 +302,62 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       operation: { serverId: workspace.serverId, machineId: workspace.machineId, operationId: 'spawn-operation' } } }; } };
 }
 
+function sessionCallerRegression() {
+  it.each([false, true])('hands off a real Session caller without replacing its origin with present-person authority (existing Session: %s)', async existingSession => {
+    const f = fixture();
+    const input = { ...f.input, ...(existingSession ? { sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } } : {}) };
+    let custody: Awaited<ReturnType<typeof f.admit>> | undefined;
+    let readCurrentTurnWorkDepth: ((turnId?: string) => number | undefined) | undefined;
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'deployments.prepare': ['agent'] } });
+    f.setActionsSettings(settings);
+    const executeSession = createDaemonSessionAccountActionExecutor({
+      serverId: 'prepare-home', serverHttpBaseUrl: 'https://prepare-home.test', token,
+      credentials: { token, encryption: null }, machineId: 'workspace-daemon',
+      prepareExternalActionAuthorization: async ({ sessionActionOrigin }) => {
+        custody = await f.admit(false, input, sessionActionOrigin, undefined, turnId => readCurrentTurnWorkDepth?.(turnId));
+        return { authorization: custody.authorization, target: { kind: 'machine', machineId: 'workspace-daemon' } };
+      },
+      createExecutor: getCurrentTurnWorkDepth => {
+        readCurrentTurnWorkDepth = getCurrentTurnWorkDepth;
+        if (!custody) throw new Error('Session origin must be admitted before Prepare execution');
+        const executor = createActionExecutor(custody.receiver);
+        return { execute: (actionId, input, context) => executor.execute(actionId, input, {
+          ...context, ...custody!.ingress, runtimeAccountId: 'prepare-account', actionsSettings: custody!.accountSettings.actionsSettingsV1,
+          // The authenticated Session ingress, rather than authored Prepare input, owns these facts.
+          agentStartContext: { caller: { kind: 'session', sessionId: 'prepare-caller', starterDepth: 0, turnDepth: 1 },
+            baseline: { machineId: 'workspace-daemon', directory: f.rootPath }, roles: {}, ledSubtreeSessionIds: [],
+            callerPermissionCeiling: 'default', workDepthLimit: custody!.accountSettings.workDepthLimit,
+            allowLists: custody!.accountSettings.sessionAgentStartAllowListsV1 },
+          sessionAgentSpawnPolicyV1: custody!.accountSettings.sessionAgentSpawnPolicyV1,
+          originalActionEnvelope: custody!.envelope,
+        }) };
+      },
+    });
+    const result = await runWithServerHttpBaseUrl('https://prepare-home.test', () => executeSession({ kind: 'action.execute', requestId: 'prepare-request',
+      actionId: 'deployments.prepare', input,
+      witness: { turnId: 'prepare-turn', inputId: 'prepare-input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 1,
+        callerPermissionMode: 'default', causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        agentStartCaller: { kind: 'session', sessionId: 'prepare-caller', starterDepth: 0, turnDepth: 1 } },
+    }, { sessionId: 'prepare-caller', isCurrent: async () => true }));
+    expect(result, JSON.stringify({ result, launches: f.launches.length, accepted: f.accepted.length })).toMatchObject({ ok: true, result: { kind: 'handedOff' } });
+    expect(f.boundReads.map(read => read.effectActionId)).toEqual(['deployments.prepare', 'projects.sources.read']);
+    expect(f.boundReads.every(verifiesPrepareRead)).toBe(true);
+    expect(custody?.authorization.binding.sessionActionOrigin?.caller).toEqual({
+      kind: 'session', sessionId: 'prepare-caller', starterDepth: 0, turnDepth: 1,
+    });
+    expect(f.launches).toHaveLength(existingSession ? 0 : 1);
+    if (!existingSession) expect(f.launches[0]).toMatchObject({ originSessionId: 'prepare-caller' });
+    expect(f.accepted).toHaveLength(1);
+    expect(f.accepted[0]?.content.text).toContain(f.input.baseCommit);
+    expect(f.accepted[0]?.content.text).toContain('scm.pullRequest.openOrReuse');
+    if (existingSession) expect(readSessionInputRequest(f.accepted[0]?.meta)).toMatchObject({
+      producer: 'sessionAction', sourceSession: { sourceSessionId: 'prepare-caller', sourceTurnId: 'prepare-turn', sourceInputId: 'prepare-input' },
+    });
+    expect(f.dispatched).toEqual([]);
+  });
+}
+
 describe('Prepare routing and signed Account reads', () => {
   it.each([false, true])('resolves the exact workspace Machine through the original outer Account factory with two available Machines (Require: %s)', async requireApproval => {
     const f = fixture();
@@ -338,6 +400,7 @@ describe('Prepare routing and signed Account reads', () => {
 });
 
 describe('Prepare native workspace to normal Session handoff', () => {
+  sessionCallerRegression();
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
   // Real product-build source admission and publication, without mocking SCM.
   beforeAll(async () => {

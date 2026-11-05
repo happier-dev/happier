@@ -1,3 +1,5 @@
+import { buildDeploymentPreparationBriefV1, DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import { buildSessionActionChildCreationProofPayloadV1, deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
@@ -185,6 +187,58 @@ export async function isReviewedSecondOpinionModelSpawnChild(input: Readonly<{
       serverId: derived.launch.executionTarget.serverId } }, derived.launch)
       && !input.signal?.aborted && await requester.isCurrent();
   } catch (error) { rethrowRequesterHomeReadFailure(error); return false; }
+}
+
+/** The admitted Prepare receiver binds its one canonical Session child to the actual birth body. */
+export function createPrepareSessionCreationAuthorization(input: Readonly<{
+  context: ActionExecutorContext & Partial<Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
+  publicInput: SessionSpawnNewInputV2;
+  installationId: string;
+  privateKey: ExternalActionMachineRequestSigningKey;
+}>): SessionCreationAuthorizationV1 | null {
+  const { context } = input;
+  const authorization = context.externalActionExecutionAuthorization;
+  const parent = readHostReviewedParentV1(context);
+  const child = readHostAdmittedReviewedChildV1(context);
+  const root = DeploymentPrepareInputV1Schema.safeParse(parent?.input);
+  const spawn = SessionSpawnNewInputV2Schema.safeParse(child?.input);
+  const admission = context.machineAdmission;
+  const identity = authorization && deriveDeploymentPrepareSessionCreationIdentityV1(authorization.binding);
+  if (!authorization || !identity || !root.success || !spawn.success || root.data.sessionRef
+    || parent?.actionId !== 'deployments.prepare' || child?.actionId !== 'session.spawn_new' || child.role !== 'prepare-session'
+    || context.actionRequestId !== identity.requestId || !context.verifyMachineAdmissionCurrent || !admission
+    || admission.machineId !== authorization.binding.machineId || admission.installationId !== input.installationId
+    || admission.installationId !== authorization.binding.installationId
+    || admission.actorAccountId !== authorization.binding.accountId
+    || admission.custodianAccountId !== authorization.binding.custodianAccountId
+    || spawn.data.executionTarget.machineId !== admission.machineId
+    || spawn.data.executionTarget.serverId !== root.data.workspace.serverId
+    || !sameStrictJsonValue(spawn.data.initialInput, { text: buildDeploymentPreparationBriefV1(root.data) })
+    || !sameStrictJsonValue(input.publicInput.executionTarget, spawn.data.executionTarget)
+    || !sameStrictJsonValue(input.publicInput.directory, spawn.data.directory)
+    || !sameStrictJsonValue(input.publicInput.initialInput, spawn.data.initialInput)
+    || !sameStrictJsonValue(input.publicInput.agentTarget, spawn.data.agentTarget)) return null;
+  const envelope = context.originalActionEnvelope;
+  if (!envelope || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding, {
+    actionId: 'deployments.prepare', machineId: admission.machineId, envelope,
+  }) || envelope.v === 1 && !sameStrictJsonValue(envelope.input, root.data)) return null;
+  const method = `${admission.machineId}:${RPC_METHODS.SESSION_SPAWN_NEW}`;
+  // The native issuer already owns the opened E2EE child. Its signed body proof
+  // carries no plaintext preparation brief or checkout path to Home.
+  const params = envelope.v === 1 ? child.input : undefined;
+  const execution = createExternalActionMachineRpcExecution({ context, effectActionId: 'session.spawn_new',
+    installationId: input.installationId, method, requestId: identity.requestId,
+    ...(params === undefined ? {} : { params }), privateKey: input.privateKey });
+  if (!execution) return null;
+  const sourceExecution = { requestId: identity.requestId, method,
+    ...(params === undefined ? {} : { params }), externalActionExecution: execution, originalActionEnvelope: envelope };
+  return { token: authorization.token, prepareRequestProof: async body => {
+    if (!await context.verifyMachineAdmissionCurrent!() || context.signal?.aborted
+      || body.tag !== identity.sessionCreationTag) throw new Error('prepare_session_creation_authorization_unavailable');
+    return { v: 1, sourceExecution, machineAdmission: admission,
+      proof: signMachineInstallationProof({ privateKey: input.privateKey,
+        payload: buildSessionActionChildCreationProofPayloadV1({ sourceExecution, machineAdmission: admission, body }) }) };
+  } };
 }
 
 /** Only the reached native receiver may bind the reviewed public child to its final HTTP birth body. */
