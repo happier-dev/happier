@@ -1916,7 +1916,10 @@ test('finite typecheck dispatch is granted by public script owners on remote and
 });
 
 test('native dispatch consumes the shared source-test, generator, compiler and admission decisions', async (t) => {
-  const { invocation } = await memoryRoutingFixture(t);
+  const compilationFloorKiB = resolveHeavyweightMemoryFloorKiB('compilation');
+  const { invocation } = await memoryRoutingFixture(t, {
+    totalKiB: compilationFloorKiB, roomyTotalKiB: compilationFloorKiB, roomyAvailableKiB: compilationFloorKiB,
+  });
   for (const { args, kind, component } of [
     { args: ['yarn', 'workspace', '@happier-dev/server', 'build'], kind: 'runtime', component: 'apps/server' },
     { args: ['yarn', 'workspace', '@happier-dev/app', 'test:unit:local'], kind: 'source-test', component: 'apps/ui' },
