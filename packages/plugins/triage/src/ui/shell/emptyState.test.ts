@@ -5,6 +5,7 @@ import type { TriageLensNarrowingV1 } from '../state/narrowing.js';
 import { readTriageLensNarrowingV1 } from '../state/narrowing.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
 import {
+    readTriageListEmptyBelowPinsV1,
     readTriageListEmptyState,
     readTriageListEmptyStateKeys,
     resolveTriageListEmptyState,
@@ -243,5 +244,29 @@ describe('the empty PRs & Issues list', () => {
         // filtered result announced as a healthy empty account.
         expect(readTriageListEmptyState(windowState({ coverage: 'complete' }), 0, { narrowing: NOT_NARROWED }))
             .toMatchObject({ kind: 'healthy' });
+    });
+});
+
+describe('readTriageListEmptyBelowPinsV1', () => {
+    const below = (state: TriageListShellStateV1, unpinned: number, pinned: number, narrowing: TriageLensNarrowingV1) =>
+        readTriageListEmptyBelowPinsV1(state, { pinned, unpinned }, { narrowing });
+
+    it('answers a filter that left only pins, so it never ends in a blank canvas', () => {
+        expect(below(windowState({ coverage: 'complete' }), 0, 2, FACET_NARROWED)?.kind).toBe('noMatch');
+        expect(below(windowState({ coverage: 'complete' }), 0, 2, SEARCH_NARROWED)?.kind).toBe('noSearchMatch');
+        expect(below(windowState({ coverage: 'partial' }), 0, 2, FACET_NARROWED)?.kind).toBe('noMatchYet');
+    });
+
+    it('names unreadable sources below pins rather than inventing more pages after exhaustion', () => {
+        const answer = below(windowState({ coverage: 'complete', failure: BROKEN_SOURCE }), 0, 2, FACET_NARROWED);
+        expect(answer?.kind).toBe('sourceFailure');
+        expect(`${answer?.title} ${answer?.description}`).toContain('example-forge');
+        expect(answer?.next).not.toContain('loadMore');
+    });
+
+    it('stays out of a list with rows, an unnarrowed list, and a list with no pins', () => {
+        expect(below(windowState({ coverage: 'complete' }), 3, 2, FACET_NARROWED)).toBeNull();
+        expect(below(windowState({ coverage: 'complete' }), 0, 2, NOT_NARROWED)).toBeNull();
+        expect(below(windowState({ coverage: 'complete' }), 0, 0, FACET_NARROWED)).toBeNull();
     });
 });

@@ -42,7 +42,7 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
-import { TriageListFailureStatus } from './sourceFailure.js';
+import { TriageListFailureDetails, TriageListFailureStatus } from './sourceFailure.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 import { parseCorpusSmartPolicy, type CorpusSmartPolicyV1 } from '../../corpus/query/smartPolicy.js';
 import {
@@ -165,7 +165,7 @@ import {
   planTriageConfigureSourceOffersV1,
   type TriageConfigureSourceOfferV1,
 } from './configureSources.js';
-import { readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
+import { readTriageListEmptyBelowPinsV1, readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from './emptyState.js';
 import { retainTriageLastKnownRowV1, type TriageLastKnownRowV1 } from './lastKnownRow.js';
 import {
   TRIAGE_SPLIT_LIST_RATIO_PREFERENCE_V1,
@@ -2141,6 +2141,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const listWindow = state.kind === 'window' ? state : null;
   const empty = readTriageListEmptyState(state, rowCount, { narrowing, text, locale: surfaceContext.locale });
+  // Pins stay listed under a narrowing (applying the filter to them is a separate product call, left as is), so a
+  // narrowing that removed every other row says so below them instead of ending in a blank canvas.
+  const pinnedCount = items.reduce((count, item) => item.group === 'pinned' ? count + 1 : count, 0);
+  const emptyBelowPins = collectionView !== 'list' ? null
+    : readTriageListEmptyBelowPinsV1(state, { pinned: pinnedCount, unpinned: rowCount - pinnedCount }, { narrowing, text, locale: surfaceContext.locale });
+  const emptyAnswer = empty ?? emptyBelowPins;
   /**
    * The empty narrowed list's ways out, drawn from the one decision (`empty.next`): the first is the
    * primary control and the rest follow it quietly. Read-further is the entries continuation the
@@ -2152,7 +2158,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Each next step is one Button, typed by the Button contract itself: the first is the primary control and
   // the rest follow quietly.
   const emptyNextButtons: React.ReactElement[] = [];
-  for (const step of empty?.next ?? []) {
+  for (const step of emptyAnswer?.next ?? []) {
     const variant = emptyNextButtons.length === 0 ? 'secondary' : 'plain';
     switch (step) {
       case 'loadMore':
@@ -2518,6 +2524,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   onPress={() => { setEditingSources(false); }}
                 />
               </Row>
+              {listWindow?.failure == null ? null : <TriageListFailureDetails failure={listWindow.failure} />}
               {configuredSources.unavailableReason === null ? null : (
                 <Banner
                   tone="warning"
@@ -2614,8 +2621,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             per-source health, and a reader with several connections configured
             cannot act on health that will not say whose it is.
           */}
-          {listWindow?.failure == null || rowCount === 0 ? null : (
-            <TriageListFailureStatus failure={listWindow.failure} action={sourceManagementStatusAction} />
+          {/* Rows are still listed, so one unread connection is a status line with its fix beside it, not a card that
+              leads every page: the name and why, then Manage sources (lab c7: the page's name and rows lead). */}
+          {listWindow?.failure == null || rowCount === 0 || emptyBelowPins?.kind === 'sourceFailure' ? null : (
+            <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
+              retry={<Button titleKey="plugins.triage.surface.tryAgain" title="Try again" variant="plain" size="small"
+                busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
           )}
 
           {/*
@@ -2672,6 +2683,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // Nothing about the reader could be read. The page stays the page: the same one header (its name, search,
           // lens, Refresh and Run on) leads, and the failure is said in words in the list's own place. The host's code
           // is a diagnostic behind Details, and a retry is offered only when the host says one can succeed.
+          {...(emptyBelowPins === null ? {} : { afterRows: (
+            emptyBelowPins.kind === 'sourceFailure' && listWindow?.failure != null ? (
+              <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
+                retry={<Button titleKey="plugins.triage.surface.tryAgain" title="Try again" variant="plain" size="small"
+                  busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
+            ) : <EmptyState
+              title={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).title, emptyBelowPins.title)}
+              description={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).description, emptyBelowPins.description)}
+              {...emptyNextControls}
+            />
+          ) })}
           empty={state.kind === 'unavailable' ? (
             <ErrorState
               titleKey="plugins.triage.surface.listFailed"

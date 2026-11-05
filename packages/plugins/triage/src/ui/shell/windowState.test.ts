@@ -4,6 +4,7 @@ import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import {
+  readTriageListFailureLine,
   readTriageListFailureNotice,
   readTriageRefreshPacingNotice,
   readTriageListReadFailureNotice,
@@ -60,6 +61,22 @@ describe('resolveTriageListShellState', () => {
       key === 'plugins.triage.surface.listFailed.permanent' ? 'Recovery needs a change' : fallback ?? key);
     expect(notice.description).toBe('Recovery needs a change');
     expect(notice).toMatchObject({ details: expect.stringContaining('plugin_activation_failed') });
+  });
+  it('says a failure beside rows in one line, leading to the one press that can help', () => {
+    const transient = { kind: 'sources', sources: [
+      { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Could not be reached just now.' },
+    ] } as const;
+    expect(readTriageListFailureLine(transient)).toEqual({
+      label: 'GitHub could not be read. Could not be reached just now.', recovery: 'retry',
+    });
+    // Several causes: all named, reasons left to Manage sources, and the sentence that told the reader nothing is gone.
+    expect(readTriageListFailureLine({ kind: 'sources', sources: [
+      { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Needs you to sign in again.', needsConnectionChange: true },
+      { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
+    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read.', recovery: 'manageSources' });
+    expect(readTriageListFailureLine({ kind: 'sources', sources: [
+      { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
+    ] }).label).toBe('Linear could not be read.');
   });
   it('preserves the provider refusal code as well as its readable failure class', () => {
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
@@ -284,6 +301,7 @@ describe('resolveTriageListShellState', () => {
           displayName: 'globex/service',
           reason: 'Refused this account access.',
           code: 'forbidden',
+          needsConnectionChange: true,
         }],
       },
     });

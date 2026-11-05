@@ -592,8 +592,7 @@ describe('the mounted PRs & Issues surface', () => {
             // read" is health without attribution: with two connections
             // configured it leaves the reader guessing, and with six it is
             // useless.
-            `${LABEL_B} could not be read`,
-            'Could not be reached just now.',
+            `${LABEL_B} could not be read. Could not be reached just now.`,
         ]);
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
         // One cause, one voice: the notice names the connection and why, so the toolbar does not repeat it as

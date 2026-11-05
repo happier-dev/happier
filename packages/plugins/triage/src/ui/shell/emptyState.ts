@@ -282,3 +282,25 @@ export function readTriageListEmptyState(
         ...(options.locale === undefined ? {} : { locale: options.locale }),
     }, options.text ?? ENGLISH_TEXT);
 }
+
+/**
+ * The answer drawn BELOW the reader's pins when their narrowing removed every other row. Pins stay visible under a
+ * filter (they are the reader's own marks, not a match), so without this a filter ends in pins over a blank canvas.
+ * It is the same decision as the whole-list empty state, including the named source failures that prevent a
+ * complete answer. The shell places that failure here instead of repeating it above the pins.
+ */
+export function readTriageListEmptyBelowPinsV1(
+    state: TriageListShellStateV1,
+    counts: Readonly<{ pinned: number; unpinned: number }>,
+    options: Readonly<{ narrowing: TriageLensNarrowingV1; text?: TriageTextResolverV1; locale?: string }>,
+): TriageListEmptyStateV1 | null {
+    if (state.kind !== 'window' || counts.pinned === 0 || counts.unpinned > 0) return null;
+    if (!options.narrowing.facets && !options.narrowing.search) return null;
+    return resolveTriageListEmptyState({
+        coverage: state.window.coverage,
+        failure: state.failure,
+        refreshing: state.refreshing,
+        narrowing: options.narrowing,
+        ...(options.locale === undefined ? {} : { locale: options.locale }),
+    }, options.text ?? ENGLISH_TEXT);
+}

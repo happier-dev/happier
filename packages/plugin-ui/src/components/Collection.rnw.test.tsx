@@ -366,6 +366,7 @@ type HarnessOptions = Readonly<{
   loading?: boolean;
   loadingRows?: number;
   empty?: React.ReactNode;
+  afterRows?: React.ReactNode;
   anatomy?: CollectionAnatomy<Entry>;
   header?: CollectionProps<Entry>['header'];
   footer?: React.ReactNode;
@@ -460,6 +461,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.loading === undefined ? {} : { loading: props.loading })}
       {...(props.loadingRows === undefined ? {} : { loadingRows: props.loadingRows })}
       {...(props.empty === undefined ? {} : { empty: props.empty })}
+      {...(props.afterRows === undefined ? {} : { afterRows: props.afterRows })}
       {...(props.header === undefined ? {} : { header: props.header })}
       {...(props.footer === undefined ? {} : { footer: props.footer })}
       {...(props.title === undefined ? {} : { title: props.title })}
@@ -2105,6 +2107,26 @@ describe('Collection table', () => {
     table.measure(1440);
     expect(table.query('virtualizer')?.textContent).not.toContain('Overdue');
     table.unmount();
+  });
+
+  it('draws what the caller says beneath its rows, after every group and outside the rows a reader moves through', () => {
+    const grouping = {
+      axis: [
+        { key: 'needs', title: 'Needs you' },
+        { key: 'other', title: 'With an agent' },
+        { key: 'rest', title: 'Everything else' },
+      ],
+      groupOf: (entry: Entry) => entry.group,
+    };
+    const view = mount({ items: entries, grouping, presentation: 'table', detail: 'none',
+      empty: <Text testID="empty-state">Nothing here</Text>,
+      afterRows: <Text testID="after-rows">No matches beyond these</Text> });
+    view.measure(1440);
+    const text = view.query('virtualizer')?.textContent ?? '';
+    expect(view.query('after-rows')).not.toBeNull();
+    expect(text.indexOf('No matches beyond these')).toBeGreaterThan(text.lastIndexOf(entries[entries.length - 1]!.title));
+    expect(view.query('empty-state')).toBeNull();
+    view.unmount();
   });
 
   it('groups rows by the one axis, with each group naming what its rows share', () => {

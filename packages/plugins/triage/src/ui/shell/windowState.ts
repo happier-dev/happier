@@ -63,6 +63,8 @@ export type TriageListSourceFailureV1 = Readonly<{
    * code and the reason together. Connections that all carry one key failed for one cause, which is said once.
    */
   sharedCauseKey?: string;
+  /** Whether the connection's owner has to change something (sign in, allow it, install it) before a read can work. */
+  needsConnectionChange?: boolean;
 }>;
 
 /**
@@ -162,6 +164,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       displayName: entry.displayName,
       reason: entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class],
       code: entry.failure.code,
+      needsConnectionChange: entry.failure.class === 'authentication' || entry.failure.class === 'permission',
     }));
   // A connection the pass could not read at all is the same kind of fact as one
   // that failed with provider evidence — one named connection the reader can go
@@ -183,6 +186,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       ...(entry.code === undefined ? {} : { code: entry.code }),
       ...(entry.retryable === undefined ? {} : { retryable: entry.retryable }),
       sharedCauseKey: `${entry.code ?? ''}\n${entry.retryable ?? ''}\n${reason}`,
+      needsConnectionChange: entry.retryable === false,
     }));
   }
   // Configuration admission, not the presence of a coverage lane, establishes
@@ -199,6 +203,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       sourceInstanceId: configured.sourceInstanceId,
       displayName: readTriageSourceDisplayName(snapshot, sourceInstance),
       reason: SOURCE_UNAVAILABLE_COPY_V1,
+      needsConnectionChange: true,
     }));
   }
   return sources.length === 0
@@ -288,6 +293,28 @@ export function readTriageListFailureNotice(
       .map((source) => `${source.displayName} — ${describe(source)}`)
       .join('\n'),
     ...(details.length === 0 ? {} : { details }),
+  });
+}
+
+/**
+ * The one line a failure takes beside listed rows: who could not be read, why when one reason covers them all, and
+ * the one press that can help. Each connection's own reason and diagnostic wait in Manage sources, so the rows lead.
+ */
+export type TriageListFailureLineV1 = Readonly<{ label: string; recovery: 'retry' | 'manageSources' }>;
+
+export function readTriageListFailureLine(
+  failure: TriageListShellFailureV1,
+  text: TriageTextResolverV1 = ENGLISH_TEXT,
+  locale?: string,
+): TriageListFailureLineV1 {
+  const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
+  const title = `${names} ${text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
+  const first = failure.sources[0];
+  const oneReason = first !== undefined && failure.sources.every((source) => source.reason === first.reason)
+    && !(first.retryable === false && first.reason === SOURCE_FAILURE_COPY_V1.transient);
+  return Object.freeze({
+    label: oneReason ? `${title}. ${resolveSourceFailureReason(text, first.reason)}` : `${title}.`,
+    recovery: failure.sources.some((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
   });
 }
 

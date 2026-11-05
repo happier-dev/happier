@@ -483,6 +483,12 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   }>;
   empty?: ReactNode;
   /**
+   * What the page says beneath rows it still shows: an empty answer below rows that stand outside the reader's
+   * narrowing (the pins a filter leaves), so a narrowed list never ends in a blank canvas. It scrolls with the rows
+   * and is never a row a reader moves through.
+   */
+  afterRows?: ReactNode;
+  /**
    * The page's own chrome above the Collection (a toolbar, notices), across both panes. It sits inside the
    * Collection's layout, so it reads the measured mode (`useHappierCollectionLayout`) like everything else inside.
    * A `grid` scrolls it with the cards (a page of cards reads as one page); the other views keep it fixed.
@@ -504,7 +510,9 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
 
 type CollectionCell<Item> =
   | Readonly<{ kind: 'item'; key: string; item: Item }>
-  | Readonly<{ kind: 'peek'; key: string; itemKey: string; item: Item }>;
+  | Readonly<{ kind: 'peek'; key: string; itemKey: string; item: Item }>
+  /** The caller's `afterRows`: one cell after the last group, scrolling with the rows, never a focus stop. */
+  | Readonly<{ kind: 'after'; key: string; content: ReactNode; item?: undefined }>;
 
 /** Table geometry, at normal text size. */
 const TABLE = Object.freeze({
@@ -1545,12 +1553,17 @@ function CollectionCellView<Item>(props: Readonly<{ cell: CollectionCell<Item> }
   const cell = props.cell;
   return cell.kind === 'item'
     ? <CollectionRow item={cell.item} itemKey={cell.key} />
-    : <CollectionPeek item={cell.item} itemKey={cell.itemKey} />;
+    : cell.kind === 'after' ? <View style={afterRowsStyle}>{cell.content}</View>
+      : <CollectionPeek item={cell.item} itemKey={cell.itemKey} />;
 }
 
 function renderCollectionCell(cell: CollectionCell<unknown>): ReactElement {
   return <CollectionCellView cell={cell} />;
 }
+
+const AFTER_ROWS_CELL_KEY = 'collection-after-rows';
+/** The air an answer under the rows stands in, as an empty state stands in the empty pane. */
+const afterRowsStyle: HappierPortableStyle = { paddingVertical: 32 };
 
 function readCellKey(cell: CollectionCell<unknown>): string {
   return cell.key;
@@ -1833,8 +1846,12 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       };
     });
     previousCells.current = nextCells;
+    const last = nextSections[nextSections.length - 1];
+    if (last !== undefined && props.afterRows != null && props.afterRows !== false) {
+      nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
+    }
     return nextSections;
-  }, [closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, model.keyOf, model.sections, pageSections, tree]);
+  }, [props.afterRows, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, model.keyOf, model.sections, pageSections, tree]);
   const dividedKeys = useMemo(() => (pageSections
     ? new Set(drawnSections.flatMap((section) => section.items.slice(0, -1).map(model.keyOf)))
     : null), [drawnSections, model.keyOf, pageSections]);
@@ -1886,7 +1903,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         cells.push(cell.kind === 'item'
           // A nested row stands only in the table: the list beside a detail draws owners only.
           ? { key: cell.key, table: metrics.tableRow, list: (tree?.get(cell.key)?.depth ?? 0) > 0 ? 0 : metrics.listRow }
-          : { key: cell.key, table: peekHeights.current.get(cell.itemKey) ?? 0, list: 0 });
+          : cell.kind === 'after' ? { key: cell.key, table: metrics.tableRow, list: metrics.listRow }
+            : { key: cell.key, table: peekHeights.current.get(cell.itemKey) ?? 0, list: 0 });
       }
     }
     return cells;
