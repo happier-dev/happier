@@ -13,6 +13,40 @@ afterEach(() => { vi.restoreAllMocks(); clearPersistenceStorage(); });
 const initializedProjectNavigation = { navigationSurfacePlacementsV1: { detailPages: { project: { phone: { items: { orderedIds: [], placements: {} } } } } } };
 
 describe('retained workspace settings migration', () => {
+    it('saves the mapped notch dock without keeping never-shipped position inputs', () => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({ desktopOverlayPresentationMode: 'floating_overlay',
+            desktopOverlayPlacementMode: 'custom', desktopOverlayAnchor: 'bottom_right',
+            desktopOverlayDensity: 'comfortable', desktopOverlayCompactStyle: 'panel' }));
+        const settings = loadLocalSettings();
+        saveLocalSettings({ ...settings, themePreference: 'dark' });
+        expect(JSON.parse(device.getString('local-settings')!)).toHaveProperty('desktopOverlayDock', 'floating');
+        expect(loadLocalSettings().desktopOverlayDock).toBe('floating');
+        expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('desktopOverlayAnchor');
+        expect(loadLocalSettings()).toMatchObject({ desktopOverlayDock: 'floating', themePreference: 'dark' });
+    });
+
+    it.each(['bottom_left', 'bottom_center', 'bottom_right'] as const)(
+        'maps %s to the Floating dock', (anchor) => {
+            getPersistenceStorage().set('local-settings', JSON.stringify({ desktopOverlayAnchor: anchor }));
+            expect(loadLocalSettings().desktopOverlayDock).toBe('floating');
+        },
+    );
+
+    it('does not replay old position inputs over an explicit dock preference', () => {
+        getPersistenceStorage().set('local-settings', JSON.stringify({ desktopOverlayDock: 'left',
+            desktopOverlayPresentationMode: 'floating_overlay', desktopOverlayPlacementMode: 'custom', desktopOverlayAnchor: 'bottom_right' }));
+        expect(loadLocalSettings().desktopOverlayDock).toBe('left');
+    });
+
+    it('keeps a deliberate dock edit over the historical mode mapping', () => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({ desktopOverlayAnchor: 'bottom_right' }));
+        const settings = loadLocalSettings();
+        saveLocalSettings({ ...settings, desktopOverlayDock: 'left' });
+        expect(loadLocalSettings().desktopOverlayDock).toBe('left');
+        expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('desktopOverlayAnchor');
+    });
 
     it('imports admitted navigation while another device-state seed is invalid', () => {
         const device = getPersistenceStorage();
