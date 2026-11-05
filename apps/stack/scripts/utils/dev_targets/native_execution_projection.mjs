@@ -143,14 +143,19 @@ export async function prepareCommandRepository({ configPath, repoRoot, executorR
     if (error.code === 'ENOENT') return null;
     throw error;
   });
+  const saved = previous ? JSON.parse(previous) : null;
+  const commandExecutionExplicit = saved?.commandExecutionExplicit === true;
   const identity = resolveRepoStackIdentity({ repoRoot: repository,
     stacksStorageRoot: resolveStacksStorageRoot(env), createIfMissing: false });
   const runtime = await loadDevTargetsConfig({ path: join(identity.stackBaseDir, 'dev-targets.json'), env, allowMissing: true });
   const config = resolveCommandRepositoryConfig(parentConfig, {
     repoRoot: repository, executorRepoRoot, runtimeConfig: runtime.config,
-    commandExecution: previous ? JSON.parse(previous).commandExecution : undefined,
+    commandExecution: commandExecutionExplicit ? saved.commandExecution : undefined,
   });
-  const contents = `${JSON.stringify(config, null, 2)}\n`;
+  const contents = `${JSON.stringify({
+    ...config,
+    ...(commandExecutionExplicit ? { commandExecutionExplicit: true } : {}),
+  }, null, 2)}\n`;
   if (previous !== contents) {
     await mkdir(directory, { recursive: true });
     const temporary = `${path}.${process.pid}.tmp`;

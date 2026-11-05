@@ -870,7 +870,10 @@ async function main() {
         const current = await loadDevTargetsConfig({ stackName, path, env: process.env });
         config = setPlacement(current.config, positionals[2], positionals[3], options);
       }
-      await writeConfig(path, config, commandRepoRoot);
+      await writeConfig(path, {
+        ...config,
+        ...(commandRepoRoot !== executorRepoRoot ? { commandExecutionExplicit: true } : {}),
+      }, commandRepoRoot);
       printResult({
         json,
         data: { path, stackName, config },

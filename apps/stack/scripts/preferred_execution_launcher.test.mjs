@@ -7242,7 +7242,7 @@ test('native launcher flushes an automatically selected mirror and retries anoth
     HAPPIER_EXEC_CONFIG_PATH: configPath, PATH: `${binDir}:/usr/bin:/bin`, TMPDIR: root };
   const siblingConfig = join(stackDir, `commands-${sibling.split('/').at(-1)}`, 'dev-targets.json');
   await mkdir(dirname(siblingConfig), { recursive: true });
-  await writeFile(siblingConfig, JSON.stringify({ commandExecution: { mode: 'auto', targets: ['linux', 'mac2'], fallback: 'error' } }));
+  await writeFile(siblingConfig, JSON.stringify({ commandExecutionExplicit: true, commandExecution: { mode: 'auto', targets: ['linux', 'mac2'], fallback: 'error' } }));
   const prepared = await prepareCommandRepository({ configPath, repoRoot: sibling, executorRepoRoot: repoRoot, synchronize: false, env });
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir: dirname(prepared.path), sourceDir: sibling, env });
   await mkdir(dirname(runtime.projectFile), { recursive: true });

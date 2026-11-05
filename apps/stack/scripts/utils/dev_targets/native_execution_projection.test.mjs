@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -276,7 +276,7 @@ test('sibling checkout projection isolates mirror roots and defaults to the smal
   assert.equal(JSON.stringify(config), before);
 });
 
-test('sibling command configuration preserves placement overrides and excludes service watches', async t => {
+test('sibling command preparation refreshes derived pools and preserves explicit placement', async t => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-command-repository-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repoRoot = join(root, '0.2');
@@ -308,11 +308,39 @@ test('sibling command configuration preserves placement overrides and excludes s
   const before = await stat(prepared.outputPath);
   await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
   assert.equal((await stat(prepared.outputPath)).mtimeMs, before.mtimeMs);
-  await writeFile(prepared.path, JSON.stringify({ ...prepared.config, commandExecution: { mode: 'auto', targets: ['other'], fallback: 'error' } }));
+  // The previous generated default must not freeze membership after a default changes.
+  await writeFile(prepared.path, JSON.stringify({ ...prepared.config, commandExecution: { mode: 'auto', targets: ['windows2-linux'], fallback: 'local' } }));
+  const refreshed = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
+  assert.deepEqual(refreshed.config.commandExecution.targets, ['nl3', 'windows2-linux']);
+  assert.match(await readFile(refreshed.outputPath, 'utf8'), /^target_1_automatic='1'$/m);
+  // A withdrawn target in an old generated pool is also replaced by current defaults.
+  await writeFile(prepared.path, JSON.stringify({ ...prepared.config, commandExecution: { mode: 'auto', targets: ['removed-worker'], fallback: 'local' } }));
+  assert.deepEqual((await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false })).config.commandExecution.targets, ['nl3', 'windows2-linux']);
+
+  // Exercise the real explicit writer from an OS-temp checkout, with real utilities.
+  const scripts = join(executorRepoRoot, 'apps/stack/scripts');
+  await mkdir(scripts, { recursive: true });
+  await copyFile(new URL('../../dev_targets.mjs', import.meta.url), join(scripts, 'dev_targets.mjs'));
+  await symlink(fileURLToPath(new URL('../', import.meta.url)), join(scripts, 'utils'), 'junction');
+  const result = spawnSync(process.execPath, [join(scripts, 'dev_targets.mjs'), 'placement', 'set', 'commands', 'other', `--repo=${repoRoot}`, '--json'], {
+    env: { ...process.env, HAPPIER_EXEC_CONFIG_PATH: configPath, HAPPIER_STACK_STORAGE_DIR: join(root, 'storage'),
+      HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '', HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const explicit = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
+  assert.equal(explicit.config.commandExecution.mode, 'prefer-target');
+  assert.equal(explicit.config.commandExecution.target, 'other');
+  assert.equal((await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false })).config.commandExecution.target, 'other');
+  await writeFile(prepared.path, JSON.stringify({ ...prepared.config, commandExecutionExplicit: true, commandExecution: { mode: 'auto', targets: ['other'], fallback: 'error' } }));
   const next = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false });
   assert.deepEqual(next.config.commandExecution.targets, ['other']);
   assert.equal(next.config.commandExecution.fallback, 'error');
   assert.match(await readFile(next.outputPath, 'utf8'), /^target_3_automatic='1'$/m);
+  // A real explicit choice cannot silently become another target when it is removed.
+  await writeFile(configPath, JSON.stringify({ ...config, targets: config.targets.filter(target => target.name !== 'other'), commandExecution: { mode: 'local' } }));
+  await assert.rejects(prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, synchronize: false }), /commandExecution references unknown target: other/);
+  await writeFile(configPath, JSON.stringify(config));
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), config);
   await assert.rejects(prepareCommandRepository({ configPath, executorRepoRoot, repoRoot: join(repoRoot, 'nested'), synchronize: false }));
 });
