@@ -5,6 +5,7 @@ import type { CliServerFeaturesSnapshot } from './serverFeaturesClient';
 import {
   createServerFeaturesSnapshotStore,
   createServerUrlServerFeaturesSnapshotStore,
+  readServerFeaturesSnapshot,
 } from './serverFeaturesSnapshotStore';
 
 function ready(features: Record<string, unknown>): Extract<CliServerFeaturesSnapshot, { status: 'ready' }> {
@@ -41,6 +42,27 @@ const HOME_READY: Extract<CliServerFeaturesSnapshot, { status: 'ready' }> = {
 describe('createServerFeaturesSnapshotStore', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('initializes a cold Session-control read once and makes zero HTTP refreshes for warm reads', async () => {
+    // HTTP is the boundary; reads and refreshes use the real daemon snapshot store.
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      features: { localServices: { enabled: true } }, capabilities: {},
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    const store = createServerUrlServerFeaturesSnapshotStore({
+      serverUrl: 'https://daemon-read.test', token: 'fixture-token',
+    });
+
+    const cold = await readServerFeaturesSnapshot(store, store.refresh);
+    expect(cold).toMatchObject({ status: 'ready', provenance: 'authenticated' });
+    expect(fetch).toHaveBeenCalledOnce();
+    fetch.mockClear();
+
+    for (let read = 0; read < 3; read += 1) {
+      expect(await readServerFeaturesSnapshot(store, store.refresh)).toEqual(cold);
+    }
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('returns undefined before the first refresh (cold daemon)', () => {

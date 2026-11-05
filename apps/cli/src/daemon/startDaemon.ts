@@ -220,7 +220,7 @@ import type {
   ManagedServiceSessionClientAccessResolver,
 } from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
+import { createServerUrlServerFeaturesSnapshotStore, readServerFeaturesSnapshot } from '@/features/serverFeaturesSnapshotStore';
 import { startServerFeaturesSnapshotRefreshLoop } from './serverFeaturesSnapshotRefreshLoop';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveMachineConnectionHandover } from './lifecycle/requestDaemonSelfRestart';
@@ -2448,7 +2448,7 @@ const pluginRuntimeOwner = createDaemonPluginRuntimeOwner({
       onSimulatorPreviewRoutesReady: machineRpcRouteAttachments.attachSimulatorPreviewRoutes,
       onMachineAccessLossReceiverReady: machineRpcRouteAttachments.attachMachineAccessLossReceiver,
       onConnectedServicePoolSelectionReadReady: machineRpcRouteAttachments.attachConnectedServicePoolSelectionRead,
-      resolveServerFeaturesSnapshot: refreshServerFeaturesSnapshot,
+      resolveServerFeaturesSnapshot: () => readServerFeaturesSnapshot(serverFeaturesSnapshotStore, refreshServerFeaturesSnapshot),
       liveStreamCaptureRegistry,
       simulatorInputLeaseManager,
       spawnResourceCleanupByPid,

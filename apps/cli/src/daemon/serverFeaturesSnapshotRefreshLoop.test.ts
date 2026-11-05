@@ -1,10 +1,49 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startServerFeaturesSnapshotRefreshLoop } from './serverFeaturesSnapshotRefreshLoop';
+import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
+import { createLocalServicesDaemonFeatureGate } from './local/services/featureGate';
 
 describe('startServerFeaturesSnapshotRefreshLoop', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('delivers a server feature flip to snapshot consumers at the next connection refresh', async () => {
+    let enabled = true;
+    // HTTP is the external boundary; the store, refresh loop and feature gate are real.
+    const fetch = vi.fn(async () => new Response(JSON.stringify({
+      features: { localServices: { enabled } }, capabilities: {},
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    const store = createServerUrlServerFeaturesSnapshotStore({
+      serverUrl: 'https://daemon-home.test', token: 'fixture-token',
+    });
+    const loop = startServerFeaturesSnapshotRefreshLoop({
+      refresh: async () => { await store.refresh(); },
+      isTransitionActive: store.isRefreshTransitionActive,
+      transitionIntervalMs: 30_000,
+    });
+    const gate = createLocalServicesDaemonFeatureGate({
+      env: {}, resolveServerFeaturesSnapshot: store.getSnapshot,
+    });
+    try {
+      await loop.refresh();
+      await gate.refresh();
+      expect(gate.isEnabled('localServices')).toBe(true);
+      enabled = false;
+      await gate.refresh();
+      expect(gate.isEnabled('localServices')).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      // startDaemon's onMachineConnectionOnline calls this existing lifecycle owner.
+      await loop.refresh();
+      await gate.refresh();
+      expect(gate.isEnabled('localServices')).toBe(false);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      loop.stop();
+    }
   });
 
   it('parks after Home indexing settles and refreshes on the next connection change', async () => {

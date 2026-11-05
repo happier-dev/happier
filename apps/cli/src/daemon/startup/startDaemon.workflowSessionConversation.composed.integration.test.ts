@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { startInstalledDaemonFixture } from '@/daemon/testkit/installedDaemon.testkit';
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
 import { WorkflowInvocationListResultV1Schema, WorkflowRunWaitResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 
 // Both targets use the same installed daemon lifetime. Its process-wide
 // plugin registry is terminal after shutdown, just as in the shipped process.
@@ -92,5 +93,35 @@ it.each(['session', 'detached_run'] as const)('completes an owner Workflow %s th
     expect(after.runs).toEqual(effects.runs);
     expect(after.turns).toEqual(effects.turns);
     expect(after.pending).toEqual(effects.pending);
+  }
+  if (target === 'session') {
+    // Observe only the HTTP boundary in the actual daemon process. The real
+    // Action ingress, feature owner, capability publication and input path run.
+    const originalFetch = globalThis.fetch;
+    let featureRequests = 0;
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const pathname = new URL(url).pathname;
+      if (pathname === '/v1/features' || pathname === '/v1/features/authenticated') featureRequests += 1;
+      return originalFetch(input, init);
+    });
+    try {
+      const sessionId = sessions[0]!.id;
+      const sent = await dispatchOriginalAccountAction({
+        actionId: 'session.message.send',
+        input: { sessionId, message: 'WORKFLOW_FIRST_INPUT', localId: randomUUID() },
+        requestId: randomUUID(), target: { kind: 'session', sessionId },
+        credentials: f.ownerCredentials, serverHttpBaseUrl: f.home.baseUrl,
+        serverIdentityId: f.home.homeId, authority: 'present_user',
+        invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+        onRequesterSessionCredentialDisclosure: () => true,
+      });
+      expect(sent, JSON.stringify(sent)).toMatchObject({ ok: true, result: { status: 'accepted' } });
+      // A warm send consumes the daemon's existing snapshot; it must not
+      // refetch features and wait for Machine advertisement reconciliation.
+      expect(featureRequests).toBe(0);
+    } finally {
+      fetch.mockRestore();
+    }
   }
 }, 120_000);

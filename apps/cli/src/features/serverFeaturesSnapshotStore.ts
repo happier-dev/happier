@@ -29,6 +29,14 @@ export type ServerFeaturesSnapshotStore = Readonly<{
   refresh(): Promise<CliServerFeaturesSnapshot | undefined>;
 }>;
 
+/** Session-control reads share the daemon source and its lifecycle refresh owner. */
+export async function readServerFeaturesSnapshot(
+  store: ServerFeaturesSnapshotStore,
+  refresh: () => Promise<CliServerFeaturesSnapshot | undefined>,
+): Promise<CliServerFeaturesSnapshot | undefined> {
+  return store.getSnapshot() ?? refresh();
+}
+
 export function createServerFeaturesSnapshotStore(params: {
   // The fetch source. Defaults to the canonical `/v1/features` client so the daemon does not
   // introduce a second fetch path.
