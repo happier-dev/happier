@@ -20,6 +20,7 @@ import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, type
 
 export type ProjectSessionRuntimeFixture = Readonly<{
   directory: string;
+  signal: AbortSignal;
   readonly bootstrap: AdmittedRequesterSessionBootstrap;
   createBootstrap(): Promise<AdmittedRequesterSessionBootstrap>;
   installation: MachineInstallationIdentityV1;
@@ -36,6 +37,8 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
   homeServerIdentityId?: string;
   machineAccess?: Readonly<{ custodianAccountId: string; role: 'use' | 'manage' }>;
 }> = {}): Promise<ProjectSessionRuntimeFixture> {
+  const lifetime = new AbortController();
+  onTestFinished(() => lifetime.abort());
   const directory = await mkdtemp(join(tmpdir(), 'project-session-runtime-'));
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
   env.patch({ HAPPIER_HOME_DIR: directory,
@@ -127,7 +130,7 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     return prepared.admitted;
   };
   await createBootstrap();
-  return { directory, get bootstrap() {
+  return { directory, signal: lifetime.signal, get bootstrap() {
     if (!currentBootstrap) throw new Error('Session admission unavailable');
     return currentBootstrap.admitted;
   }, createBootstrap, installation, channel, isHomeCurrent: () => current, retire: () => { current = false; }, mutatePromptLibraryRow };

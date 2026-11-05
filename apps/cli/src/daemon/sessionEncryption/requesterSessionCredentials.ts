@@ -1023,6 +1023,12 @@ async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof reso
     const current = await readRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials,
       verifyMachineAdmissionCurrent }, readMachineAdmissionCurrent, 'custody_recovery');
     if (current === true) return stored;
+    // Missing live Home evidence is not missing private custody. Preserve the
+    // worker's existing retry/parking disposition instead of failing the Run.
+    if (input.scope === 'workflow_trigger' && current === undefined && !input.signal?.aborted) {
+      throw new PluginError({ code: 'project_requester_home_unavailable', retryable: true,
+        message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
+    }
     // readBoundCustody above has already matched the exact persisted scope,
     // Account, Session/trigger id and installation attribution. Workspace keeps
     // its existing authenticated Machine recovery behavior.

@@ -13,6 +13,7 @@ import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountS
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createExecutionRunAccountSettingsSnapshotResolver } from './resolveExecutionRunAccountSettingsSnapshot';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetInMemoryAccountSettingsContextForTests(); });
 
@@ -59,6 +60,47 @@ function captureHomeReads(onCatalogRead?: () => void, sharedSecret = false) {
 }
 
 describe('Machine Execution Run owner account snapshot', () => {
+    it('keeps the captured Settings version when a reusable active snapshot is older', async () => {
+        captureHomeReads();
+        const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'run-machine',
+            serverHttpBaseUrl: 'https://run-owner.test', readCredentials: async () => credentials,
+            isOwnerCurrent: () => true, onSettings() {} });
+        try {
+            const initial = await resolver();
+            expect(initial.settingsVersion).toBe(7);
+            setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({ preferredLanguage: 'de' }),
+                settingsVersion: 5, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+                scopeKey: resolveAccountSettingsScopeKey(credentials) });
+            const incumbent = getActiveAccountSettingsSnapshot();
+            const refreshed = await resolver();
+            expect(refreshed.settingsVersion).toBe(7);
+            expect(refreshed.settings.preferredLanguage).toBe('fr');
+            expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+        } finally { await resolver.dispose(); }
+    });
+    it('keeps an admitted Workflow requester snapshot separate from the Machine custodian and refuses retired custody', async () => {
+        const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: 'https://session-home.test',
+            machineAccess: { custodianAccountId: 'custodian', role: 'manage' }, accountSettings: { preferredLanguage: 'fr' } });
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({ preferredLanguage: 'de' }),
+            settingsVersion: 99, loadedAtMs: 1, settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey({ token: 'custodian', encryption: null }) });
+        const incumbent = getActiveAccountSettingsSnapshot();
+        const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine',
+            serverHttpBaseUrl: 'https://session-home.test', readCredentials: async () => null,
+            isOwnerCurrent: () => true, onSettings() {} });
+        try {
+            const read = resolver.forInvocation({ signal: f.signal, requesterSessionBootstrap: f.bootstrap });
+            const snapshot = await read();
+            expect(snapshot?.settings.preferredLanguage).toBe('fr');
+            expect(snapshot?.scopeKey).toBe(resolveAccountSettingsScopeKey(f.bootstrap.credentials));
+            expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+            f.retire();
+            expect((await read())?.settings.preferredLanguage).toBe('fr');
+            await f.bootstrap.dispose();
+            await expect(read()).rejects.toMatchObject({ code: 'provider_authorization_changed' });
+            expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+        } finally { await resolver.dispose(); }
+    });
     it('refuses a Run read after its owner retires even while the original credentials remain available', async () => {
         captureHomeReads();
         const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'run-machine',

@@ -1267,6 +1267,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return this.permissionResponseTargetStore ?? this.getPermissionRequestStore?.() ?? null;
   }
 
+  private bindInvocationAccountSettingsSnapshot(ingress?: import('@/api/rpc/types').RpcHandlerContext) {
+    const resolver = this.resolveAccountSettingsSnapshot;
+    return resolver?.forInvocation ? resolver.forInvocation(ingress) : resolver;
+  }
+
   private createExecutionRunRuntime(opts: ExecutionRunRuntimeCreateOptions): ExecutionRunHostRuntime {
     const runScope = opts.runId ? this.runs.get(opts.runId)?.sessionId : undefined;
     const scope = (
@@ -1287,6 +1292,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }
       return runScope === null ? opts.getPermissionRequestStore?.() ?? null : this.resolvePermissionRequestStore();
     };
+    // Machine readers bind the admitted invocation's private Account holder;
+    // Session readers already capture their original parent and stay unchanged.
+    const accountSnapshotResolver = Object.hasOwn(opts, 'resolveAccountSettingsSnapshot')
+      ? opts.resolveAccountSettingsSnapshot
+      : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
     const runtime = createExecutionRunBridgeRuntime({
       ...(opts.runId ? { resolveProjectSetupOperation: () => this.resolveRunProjectSetupOperation(opts.runId!, opts.projectLaunchContext) } : {}),
       ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
@@ -1425,8 +1435,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
               this.resolveProvidersFeatureEnabled,
           }
         : {}),
-      ...(this.resolveAccountSettingsSnapshot
-        ? { resolveAccountSettingsSnapshot: this.resolveAccountSettingsSnapshot }
+      ...(accountSnapshotResolver
+        ? { resolveAccountSettingsSnapshot: accountSnapshotResolver }
         : {}),
       ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
       ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
@@ -1474,6 +1484,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
    */
   private createResumeExecutionRunRuntime(opts: Readonly<{
     projectLaunchContext?: ExecutionRunRuntimeCreateOptions['projectLaunchContext'];
+    resolveAccountSettingsSnapshot?: ExecutionRunRuntimeCreateOptions['resolveAccountSettingsSnapshot'];
     runId?: string;
     controllerOccurrenceId?: string;
     backendId: string;
@@ -1491,6 +1502,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const run = opts.runId ? this.runs.get(opts.runId) ?? null : null;
     const resumeOptions = resolveExecutionRunResumeBackendOptions({ run });
     return this.createExecutionRunRuntime({
+      resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
       ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
       ...(opts.runId ? { runId: opts.runId } : {}),
       ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
@@ -2048,6 +2060,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (params.actionRequestAttributionV1) params = { ...params,
       actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) };
     if (params.intent === 'voice_agent') params.signal?.throwIfAborted();
+    const accountSnapshotResolver = this.bindInvocationAccountSettingsSnapshot(params.projectLaunchContext?.ingress);
     if (retained) await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();
     const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
@@ -2067,6 +2080,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       },
       releaseOwner: async () => { await resolution.release?.(); },
     } : this.bindExecutionRunRuntimeSnapshot(resolution, options => this.createExecutionRunRuntime({ ...options,
+      resolveAccountSettingsSnapshot: accountSnapshotResolver,
       ...(params.projectSetupOperation ? { projectSetupOperation: params.projectSetupOperation } : {}),
       ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }));
     try {
@@ -2155,7 +2169,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         admitStart: this.admitStart,
         recoverRetainedRuns: retained ? undefined : this.recoverRetainedRuns.bind(this),
         params: preparedParams,
-        resolveAccountSettingsSnapshot: this.resolveAccountSettingsSnapshot,
+        resolveAccountSettingsSnapshot: accountSnapshotResolver,
         childSelectionContext: {
           lifecycle: preparedParams.sessionId === null || preparedParams.workflowRunId ? 'independent' : 'attached',
           readAppliedParentSelection: this.sessionInteractionHost?.readAppliedChildSelection,
@@ -2163,7 +2177,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         },
         admitInheritedProviderSelection: async (selection, runId) => {
           if (!selection.modelSelection) return;
-          const accountSettingsSnapshot = await this.resolveAccountSettingsSnapshot?.() ?? null;
+          const accountSettingsSnapshot = await accountSnapshotResolver?.() ?? null;
           if (resolution.providerLaunch && selection.modelSelection.providerConnectionId !== null) {
             if (!accountSettingsSnapshot?.scopeKey) throw Object.assign(new Error('provider_connection_not_found'), { code: 'provider_connection_not_found' });
             await resolution.providerLaunch.admitInheritedSelection({
@@ -2185,7 +2199,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             featureEnabled: await this.resolveProvidersFeatureEnabled?.() ?? false,
             happyHomeDir: this.happyHomeDir ?? configuration.happyHomeDir,
             accountSettingsSnapshot,
-            savedSecretOperationContext: this.resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined,
+            savedSecretOperationContext: accountSnapshotResolver?.readOperationContext?.() ?? undefined,
             ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
             ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
           });
@@ -2203,7 +2217,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
               admitSecretReferenceOverlay: async () => {
                 let snapshot: ActiveAccountSettingsSnapshot | null;
                 try {
-                  snapshot = await this.resolveAccountSettingsSnapshot?.({
+                  snapshot = await accountSnapshotResolver?.({
                     secretReferenceOverlay,
                   }) ?? null;
                 } catch (error) {
@@ -2405,6 +2419,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.ensurePermissionResponseTargetHandlerRegistered();
     const run = this.runs.get(runId) ?? null;
     if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+    const accountSnapshotResolver = this.bindInvocationAccountSettingsSnapshot(params.projectLaunchContext?.ingress);
     if (run.sessionId === null) {
       const authority = resolveExecutionRunInputAuthority({ permissionMode: run.permissionMode,
         ...(Object.hasOwn(params, 'causalPermissionAuthority') ? { causalPermissionAuthority: params.causalPermissionAuthority } : {}),
@@ -2442,6 +2457,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         const ensured = await this.ensure(runId, {
           resume: true,
           inputFollowsResume: true,
+          resolveAccountSettingsSnapshot: accountSnapshotResolver,
           ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}),
           ...(params.causalPermissionAuthority
             ? { causalPermissionAuthority: params.causalPermissionAuthority }
@@ -2544,6 +2560,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const runtimeSnapshot = this.bindExecutionRunRuntimeSnapshot(
         resolution,
         (opts) => this.createResumeExecutionRunRuntime({ ...opts,
+          resolveAccountSettingsSnapshot: accountSnapshotResolver,
           ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }),
       );
       try {
@@ -2688,6 +2705,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       budgetRegistry: this.budgetRegistry,
       createRuntime: ({ runId: resumedRunId, controllerOccurrenceId, backendId, backendTarget, permissionMode, causalPermissionAuthority, accountSettings, onConnectedServicesSelection, onConnectedServicesRegistration }) =>
         this.createResumeExecutionRunRuntime({
+          resolveAccountSettingsSnapshot: accountSnapshotResolver,
           ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}),
           runId: resumedRunId,
           controllerOccurrenceId,
@@ -2734,6 +2752,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       signal?: AbortSignal;
       /** Host-only coupling used by bounded `send({ resume: true })`. */
       inputFollowsResume?: boolean;
+      resolveAccountSettingsSnapshot?: ExecutionRunRuntimeCreateOptions['resolveAccountSettingsSnapshot'];
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
       projectLaunchContext?: ExecutionRunRuntimeCreateOptions['projectLaunchContext'];
@@ -2741,10 +2760,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   ): Promise<ExecutionRunEnsureResult> {
     await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();
+    const accountSnapshotResolver = Object.hasOwn(params, 'resolveAccountSettingsSnapshot')
+      ? params.resolveAccountSettingsSnapshot
+      : this.bindInvocationAccountSettingsSnapshot(params.projectLaunchContext?.ingress);
     const resolution = await this.resolveExecutionRunProfileCatalog(this.runs.get(runId)?.backendTarget, runId, true);
     const runtimeSnapshot = this.bindExecutionRunRuntimeSnapshot(
       resolution,
       (opts) => this.createResumeExecutionRunRuntime({ ...opts,
+        resolveAccountSettingsSnapshot: accountSnapshotResolver,
         ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }),
     );
     try {

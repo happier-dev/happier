@@ -35,6 +35,7 @@ import {
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createSnapshotActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createWorkflowRequesterCustody } from './requesterCustody';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from '@/session/actions/workflowMaterializationHost';
@@ -335,6 +336,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       sessionStartup?: import('./sessionStepExecutor').WorkflowSessionStartup;
       postWorkflowMessage?: import('./production').WorkflowProductionExecutionDeps['postWorkflowMessage'];
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+      savedSecretOperationContext?: Parameters<typeof createCredentialedWorkflowMaterializationHostV1>[0]['savedSecretOperationContext'];
       machineAdmissionTransport: MachineAdmissionTransport;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
       managedMachineAction?: import('@happier-dev/protocol').ActionExecutorDeps['managedMachineAction'];
@@ -353,11 +355,20 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             accountId: params.accountId,
           })
         : undefined;
+      const savedSecretOperationContext = input.savedSecretOperationContext;
       const actionExecutor = createCliActionExecutorFromCredentials({
         credentials: params.credentials,
         serverId,
         serverApiUrl: resolveServerHttpBaseUrl(),
         machineId: input.machineId,
+        ...(savedSecretOperationContext ? {
+          savedSecretOperationContext,
+          actionsSettingsProvider: createSnapshotActionSettingsProvider(() => {
+            const snapshot = savedSecretOperationContext.readSnapshot();
+            if (!snapshot) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+            return snapshot;
+          }),
+        } : {}),
         ...(requesterWorkAttributionV1 ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: params.credentials, attribution: requesterWorkAttributionV1,
           happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: readBaseUrl(),
@@ -380,6 +391,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       });
       const resolveMaterializer = createCredentialedWorkflowMaterializationHostV1({
         credentials: params.credentials, accountId: params.accountId,
+        ...(input.savedSecretOperationContext ? { savedSecretOperationContext: input.savedSecretOperationContext } : {}),
         serverId, serverIdentityId: input.serverIdentityId,
         callMachineAction: async (request) => {
           if (request.machineId !== input.machineId) {

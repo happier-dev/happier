@@ -290,6 +290,7 @@ export function createDaemonMachineBootstrapRuntime(
       machineId: string;
       requesterCredentials?: StoredCredentials;
       requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+      savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
     }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
@@ -648,16 +649,20 @@ agentIsolation: params.agentIsolation,
               machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
               invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
           });
-          const coordinate = params.createWorkflowRunCoordinatorForMachine!({
-            machineId: runtimeMachineId,
-            requesterCredentials: selectedCredentials,
-            ...(selectedAttribution ? { requesterWorkAttributionV1: selectedAttribution } : {}),
-            machineAdmissionTransport: async (request, options) =>
-              await automationApiMachine.enqueueSessionPendingByMachine(request, options),
-            machineActionDirectTargetTransport: requesterTransport.transport,
-          });
-          try { return await coordinate(claim); }
-          finally { await requesterTransport.dispose(); }
+          try {
+            const savedSecretOperationContext = await requesterTransport.resolveSavedSecretOperationContext();
+            if (!savedSecretOperationContext) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+            const coordinate = params.createWorkflowRunCoordinatorForMachine!({
+              machineId: runtimeMachineId,
+              requesterCredentials: selectedCredentials,
+              savedSecretOperationContext,
+              ...(selectedAttribution ? { requesterWorkAttributionV1: selectedAttribution } : {}),
+              machineAdmissionTransport: async (request, options) =>
+                await automationApiMachine.enqueueSessionPendingByMachine(request, options),
+              machineActionDirectTargetTransport: requesterTransport.transport,
+            });
+            return await coordinate(claim);
+          } finally { await requesterTransport.dispose(); }
         }
         : null;
       const worker = startAutomationWorker({

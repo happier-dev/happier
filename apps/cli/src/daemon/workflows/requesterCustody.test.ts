@@ -151,9 +151,8 @@ it.each(['unavailable', 'invalid-profile'] as const)(
       const retained = await retainWorkflowRequesterCredentials({ ...binding, attribution,
         credentials: { token: 'guest-token', encryption: null } });
       unavailable = true;
-      if (failure === 'unavailable') await expect(acquireWorkflowRequesterCredentials(binding))
+      await expect(acquireWorkflowRequesterCredentials(binding))
         .rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
-      else await expect(acquireWorkflowRequesterCredentials(binding)).resolves.toBeNull();
       await expect(access(retained.path)).resolves.toBeUndefined();
       unavailable = false;
       const admitted = await acquireWorkflowRequesterCredentials(binding);

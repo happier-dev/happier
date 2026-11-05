@@ -2,7 +2,7 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 
-import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountRoleOverrides } from './accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountRoleOverrides, readAccountRoleOverridesFromSnapshot, type ActiveAccountSettingsSnapshot } from './accountSettings/activeAccountSettingsSnapshot';
 import { readActionsSettingsOverrideFromEnv } from './actionsSettings';
 
 /** Narrow host-reviewed policy accepted by ordinary and restricted runtime constructors. */
@@ -17,6 +17,15 @@ export type ActionSettingsProvider = Readonly<{
   getActionsSettings: () => ActionsSettingsV1;
   getAccountRoleOverrides: () => AccountRoleOverridesReadV1;
 }>;
+
+/** Invocation-owned policy follows its retained Account reader, never the focused host Account. */
+export function createSnapshotActionSettingsProvider(readSnapshot: () => ActiveAccountSettingsSnapshot): ActionSettingsProvider {
+  return {
+    getActionsSettings: () => readSnapshot().settings.actionsSettingsV1,
+    getAccountSettings: () => readSnapshot().settings,
+    getAccountRoleOverrides: () => readAccountRoleOverridesFromSnapshot(readSnapshot()),
+  };
+}
 
 function readAccountSettingsSafely(getAccountSettings?: (() => AccountSettings | null) | null): AccountSettings | null {
   if (!getAccountSettings) return null;

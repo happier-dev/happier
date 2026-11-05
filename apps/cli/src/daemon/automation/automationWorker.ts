@@ -884,7 +884,7 @@ export function startAutomationWorker(params: {
       }
 
       if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
-        && body.state !== 'queued' && !isTerminalAutomationRunStateV3(body.state)
+        && isTerminalAutomationRunStateV3(body.state)
         && body.requesterScope?.kind === 'workflow_trigger' && !activeExecutions.has(body.runId)) {
         recoverWorkflowCustody(body.runId, body.requesterScope.id);
         return;

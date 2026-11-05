@@ -21,7 +21,11 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   isCurrent(): Promise<boolean>;
   signal?: AbortSignal;
   transport: MachineActionDirectTargetTransport;
-}>): Readonly<{ transport: MachineActionDirectTargetTransport; dispose(): Promise<void> }> {
+}>): Readonly<{
+  transport: MachineActionDirectTargetTransport;
+  resolveSavedSecretOperationContext(): Promise<import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 | null>;
+  dispose(): Promise<void>;
+}> {
   let requester: ReturnType<typeof prepareRequesterSessionBootstrap> | undefined;
   const prepare = async (local: Pick<RpcLocalActionContext, 'executionRunWorkflowRunId' | 'requesterWorkAttributionV1'>) => {
     const expected = input.requesterWorkAttributionV1;
@@ -44,6 +48,11 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
     return prepared && await prepared.admitted.isCurrent() ? prepared : null;
   };
   return {
+    resolveSavedSecretOperationContext: async () => {
+      const prepared = await prepare({ executionRunWorkflowRunId: input.runId,
+        requesterWorkAttributionV1: input.requesterWorkAttributionV1 });
+      return prepared?.admitted.savedSecretOperationContext ?? null;
+    },
     transport: {
       machineId: input.transport.machineId,
       ...(input.transport.machineServiceAction ? { machineServiceAction: async request => {

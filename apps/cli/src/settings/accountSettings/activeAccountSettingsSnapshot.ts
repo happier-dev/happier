@@ -62,6 +62,9 @@ export type AccountSettingsSnapshotResolver = ((input?: Readonly<{
   savedSecretReferences?: readonly import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationReferenceV1[];
   signal?: AbortSignal;
 }>) => Promise<ActiveAccountSettingsSnapshot | null>) & Readonly<{
+  /** Machine-owned Run composition binds its admitted invocation's original
+   * private Account holder. Session readers already capture that owner. */
+  forInvocation?: (ingress?: import('@/api/rpc/types').RpcHandlerContext) => AccountSettingsSnapshotResolver;
   readOperationContext?: () => import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1 | null;
 }>;
 

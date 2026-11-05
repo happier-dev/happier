@@ -59,11 +59,34 @@ it('finishes an owner background Role and keeps shared requester Run custody in 
     const member = await f.home.createMachineMember('admin');
     const guest = f.createActionExecutor(member);
     const guestRunId = randomUUID();
-    expect(await guest.execute('workflow.run.start', request(guestRunId), context)).toMatchObject({ ok: true });
-    expect(await guest.execute('workflow.run.get', { runId: guestRunId, includeUsage: false }, context))
+    const guestStarted = await guest.execute('workflow.run.start', request(guestRunId), context);
+    expect(guestStarted, JSON.stringify(guestStarted)).toMatchObject({ ok: true });
+    const guestRead = await guest.execute('workflow.run.get', { runId: guestRunId, includeUsage: false }, context);
+    expect(guestRead, JSON.stringify(guestRead))
       .toMatchObject({ ok: true, result: { run: { id: guestRunId } } });
+    let guestSettled = await guest.execute('workflow.run.wait', { runId: guestRunId, timeoutSeconds: 60 }, context);
+    while (guestSettled.ok && WorkflowRunWaitResultV1Schema.parse(guestSettled.result).observation === 'timeout'
+      && WorkflowRunWaitResultV1Schema.parse(guestSettled.result).run.state === 'running') {
+      guestSettled = await guest.execute('workflow.run.wait', { runId: guestRunId, timeoutSeconds: 60 }, context);
+    }
+    expect(guestSettled, JSON.stringify(guestSettled)).toMatchObject({ ok: true });
+    if (!guestSettled.ok) throw new Error('Guest Workflow observation refused');
+    const guestListed = await guest.execute('workflow.run.invocations.list', { runId: guestRunId, includeContent: true }, context);
+    expect(guestListed, JSON.stringify(guestListed)).toMatchObject({ ok: true });
+    if (!guestListed.ok) throw new Error('Guest Workflow persisted invocation read refused');
+    const guestBackground = WorkflowInvocationListResultV1Schema.parse(guestListed.result).invocationDetails
+      ?.find(detail => detail.progress.invocationPath.blockId === 'background');
+    expect(guestBackground?.index.lifecycle, JSON.stringify({ guestSettled,
+      reason: guestBackground?.progress.reason?.code })).toBe('completed');
+    expect(guestBackground?.progress).toMatchObject({ execution: { kind: 'detached_run' } });
+    expect(JSON.stringify(guestBackground?.progress.result)).toContain('git version ');
+    expect(WorkflowRunWaitResultV1Schema.parse(guestSettled.result)).toMatchObject({
+      observation: 'terminal', run: { id: guestRunId, state: 'succeeded' },
+    });
     expect(await executor.execute('workflow.run.get', { runId: guestRunId, includeUsage: false }, context))
       .toMatchObject({ ok: false, errorCode: 'run_not_found' });
+    expect(await guest.execute('workflow.run.get', { runId, includeUsage: false }, context))
+      .toMatchObject({ ok: false, errorCode: 'run_not_found' });
     const sharedEffects = await f.home.readWorkflowSessionEffects();
-    expect(sharedEffects.runs.find(run => run.id === guestRunId)).toMatchObject({ accountId: member.accountId });
+    expect(sharedEffects.runs.find(run => run.id === guestRunId)).toMatchObject({ accountId: member.accountId, state: 'succeeded' });
 }, 120_000);

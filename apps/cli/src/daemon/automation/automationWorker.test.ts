@@ -276,7 +276,7 @@ describe('automationWorker', () => {
     } finally { worker.stop(); }
   });
 
-  it.each(['queued', 'claimed', 'running'] as const)('reports missing requester custody without claiming or reading Workflow content with the custodian bearer (%s)', async state => {
+  it.each(['queued', 'succeeded'] as const)('reports missing requester custody without claiming or reading Workflow content with the custodian bearer (%s)', async state => {
     mockPost.mockClear();
     const now = Date.now();
     process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-missing-requester-${now}-${Math.random()}`);
@@ -296,7 +296,7 @@ describe('automationWorker', () => {
       mockPost.mockClear();
       worker.handleServerUpdate({ id: 'missing-guest-wake', seq: 1, createdAt: now, body: {
         t: 'automation-run-updated', runId: 'guest-run', automationId: 'automation', requesterScope: { kind: 'workflow_trigger', id: 'missing' },
-        state, scheduledAt: now, startedAt: state === 'running' ? now : null, finishedAt: null,
+        state, scheduledAt: now, startedAt: null, finishedAt: state === 'succeeded' ? now : null,
         updatedAt: now, machineId: null, targetMachineId: 'machine-1',
       } } satisfies Update);
       if (state === 'queued') releaseDrain();
