@@ -10,7 +10,6 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { ManagedMachineSelectionOffer } from './managedMachineSelection';
 
-import { installNewSessionComponentsCommonModuleMocks } from '../newSessionComponentsTestHelpers';
 import type {
     BuildMachineSelectionListModelParams,
     useMachineSelectionListModel as UseMachineSelectionListModel,
@@ -25,23 +24,19 @@ const modalHost = vi.hoisted(() => ({
     show: vi.fn((_config: unknown) => 'modal-id'),
 }));
 
-installNewSessionComponentsCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key, params) => key === 'machines.destinations.shared'
-            ? `${key}:${String(params?.team)}` : key });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: { show: modalHost.show as never } }).module;
-    },
-});
-
-// Cuts the row-accessory's sync/ops import graph out of this pure-model suite;
-// the accessory is only ever created as an element here, never rendered.
-vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
-    MachineCliGlyphs: () => null,
+// Hoist the genuine presentation boundaries before the static destination-model
+// import reaches its UI dependencies. Installing them from a later helper leaves
+// those dependencies holding the real text/modal/native modules.
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key, params) => key === 'machines.destinations.shared' ? `${key}:${String(params?.team)}` : key,
 }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    spies: { show: modalHost.show },
+}).module);
 
 const network = await installSessionOpsNetworkBoundary();
 const fixtureScope = { serverId: 'server-a', accountId: 'account-a' };
