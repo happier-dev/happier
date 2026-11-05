@@ -46,7 +46,8 @@ import { ProjectRightPanelServicesView } from './services/ProjectRightPanelServi
 import { ProjectScriptsBody } from '@/components/projects/projectSetup/ProjectScriptsBody';
 import { ProjectWidgetsPane } from './ProjectOverviewWidgets';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { ProjectBrowseFilesSurface } from './surfaces/ProjectBrowseFilesSurface';
+import { ProjectFilesPaneSurface } from './surfaces/ProjectBrowseFilesSurface';
+import { PaneHeaderSlotProvider, PaneHeaderSlotScope } from '@/components/appShell/panes/paneHeaderSlot';
 import { ProjectGitSurface } from './surfaces/ProjectGitSurface';
 import { ProjectTerminalSurface } from './surfaces/ProjectTerminalSurface';
 import { useProjectSurfaceActions } from './useProjectSurfaceActions';
@@ -376,6 +377,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
         onRevealInFilesTreeNavigate: () => setActiveTab('files'),
     });
     return (
+        <PaneHeaderSlotProvider>
         <View testID="project-right-panel-root" style={styles.container}>
             {!hasActionRail ? <View style={[styles.header, { paddingTop: 10 + insets.top }]}>
                 <View style={styles.tabBarContainer}>
@@ -436,14 +438,16 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                     </RetainedPanelSurface>
                     <RetainedPanelSurface isActive={activeTab === 'files'} testID="project-rightpanel-surface-files">
                         <React.Suspense fallback={<PaneLoadingFallback />}>
-                            <ProjectBrowseFilesSurface
-                                workspaceRef={props.workspaceRef}
-                                activeWorktreeId={props.activeWorktreeId}
-                        scopeId={props.scopeId}
-                                scope={workspaceScope}
-                                onOpenFile={openFileInDetails}
-                                onOpenFilePinned={openFileInDetailsPinned}
-                            />
+                            {/* What the tree publishes (its live line and +) lands on this tab's pane header. */}
+                            <PaneHeaderSlotScope slotKey="files">
+                                <ProjectFilesPaneSurface
+                                    workspaceRef={props.workspaceRef}
+                                    scopeId={props.scopeId}
+                                    scope={workspaceScope}
+                                    onOpenFile={openFileInDetails}
+                                    onOpenFilePinned={openFileInDetailsPinned}
+                                />
+                            </PaneHeaderSlotScope>
                         </React.Suspense>
                     </RetainedPanelSurface>
                     {availableTabIds.has('problems') ? (
@@ -539,5 +543,6 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                 </SurfaceStateSizeProvider>
             </View>
         </View>
+        </PaneHeaderSlotProvider>
     );
 }

@@ -13,9 +13,7 @@ import { useSessionFileUploadAvailability } from '@/components/sessions/files/us
 import { storage, useSessionDirectoryKind, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths, useSessionServerId, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
-import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { useRepositoryTreePaneChrome } from '@/components/workspaces/files/repositoryTree/useRepositoryTreePaneChrome';
 import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 import { RepositoryTreeRootErrorState } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRootErrorState';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -23,10 +21,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { HAPPIER_TREE_ROW_METRICS as TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
-import { usePaneHeaderSlotContent, type PaneHeaderLine, type PaneHeaderLineSegment } from '@/components/appShell/panes/paneHeaderSlot';
+import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
-import { leafFolderName } from '@/utils/path/pathUtils';
-import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { RepositoryTreeCreateMenu } from '@/components/workspaces/files/repositoryTree/RepositoryTreeCreateMenu';
 import type { FileMenuContext } from '@/components/workspaces/files/file/fileMenus';
 import { applyFileDiscardAction } from '@/scm/operations/applyFileDiscardAction';
@@ -77,7 +73,6 @@ export type SessionRepositoryTreeBrowserViewProps = Readonly<{
 
 /** Session is an authorization/navigation adapter, not a second filesystem browser. */
 export const SessionRepositoryTreeBrowserView = React.memo((props: SessionRepositoryTreeBrowserViewProps) => {
-    const { theme } = useUnistyles();
     const { machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId, props.serverId);
     const target = useSessionWorkspaceTarget(props.sessionId, props.serverId);
     const scope = React.useMemo(() => target ? { serverId: target.serverId, machineId: target.machineId, rootPath: target.rootPath } : null,
@@ -107,18 +102,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     // The pane header's live line: where this Session works ("folder on machine"), then how many files changed (the Git pane's words).
     const rootPath = scope?.rootPath ?? (displayIdentity.basePath || null);
     const repoChangedCount = React.useMemo(() => scmSnapshot?.repo.isRepo ? selectScmChangedFiles(scmSnapshot).length : null, [scmSnapshot]);
-    const paneHeaderLine = React.useMemo((): PaneHeaderLine | null => {
-        const folder = withoutFolder ? null : leafFolderName(rootPath);
-        const place = folder && machineName ? t('sessionGitPane.header.folderOnMachine', { folder, machine: machineName }) : folder ?? machineName;
-        if (!place) return null;
-        const segments: PaneHeaderLineSegment[] = [place];
-        if (repoChangedCount !== null) {
-            segments.push(repoChangedCount > 0
-                ? t('sessionGitPane.header.changed', { count: formatExactCount(repoChangedCount) })
-                : t('sessionGitPane.flow.header.noChanges'));
-        }
-        return { segments };
-    }, [machineName, repoChangedCount, rootPath, withoutFolder]);
+    const chrome = useRepositoryTreePaneChrome({ rootPath: withoutFolder ? null : rootPath, machineName, changedCount: repoChangedCount });
     // A changed file's row menu ends with Discard all changes in this file, the Session's own discard (lab FB1k).
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const commitStrategy = useSetting('scmCommitStrategy');
@@ -130,12 +114,9 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         return { changes: { discardAll: () => applyFileDiscardAction({ sessionId: props.sessionId, serverId: serverId ?? undefined,
             sessionPath: rootPath, file, snapshot: scmSnapshot ?? null, scmWriteEnabled, commitStrategy, surface: 'files' }) } };
     }, [changedFiles, commitStrategy, props.sessionId, rootPath, scmSnapshot, scmWriteEnabled, serverId]);
-    const scrollFades = useScrollEdgeFades({ enabledEdges: { top: true, bottom: true }, overflowThreshold: 1, edgeThreshold: 1 });
-    const scrollProps = React.useMemo(() => ({ onLayout: scrollFades.onViewportLayout, onContentSizeChange: scrollFades.onContentSizeChange,
-        onScroll: scrollFades.onScroll, scrollEventThrottle: 16 }), [scrollFades.onViewportLayout, scrollFades.onContentSizeChange, scrollFades.onScroll]);
 
     if (!scope) return <UnavailableSessionFiles rootLabel={rootLabel} machineName={machineName}
-        machineScope={displayMachineScope} paneHeaderLine={paneHeaderLine} />;
+        machineScope={displayMachineScope} paneHeaderLine={chrome.paneHeaderLine} />;
     return (
         <WorkspaceRepositoryTreeBrowserView
             {...props}
@@ -153,10 +134,9 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             rootHeading={withoutFolder ? <SessionFilesRootHeading label={rootLabel} /> : null}
             machineName={machineName}
             createMenuPlacement="paneHeader"
-            paneHeaderLine={paneHeaderLine}
-            scrollProps={scrollProps}
-            scrollOverlay={<><ScrollEdgeFades color={theme.colors.surface.base} size={18} edges={scrollFades.visibility} />
-                <ScrollEdgeIndicators edges={scrollFades.visibility} color={theme.colors.text.secondary} size={14} opacity={0.35} /></>}
+            paneHeaderLine={chrome.paneHeaderLine}
+            scrollProps={chrome.scrollProps}
+            scrollOverlay={chrome.scrollOverlay}
         />
     );
 });
