@@ -10,6 +10,7 @@ import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actio
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { presentActionApproval, readActionApprovalSubject } from './actionApprovalPresentation';
 import { readApprovalPreviewSummary } from './ApprovalPreviewCard';
+import { readPluginInstallSourceName } from './pluginInstallApprovalFacts';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 
 export type ApprovalRequestTitleInput = Readonly<{
@@ -62,18 +63,21 @@ export function resolveApprovalRequestTitle(
     isSpecCopy = firstLine === spec.title || firstLine === buildApprovalPreviewSummary(spec, input.actionArgs)
       || (firstLine !== '' && firstLine === input.previewSummary?.trim());
   } catch { /* Authored/plugin requests retain their copy. */ }
+  const generated = isRawId || isSpecCopy || firstLine === '';
+  // A generated install title names what it installs: the reviewed plugin, else its own source until a review lands.
   const subjectName = actionId === 'plugins.install'
-    ? readPluginInstallApprovalPendingReview(input.preview)?.review.displayName.trim() || null
+    ? readPluginInstallApprovalPendingReview(input.preview)?.review.displayName.trim()
+      || (generated ? readPluginInstallSourceName(input.actionArgs) : null)
     : WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId).success
       ? readWidgetLayoutFragmentApprovalNameV1(input.actionArgs, input.preview) : null;
   const title = subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
-    isRawId || isSpecCopy || firstLine === ''
+    generated
       ? (presentation.title ?? actionTitle ?? t('inbox.work.rows.approvalUntitled'))
       : firstLine;
   const detail = rest.join('\n').trim();
   // A generated title already identifies the Action, including its named subject.
   // The Inbox facts and page Action row must not repeat it beside that title.
-  const titleNamesAction = Boolean(subjectName && actionTitle) || isRawId || isSpecCopy || firstLine === '';
+  const titleNamesAction = Boolean(subjectName && actionTitle) || generated;
   return { title, actionTitle: titleNamesAction ? null : actionTitle, detail: detail || null };
 }
 

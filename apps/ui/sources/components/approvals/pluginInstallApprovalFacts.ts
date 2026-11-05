@@ -1,3 +1,5 @@
+import { PluginInstallActionInputSchema } from '@happier-dev/protocol/actions/specs/pluginDevelopment';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { PluginInstallationReviewSchema } from '@happier-dev/protocol/marketplace/internal';
 import {
   describePluginInstallationReviewFacts,
@@ -72,4 +74,15 @@ export function presentPluginInstallApprovalRows(
       },
     ];
   });
+}
+
+/**
+ * What an install says it installs before its review names the plugin: the Store or installed plugin's
+ * id, the npm package, or the folder or archive it reads.
+ */
+export function readPluginInstallSourceName(actionArgs: unknown): string | null {
+  const parsed = PluginInstallActionInputSchema.safeParse(actionArgs);
+  if (!parsed.success) return null;
+  if ('source' in parsed.data) return parsed.data.source.pluginId;
+  return parsed.data.kind === 'npm' ? parsed.data.path : resolveWorkspacePathBasenameV1(parsed.data.path);
 }
