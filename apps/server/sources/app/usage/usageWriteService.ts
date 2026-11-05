@@ -590,7 +590,7 @@ export async function deleteNativeUsageHistory(accountId: string, request: Usage
         const deleted = ids.length ? await tx.usageEvent.deleteMany({ where: { accountId, id: { in: ids } } }) : { count: 0 };
         if (deleted.count > 0) afterTx(tx, () => eventRouter.emitEphemeral({
             userId: accountId,
-            payload: buildUsageEphemeral(null, 'native_history_deleted', { total: 0 }, { total: 0 }),
+            payload: buildUsageEphemeral(null, 'native_history_deleted', { total: 0 }, { total: 0 }, undefined, { sessionId: null }),
             recipientFilter: { type: 'user-scoped-only' },
         }));
         return { ok: true, deletedEventCount: deleted.count };
@@ -694,6 +694,11 @@ function emitUsageEventAfterTransaction(
                     providerConnectionId: request.attribution.source.providerConnectionId,
                     ...(request.machineId ? { machineId: request.machineId } : {}),
                 } : undefined,
+                // Native subjects reconcile across linked/unlinked Session rows.
+                // Admission above has already validated any metadata-carried subject.
+                request.sessionId && !request.subject && request.metadata?.accountingSubject === undefined
+                    ? { sessionId: request.sessionId, observedFromMs: request.observedAt }
+                    : { sessionId: null },
             ),
             recipientFilter: { type: 'user-scoped-only' },
         });
@@ -1308,6 +1313,9 @@ export async function recordLegacyUsageReport(
                     key,
                     params.tokens,
                     params.cost,
+                    undefined,
+                    // Bridging a retained legacy report can also add its older baseline.
+                    { sessionId },
                 );
                 eventRouter.emitEphemeral({
                     userId: accountId,

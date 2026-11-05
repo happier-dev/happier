@@ -82,6 +82,7 @@ describe("usageWriteService", () => {
         expect(wake).toMatchObject({ userId: account.id, recipientFilter: { type: 'user-scoped-only' } });
         expect(EphemeralUpdateSchema.parse(wake?.payload)).toMatchObject({
             type: 'usage', id: session.id, providerConnectionId: 'connection-used', machineId: 'provider-usage-machine',
+            accountingChange: { sessionId: session.id, observedFromMs: 100 },
         });
         expect(await recordUsageEvent(account.id, request)).toMatchObject({ ok: true });
         expect(vi.mocked(eventRouter.emitEphemeral).mock.calls.filter(([event]) => event.payload.type === 'usage')).toHaveLength(1);
@@ -169,7 +170,8 @@ describe("usageWriteService", () => {
         const first = await recordUsageEvent(account.id, request);
         expect(first).toMatchObject({ ok: true });
         const wake = vi.mocked(eventRouter.emitEphemeral).mock.calls.at(-1)?.[0];
-        expect(wake).toMatchObject({ userId: account.id, recipientFilter: { type: 'user-scoped-only' }, payload: { type: 'usage', id: null } });
+        expect(wake).toMatchObject({ userId: account.id, recipientFilter: { type: 'user-scoped-only' },
+            payload: { type: 'usage', id: null, accountingChange: { sessionId: null } } });
         expect(EphemeralUpdateSchema.safeParse(wake?.payload).success).toBe(true);
         expect(await recordUsageEvent(account.id, request)).toEqual(first);
         expect(await recordUsageEvent(other.id, request)).toEqual({ ok: false, error: 'machine-not-found' });

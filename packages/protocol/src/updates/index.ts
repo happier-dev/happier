@@ -485,6 +485,11 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
     /** Captured request source; a wake hint, never permission to read that connection. */
     providerConnectionId: z.optional(z.string().check(z.minLength(1))),
     machineId: z.optional(z.string().check(z.minLength(1))),
+    /** Advisory accounting read scope; null/absent remains Account-wide, never read authority. */
+    accountingChange: z.optional(z.strictObject({
+      sessionId: z.nullable(z.string().check(z.minLength(1))),
+      observedFromMs: z.optional(TimestampMsSchema),
+    })),
   }),
   /**
    * Content-free invalidation to a Team credential resource's usage readers after a
