@@ -9,6 +9,15 @@ import { logger } from '@/ui/logger';
 import type { HerdrProcessInfo } from '@/integrations/herdr/client';
 import type { OwnedTerminalProcessIdentity } from './ownedTerminalProcess';
 
+export function terminalClientArgvMatchesInvocation(
+  argv: readonly string[],
+  invocation: Readonly<{ command: string; args: readonly string[] }>,
+): boolean {
+  return argv[0] === invocation.command
+    && argv.length === invocation.args.length + 1
+    && invocation.args.every((arg, index) => argv[index + 1] === arg);
+}
+
 /** This is process custody, not the lifetime of its borrowed terminal shell. */
 export async function readTerminalClientProcessState(identity: OwnedTerminalProcessIdentity): Promise<'alive' | 'dead' | 'unknown'> {
   const state = await readProcessRunState(identity.pid);
@@ -67,9 +76,7 @@ export async function proveTerminalClientCustody(input: Readonly<{
     resolveCommandOnPath: false });
   const native = input.processes.foregroundProcesses.some(process => process.pid !== input.launcher.pid
     && descendsFrom(process.pid, input.launcher.pid)
-    && process.argv[0] === invocation.command
-    && process.argv.length === invocation.args.length + 1
-    && invocation.args.every((arg, index) => process.argv[index + 1] === arg));
+    && terminalClientArgvMatchesInvocation(process.argv, invocation));
   if (input.processes.foregroundProcesses.some(process => !descendsFrom(process.pid, input.launcher.pid)
     && !descendsFrom(input.launcher.pid, process.pid))) return reject('unrelated_foreground_process');
   if (!native) return reject('native_invocation_not_observed');

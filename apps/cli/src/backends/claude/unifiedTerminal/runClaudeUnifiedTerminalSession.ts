@@ -1266,6 +1266,19 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       logger.debug('[unified]: Claude process-exit activity observation failed', error);
     });
   };
+  const failForTerminalHostLoss = (
+    activeHandle: TerminalHostHandle,
+    error: ClaudeUnifiedTerminalHostDeadError,
+    providerStopped = false,
+  ): void => {
+    if (!currentTerminalProcess) {
+      if (providerStopped) observeProviderProcessExit();
+      else observeUnverifiedProviderExit(error);
+    }
+    void publishHostDeadHealth(activeHandle, error.liveness);
+    fatalRuntimeError ??= error;
+    if (!runtimeAbortController.signal.aborted) runtimeAbortController.abort(error);
+  };
   const expectedProviderResumeSessionId =
     typeof opts.expectedProviderResumeSessionId === 'string'
     && opts.expectedProviderResumeSessionId.trim().length > 0
@@ -2704,10 +2717,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             startupGraceMs: configuration.claudeUnifiedTerminalStartupReadinessTimeoutMs,
             startupGraceActive: () => startupHostLivenessGraceActive,
             isExpectedHostExit: (liveness) => expectedPromptInputExit && isCleanTerminalExit(liveness),
-            // The adapter-derived command identity from the provider launch argv (herdr: the
-            // executable; zellij: the launcher proof fragments) — the same convention the hosts
-            // themselves use for pane-command matching.
-            providerCommandFragments: activeHandle.expectedCommandFragments,
+            // Owned processes already deliver qualified exit through IPC. Independently
+            // launched hosts may qualify only the actual provider invocation, never a runner.
+            providerInvocation: currentTerminalProcess ? undefined : spawn?.providerInvocation,
             onProviderGone: ({ liveness }) => {
               if (expectedPromptInputExit) {
                 if (!runtimeAbortController.signal.aborted) {
@@ -2715,18 +2727,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
                 }
                 return;
               }
-              // The pane outlived the provider: reuse the host-dead consequence chain (issue
-              // surfacing, failed turn, park-for-recovery) — the liveness payload (paneAlive true,
-              // foreground lineage present) distinguishes this shape in diagnostics.
-              const error = new ClaudeUnifiedTerminalHostDeadError(liveness);
-              if (!currentTerminalProcess) {
-                observeUnverifiedProviderExit(error);
-              }
-              void publishHostDeadHealth(activeHandle, liveness);
-              fatalRuntimeError ??= error;
-              if (!runtimeAbortController.signal.aborted) {
-                runtimeAbortController.abort(error);
-              }
+              failForTerminalHostLoss(activeHandle, new ClaudeUnifiedTerminalHostDeadError(liveness), true);
             },
             onHostExited: () => {
               if (!currentTerminalProcess) {
@@ -2739,12 +2740,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               }
             },
             onHostDead: (error) => {
-              if (!currentTerminalProcess) {
-                observeUnverifiedProviderExit(error);
-              }
-              void publishHostDeadHealth(activeHandle, error.liveness);
-              fatalRuntimeError ??= error;
-              runtimeAbortController.abort(error);
+              failForTerminalHostLoss(activeHandle, error);
             },
           }),
         ]),

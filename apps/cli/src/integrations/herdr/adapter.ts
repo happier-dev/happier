@@ -229,7 +229,7 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
           paneAlive: true,
           panePid: process.shellPid ?? undefined,
           paneCurrentCommand: process.foregroundProcesses.map((item) => item.argv.join(' ')).join(' | '),
-          paneForegroundArgv: process.foregroundProcesses.map((item) => item.argv),
+          paneForegroundProcesses: process.foregroundProcesses,
           observedAt,
         };
       } catch (error) {

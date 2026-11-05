@@ -244,7 +244,7 @@ describe('Herdr terminal host creation', () => {
 });
 
 describe('Herdr terminal host liveness', () => {
-  it('reports the per-process foreground argv of a live pane', async () => {
+  it('reports foreground process identities of a live pane', async () => {
     await withHerdrApi(async (api) => {
       api.panes.add('managed');
       const liveness = await adapterFor(api.socketPath).evaluateLiveness({
@@ -255,7 +255,7 @@ describe('Herdr terminal host liveness', () => {
       expect(liveness).toMatchObject({
         paneAlive: true,
         panePid: 42,
-        paneForegroundArgv: [['/bin/bash'], ['/managed/claude', '--session', 'x']],
+        paneForegroundProcesses: [{ pid: 101, argv: ['/bin/bash'] }, { pid: 202, argv: ['/managed/claude', '--session', 'x'] }],
       });
     }, {
       response: (method) => {
