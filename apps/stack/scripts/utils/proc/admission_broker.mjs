@@ -166,6 +166,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     send(item.socket, { kind: 'refused', reason, ...(cause ? { cause } : {}) });
     item.socket.end();
   }
+  function readResources(item) {
+    try { return item.observation.readState(); }
+    catch (error) {
+      recordFailure(error);
+      refuse(item, 'HSTACK_RESOURCE_OBSERVATION_UNAVAILABLE', error.code ?? error.name);
+      return null;
+    }
+  }
   function refreshWatchers() {
     const blocked = waiting.filter(item => item.blocked);
     const memoryWaiting = waiting.some(item => !item.slot && !item.blocked);
@@ -234,7 +242,10 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     }
     // Arm before comparing the offer's canonical snapshot, so a release
     // between the client's busy reply and watcher registration cannot be lost.
-    const changed = blocked.filter(item => item.observation.readSnapshot() !== item.resourceSnapshot);
+    const changed = blocked.filter(item => {
+      const resources = readResources(item);
+      return resources !== null && resources.snapshot !== item.resourceSnapshot;
+    });
     if (changed.length) {
       enqueue(() => resourcesChanged(changed));
     }
@@ -249,9 +260,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     if (changed) { await observe(); await drain(); }
   }
   function resourceChanged(item) {
-    const snapshot = item.observation.readSnapshot();
-    if (snapshot === item.resourceSnapshot) return false;
-    item.resourceSnapshot = snapshot;
+    const resources = readResources(item);
+    if (!resources || resources.snapshot === item.resourceSnapshot) return false;
+    item.resourceSnapshot = resources.snapshot;
     return true;
   }
   async function release(slot) {
@@ -284,7 +295,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           if (item.locks.length) send(item.socket, { kind: 'capacity-wait' });
           // A head that cannot fit has not reached the client's resource
           // attempt yet. An active publication must not reserve its floor.
-          const resources = item.observation.readState();
+          const resources = readResources(item);
+          if (!resources) continue;
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
@@ -294,12 +306,16 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       }
       const floorKiB = fitting?.floorKiB ?? item.floorKiB;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
+      // Observe before publishing a reservation: a failed request must not
+      // leave a slot that its client was never offered.
+      const resources = readResources(item);
+      if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID());
       const slot = { address, pid: item.pid, floorKiB, workers: fitting?.workers, control: item.socket };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       item.slot = slot;
-      item.resourceSnapshot = item.observation.readSnapshot();
+      item.resourceSnapshot = resources.snapshot;
       send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, workers: slot.workers });
     }
     refreshWatchers();
@@ -342,7 +358,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           removeWaiting(item);
           send(socket, { kind: 'admitted', floorKiB: item.slot.floorKiB, workers: item.slot.workers });
           refreshWatchers();
-        } catch { await release(item.slot); refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); }
+        } catch { refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); await releaseDecision(); }
         return;
       }
       if (request.kind === 'resources-busy' && item?.slot && !item.settled) {
@@ -373,7 +389,14 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       waiting.push(item);
       refreshWatchers();
-      const disk = await admitDisk(item);
+      let disk;
+      try { disk = await admitDisk(item); }
+      catch (error) {
+        recordFailure(error);
+        refuse(item, 'HSTACK_ADMISSION_UNAVAILABLE', error.code ?? error.name);
+        refreshWatchers();
+        return;
+      }
       if (!disk.admitted) { refuse(item, 'HSTACK_DISK_UNAVAILABLE'); refreshWatchers(); return; }
       await observe();
       await drain();

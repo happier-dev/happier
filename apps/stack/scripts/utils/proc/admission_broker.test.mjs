@@ -19,27 +19,17 @@ import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
 
-test('measured validation floors admit concurrent focused work without a controller margin', linux, async t => {
+test('canonical validation floors admit concurrent focused work up to exact capacity', linux, async t => {
   const { resolveRemoteCommandPolicy, resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const policy = resolveRemoteCommandPolicy(['vitest', 'run', 'sources/utils/path/resolvePathRelativeToRoot.test.ts'],
     { repoRoot, cwd: join(repoRoot, 'apps/ui') });
   const floorKiB = resolveHeavyweightMemoryFloorKiB(policy.heavyClass, { machine: 'local' });
   const concurrentRuns = 3;
-  // Largest successful focused tree peak; owner Q1 rounds up without margin.
-  const measuredFloorKiB = Math.ceil(779072 / (1024 * 1024)) * 1024 * 1024;
-  const capacityKiB = concurrentRuns * measuredFloorKiB;
+  // The command-resource owner sizes each class from its current measurements.
+  // Admission must use that floor without introducing a controller margin.
+  const capacityKiB = concurrentRuns * floorKiB;
   const readMemory = () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: 64 * 1024 * 1024 });
-  const legacy = await fixture(t, { readMemory });
-  for (let index = 0; index < concurrentRuns; index++) {
-    // Historical controller minimum observed before this change.
-    await acquire(legacy.root, 8 * 1024 * 1024, t);
-  }
-  const legacySample = await request(legacy.root, { kind: 'sample' });
-  await legacySample.next();
-  legacySample.socket.destroy();
-  assert.equal(legacy.broker.status().activeCount, 0);
-  assert.equal(legacy.broker.status().waitingCount, concurrentRuns);
   const { root, broker } = await fixture(t, {
     readMemory,
   });
@@ -154,6 +144,97 @@ function captureRecoveryClock(t) {
     await Promise.all([...active.values()].map(callback => callback()));
   } };
 }
+
+test('a missing slot settles its own request even when the following memory observation fails', linux, async t => {
+  // Capture the wire outcome at the OS boundary so a missing refusal fails an
+  // assertion instead of leaving this negative regression waiting forever.
+  const refusals = [];
+  const nativeWrite = Socket.prototype.write;
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'refused') refusals.push(response);
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  let fail = false;
+  const { root, broker } = await fixture(t, { readMemory: () => {
+    if (fail) throw Object.assign(new Error('Memory read failed'), { code: 'EIO' });
+    return { availableMemoryKiB: 100, totalMemoryKiB: 100 };
+  } });
+  const affected = await acquire(root, 20, t);
+  assert.equal((await affected.next()).kind, 'reserved');
+  const unrelated = await acquire(root, 90, t);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next();
+  barrier.socket.destroy();
+  fail = true;
+  affected.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
+  const after = await request(root, { kind: 'sample' });
+  await after.next();
+  after.socket.destroy();
+  assert.equal(broker.status().waitingCount, 1, 'a vanished slot must not leave its request stranded after resampling fails');
+  assert.equal(refusals.some(response => response.reason === 'HSTACK_SLOT_UNAVAILABLE'), true,
+    'the vanished-slot request must settle before fallible resampling');
+  assert.equal((await affected.next()).reason, 'HSTACK_SLOT_UNAVAILABLE');
+  fail = false;
+  const wake = await acquire(root, 1, t);
+  await unrelated.admit();
+  await wake.admit();
+});
+
+test('a resource observation failure settles only its waiter without leaving a phantom reservation', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  let availableMemoryKiB = 0;
+  let fail = false;
+  const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }) });
+  const lock = { path: join(root, 'fault.lock') };
+  const nativeRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (fail && path === lock.path) throw Object.assign(new Error('Resource read failed'), { code: 'EIO' });
+    return nativeRead(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const affected = await acquire(root, 70, t, { locks: [lock] });
+  const unaffected = await acquire(root, 40, t);
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next();
+  barrier.socket.destroy();
+  fail = true;
+  availableMemoryKiB = 100;
+  await clock.tick();
+  assert.equal(broker.status().reservedMemoryKiB, 40, 'the failing snapshot must not leave an unoffered slot or block other waiters');
+  // Publication-priority notices can precede the failure decision while
+  // arrivals revisit this memory waiter; consume the decision itself.
+  let refused;
+  do { refused = await affected.next(); } while (refused.kind === 'capacity-wait');
+  assert.equal(refused.kind, 'refused');
+  assert.equal(refused.reason, 'HSTACK_RESOURCE_OBSERVATION_UNAVAILABLE');
+  assert.equal(refused.cause, 'EIO');
+  await unaffected.admit();
+});
+
+test('a disk admission exception refuses only its request without invalidating host memory', linux, async t => {
+  const { root, broker } = await fixture(t);
+  const holder = await acquire(root, 100, t);
+  const held = await holder.admit();
+  const older = await acquire(root, 70, t);
+  // A broker with an older disk catalog can receive a newly introduced class.
+  // Exercise the real disk owner, whose unknown-class check throws before I/O.
+  const unsupported = await acquire(root, 1, t, { className: 'fixture-new-class' });
+  const barrier = await request(root, { kind: 'sample' });
+  await barrier.next();
+  barrier.socket.destroy();
+  assert.equal(broker.status().waitingCount, 1, 'the failed disk request must settle without consuming unrelated waiters');
+  assert.equal(broker.status().availableMemoryKiB, 100, 'a request-specific disk failure must not zero a valid host sample');
+  const refused = await unsupported.next();
+  assert.equal(refused.kind, 'refused');
+  assert.equal(refused.reason, 'HSTACK_ADMISSION_UNAVAILABLE');
+  assert.equal(refused.cause, 'Error');
+  await held.release();
+  await older.admit();
+});
 
 test('a failed memory pass retains oldest-first waiters and recovers on the existing catch-up', linux, async t => {
   const clock = captureRecoveryClock(t);
