@@ -139,6 +139,19 @@ const ICON_TABS: ReadonlyArray<SegmentedTab<'alpha' | 'beta' | 'gamma'>> = TABS.
 const WCAG_MINIMUM_TARGET_PX = 24;
 
 describe('SegmentedTabBar', () => {
+  it('keeps Customize reachable when every page fits and no page is in overflow', async () => {
+    const { SegmentedTabBar } = await import('./SegmentedTabBar');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const customize = vi.fn();
+    const screen = await renderScreen(<SegmentedTabBar tabs={TABS} activeTabId="alpha" onSelectTab={() => {}}
+      overflow={{ label: 'More', actions: [{ id: 'customize', label: 'Customize', onPress: customize }] }} />);
+    const menu = screen.findAllByType(DropdownMenu)[0];
+    expect(menu).toBeDefined();
+    expect(menu!.props.items).toHaveLength(1);
+    await act(async () => menu!.props.onSelect(menu!.props.items[0].id));
+    expect(customize).toHaveBeenCalledTimes(1);
+  });
+
   it('measures a compact value row at the size it draws, so a row that fits is not turned into a select', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const screen = await renderScreen(<SegmentedTabBar role="radiogroup" compact tabs={TABS} activeTabId="alpha"

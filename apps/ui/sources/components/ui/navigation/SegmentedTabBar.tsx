@@ -33,7 +33,7 @@ import { ICON_SIZE } from '@/components/ui/icons/Icon';
 // gauge and chart components (and their SVG dependency) that the barrel also exports.
 import { INSTRUMENT_SPRINGS } from '@/components/instrument/motion/motionTokens';
 import { useMotionPreferences } from '@/components/instrument/motion/useMotionPreferences';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -157,6 +157,8 @@ export type SegmentedTabBarProps<T extends string = string> = Readonly<{
         items?: readonly SegmentedTab<T>[];
         /** The placement owner's resolved full catalog order for the combined More menu. */
         orderedIds?: readonly T[];
+        /** Surface operations (Customize…), drawn as menu items below its pages, not as a fake destination. */
+        actions?: readonly SegmentedOverflowAction[];
         /** Existing menu footer, for surface actions such as Customize without a fake destination. */
         footer?: React.ReactNode;
     }>;
@@ -566,7 +568,8 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
     const iconOnly = !plain && props.iconPlacement !== 'leading' && props.tabs.length > 0 && props.tabs.every((tab) => tab.icon != null);
     const overflow = props.overflow;
     const hasOverflow = overflow !== undefined;
-    const reserveMore = (overflow?.items?.length ?? 0) > 0;
+    const hasOverflowActions = (overflow?.actions?.length ?? 0) > 0;
+    const reserveMore = hasOverflowActions || (overflow?.items?.length ?? 0) > 0;
     const overflowItems = overflow?.items;
     const overflowOrderedIds = overflow?.orderedIds;
     const [rowWidth, setRowWidth] = React.useState<number | null>(null);
@@ -857,7 +860,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         </View>
                     ) : tabNode;
                 })}
-                {overflow && hiddenTabs.length > 0 ? (
+                {overflow && (hiddenTabs.length > 0 || hasOverflowActions) ? (
                     <SegmentedTabOverflowMore
                         label={overflow.label}
                         testID={overflow.testID ?? (props.testIDPrefix ? `${props.testIDPrefix}:more` : undefined)}
@@ -866,6 +869,7 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                         active={activeHidden}
                         disabled={disabled}
                         footer={overflow.footer}
+                        actions={overflow.actions}
                         onSelectTab={props.onSelectTab}
                         onLayout={(event) => handleTabLayout(OVERFLOW_KEY, event)}
                     />
@@ -980,6 +984,19 @@ function PlainTabCaption(props: Readonly<{
         : caption;
 }
 
+/** An operation in the More menu below its pages ("Customize tabs…"). */
+export type SegmentedOverflowAction = Readonly<{
+    id: string;
+    label: string;
+    icon?: React.ReactNode;
+    testID?: string;
+    onPress: () => void;
+}>;
+
+const OVERFLOW_PAGES_CATEGORY = 'pages';
+const OVERFLOW_ACTIONS_CATEGORY = 'actions';
+const OVERFLOW_ACTION_ID_PREFIX = '\u0000action:';
+
 /** The tabs that no longer fit, in one menu; it is the selected tab's place while that tab is inside. */
 function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     label: string;
@@ -991,22 +1008,41 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
     onSelectTab: (tabId: T) => void;
     onLayout: (event: LayoutChangeEvent) => void;
     footer?: React.ReactNode;
+    actions?: readonly SegmentedOverflowAction[];
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
     const [focusVisible, setFocusVisible] = React.useState(false);
-    const items = React.useMemo(() => props.tabs.map((tab) => ({
-        id: tab.id,
-        title: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
-        subtitle: tab.disabled === true ? tab.unavailableReason : undefined,
-        icon: tab.icon ?? undefined,
-        checked: isHappierTabSelected(props.activeTabId, tab.id),
-        disabled: tab.disabled === true,
-        testID: props.testID ? `${props.testID}:${tab.id}` : undefined,
-    })), [props.activeTabId, props.tabs, props.testID]);
+    const items = React.useMemo((): DropdownMenuItem[] => [
+        ...props.tabs.map((tab) => ({
+            id: tab.id,
+            title: [tab.label, tab.count, tab.badge].filter(Boolean).join(' '),
+            subtitle: tab.disabled === true ? tab.unavailableReason : undefined,
+            icon: tab.icon ?? undefined,
+            checked: isHappierTabSelected(props.activeTabId, tab.id),
+            category: OVERFLOW_PAGES_CATEGORY,
+            disabled: tab.disabled === true,
+            testID: props.testID ? `${props.testID}:${tab.id}` : undefined,
+        })),
+        ...(props.actions ?? []).map((action) => ({
+            id: `${OVERFLOW_ACTION_ID_PREFIX}${action.id}`,
+            title: action.label,
+            icon: action.icon,
+            category: OVERFLOW_ACTIONS_CATEGORY,
+            testID: action.testID,
+        })),
+    ], [props.actions, props.activeTabId, props.tabs, props.testID]);
     const activeItem = items.find(item => item.checked) ?? null;
     const triggerLabel = activeItem ? [props.label, activeItem.title, activeItem.subtitle].filter(Boolean).join(', ') : props.label;
+    const onSelect = (id: string) => {
+        setOpen(false);
+        if (id.startsWith(OVERFLOW_ACTION_ID_PREFIX)) {
+            props.actions?.find(action => `${OVERFLOW_ACTION_ID_PREFIX}${action.id}` === id)?.onPress();
+            return;
+        }
+        props.onSelectTab(id as T);
+    };
     return (
         // Measure in the track's coordinate space, like the visible tabs. DropdownMenu's
         // anchoring host wraps its trigger, whose own onLayout x is only host-relative.
@@ -1016,8 +1052,9 @@ function SegmentedTabOverflowMore<T extends string>(props: Readonly<{
                 onOpenChange={setOpen}
                 items={items}
                 footer={props.footer}
+                separateCategories
                 selectedId={activeItem?.id ?? null}
-                onSelect={(id) => { setOpen(false); props.onSelectTab(id as T); }}
+                onSelect={onSelect}
                 placement="bottom"
                 matchTriggerWidth={false}
                 trigger={({ toggle }) => (
