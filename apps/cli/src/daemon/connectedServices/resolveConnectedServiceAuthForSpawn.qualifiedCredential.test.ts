@@ -497,11 +497,62 @@ describe('qualified first-party spawn credential authority', () => {
     expect(diagnostic.mock.calls.filter(([event]) => event === '[ConnectedServiceRefreshCoordinator] credential health write'))
       .toEqual([['[ConnectedServiceRefreshCoordinator] credential health write', {
         path: 'materialization-failure', serviceKind: service.localId,
+        account, credentialRevision: revision, configurationRevision: null,
         beforeStatus: knownHealth ? 'refresh_failed_retryable' : 'connected',
         afterStatus: 'refresh_failed_retryable', substantiveChanged: knownHealth ? false : null,
       }]]);
     diagnostic.mockRestore();
     http.mockRestore();
+  });
+  it.each([
+    { category: 'provider_401', providerStatus: 401 },
+    { category: 'provider_403', providerStatus: 403 },
+  ] as const)('keeps qualified $category materialization health retryable without notifying reauth', async ({ category, providerStatus }) => {
+    const account = { service, accountId: 'device-health' };
+    const onReauthRequired = vi.fn(async () => undefined);
+    const http = vi.spyOn(axios, 'patch').mockImplementation(async () => ({
+      status: 200, data: { success: true, credentialRevision: revision, configurationRevision: null },
+    }));
+    try {
+      await persistConnectedServiceCredentialHealthForMaterializationFailure({
+        binding: { serviceId: 'openai-codex', profileId: account.accountId },
+        qualifiedCredential: { token: credentials.token, ref: account, expectedCredentialRevision: revision,
+          expectedConfigurationRevision: null, previousStatus: 'connected' },
+        diagnostic: { code: 'provider_auth_rejected', severity: 'blocking',
+          credentialRefreshFailure: { category, providerStatus } },
+        now: 10, onReauthRequired,
+      });
+      expect(http.mock.calls[0]?.[1]).toMatchObject({ ref: account, health: {
+        status: 'refresh_failed_retryable', reconnectRequired: false,
+        lastRefreshFailureKind: category, providerHttpStatus: providerStatus,
+      } });
+      expect(onReauthRequired).not.toHaveBeenCalled();
+    } finally { http.mockRestore(); }
+  });
+  it.each(['invalid_grant', 'missing_refresh_token'] as const)('notifies once when qualified %s materialization failure enters reauth health', async category => {
+    const account = { service, accountId: 'device-health' };
+    const onReauthRequired = vi.fn(async () => undefined);
+    const http = vi.spyOn(axios, 'patch').mockImplementation(async () => ({
+      status: 200, data: { success: true, credentialRevision: revision, configurationRevision: null },
+    }));
+    try {
+      const input = {
+        binding: { serviceId: 'openai-codex', profileId: account.accountId },
+        qualifiedCredential: { token: credentials.token, ref: account, expectedCredentialRevision: revision,
+          expectedConfigurationRevision: null, previousStatus: 'connected' },
+        diagnostic: { code: 'provider_auth_rejected', severity: 'blocking',
+          credentialRefreshFailure: { category } },
+        now: 10, onReauthRequired,
+      } as const;
+      await persistConnectedServiceCredentialHealthForMaterializationFailure(input);
+      expect(http.mock.calls[0]?.[1]).toMatchObject({ ref: account, health: {
+        status: 'needs_reauth', reconnectRequired: true, lastRefreshFailureKind: category,
+      } });
+      expect(onReauthRequired).toHaveBeenCalledExactlyOnceWith({ account, credentialRevision: revision });
+      await persistConnectedServiceCredentialHealthForMaterializationFailure({ ...input,
+        qualifiedCredential: { ...input.qualifiedCredential, previousStatus: 'needs_reauth' } });
+      expect(onReauthRequired).toHaveBeenCalledTimes(1);
+    } finally { http.mockRestore(); }
   });
   it.each([
     { authenticationModeId: 'device', refresh: false, groupRecovery: false, cachedFeatures: true },

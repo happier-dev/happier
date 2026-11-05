@@ -96,7 +96,12 @@ import {
   boundConnectedServiceMaterializationDiagnosticValue,
 } from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 
-type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
+import { bindingKey, qualifiedAccountKey, type BoundProfile } from './tick';
+import { notifyQualifiedReauth, recordCredentialHealthWrite, settleQualifiedHealth, type QualifiedHealthSettlementInput } from './qualifiedHealthSettlement';
+import type { ConnectedAccountReauthEvent } from '../accountGroups/switching/reauthPools';
+import { classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh, isReauthRequiredFailure, persistConnectedServiceCredentialHealthForMaterializationFailure } from './failureHealth';
+export { classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh, persistConnectedServiceCredentialHealthForMaterializationFailure } from './failureHealth';
+export type { ConnectedServiceMaterializationCredentialRefreshClassification } from './failureHealth';
 type ScheduledStatusInvocation = () => Promise<QualifiedConnectedAccountScheduledReceipt<'status'>>;
 export type ScheduledQualifiedAccountHealth = Readonly<{
   due: boolean;
@@ -117,6 +122,7 @@ export type QualifiedConnectedAccountRefreshRuntime = Readonly<{
   mutateCredentialHealth(input: Readonly<{
     token: string;
     patch: unknown;
+    signal?: AbortSignal;
   }>): Promise<Readonly<{
     credentialRevision: string;
     configurationRevision: string | null;
@@ -149,6 +155,7 @@ export type QualifiedConnectedAccountRefreshRuntime = Readonly<{
   listScheduledAccounts?(service?: QualifiedConnectedAccountRef['service']): Promise<
     readonly QualifiedConnectedAccountProfileV4[]
   >;
+  onReauthRequired?(event: ConnectedAccountReauthEvent): Promise<void>;
   onCredentialUpdated?(
     account: QualifiedConnectedAccountRef,
     options?: Readonly<{ reason?: 'provider_context' }>,
@@ -324,10 +331,6 @@ type RematerializedTargetsResult = Readonly<{
 }>;
 type CanonicalGroupStateForRefresh = Readonly<{ activeProfileId: string | null; generation: number }>;
 
-function bindingKey(binding: BoundProfile): string {
-  return `${binding.serviceId}/${binding.profileId}`;
-}
-
 /**
  * Whether a caller can adopt an already-in-flight refresh result instead of running its own.
  * A non-forced caller always adopts. A forced (reactive) caller adopts any result that actually
@@ -342,14 +345,6 @@ function inFlightResultSatisfiesCaller(
   return result.status !== 'not_needed';
 }
 
-function qualifiedAccountKey(account: QualifiedConnectedAccountRef): string {
-  return JSON.stringify([
-    account.service.pluginId,
-    account.service.localId,
-    account.accountId,
-  ]);
-}
-
 function qualifiedConfigurationConsequenceError(
   code:
     | 'connected_account_configuration_consequence_stale'
@@ -360,14 +355,6 @@ function qualifiedConfigurationConsequenceError(
   return Object.assign(new Error(message, cause === undefined ? {} : { cause }), {
     code,
   });
-}
-
-function isReauthRequiredFailure(category: ConnectedServiceRefreshFailureCategory): boolean {
-  return category === 'invalid_grant'
-    || category === 'invalid_client'
-    || category === 'provider_401'
-    || category === 'provider_403'
-    || category === 'missing_refresh_token';
 }
 
 export type ConnectedServiceCredentialRefreshFailureCode =
@@ -435,32 +422,6 @@ function buildCredentialHealthFromPluginStatus(
   };
 }
 
-function credentialHealthStatusFacts(health: ConnectedServiceCredentialHealthV1 | null) {
-  if (!health) return null;
-  const { lastRefreshAttemptAt: _attempt, lastRefreshSuccessAt: _success,
-    lastRefreshFailureAt: _failure, lastRuntimeAuthFailureAt: _runtime, ...facts } = health;
-  return facts;
-}
-
-function recordCredentialHealthWrite(input: Readonly<{
-  path: 'status' | 'result' | 'legacy-refresh-result' | 'materialization-failure' | 'configuration-reconnect';
-  serviceKind: string;
-  before: ConnectedServiceCredentialHealthV1 | null | undefined;
-  beforeStatus?: ConnectedServiceCredentialHealthV1['status'];
-  after: ConnectedServiceCredentialHealthV1;
-}>): void {
-  logger.debug('[ConnectedServiceRefreshCoordinator] credential health write', {
-    path: input.path,
-    serviceKind: input.serviceKind,
-    beforeStatus: input.before?.status ?? input.beforeStatus ?? null,
-    afterStatus: input.after.status,
-    // An unavailable prior value is explicitly unknown; never read credentials just to log.
-    substantiveChanged: input.before === undefined ? null
-      : !isDeepStrictEqual(credentialHealthStatusFacts(input.before), credentialHealthStatusFacts(input.after)),
-  });
-}
-
-
 function buildRefreshDiagnostic(params: Readonly<{
   binding: BoundProfile;
   reason: ConnectedServiceCredentialRefreshReason;
@@ -522,112 +483,6 @@ function didRuntimeAuthSessionAdoptAnotherGroupMember(input: Readonly<{
   const selection = target?.childSelectionsByServiceId?.get(input.binding.serviceId);
   return selection?.kind === 'group'
     && selection.activeProfileId !== input.binding.profileId;
-}
-
-
-function providerHttpStatusForHealth(status: number | null | undefined): number | undefined {
-  if (typeof status !== 'number' || !Number.isInteger(status)) return undefined;
-  return status >= 100 && status <= 599 ? status : undefined;
-}
-
-function providerErrorCodeForHealth(code: string | null | undefined): string | undefined {
-  const trimmed = typeof code === 'string' ? code.trim() : '';
-  return trimmed.length > 0 ? trimmed.slice(0, 128) : undefined;
-}
-
-function readConnectedServiceRefreshFailureCategory(
-  value: unknown,
-): ConnectedServiceRefreshFailureCategory | null {
-  switch (value) {
-    case 'invalid_grant':
-    case 'invalid_client':
-    case 'provider_401':
-    case 'provider_403':
-    case 'network_error':
-    case 'malformed_response':
-    case 'missing_access_token':
-    case 'missing_refresh_token':
-    case 'unknown':
-      return value;
-    default:
-      return null;
-  }
-}
-
-export type ConnectedServiceMaterializationCredentialRefreshClassification = Readonly<{
-  category: ConnectedServiceRefreshFailureCategory;
-  providerStatus?: number;
-  providerErrorCode?: string;
-}>;
-
-export function classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh(
-  diagnostic: ConnectedServicesMaterializationDiagnostic,
-): ConnectedServiceMaterializationCredentialRefreshClassification {
-  const refreshFailure = diagnostic.credentialRefreshFailure;
-  const category = readConnectedServiceRefreshFailureCategory(refreshFailure?.category) ?? 'unknown';
-  const providerStatus = providerHttpStatusForHealth(refreshFailure?.providerStatus);
-  const providerErrorCode = providerErrorCodeForHealth(refreshFailure?.providerErrorCode)
-    ?? providerErrorCodeForHealth(diagnostic.code);
-
-  return {
-    category,
-    ...(providerStatus !== undefined ? { providerStatus } : {}),
-    ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
-  };
-}
-
-/**
- * Single canonical owner for materialization-failure credential-health writes. Classifies the
- * diagnostic via the shared taxonomy and only latches `needs_reauth` for genuinely auth/permission
- * failure categories; every other blocking reason keeps its true category as a non-latching
- * `refresh_failed_retryable` status. Reused by the coordinator's rematerialize path AND the spawn
- * preflight path (`resolveConnectedServiceAuthForSpawn`) so no caller can fabricate an auth latch.
- */
-export async function persistConnectedServiceCredentialHealthForMaterializationFailure(input: Readonly<{
-  binding: BoundProfile;
-  diagnostic: ConnectedServicesMaterializationDiagnostic;
-  now: number;
-  qualifiedCredential?: Readonly<{
-    token: string;
-    ref: QualifiedConnectedAccountRef;
-    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
-    expectedConfigurationRevision: string | null;
-    previousHealth?: ConnectedServiceCredentialHealthV1 | null;
-    previousStatus?: ConnectedServiceCredentialHealthV1['status'];
-  }>;
-  mutateCredentialHealth?: QualifiedConnectedAccountRefreshRuntime['mutateCredentialHealth'];
-}>): Promise<void> {
-  if (!input.qualifiedCredential) return;
-
-  const classification = classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh(input.diagnostic);
-  const health = {
-    v: 1,
-    status: isReauthRequiredFailure(classification.category) ? 'needs_reauth' : 'refresh_failed_retryable',
-    reconnectRequired: isReauthRequiredFailure(classification.category),
-    lastRefreshAttemptAt: input.now,
-    lastRefreshFailureAt: input.now,
-    lastRefreshFailureKind: classification.category,
-    ...(providerHttpStatusForHealth(classification.providerStatus) !== undefined
-      ? { providerHttpStatus: providerHttpStatusForHealth(classification.providerStatus) }
-      : {}),
-    ...(classification.providerErrorCode ? { providerErrorCode: classification.providerErrorCode } : {}),
-  } satisfies ConnectedServiceCredentialHealthV1;
-
-  try {
-    const { token, previousHealth, previousStatus, ...basis } = input.qualifiedCredential;
-    recordCredentialHealthWrite({ path: 'materialization-failure', serviceKind: basis.ref.service.localId,
-      before: previousHealth, beforeStatus: previousStatus, after: health });
-    await (input.mutateCredentialHealth ?? mutateQualifiedConnectedAccountCredentialHealthV4)({ token, patch: { ...basis, health } });
-  } catch (error) {
-    logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {
-      serviceId: input.binding.serviceId,
-      materializationCode: boundConnectedServiceMaterializationDiagnosticValue(input.diagnostic.code),
-      reason: boundConnectedServiceMaterializationDiagnosticValue(input.diagnostic.reason),
-      error: sanitizeConnectedServiceDiagnosticError(error, {
-        redactedValues: [input.binding.profileId],
-      }),
-    });
-  }
 }
 
 
@@ -941,7 +796,8 @@ export class ConnectedServiceRefreshCoordinator {
           v: 1 as const, status: 'needs_reauth' as const, reconnectRequired: true,
           providerErrorCode: 'connected_account_configuration_changed',
         });
-        recordCredentialHealthWrite({ path: 'configuration-reconnect', serviceKind: input.account.service.localId,
+        recordCredentialHealthWrite({ path: 'configuration-reconnect', account: input.account,
+          credentialRevision: expectedCredential.credentialRevision, configurationRevision: expectedCredential.configurationRevision,
           before: expectedCredential.health ?? null, after: health });
         const mutation = await runtime.mutateCredentialHealth({
           token: this.params.credentials.token,
@@ -2613,18 +2469,7 @@ export class ConnectedServiceRefreshCoordinator {
     }
   }
 
-  private async settleQualifiedConnectedAccountHealth(input: Readonly<{
-    account: QualifiedConnectedAccountRef;
-    /** Only a successful credential CAS can supply a replacement revision. */
-    settledCredentialRevision?: ConnectedServiceCredentialRevisionV1;
-    basis: Awaited<
-      ReturnType<
-        QualifiedConnectedAccountEstablishedRuntimeOwner['invokeWithReceipt']
-      >
-    >['basis'];
-    health: ConnectedServiceCredentialHealthV1;
-    healthWritePath?: 'status' | 'result';
-  }>): Promise<void> {
+  private async settleQualifiedConnectedAccountHealth(input: QualifiedHealthSettlementInput): Promise<void> {
     const runtime = this.params.qualifiedConnectedAccountRuntime;
     if (
       !runtime
@@ -2638,35 +2483,7 @@ export class ConnectedServiceRefreshCoordinator {
         'Qualified Connected Account health settlement basis is no longer current',
       );
     }
-    const expectedConfigurationRevision =
-      input.basis.credentialConfigurationRevision;
-    const expectedCredentialRevision = input.settledCredentialRevision ?? input.basis.credentialRevision;
-    // Status observes no new attempt/success timestamp. Keep committed history
-    // intact when this admission already carries exactly the same status facts.
-    // Result settlement still owns refresh effects and replacement revisions.
-    if (input.healthWritePath === 'status'
-      && input.settledCredentialRevision === undefined
-      && isDeepStrictEqual(credentialHealthStatusFacts(input.basis.credentialHealth ?? null), input.health)) return;
-    recordCredentialHealthWrite({ path: input.healthWritePath ?? 'result', serviceKind: input.account.service.localId,
-      before: input.basis.credentialHealth, after: input.health });
-    const mutation = await runtime.mutateCredentialHealth({
-      token: this.params.credentials.token,
-      patch: Object.freeze({
-        ref: input.account,
-        expectedCredentialRevision,
-        expectedConfigurationRevision,
-        health: input.health,
-      }),
-    });
-    if (
-      mutation.credentialRevision !== expectedCredentialRevision
-      || mutation.configurationRevision !== expectedConfigurationRevision
-      || !input.basis.isCurrent()
-    ) {
-      throw new Error(
-        'Qualified Connected Account health mutation settled against a different invocation basis',
-      );
-    }
+    await settleQualifiedHealth(input, { runtime, token: this.params.credentials.token });
   }
 
   private async refreshQualifiedLegacyBinding(
@@ -3194,7 +3011,8 @@ export class ConnectedServiceRefreshCoordinator {
       }, result.credentialRevision);
       if (!basis) return false;
       const { previousHealth, ...patchBasis } = basis;
-      recordCredentialHealthWrite({ path: 'legacy-refresh-result', serviceKind: basis.ref.service.localId,
+      recordCredentialHealthWrite({ path: 'legacy-refresh-result', account: basis.ref,
+        credentialRevision: basis.expectedCredentialRevision, configurationRevision: basis.expectedConfigurationRevision,
         before: previousHealth, after: health });
       const settled = await runtime.mutateCredentialHealth({
         token: this.params.credentials.token, patch: { ...patchBasis, health },
@@ -3203,6 +3021,8 @@ export class ConnectedServiceRefreshCoordinator {
         || settled.configurationRevision !== basis.expectedConfigurationRevision) {
         throw new Error('Qualified credential health did not settle against its exact snapshot');
       }
+      notifyQualifiedReauth({ account: basis.ref, credentialRevision: basis.expectedCredentialRevision,
+        previousHealth, health }, runtime);
       return true;
     } catch (error) {
       logger.warn('[DAEMON RUN] Failed to update connected-service credential health after refresh', {
@@ -3511,6 +3331,7 @@ export class ConnectedServiceRefreshCoordinator {
       now: this.params.now(),
       qualifiedCredential: { token: this.params.credentials.token, ...basis },
       mutateCredentialHealth: this.params.qualifiedConnectedAccountRuntime?.mutateCredentialHealth,
+      onReauthRequired: this.params.qualifiedConnectedAccountRuntime?.onReauthRequired,
     });
   }
 

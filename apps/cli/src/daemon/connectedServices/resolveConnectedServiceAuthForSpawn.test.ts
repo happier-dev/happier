@@ -4050,7 +4050,10 @@ describe('persistMaterializationFailureCredentialHealthForSpawn', () => {
     expect(written.health.providerHttpStatus).toBeUndefined();
   });
 
-  it('latches needs_reauth only for a genuine auth (provider_403) materialization diagnostic', async () => {
+  it.each([
+    { category: 'provider_401', providerStatus: 401 },
+    { category: 'provider_403', providerStatus: 403 },
+  ] as const)('keeps broad $category materialization failures retryable', async ({ category, providerStatus }) => {
     const updateConnectedServiceCredentialHealth = vi.fn(async () => {});
     const api = { updateConnectedServiceCredentialHealth } as unknown as ApiClient;
     const patch = vi.spyOn(axios, 'patch').mockResolvedValue({ status: 200, data: {
@@ -4064,8 +4067,8 @@ describe('persistMaterializationFailureCredentialHealthForSpawn', () => {
       serviceId: 'claude-subscription',
       reason: 'missing_required_scope',
       credentialRefreshFailure: {
-        category: 'provider_403',
-        providerStatus: 403,
+        category,
+        providerStatus,
         providerErrorCode: 'claude_subscription_missing_claude_code_scope',
       },
     };
@@ -4084,9 +4087,9 @@ describe('persistMaterializationFailureCredentialHealthForSpawn', () => {
     expect(patch).toHaveBeenCalledOnce();
     const written = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(patch.mock.calls[0]?.[1]);
     expect(updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
-    expect(written.health.status).toBe('needs_reauth');
-    expect(written.health.reconnectRequired).toBe(true);
-    expect(written.health.lastRefreshFailureKind).toBe('provider_403');
-    expect(written.health.providerHttpStatus).toBe(403);
+    expect(written.health.status).toBe('refresh_failed_retryable');
+    expect(written.health.reconnectRequired).toBe(false);
+    expect(written.health.lastRefreshFailureKind).toBe(category);
+    expect(written.health.providerHttpStatus).toBe(providerStatus);
   });
 });
