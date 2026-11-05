@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import packageJson from '../../package.json'
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
-import { redactCliApiTokenArgv } from '@/auth/cliApiToken'
+import { getEnvironmentInfo } from './getEnvironmentInfo'
 import { formatRelayAccountIdentity } from '@/auth/formatRelayAccountIdentity'
 import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness'
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload'
@@ -35,6 +35,7 @@ import {
 } from '@/ui/doctorRedaction'
 
 export { redactDaemonStateForDisplay } from '@/ui/doctorRedaction'
+export { getEnvironmentInfo } from './getEnvironmentInfo'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -55,34 +56,6 @@ export function maskValue(value: string | undefined): string | undefined {
     }
 
     return `<${value.length} chars>`;
-}
-
-/**
- * Get relevant environment information for debugging
- */
-export function getEnvironmentInfo(): Record<string, any> {
-    return {
-        PWD: process.env.PWD,
-        HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR,
-        HAPPIER_SERVER_URL: process.env.HAPPIER_SERVER_URL,
-        HAPPIER_PROJECT_ROOT: process.env.HAPPIER_PROJECT_ROOT,
-        DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING,
-        NODE_ENV: process.env.NODE_ENV,
-        DEBUG: process.env.DEBUG,
-        workingDirectory: process.cwd(),
-        processArgv: redactCliApiTokenArgv(process.argv),
-        happyDir: configuration?.happyHomeDir,
-        serverUrl: configuration?.serverUrl,
-        logsDir: configuration?.logsDir,
-        processPid: process.pid,
-        nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        user: process.env.USER,
-        home: process.env.HOME,
-        shell: process.env.SHELL,
-        terminal: process.env.TERM,
-    };
 }
 
 function getLogFiles(logDir: string): { file: string, path: string, modified: Date }[] {

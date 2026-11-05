@@ -11,16 +11,14 @@ import { spawnTestProcess } from '@/testkit/process/spawn';
 import { resolveCliTsxTsconfigPath } from '@/utils/spawnHappyCLI';
 
 describe('daemon source imports', () => {
-  it('loads the daemon voice bootstrap through the TSX source loader', async () => {
+  it.each(['daemon/startup/createDaemonMachineBootstrapRuntime.ts', 'daemon/startDaemon.ts', 'cli/commands/daemonControl.ts'])('loads %s through the TSX source loader without starting a daemon', async (entry) => {
     const cliRoot = projectPath();
     const tsconfigPath = resolveCliTsxTsconfigPath();
     const sourceRuntimeUrl = pathToFileURL(join(cliRoot, '..', '..', 'packages', 'cli-common', 'registerSourceRuntime.mjs')).href;
     const daemonBootstrapUrl = pathToFileURL(join(
       cliRoot,
       'src',
-      'daemon',
-      'startup',
-      'createDaemonMachineBootstrapRuntime.ts',
+      entry,
     )).href;
 
     await withTempDir('happier-daemon-source-import-', async (tempDir) => {
@@ -28,6 +26,8 @@ describe('daemon source imports', () => {
       await writeFile(
         probePath,
         [
+          'import { registerHooks } from "node:module";',
+          'registerHooks({ load(url, context, nextLoad) { if (/\\/ui\\/doctor(?:Snapshot)?\\.ts$/.test(url.split("?")[0])) throw new Error("Doctor diagnostics eagerly loaded before demand"); return nextLoad(url, context); } });',
           'const report = (phase) => process.stdout.write(JSON.stringify({ phase, uptimeMs: Math.round(process.uptime() * 1000), tsxCacheDisabled: process.env.TSX_DISABLE_CACHE === "1", resources: process.getActiveResourcesInfo() }) + "\\n");',
           'process.once("beforeExit", () => report("before-exit"));',
           '(async () => {',
@@ -75,5 +75,5 @@ describe('daemon source imports', () => {
       expect(diagnostics.join('')).toContain('"phase":"import-completed"');
       expect(diagnostics.join('')).toContain('"phase":"before-exit"');
     });
-  });
+  }, 180_000);
 });

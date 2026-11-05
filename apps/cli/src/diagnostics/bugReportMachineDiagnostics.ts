@@ -6,7 +6,7 @@ import { readDaemonState } from '@/persistence';
 import { listDaemonLogFiles } from '@/ui/logger';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
-import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot';
+import type { DoctorSnapshot } from '@/ui/doctorSnapshot';
 
 type CollectMachineDiagnosticsOptions = {
   daemonLogLimit?: number;
@@ -149,6 +149,7 @@ export async function collectBugReportMachineDiagnosticsSnapshot(
 
   let doctorSnapshot: DoctorSnapshot | null = null;
   try {
+    const { buildDoctorSnapshot } = await import('@/ui/doctorSnapshot');
     doctorSnapshot = await buildDoctorSnapshot();
   } catch {
     doctorSnapshot = null;

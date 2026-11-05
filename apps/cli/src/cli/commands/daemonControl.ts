@@ -15,7 +15,6 @@ import type { DaemonSessionRunnerRestartMode, RestartAllDaemonSessionRunnersResu
 import { startDaemon } from '@/daemon/startDaemon';
 import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
 import { getLatestDaemonLog } from '@/ui/logger';
-import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
 import { readSettings, readStoredCredentials, updateSettings } from '@/persistence';
@@ -764,6 +763,7 @@ export async function handleDaemonControlCliCommand(context: CommandContext): Pr
       }
       process.exit(0);
     }
+    const { runDoctorCommand } = await import('@/ui/doctor');
     await runDoctorCommand('daemon');
     process.exit(0);
   }

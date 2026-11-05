@@ -66,7 +66,7 @@ import type { DaemonPublicVoiceModelPackRuntime } from './voiceInference/publicM
 import type { BrowserRecordingDaemonRuntime } from './browser/recording/runtime';
 import { scmWorktreeMutationActivity } from '@/scm/worktreeMutationActivity';
 import packageJson from '../../package.json';
-import { getEnvironmentInfo } from '@/ui/doctor';
+import { getEnvironmentInfo } from '@/ui/getEnvironmentInfo';
 import { pruneHappyCliRunnerSnapshots } from '@/utils/spawnHappyCLI';
 import { projectPath } from '@/projectPath';
 import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
