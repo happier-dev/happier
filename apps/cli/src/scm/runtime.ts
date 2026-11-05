@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
-import type { BackendCommandRunInput, BackendCommandRunResult, BackendCommandStreamInput } from '@happier-dev/plugin-sdk/scm/backend';
+import type { BackendCommandRunInput, BackendCommandStreamInput } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveBackendCommandMaxOutputBytes } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
@@ -19,7 +19,10 @@ import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
 
-export type ScmExecResult = BackendCommandRunResult;
+import { resolveScmCommandOperationInput } from './commandOperation';
+import { observeScmCommandResult, type ScmExecResult } from './commandDiagnostics';
+
+export type { ScmExecResult } from './commandDiagnostics';
 
 const SCM_INSTALLABLE_KEYS = {
     git: 'dep.git',
@@ -94,7 +97,7 @@ function resolveSystemScmBinPath(command: string, env: NodeJS.ProcessEnv): strin
     return null;
 }
 
-export function runScmCommand(input: {
+export type ScmCommandInput = {
     bin: string;
     installableKey?: string;
     cwd: string;
@@ -108,7 +111,15 @@ export function runScmCommand(input: {
     stdoutConsumer?: BackendCommandStreamInput['stdoutConsumer'];
     /** Internal host-owned output file; exclusive creation, without collecting stdout. */
     stdoutFilePath?: string;
-}): Promise<ScmExecResult> {
+};
+
+export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
+    input = resolveScmCommandOperationInput(input);
+    const startedAt = performance.now();
+    return runHostScmCommand(input).then(result => observeScmCommandResult(input, result, startedAt));
+}
+
+function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
     const execEnv = input.env ? { ...process.env, ...input.env } : process.env;
     const resolvedBinPath = resolveSystemScmBinPath(input.bin, execEnv);
     if (!resolvedBinPath) {
@@ -128,6 +139,7 @@ export function runScmCommand(input: {
             stdout: '',
             stderr: 'SCM command was aborted',
             exitCode: -1,
+            aborted: true,
         });
     }
 
@@ -171,7 +183,7 @@ export function runScmCommand(input: {
         let interactionResponded = false;
         let interactionError = '';
         let pendingStdoutLine = '';
-        const timeoutMs = input.timeoutMs ?? 15_000;
+        const timeoutMs = input.timeoutMs;
         const maxOutputBytes = resolveScmMaxOutputBytes(input.maxOutputBytes);
 
         const done = (result: ScmExecResult) => {
@@ -284,7 +296,7 @@ export function runScmCommand(input: {
             outputBytes += chunk.length;
         };
 
-        const timer = setTimeout(() => {
+        const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
             timedOut = true;
             if (input.stdinInteraction || input.stdoutConsumer || input.stdoutFilePath) abort();
             else child.kill('SIGKILL');
@@ -340,7 +352,7 @@ export function runScmCommand(input: {
             });
         });
 
-        child.on('close', (exitCode) => {
+        child.on('close', (exitCode, signal) => {
             clearTimeout(timer);
             const code = typeof exitCode === 'number' ? exitCode : -1;
             closedResult = {
@@ -353,6 +365,8 @@ export function runScmCommand(input: {
                 // Cancellation can race a successful publication; callers must resolve the outcome.
                 exitCode: input.stdinInteraction && aborted ? -1 : code,
                 timedOut,
+                aborted,
+                ...(signal ? { signal } : {}),
                 outputLimitExceeded,
                 ...(input.stdoutConsumer ? { stoppedEarly } : {}),
             };

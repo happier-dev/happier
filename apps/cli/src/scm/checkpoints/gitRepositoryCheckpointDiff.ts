@@ -1,4 +1,5 @@
 import { resolveRepositoryCheckpointAvailability } from './availability';
+import { runWithScmCommandOperation } from '../commandOperation';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';
 import { buildRepositoryCheckpointRef } from './refs';
 import { REPOSITORY_CHECKPOINT_RECEIPT_IDS } from './receipts';
@@ -16,6 +17,10 @@ function validateDiffRef(checkpointRef: RepositoryCheckpointRef): string | null 
 }
 
 export async function diffGitRepositoryCheckpoints(input: RepositoryCheckpointDiffRequest): Promise<RepositoryCheckpointDiffResult> {
+    return runWithScmCommandOperation(input.context.signal, () => diffCheckpoints(input));
+}
+
+async function diffCheckpoints(input: RepositoryCheckpointDiffRequest): Promise<RepositoryCheckpointDiffResult> {
     const unavailable = (reason: Extract<RepositoryCheckpointDiffResult, { success: false }>['reason'], error: string,
         kind: 'failed' | 'unavailable' = 'unavailable'): RepositoryCheckpointDiffResult => ({
         success: false, kind, reason, error, baseRefSource: input.baseRefSource, contentConfidence: 'unavailable',

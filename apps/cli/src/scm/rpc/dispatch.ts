@@ -1,4 +1,5 @@
 import { resolve } from 'path';
+import { runWithScmCommandOperation } from '../commandOperation';
 
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmBackendPreference } from '@happier-dev/protocol';
@@ -105,7 +106,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             return invalidPathResponse<TResponse>(cwdResult.error);
         }
 
-        return await runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        return await runWithScmCommandOperation(input.signal, () => runWithScmBackendRegistryLease(input.registry, async (registry) => {
             if (input.signal?.aborted) throw new Error('SCM operation was aborted');
             const outcome = await resolveScmSelectionOutcome({
                 workingDirectory: normalizedWorkingDirectory,
@@ -157,7 +158,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
                 }),
                 selection: resolved.selection,
             });
-        });
+        }));
     } catch (error) {
         return fallbackError<TResponse>(error);
     }

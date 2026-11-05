@@ -23,6 +23,8 @@ vi.mock('@/processes/terminate/terminateProcessTree', () => ({
 import { runScmCommand } from './runtime';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from './checkpoints/gitCheckpointAdapter';
 import { buildRepositoryCheckpointRefs } from './checkpoints/refs';
+import { logger } from '@/ui/logger';
+import { runWithScmCommandOperation } from './commandOperation';
 
 type FakeChild = EventEmitter & Readonly<{
   pid: number;
@@ -63,7 +65,8 @@ describe('runScmCommand cancellation', () => {
       try {
         let completed = false;
         const command = runScmCommand({ bin: 'git', cwd: directory, args: ['log'],
-          stdoutFilePath: join(directory, 'listing'), maxOutputBytes: 4, signal: controller.signal })
+          stdoutFilePath: join(directory, 'listing'), maxOutputBytes: 4, signal: controller.signal,
+          ...(reason === 'timeout' ? { timeoutMs: 15_000 } : {}) })
           .then(result => { completed = true; return result; });
         const options = mocks.spawn.mock.calls[0]?.[2] as { stdio: (string | number)[] };
         const descriptor = options.stdio[1];
@@ -125,7 +128,7 @@ describe('runScmCommand cancellation', () => {
     expect(await command).toMatchObject({ success: false });
   });
 
-  it('captures checkpoints when Git phases finish within the canonical command budget', async () => {
+  it('captures checkpoints when staging exceeds the former 15-second command cutoff', async () => {
     // Git processes and clocks are system boundaries; checkpoint capture,
     // private-index setup and the SCM process-budget owner remain real.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -140,7 +143,7 @@ describe('runScmCommand cancellation', () => {
           : args[0] === 'write-tree' ? treeOid : '';
         if (output) child.stdout.emit('data', Buffer.from(`${output}\n`));
         child.emit('close', 0);
-      }, 11000);
+      }, args[0] === 'add' ? 16_000 : 1);
       Object.assign(child, { kill: () => { clearTimeout(delayed); child.emit('close', 1); return true; } });
       return child;
     });
@@ -162,6 +165,75 @@ describe('runScmCommand cancellation', () => {
       vi.useRealTimers();
       mocks.spawn.mockReset();
     }
+  });
+
+  it('stops checkpoint staging on the containing capture signal', async () => {
+    mocks.spawn.mockReset();
+    const controller = new AbortController();
+    const children: FakeChild[] = [];
+    let stageStarted!: () => void;
+    const staging = new Promise<void>(resolve => { stageStarted = resolve; });
+    mocks.spawn.mockImplementation((_command: string, args: readonly string[]) => {
+      const child = createFakeChild(41009);
+      children.push(child);
+      queueMicrotask(() => {
+        if (args[0] === 'add') { controller.abort(); stageStarted(); return; }
+        if (args[0] === 'rev-parse') child.stdout.emit('data', Buffer.from(`${'b'.repeat(40)}\n`));
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    mocks.terminateProcessTree.mockReset();
+    mocks.terminateProcessTree.mockImplementation(async (child: FakeChild) => child.emit('close', null, 'SIGTERM'));
+    const checkpointRef = buildRepositoryCheckpointRefs({ scopeId: 'cancel-capture', turnId: 'turn' }).turnFinal!;
+    const capture = gitCheckpointAdapter.capture({ context: { cwd: process.cwd(), projectKey: 'cancel-capture',
+      detection: { isRepo: true, rootPath: process.cwd(), mode: '.git' }, signal: controller.signal }, checkpointRef });
+    await staging;
+    // A broken lifecycle must still settle this constructed test, without leaking a fake command.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const stopped = mocks.terminateProcessTree.mock.calls.length > 0;
+    if (!stopped) children.at(-1)?.emit('close', null, 'SIGTERM');
+    expect(await capture).toMatchObject({ success: false });
+    expect(stopped).toBe(true);
+  });
+
+  it.each(['timeout', 'signal'] as const)('retains and logs the terminal cause of silent Git failure (%s)', async reason => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const child = createFakeChild(41010);
+    mocks.spawn.mockReset(); mocks.spawn.mockReturnValue(child);
+    Object.assign(child, { kill: () => { child.emit('close', null, 'SIGKILL'); return true; } });
+    const logged = vi.spyOn(logger, 'warnLocalFile');
+    try {
+      const command = runScmCommand({ bin: 'git', cwd: process.cwd(), args: ['add', '-A', '--', '.'], timeoutMs: 15_000 });
+      if (reason === 'timeout') await vi.advanceTimersByTimeAsync(15_000);
+      else child.emit('close', null, 'SIGKILL');
+      const result = await command;
+      expect(result).toMatchObject({ success: false, exitCode: -1, timedOut: reason === 'timeout', signal: 'SIGKILL',
+        commandKind: 'add', elapsedMs: expect.any(Number) });
+      expect(logged).toHaveBeenCalledWith('[SCM] Command failed', expect.objectContaining({
+        commandKind: 'add', timedOut: reason === 'timeout', signal: 'SIGKILL', exitCode: -1, elapsedMs: expect.any(Number),
+      }));
+    } finally { logged.mockRestore(); vi.useRealTimers(); }
+  });
+
+  it('uses the containing operation signal instead of a subordinate explicit deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const child = createFakeChild(41011);
+    const killed = vi.fn(() => { child.emit('close', null, 'SIGKILL'); return true; });
+    Object.assign(child, { kill: killed });
+    mocks.spawn.mockReset(); mocks.spawn.mockReturnValue(child);
+    const controller = new AbortController();
+    mocks.terminateProcessTree.mockReset();
+    mocks.terminateProcessTree.mockImplementation(async () => child.emit('close', null, 'SIGTERM'));
+    try {
+      const command = runWithScmCommandOperation(controller.signal, () => runScmCommand({
+        bin: 'git', cwd: process.cwd(), args: ['status'], timeoutMs: 10_000,
+      }));
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(killed).not.toHaveBeenCalled();
+      controller.abort();
+      expect(await command).toMatchObject({ success: false, aborted: true, timedOut: false, signal: 'SIGTERM' });
+    } finally { vi.useRealTimers(); }
   });
 
   it('does not spawn when the operation was already aborted', async () => {

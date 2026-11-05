@@ -1,4 +1,5 @@
 import { resolveRepositoryCheckpointAvailability } from './availability';
+import { runWithScmCommandOperation } from '../commandOperation';
 import {
     buildRepositoryCheckpointRef,
 } from './refs';
@@ -83,6 +84,10 @@ function buildCheckpointCommitMessage(input: RepositoryCheckpointCaptureRequest)
 export async function captureGitRepositoryCheckpoint(
     input: RepositoryCheckpointCaptureRequest,
 ): Promise<RepositoryCheckpointCaptureResult> {
+    return runWithScmCommandOperation(input.context.signal, () => captureCheckpoint(input));
+}
+
+async function captureCheckpoint(input: RepositoryCheckpointCaptureRequest): Promise<RepositoryCheckpointCaptureResult> {
     const checkpointRefError = validateCheckpointRef(input);
     if (checkpointRefError) return captureFailure(checkpointRefError);
 

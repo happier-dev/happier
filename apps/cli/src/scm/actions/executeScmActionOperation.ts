@@ -323,6 +323,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 const captured = request.comparisonId
                     ? await readCapturedScmComparison({ ...request, comparisonId: request.comparisonId, cwd: authorized.cwd })
                     : await captureScmComparison({ ...request, cwd: authorized.cwd,
+                    signal: params.signal,
                     ...(params.registry ? { registry: params.registry } : {}),
                     ...(params.readComparisonTranscriptPage ? { readTranscriptPage: params.readComparisonTranscriptPage } : {}),
                     ...(params.readPullRequestComparisonPage ? { readPullRequestComparisonPage: params.readPullRequestComparisonPage } : {}),

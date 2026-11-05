@@ -7,6 +7,15 @@ open; the presentation gaps below must not be documented as completed flows.
 
 ## Owners and data flow
 
+Checkpoint capture, comparison capture and SCM routes share their containing
+operation's cancellation signal. Their Git phases have no shorter command
+deadline; large staging, status and diff commands can finish while the operation
+remains active. The SCM runner has no implicit command timeout. Explicit deadlines
+remain available for independent commands such as executable probes. Timeout and
+signal failures retain command kind, elapsed time, exit code and termination
+cause in the host result and local file log, without logging operands or content.
+Review presents the canonical failure and its existing Retry action.
+
 Machine-captured repository comparisons are readable by a Session Review on that
 same Machine and Home. The capture reader first checks the Session namespace,
 then uses the repository capture only when that Session capture is absent.

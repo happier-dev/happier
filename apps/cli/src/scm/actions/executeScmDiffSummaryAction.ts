@@ -50,6 +50,7 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         turnId: params.request.turnId, checkpointReceiptId: params.request.checkpointReceiptId,
         turnEvidenceMode: params.request.turnEvidenceMode,
     }) : await captureScmComparison({
+        signal: params.signal,
         ...params.request,
         ...(sessionId ? { sessionId } : {}),
         ...(params.readTranscriptPage ? { readTranscriptPage: params.readTranscriptPage } : {}),

@@ -41,6 +41,7 @@ export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices 
                 stdin: input.stdin,
                 maxOutputBytes: input.maxOutputBytes,
                 env: input.env,
+                signal: input.signal,
             });
         },
     };

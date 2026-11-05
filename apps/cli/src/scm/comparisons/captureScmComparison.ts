@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { runWithScmCommandOperation } from '../commandOperation';
 import { lstat, mkdir, mkdtemp, rename, rm, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
@@ -35,6 +36,7 @@ export type CapturedScmComparison = Readonly<{
   comparison: ScmComparison;
 }>;
 export type CaptureScmComparisonInput = Readonly<{
+  signal?: AbortSignal;
   cwd: string; source: ScmComparisonSource; sessionId?: string; turnId?: string;
   registry?: ScmBackendRegistry;
   captureCommitTarget?: (cwd: string) => Promise<ScmCommitTargetCaptureResponse>;
@@ -383,6 +385,11 @@ export async function captureScmPendingTree(cwd: string): Promise<string> {
 }
 
 export async function captureScmComparison(input: CaptureScmComparisonInput): Promise<CapturedScmComparison> {
+  return runWithScmCommandOperation(input.signal, () => captureComparison(input));
+}
+
+async function captureComparison(input: CaptureScmComparisonInput): Promise<CapturedScmComparison> {
+  input.signal?.throwIfAborted();
   const source = ScmComparisonSourceSchema.parse(input.source);
   // Exact ranges attest existing objects; promisor fallback is not fetch authority.
   const rangeEnvironment = source.kind === 'revisionRange' ? { GIT_NO_LAZY_FETCH: '1' } : undefined;
@@ -526,6 +533,7 @@ export async function captureScmComparison(input: CaptureScmComparisonInput): Pr
     }
     if (reasons.length && state === 'complete') state = 'incomplete';
   } catch (error) {
+    input.signal?.throwIfAborted();
     reasons.push(error instanceof Error ? error.message : 'Comparison evidence is unavailable'); state = files.length ? 'incomplete' : 'unavailable';
   }
   const id = buildScmComparisonIdentity({ source, repositoryRootPath: rootPath, beforeOid: before, afterOid: after, indexOid,
