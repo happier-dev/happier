@@ -859,7 +859,7 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
   if ((facts.component === 'apps/cli' || policy.kind === 'runtime') && policy.workerTool === 'vitest'
     && policy.runnerKnown === '1' && facts.resolverOverride === '0' && policy.generatorCheck === '0'
     && facts.config === commandBasename(facts.config)) {
-    const preparation = readVitestSourcePreparation(join(repoRoot, facts.component, facts.config), path => {
+    const preparation = readVitestSourcePreparation(repoRoot, join(repoRoot, facts.component, facts.config), path => {
       const baseFacts = { ...facts, component: normalizeCommandPath(relative(repoRoot, dirname(path))), config: commandBasename(path) };
       const basePolicy = applyCommandRules(baseFacts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
       applyCommandRules(baseFacts, FINAL_COMMAND_RULES, basePolicy);

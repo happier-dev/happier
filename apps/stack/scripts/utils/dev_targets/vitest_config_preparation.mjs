@@ -1,13 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const cliSourceResolver = fileURLToPath(new URL('../../../../cli/scripts/vitestWorkspacePackageResolution.ts', import.meta.url));
 
 /** Recognize the CLI's complete workspace resolver and configs that retain it.
  * Partial/plugin-replacing configs and unknown setup expressions keep runtime
  * preparation. Read declarations only; loading Vitest would run global setup. */
-export function readVitestSourcePreparation(configPath, isKnownSourceConfig) {
+export function readVitestSourcePreparation(repoRoot, configPath, isKnownSourceConfig) {
+  const cliSourceResolver = resolve(repoRoot, 'apps/cli/scripts/vitestWorkspacePackageResolution.ts');
   const visited = new Set();
   const read = (path) => {
     if (isKnownSourceConfig(path)) return { buildsDist: false };
