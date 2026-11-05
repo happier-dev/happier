@@ -312,7 +312,7 @@ export type PluginUiHostApiSurfaceContextV1 = {
     mount: PluginUiMountContextV1;
     target: PluginUiHostApiSurfaceTargetV1;
     /** Host page chrome for app pages; absent on other surface placements. */
-    page?: { columnVisible: boolean };
+    page?: ProtocolPluginUiHostApiSurfaceContextV1['page'];
     /** Read-only pending review from the mounted host's canonical approval presenter. */
     pendingApproval?: ProtocolPluginUiHostApiSurfaceContextV1['pendingApproval'];
     /** The mounted host is loading Machine prerequisites; Account/local work remains available. */

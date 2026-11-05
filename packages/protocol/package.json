@@ -8435,6 +8435,11 @@
       "types": "./dist/plugins/ui/newSessionSeedOrigin.d.ts",
       "default": "./dist/plugins/ui/newSessionSeedOrigin.js"
     },
+    "./plugins/ui/pageNavigation": {
+      "happier-source": "./src/plugins/ui/pageNavigation.ts",
+      "types": "./dist/plugins/ui/pageNavigation.d.ts",
+      "default": "./dist/plugins/ui/pageNavigation.js"
+    },
     "./plugins/ui/reactNativeCompatibility": {
       "happier-source": "./src/plugins/ui/reactNativeCompatibility.ts",
       "types": "./dist/plugins/ui/reactNativeCompatibility.d.ts",

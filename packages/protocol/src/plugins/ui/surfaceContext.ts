@@ -1,5 +1,6 @@
 import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PluginUiPageNavigationProjectionV1Schema } from './pageNavigation.js';
 import { z } from 'zod/mini';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -229,7 +230,7 @@ export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.stric
     accountId: WidgetSurfaceRefV1Schema.shape.accountId,
   }))),
   /** Host page chrome for app pages; absent on other surface placements. */
-  page: z.optional(z.strictObject({ columnVisible: z.boolean() })),
+  page: z.optional(z.strictObject({ columnVisible: z.boolean(), navigation: z.optional(PluginUiPageNavigationProjectionV1Schema) })),
   /** The mount's existing approval presenter fact, not an approval or effect authority. */
   pendingApproval: z.optional(z.nullable(z.strictObject({
     artifactId: PluginUiHostApiSurfaceNonBlankStringV1Schema,

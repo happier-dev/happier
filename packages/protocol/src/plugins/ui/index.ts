@@ -5,6 +5,7 @@ export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';
 export * from './currentUiContext.js';
 export * from './hostApi.js';
+export * from './pageNavigation.js';
 export * from './widgetArea.js';
 export * from './widgetAreaHost.js';
 export * from './hostApiRequests.js';
