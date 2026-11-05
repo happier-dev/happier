@@ -2,7 +2,7 @@ import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredential
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure, requesterCurrentnessCheckpoint, type RequesterCurrentnessObservation } from './requesterCurrentness';
 
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import type { SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -805,12 +805,16 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
   serverId: string;
   machineId: string;
   installationId: string;
+  sessionId?: string;
   scope?: RequesterSessionCredentialBinding['scope'];
   endpointRole?: RequesterSessionCredentialBinding['endpointRole'];
 }>): Promise<RequesterSessionCredentialBindingsResult> {
   const directory = requesterSessionCredentialDirectory({ ...input, attribution: { serverId: input.serverId } });
   let names: readonly string[];
-  try { names = await listProtectedLocalStateDirectory(directory); }
+  try {
+    names = input.sessionId === undefined ? await listProtectedLocalStateDirectory(directory)
+      : [basename(requesterSessionCredentialPath({ ...input, sessionId: input.sessionId, attribution: { serverId: input.serverId } }))];
+  }
   catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return { status: 'ready', bindings: [] };
     return { status: 'unavailable', reason: 'requester_session_custody_unavailable' };
@@ -820,7 +824,15 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
     for (const name of names) {
       if (!name.startsWith(requesterSessionCredentialFilePrefix(input))) continue;
       const path = join(directory, name);
-      const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
+      let contents: string;
+      try { contents = await readPrivateOwnerFile(path); }
+      catch (error) {
+        if (input.sessionId !== undefined && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+          return { status: 'ready', bindings: [] };
+        }
+        throw error;
+      }
+      const value = CustodyStoredReadSchema.parse(JSON.parse(contents) as unknown);
       if (value.attribution.serverId !== input.serverId
         || path !== requesterSessionCredentialPath({ happyHomeDir: input.happyHomeDir,
           sessionId: value.sessionId, attribution: value.attribution, scope: value.scope, endpointRole: value.endpointRole }) || value.scope !== input.scope

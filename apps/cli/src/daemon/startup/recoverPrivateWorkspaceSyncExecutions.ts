@@ -24,15 +24,16 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
   const installation = input.boundary.readInstallation();
   if (!installation || !input.boundary.isHomeCurrent()) return false;
   let matched = false;
+  const accountSnapshots = new Map<string, Awaited<ReturnType<typeof input.readProjectRows>>>();
   for (const endpointRole of [undefined, 'source'] as const) {
     const listed = await listRequesterSessionCredentialBindings({ happyHomeDir: input.happyHomeDir,
       serverId: endpointRole === 'source' ? input.localProfileId : input.serverId,
       machineId: input.boundary.machineId, installationId: installation.installationId,
+      ...(input.relationshipId ? { sessionId: input.relationshipId } : {}),
       scope: 'workspace_sync_relationship', ...(endpointRole ? { endpointRole } : {}) });
     if (listed.status !== 'ready') throw Object.assign(new Error(listed.reason), { code: listed.reason });
     for (const binding of listed.bindings) {
       const relationshipId = binding.sessionId;
-      if (input.relationshipId && input.relationshipId !== relationshipId) continue;
       matched = true;
       if (input.adapter.resolvePrivateExecution?.({ relationshipId })) continue;
       const scope = { happyHomeDir: input.happyHomeDir, relationshipId, attribution: binding.attribution,
@@ -48,8 +49,10 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
       let active = true;
       const custody = { serverId: input.serverId, accountId: binding.attribution.accountId,
         serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent: async () => active && input.boundary.isHomeCurrent() };
-      let snapshot = await input.readProjectRows({ credentials, sessionCustody: custody, serverId: input.serverId,
-        selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+      let snapshot = accountSnapshots.get(binding.attribution.accountId)
+        ?? await input.readProjectRows({ credentials, sessionCustody: custody, serverId: input.serverId,
+          selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+      accountSnapshots.set(binding.attribution.accountId, snapshot);
       const relationship = snapshot.relationships.find(value => value.relationshipId === relationshipId);
       if (!relationship) {
         await retireRequesterSessionCredentialCustody({ happyHomeDir: input.happyHomeDir, ...binding });
