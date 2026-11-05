@@ -3,6 +3,8 @@ import { createProviderActionExecuteV1 } from './executeProviderActionV1.js';
 import { parseProviderActionRequestV1, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 } from './providerActionsV1.js';
 import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../sessions/control/sessionRunnerRestartV2.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
+import { RPC_METHODS } from '../rpc/methods.js';
+import { createProviderErrorV1 } from './errors.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -58,6 +60,19 @@ describe('Session-addressed Provider binding status', () => {
   });
 });
 describe('shared Provider Action recipient catalog admission', () => {
+  it('routes usage refresh separately from model discovery and admits typed source refusals', async () => {
+    const error = createProviderErrorV1('provider_endpoint_rate_limited', { connectionId: 'pc_1', machineId: 'machine-a' });
+    const reply = { status: 'success', sources: [{ sourceId: 'credits', status: 'not_configured' },
+      { sourceId: 'spend', status: 'error', error }] };
+    const execute = createProviderActionExecuteV1({ assertCurrent() {},
+      rpc: async ({ method }) => method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH ? reply
+        : { status: 'success', models: [] },
+      setDefault: async () => ({ status: 'unchanged' }),
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.usage.refresh', {
+      connectionId: 'pc_1', machineId: 'machine-a',
+    }), {})).toEqual({ ok: true, result: reply });
+  });
   it('admits each Team presentation batch once', async () => {
     // Observe both real entry points; neither validator implementation is replaced.
     const admissions = vi.spyOn(DaemonProviderModelProjectionResponseV1Schema, 'safeParse');

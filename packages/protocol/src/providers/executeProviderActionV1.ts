@@ -61,6 +61,7 @@ export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): P
     case 'providers.models.projection':
     case 'providers.models.refresh': return { method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, mutation: false };
     case 'providers.probe': return { method: RPC_METHODS.DAEMON_PROVIDERS_PROBE, mutation: false };
+    case 'providers.usage.refresh': return { method: RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH, mutation: false };
     case 'providers.binding.status': return { method: RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, mutation: false };
     case 'providers.legacy.prepare': return { method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE, mutation: true };
     case 'providers.models.load':

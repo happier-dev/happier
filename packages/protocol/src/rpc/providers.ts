@@ -65,6 +65,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
+import { ProviderAccountUsageSnapshotV1Schema } from '../connect/providerAccountUsagePrimitives.js';
 import { TeamCredentialResourceTestApplicationRequestV1Schema } from '../teams/credentials/externalProviderApiV1.js';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '../teams/credentials/resourceV1.js';
 import { ProviderModelBindingSourceV1Schema, ProviderModelConfirmationSourceV1Schema, ProviderModelConfirmationSourceKeyV1Schema } from '../providers/compatibility/sourceFacts.js';
@@ -218,6 +219,23 @@ export const DaemonProviderProbeResponseV1Schema = lazyZodSchema(() => z.discrim
   z.strictObject({ status: z.literal('not_supported') }),
 ]));
 export type DaemonProviderProbeResponseV1 = z.infer<typeof DaemonProviderProbeResponseV1Schema>;
+
+export const DaemonProviderUsageRefreshRequestV1Schema = ProviderRpcIdentityV1Schema;
+export type DaemonProviderUsageRefreshRequestV1 = z.infer<typeof DaemonProviderUsageRefreshRequestV1Schema>;
+
+export const ProviderUsageSourceResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ sourceId: ProviderLocalIdSchema, status: z.literal('ok'), snapshot: ProviderAccountUsageSnapshotV1Schema }),
+  z.strictObject({ sourceId: ProviderLocalIdSchema, status: z.literal('not_configured') }),
+  z.strictObject({ sourceId: ProviderLocalIdSchema, status: z.literal('error'), error: ProviderErrorV1Schema }),
+]));
+export type ProviderUsageSourceResultV1 = z.infer<typeof ProviderUsageSourceResultV1Schema>;
+
+export const DaemonProviderUsageRefreshResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('success'), sources: z.array(ProviderUsageSourceResultV1Schema) }),
+  z.strictObject({ status: z.literal('error'), error: ProviderErrorV1Schema }),
+  z.strictObject({ status: z.literal('not_supported') }),
+]));
+export type DaemonProviderUsageRefreshResponseV1 = z.infer<typeof DaemonProviderUsageRefreshResponseV1Schema>;
 
 export const DaemonProviderModelLoadResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('loaded'), source: z.enum(['already_loaded', 'requested']) }),

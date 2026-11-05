@@ -43,6 +43,19 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('admits usage sources only on declared endpoints with distinct optional billing slots', () => {
+    const source = { id: 'credits', endpointTemplateId: 'responses', path: '/v1/credits', parser: 'credits-v1' };
+    const value = { ...validContribution(), usageSources: [source] };
+    expect(ProviderContributionV1Schema.parse(value)).toMatchObject({ usageSources: [source] });
+    const billingCredential = { slotId: 'managementKey', title: 'Management key', destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } };
+    expect(ProviderContributionV1Schema.safeParse({ ...value, usageSources: [{ ...source, billingCredential }] }).success).toBe(true);
+    for (const usageSources of [
+      [source, source], [{ ...source, endpointTemplateId: 'foreign' }],
+      [{ ...source, path: 'https://foreign.example/credits' }],
+      [{ ...source, billingCredential: { ...billingCredential, slotId: 'apiKey' } }],
+      [{ ...source, extra: true }],
+    ]) expect(ProviderContributionV1Schema.safeParse({ ...value, usageSources }).success).toBe(false);
+  });
   it('admits and preserves only the explicit private source-envelope transport', () => {
     const value = { ...validContribution(),
       catalog: { ...validContribution().catalog, sourceRegistryVersion: 'source-envelope/v1' },

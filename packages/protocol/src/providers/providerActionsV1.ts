@@ -8,6 +8,7 @@ import {
   DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema,
   DaemonProviderModelLoadRequestV1Schema, DaemonProviderModelLoadResponseV1Schema,
   DaemonProviderProbeRequestV1Schema, DaemonProviderProbeResponseV1Schema,
+  DaemonProviderUsageRefreshRequestV1Schema, DaemonProviderUsageRefreshResponseV1Schema,
   DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderBindingStatusChangedResponseV1Schema,
   DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema,
 } from '../rpc/providers.js';
@@ -114,6 +115,7 @@ export const PROVIDER_ACTION_INPUT_SCHEMAS_V1 = {
   'providers.models.load': modelLoadInput('load'),
   'providers.models.cancel_load': modelLoadInput('cancel'),
   'providers.probe': DaemonProviderProbeRequestV1Schema,
+  'providers.usage.refresh': DaemonProviderUsageRefreshRequestV1Schema,
   'providers.binding.status': lazyZodSchema(() => z.union([
     DaemonProviderBindingStatusRequestV1Schema,
     z.strictObject({ machineId: ProviderMachineIdSchema, sessionId: SessionProviderBindingSecurityChangeConfirmationV1Schema.shape.sessionId }),
@@ -148,6 +150,7 @@ export const PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 = {
   'providers.models.load': DaemonProviderModelLoadResponseV1Schema,
   'providers.models.cancel_load': DaemonProviderModelLoadResponseV1Schema,
   'providers.probe': DaemonProviderProbeResponseV1Schema,
+  'providers.usage.refresh': DaemonProviderUsageRefreshResponseV1Schema,
   'providers.binding.status': lazyZodSchema(() => z.union([
     DaemonProviderBindingStatusResponseV1Schema,
     z.safeExtend(DaemonProviderBindingStatusChangedResponseV1Schema, {
@@ -179,6 +182,7 @@ function resolveProviderActionOwnershipV1(
     case 'providers.models.load':
     case 'providers.models.cancel_load':
     case 'providers.probe':
+    case 'providers.usage.refresh':
     case 'providers.binding.status':
     case 'providers.legacy.prepare': return { owner: 'machine', placements: ['machine'] };
     default: return { owner: 'accountCatalog', placements: ['account'] };
@@ -228,6 +232,7 @@ export function parseProviderActionRequestV1(actionId: ProviderActionIdV1, input
     case 'providers.models.load': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.models.cancel_load': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.probe': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
+    case 'providers.usage.refresh': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.binding.status': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.legacy.prepare': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };
     case 'providers.defaults.set': return { actionId, input: PROVIDER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input) };

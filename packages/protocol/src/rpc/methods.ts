@@ -149,6 +149,7 @@ export const RPC_METHODS = {
   DAEMON_MCP_SERVERS_DETECT: 'daemon.mcpServers.detect',
   DAEMON_MCP_SERVERS_PREVIEW: 'daemon.mcpServers.preview',
   DAEMON_PROVIDERS_PROBE: 'daemon.providers.probe',
+  DAEMON_PROVIDERS_USAGE_REFRESH: 'daemon.providers.usage.refresh',
   DAEMON_PROVIDERS_MODELS: 'daemon.providers.models',
   DAEMON_PROVIDERS_MODEL_LOAD: 'daemon.providers.model.load',
   DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE: 'daemon.providers.connections.describe',

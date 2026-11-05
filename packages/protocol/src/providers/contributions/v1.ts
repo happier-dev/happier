@@ -11,7 +11,7 @@ import {
   ProviderCatalogDeclarationV1Schema,
   providerCatalogProbeReportsModelLoadStateV1,
 } from '../catalog/descriptorV1.js';
-import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
+import { ProviderApiKeyCredentialRequirementV1Schema, ProviderCredentialDestinationV1Schema } from '../credentials/v1.js';
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderDetectionDescriptorV1Schema } from '../detection/descriptorV1.js';
 import { ProviderLocalIdSchema } from '../ids.js';
@@ -50,6 +50,7 @@ import type { ProviderConnectionV1 } from '../connections/v1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from '../catalog/limits.js';
+import { ConnectedServiceQuotaMeterV1Schema } from '../../connect/connectedServiceSchemas.js';
 
 const LegacyProfileEnvironmentNameSchema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Z_][A-Z0-9_]*$/u), z.maxLength(128)));
 
@@ -449,6 +450,25 @@ export function createProviderManagedRuntimeBindingFingerprintV1(
     createProviderManagedRuntimeBindingEqualityKeyV1(input));
 }
 
+export const ProviderUsageSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  id: ProviderLocalIdSchema,
+  endpointTemplateId: ProviderLocalIdSchema,
+  path: ProviderOriginRelativePathSchema,
+  parser: ProviderLocalIdSchema,
+  /** Optional billing access; an unbound slot omits this source. */
+  billingCredential: z.optional(z.strictObject({
+    slotId: ProviderLocalIdSchema,
+    title: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
+    keyUrl: z.optional(ProviderHttpsUrlSchema),
+    destination: ProviderCredentialDestinationV1Schema,
+  })),
+}));
+export type ProviderUsageSourceV1 = z.infer<typeof ProviderUsageSourceV1Schema>;
+export const ProviderUsageParseResultV1Schema = lazyZodSchema(() => z.strictObject({
+  meters: z.array(ConnectedServiceQuotaMeterV1Schema),
+}));
+export type ProviderUsageParseResultV1 = z.infer<typeof ProviderUsageParseResultV1Schema>;
+
 export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   id: ProviderLocalIdSchema,
@@ -462,6 +482,7 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
   credential: z.optional(ProviderApiKeyCredentialRequirementV1Schema),
   catalog: ProviderCatalogDeclarationV1Schema,
   modelLoad: z.optional(ProviderModelLoadDescriptorV1Schema),
+  usageSources: z.optional(z.array(ProviderUsageSourceV1Schema)),
   discovery: z.optional(ProviderDetectionDescriptorV1Schema),
   managedRuntime: z.optional(ProviderManagedRuntimeDeclarationV1Schema),
   compatibilityOverrides: z.optional(ProviderCompatibilityOverridesV1Schema),
@@ -486,6 +507,22 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
     transport.protocols.forEach((protocol) => {
       if (!protocols.has(protocol)) ctx.addIssue({ code: 'custom', path: ['credential', 'transports', index, 'protocols'], message: 'Credential transport protocol is undeclared' });
     });
+  });
+  const usageIds = new Set<string>();
+  const billingSlots = new Map<string, string>();
+  value.usageSources?.forEach((source, index) => {
+    if (usageIds.has(source.id) || !endpointIds.has(source.endpointTemplateId)) {
+      ctx.addIssue({ code: 'custom', path: ['usageSources', index], message: 'Usage source ids must be unique and name a declared endpoint' });
+    }
+    usageIds.add(source.id);
+    if (source.billingCredential) {
+      const { slotId } = source.billingCredential;
+      const descriptor = JSON.stringify(source.billingCredential);
+      if (slotId === (value.credential?.slotId ?? 'apiKey') || (billingSlots.has(slotId) && billingSlots.get(slotId) !== descriptor)) {
+        ctx.addIssue({ code: 'custom', path: ['usageSources', index, 'billingCredential'], message: 'Billing slots must be distinct from the connection key and have one descriptor' });
+      }
+      billingSlots.set(slotId, descriptor);
+    }
   });
   if ('probes' in value.catalog) {
     value.catalog.probes.forEach((probe, index) => {
