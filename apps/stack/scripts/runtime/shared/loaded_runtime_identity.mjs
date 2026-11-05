@@ -1,5 +1,5 @@
 import { resolveRuntimeRemoteServiceObservation } from '../../utils/tui/runtime_placement_summary.mjs';
-import { readSourceRuntimeSourceTime } from './source_bundle_record.mjs';
+import { readSourceRuntimeCompletionMetadata } from './source_bundle_record.mjs';
 
 /** Project loaded identities from the caller's existing lifecycle observations. */
 export function projectLoadedSourceRuntimeIdentities({ runtimeState, sourceSnapshot, runtimeLifecycleLive,
@@ -19,7 +19,8 @@ export function projectLoadedSourceRuntimeIdentities({ runtimeState, sourceSnaps
     const loaded = remoteCustodyUnconfirmed || (runtimeLifecycleLive && localRunning) ? identity.loaded : null;
     const sourceTime = loaded && typeof identity.sourceTime === 'string' && Number.isFinite(Date.parse(identity.sourceTime))
       ? new Date(identity.sourceTime).toISOString() : null;
-    return [component, { selected: identity.selected, loaded, ...(sourceTime ? { sourceTime } : {}) }];
+    return [component, { selected: identity.selected, loaded, ...(sourceTime ? { sourceTime } : {}),
+      ...(component === 'daemon' && loaded && identity.guestPayload ? { guestPayload: identity.guestPayload } : {}) }];
   }));
 }
 
@@ -30,9 +31,11 @@ export async function readLoadedSourceRuntimeIdentities({ stackBaseDir, ...optio
   return Object.fromEntries(await Promise.all(Object.entries(identities).map(async ([component, identity]) => {
     const remote = resolveRuntimeRemoteServiceObservation(options.runtimeState,
       component === 'server' || component === 'daemon' ? component : 'expo');
-    if (!identity.loaded || identity.sourceTime || remote.target) return [component, identity];
-    const sourceTime = await readSourceRuntimeSourceTime({ stackBaseDir, component, identity: identity.loaded });
-    return [component, { ...identity, ...(sourceTime ? { sourceTime } : {}) }];
+    if (!identity.loaded || remote.target) return [component, identity];
+    const metadata = await readSourceRuntimeCompletionMetadata({ stackBaseDir, component, identity: identity.loaded });
+    const sourceTime = identity.sourceTime ?? metadata?.sourceCapture?.capturedAt;
+    return [component, { ...identity, ...(sourceTime ? { sourceTime } : {}),
+      ...(metadata?.guestPayload ? { guestPayload: metadata.guestPayload } : {}) }];
   })));
 }
 

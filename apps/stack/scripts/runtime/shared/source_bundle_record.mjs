@@ -34,24 +34,25 @@ function normalizeSourceCapture(value) {
 }
 
 /** Capture metadata belongs to the exact immutable product, never its file mtime. */
-async function readSourceRuntimeSourceCapture({ stackBaseDir, component, identity, entrypoint, uiDir }) {
+export async function readSourceRuntimeCompletionMetadata({ stackBaseDir, component, identity, entrypoint, uiDir }) {
   try {
     if (uiDir) {
       const completionPath = join(dirname(resolve(uiDir)), 'source-bundle.json');
       const record = await readOptionalJson(completionPath);
       if (record?.component !== 'web' || record.uiDir !== resolve(uiDir)) return null;
-      return normalizeSourceCapture(record.sourceCapture);
+      return { sourceCapture: normalizeSourceCapture(record.sourceCapture) };
     }
     if (!identity) return null;
     const record = entrypoint ? await readSourceRuntimeBundleRecord(entrypoint)
       : await readSelectedSourceRuntimeRecord({ stackBaseDir, component, required: false });
     if (record?.identity !== identity) return null;
-    return normalizeSourceCapture(record?.sourceCapture);
+    return { sourceCapture: normalizeSourceCapture(record.sourceCapture),
+      ...(component === 'daemon' && record.guestPayload ? { guestPayload: record.guestPayload } : {}) };
   } catch { return null; }
 }
 
 export async function readSourceRuntimeSourceTime(input) {
-  return (await readSourceRuntimeSourceCapture(input))?.capturedAt ?? null;
+  return (await readSourceRuntimeCompletionMetadata(input))?.sourceCapture?.capturedAt ?? null;
 }
 
 export function formatSourceRuntimeSourceTimes(sourceTimes, sourceCaptures = {}) {

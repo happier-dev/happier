@@ -329,6 +329,8 @@ Require each requested role's nonempty `runtime.sourceRuntimeIdentities.<role>.s
 
 During source-reload preparation, `stack info` reports `runtime.sourceReload` and the health issue `runtime_preparing`. After selection, `runtime_identity_pending` remains until the replacement identity is loaded. A healthy response from the incumbent alone cannot confirm the replacement. Lost remote daemon transport reports `daemon_unknown`, retains the recorded loaded identity, and exposes the target's lifecycle phase until readiness or retirement is confirmed.
 
+For source-built guest QA in 0.3 development, a stack configured with `HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT` rebuilds its canonical native guest payloads from the daemon's captured workspace during source preparation. The daemon uses the replacement retained with its bundle, and reload READY includes both identities in `identities.daemon`, with the payload under `guestPayload`. The original payload directory is preserved. A failed guest build leaves the incumbent running. Custom interpreter-script roots without canonical target metadata remain manual overrides without a source-build identity.
+
 For daemon-only changes in 0.3 development, use the narrower reload:
 
 ```bash

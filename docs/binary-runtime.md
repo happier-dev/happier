@@ -198,6 +198,17 @@ acquisition is unchanged. Build the directory through the existing
 `buildCliBinaryArtifactPayload` owner; it is an explicit trusted operator input,
 not a release publication. Existing controllers need the input in their daemon
 environment and the shared installer change needs reload.
+The Stack placed-daemon launcher forwards this explicit payload-root input to
+the execution target without translating the path; the directory must exist on
+the creating daemon's host. In 0.3 development, source-runtime preparation rebuilds
+canonical native payloads for the configured targets from the daemon bundle's existing
+captured workspace. The replacement payload lives with that retained bundle;
+preparation does not overwrite the operator's input directory. The daemon consumes
+the replacement root, and reload READY records its identity and source capture in
+`identities.daemon.guestPayload` alongside the loaded daemon identity. A payload
+build failure leaves the incumbent runtime selected.
+Custom interpreter-script roots without canonical target metadata remain manual
+overrides and do not receive a source-build identity.
 
 For an already enrolled service-managed native guest, the admitted managed
 bootstrap Retry updates the CLI through that same installer and reinstalls its

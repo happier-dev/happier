@@ -1258,6 +1258,13 @@ export async function resolveCommandPublisherPolicy(commandArgs, options = {}) {
   const { selfPublisher, heavyClass, requiredTools } = await resolvePackageCommandPolicy(commandArgs, options);
   return { selfPublisher, heavyClass, requiredTools };
 }
+export function projectRemoteGuestCliPayloadEnvironment(env = process.env) {
+  const root = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
+  return root && !/[\0\r\n]/.test(root)
+    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root }
+    : {};
+}
+
 export function classifyRemoteCommand(commandArgs, options = {}) {
   const policy = resolveRemoteCommandPolicy(commandArgs, options);
   return { placement: policy.placement, commandClass: policy.commandClass, requiresDependencyBootstrap: policy.bootstrap === '1' };
@@ -2485,10 +2492,7 @@ function resolveRemoteStackStartInvocation(target, {
   if (normalizedServices.daemon) serviceEnvironment.HAPPIER_WEB_LATENCY_TRACE ??= env.HAPPIER_WEB_LATENCY_TRACE === '1' ? '1' : '';
   // The operator's source-built guest CLI (a path on this target) reaches the
   // daemon's managed installer, which reads it before any release download.
-  const guestCliPayloadRoot = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
-  if (normalizedServices.daemon && guestCliPayloadRoot && !/[\0\r\n]/.test(guestCliPayloadRoot)) {
-    serviceEnvironment.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT = guestCliPayloadRoot;
-  }
+  if (normalizedServices.daemon) Object.assign(serviceEnvironment, projectRemoteGuestCliPayloadEnvironment(env));
   const stackEnvLines = [
     `HAPPIER_STACK_REPO_DIR=${target.repoDir}`,
     `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,

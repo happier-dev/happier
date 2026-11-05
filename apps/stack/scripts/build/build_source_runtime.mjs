@@ -28,6 +28,8 @@ import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../p
 import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
+import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
+
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
 
 /** Finite web builds reuse workspace capture, not a second snapshot engine.
@@ -112,7 +114,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   signal?.throwIfAborted();
   const log = component === 'expo' ? console.log : console.error;
   log(`[source-${component === 'expo' ? 'ui' : 'bundle'}] phase=input-capture elapsedMs=${Math.round(performance.now() - started)} files=${capture.files.length}`);
-  return { repoDir: outputDir, uiProjectDir: join(outputDir, 'apps/ui'), files: capture.files,
+  return { repoDir: outputDir, uiProjectDir: join(outputDir, 'apps/ui'), files: capture.files, capturedAt: capture.capturedAt,
     inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
 }
 
@@ -127,7 +129,7 @@ function isCompilerTracedSource(path) {
     && !path.endsWith('/generatedBundledPluginManifests.ts');
 }
 
-async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, component, serverComponent, dbProvider, consumedPaths, sharedSourceInputs }) {
+async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, component, serverComponent, dbProvider, consumedPaths, sharedSourceInputs, env = process.env }) {
   const projectDir = join(repoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   const esbuild = createRequire(pathToFileURL(join(projectDir, 'package.json')))('esbuild');
   let { files } = await readSourceComponentBuildInputs({ repoDir, component });
@@ -137,8 +139,10 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
       ...(sharedManifest.filesByComponent[component] ?? [])].sort();
   }
   const consumed = consumedPaths && new Set(consumedPaths);
-  const fingerprintFiles = consumed ? files.filter(path => !isCompilerTracedSource(path) || consumed.has(path)) : files;
-  const options = [identityRepoDir, component, serverComponent, dbProvider, process.version, process.platform, process.arch, esbuild.version, files];
+  const guestPayloadTargets = component === 'daemon' ? readSourceGuestPayloadTargets(env) : null;
+  const fingerprintFiles = consumed && !guestPayloadTargets ? files.filter(path => !isCompilerTracedSource(path) || consumed.has(path)) : files;
+  const options = [identityRepoDir, component, serverComponent, dbProvider, process.version, process.platform, process.arch, esbuild.version, files,
+    guestPayloadTargets?.map(({ target, relativeDir }) => [target.bunTarget, relativeDir]) ?? null];
   if (!sharedSourceInputs) return await readBuildInputIdentity({ sourceDir: repoDir, files: fingerprintFiles, options });
   const hash = createHash('sha256').update(JSON.stringify(options));
   for (const path of [...new Set(fingerprintFiles)].sort()) {
@@ -155,14 +159,14 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
   return hash.digest('hex');
 }
 
-async function readReusableSourceBundle({ bundleRoot, repoDir, component, serverComponent, dbProvider, sharedSourceInputs }) {
+async function readReusableSourceBundle({ bundleRoot, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env }) {
   if (!existsSync(bundleRoot)) return null;
   for (const entry of await readdir(bundleRoot, {withFileTypes:true})) {
     if (!entry.isDirectory() || (!entry.name.startsWith('bundle-') && !entry.name.startsWith('runtime-'))) continue;
     const outputDir = join(bundleRoot, entry.name);
     const record = await readOptionalJson(join(outputDir, 'source-bundle.json'));
     if (!record?.inputIdentity || !record.sourceInputDigests) continue;
-    if (record.inputIdentity !== await sourceBundleFingerprint({ repoDir, component, serverComponent, dbProvider, sharedSourceInputs,
+    if (record.inputIdentity !== await sourceBundleFingerprint({ repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env,
       consumedPaths: Object.keys(record.sourceInputDigests) })) continue;
     // A consumed file can change and be undone during preparation. The wide
     // membership fingerprint is only a cache hint; captured load bytes decide
@@ -738,7 +742,7 @@ async function adoptReusableSourceRuntimeBundle({ stackBaseDir, bundleRoot, comp
   // Lookup, probe and adoption must exclude other fingerprints' reclamation.
   // No compiler or admission wait runs inside this publication section.
   return await withSourceBundlePublication({ stackBaseDir, signal }, async () => {
-    const reusable = await readReusableSourceBundle({ bundleRoot, repoDir, component, serverComponent, dbProvider, sharedSourceInputs });
+    const reusable = await readReusableSourceBundle({ bundleRoot, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env });
     if (!reusable) return null;
     if (component === 'daemon') await probeCliDistRuntimeImport(reusable.built.entrypoint,
       { cwd: reusable.built.cliDir, env, signal });
@@ -989,7 +993,9 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   await mkdir(outputDir, { recursive: true });
   if ((await readdir(outputDir)).length > 0) throw new Error(`Source runtime output directory must be empty: ${outputDir}`);
   const sourceRepoDir = repoDir;
+  const guestPayloadTargets = component === 'daemon' ? readSourceGuestPayloadTargets(env) : null;
   const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: join(outputDir, 'workspace'), signal, sharedSourceInputs });
+  const sourceCapture = { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt };
   repoDir = captured.repoDir;
   const projectDir = join(repoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   const runtimeDir = join(outputDir, 'apps', component === 'daemon' ? 'cli' : 'server');
@@ -1003,11 +1009,16 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   try {
-    const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles: captured.files,
+    const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles: captured.files, guestPayloadTargets,
       outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
+    if (guestPayloadTargets) {
+      built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir,
+        targets: guestPayloadTargets, sourceCapture, env, signal });
+      built.env = { ...built.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: built.guestPayload.root };
+    }
     const inputIdentity = await sourceBundleFingerprint({ repoDir, identityRepoDir: sourceRepoDir,
-      component, serverComponent, dbProvider, consumedPaths: Object.keys(built.sourceInputDigests), sharedSourceInputs });
-    return { ...built, inputIdentity, ...(component === 'server'
+      component, serverComponent, dbProvider, consumedPaths: Object.keys(built.sourceInputDigests), sharedSourceInputs, env });
+    return { ...built, inputIdentity, sourceCapture, ...(component === 'server'
       ? { serverComponent, dbProvider: dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres') } : {}) };
   } finally {
     await rm(repoDir, { recursive: true, force: true });
@@ -1047,7 +1058,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 }
 
-async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath,
+async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath,
   projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal }) {
   const { transform } = esbuild;
   const sourceInputDigests = {};
@@ -1055,7 +1066,8 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   // tooling and copied resources from this same view. Main-code neighbours
   // participate only when the real loader consumes them; membership still
   // invalidates additions/deletions that can alter resolution.
-  for (const path of capturedFiles.filter(path => !isCompilerTracedSource(path))) {
+  // The full guest payload owns additional code beyond the daemon entry graph.
+  for (const path of capturedFiles.filter(path => guestPayloadTargets || !isCompilerTracedSource(path))) {
     const absolute = join(repoDir, path);
     if ((await lstat(absolute)).isFile()) sourceInputDigests[path] = createHash('sha256').update(await readFile(absolute)).digest('hex');
   }

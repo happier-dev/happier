@@ -57,7 +57,9 @@ writeFileSync(join(output, 'index.js'), 'export const value = ' + JSON.stringify
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
       dependencies: { '@happier-dev/example': '0.0.0' }, bundledDependencies: ['@happier-dev/example'] }));
   }
-  const env = { ...process.env, FIXTURE_PREPARATION_VALUE: 'from-root-preparation' };
+  const native = await installWorkspaceAdmissionProcessFixture(t, repoRoot);
+  const env = { ...native.env, npm_execpath: fixtureCompilerPackageManager(repoRoot),
+    FIXTURE_PREPARATION_VALUE: 'from-root-preparation' };
   const options = { repoRoot, env, componentDirs: ['apps/cli', 'apps/server', 'apps/cli'] };
   const first = await runWorkspacePackageBuild(options);
   assert.deepEqual(first.built, ['@happier-dev/example']);
@@ -142,10 +144,11 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
       mkdirSync(dirname(join(repoRoot, relativePath)), { recursive: true });
       cpSync(join(sourceRoot, relativePath), join(repoRoot, relativePath), {
         recursive: true,
-        filter: (candidate) => !candidate.split(/[\\/]/u).some((part) => part === 'node_modules' || part === 'dist'),
+        filter: (candidate) => !candidate.split(/[\\/]/u).some((part) => part === 'node_modules' || part === 'dist' || part.startsWith('.tmp.')),
       });
     };
-    for (const relativePath of ['scripts', 'apps/stack/scripts', 'apps/cli/scripts', 'apps/cli/src', 'apps/cli/tsconfig.json', 'apps/cli/tsconfig.runtime.json']) copy(relativePath);
+    // Published locator source and its canonical manifest assets are one input closure.
+    for (const relativePath of ['scripts', 'apps/stack/scripts', 'apps/cli/scripts', 'apps/cli/src', 'apps/cli/assets/bundled-plugin-manifests', 'apps/cli/tsconfig.json', 'apps/cli/tsconfig.runtime.json']) copy(relativePath);
     const dependencyPackages = ['agents', 'protocol', 'cli-common', 'plugin-sdk', 'release-runtime', 'brand', 'transfers', 'peer-mediation'];
     for (const name of dependencyPackages) {
       copy(`packages/${name}`);
@@ -238,7 +241,7 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
         if (name !== packageName) {
           // Reuse genuine prepared public dependency outputs at the compiler
           // boundary; this fixture never compiles or fakes the CLI application.
-          cpSync(join(sourceRoot, 'packages', name.slice('@happier-dev/'.length), 'dist'), env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, { recursive: true });
+          cpSync(join(sourceRoot, 'packages', name.slice('@happier-dev/'.length), 'dist'), env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, { recursive: true, dereference: true });
           return;
         }
         compilerRuns += 1;
@@ -278,7 +281,7 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
       const rename = fs.renameSync;
       fs.renameSync = (source, target) => {
         const result = rename(source, target);
-        if (!changedManifest && String(target) === join(packageDir, '.happier-plugin/plugin.json')) {
+        if (!changedManifest && String(target).endsWith(join('packages', 'plugins', 'selected', '.happier-plugin', 'plugin.json'))) {
           changedManifest = true;
           writeFileSync(join(packageDir, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(editedManifest)};\n`);
         }
@@ -293,15 +296,7 @@ for (const { compiledAlready, buildMode, changeAfterManifest } of [
       ensureWorkspacePackagesBuiltForComponentImpl: (componentDir, options) => ensureWorkspacePackagesBuiltForComponent(componentDir, { ...options, env, workspaceBuildBoundary }),
     });
     if (changeAfterManifest) {
-      try {
-        await preparation;
-      } catch (error) {
-        assert.match(error.message, /inputs changed/);
-        assert.equal(changedManifest, true, 'The authored edit must follow the real manifest publication');
-        assert.equal(existsSync(join(packageDir, 'dist/happier-plugin-ui/ui-artifacts.json')), false,
-          'A drift refusal must retain the prior published tree');
-        return;
-      }
+      assert.equal((await preparation).ok, true, 'captured source drift must not discard completed package preparation');
       assert.equal(changedManifest, true, 'The authored edit must follow the real manifest publication');
       const publishedManifest = JSON.parse(readFileSync(join(packageDir, '.happier-plugin/plugin.json'), 'utf8'));
       const publishedUi = JSON.parse(readFileSync(join(packageDir, 'dist/happier-plugin-ui/ui-artifacts.json'), 'utf8'));

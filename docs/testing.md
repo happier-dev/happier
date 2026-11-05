@@ -640,6 +640,10 @@ remains authoritative for incremental currentness. There is no input-equality
 scan, shared in-flight result or completed-check cache.
 
 The root `build:packages` coordinator follows this producer-owned admission path.
+With configured dev targets, it dispatches the requested workspace graph to each
+target through the existing executor before returning. Each target runs the same
+host-local fingerprint and publication owner; ignored `dist` bytes are never copied
+between hosts. Without configured targets, preparation remains host-local.
 Its existing workspace graph prepares transitive producers through their joint
 publication-lease and capacity owner. Dispatch retains the compilation placement
 envelope without reserving capacity around the coordinator, so a foreign producer

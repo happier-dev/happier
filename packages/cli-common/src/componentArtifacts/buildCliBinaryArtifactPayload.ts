@@ -1092,8 +1092,8 @@ export async function buildCliBinaryArtifactSupportPayload({
 }
 
 /**
- * Legacy/self-contained payload builder retained for release packaging and old
- * artifacts. Managed daemon artifacts call the two owner-local functions
+ * Self-contained payload builder for release packaging and explicit guest
+ * payloads. Managed daemon artifacts call the two owner-local functions
  * above, then reference the immutable support payload instead.
  */
 export async function buildCliBinaryArtifactPayload({
@@ -1118,7 +1118,7 @@ export async function buildCliBinaryArtifactPayload({
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
   includeIrohNativeReleaseEvidence?: boolean;
-}): Promise<{ executableName: string; entrypoint: string }> {
+}): Promise<{ executableName: string; entrypoint: string; identity: string }> {
   assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
   const publicationFailuresPath = join(
     repoRoot,
@@ -1166,8 +1166,14 @@ export async function buildCliBinaryArtifactPayload({
     relativePath: support.runtimeAssetRelativePath,
     workspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
   });
+  // Hash the complete finalized output after runtime-asset manifests are written.
+  // This does not promise deterministic compiler output from identical source.
+  const identityHash = createHash('sha256');
+  hashSupportInputTree({ hash: identityHash, repoRoot: payloadDir,
+    sourcePath: payloadDir, label: 'payload' });
   return {
     executableName: code.executableName,
     entrypoint: code.entrypoint,
+    identity: identityHash.digest('hex'),
   };
 }

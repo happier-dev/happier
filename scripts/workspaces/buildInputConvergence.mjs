@@ -132,7 +132,8 @@ export async function captureBuildInputFiles({ sourceDir, captureDir, readPaths 
     await rm(join(captureDir, path), { recursive: true, force: true }).catch(error => { if (error.code !== 'ENOTDIR') throw error; });
     await copy(path);
   }
-  return { files: [...currentPaths].filter(path => copied.has(path)).sort(), rereadPaths };
+  return { files: [...currentPaths].filter(path => copied.has(path)).sort(), rereadPaths,
+    capturedAt: new Date().toISOString() };
 }
 
 /**
