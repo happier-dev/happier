@@ -190,13 +190,8 @@ export type PluginUiMountContextV1 =
         presentation: 'content' | 'fill';
     }>;
 
-/** SDK-local declaration projection of the Protocol-owned mounted target. */
-export type PluginUiHostApiSurfaceTargetV1 =
-    | { kind: 'app' }
-    | { kind: 'session'; sessionId: string; agentId?: string }
-    | { kind: 'project'; projectId: string }
-    | { kind: 'browser'; targetId: string; origin?: string }
-    | { kind: 'services' };
+/** Canonical mounted target; the SDK carries every admitted discriminated arm. */
+export type PluginUiHostApiSurfaceTargetV1 = Readonly<ProtocolPluginUiHostApiSurfaceContextV1['target']>;
 
 type PluginUiHostApiSurfaceTypographyMetricV1 = {
     fontSize: number;
@@ -308,6 +303,8 @@ export type PluginUiTargetedContributionSelectorV1 = ProtocolPluginUiTargetedCon
  * Protocol type, while Protocol remains the sole runtime parser.
  */
 export type PluginUiHostApiSurfaceContextV1 = {
+    /** Exact host-issued physical renderer identity; absent on unsupported hosts, never fabricated by an author. */
+    readonly mountId?: ProtocolPluginUiHostApiSurfaceContextV1['mountId'];
     /** Read-only identity from the mounted host's admitted Account lifetime; never a grant. */
     readonly accountScope?: Readonly<NonNullable<ProtocolPluginUiHostApiSurfaceContextV1['accountScope']>>;
     mount: PluginUiMountContextV1;
@@ -892,3 +889,12 @@ export type PluginLiveStreamReferenceV1 =
 
 /** Canonical Protocol projection; no independent author wire shape. */
 export type PluginUiOpenAutomationEventRequestV1 = DeepReadonly<ProtocolPluginUiOpenAutomationEventRequestV1>;
+
+/** Type-only public projection; Host API payloads remain ordinary JSON values. */
+export type {
+    PluginUiActionControlEventV1,
+    PluginUiActionControlRequestV1,
+    PluginUiActionControlExecutionV1,
+    PluginUiActionControlPreparationV1,
+    PluginUiActionControlPresentationV1,
+} from '@happier-dev/protocol/plugins/ui/client';

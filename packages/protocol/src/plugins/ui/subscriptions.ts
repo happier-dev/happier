@@ -1,3 +1,6 @@
+import { ActionOperationSnapshotV1Schema } from '../../actions/operations/v1.js';
+import { projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
+import { lazyDefinition } from '../../lazyZodSchema.js';
 import { PluginUiMachineServiceReadReferenceV1Schema } from '../../daemon/machineServiceLogsResource.js';
 import type { ActionId } from '../../actions/actionIds.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -19,7 +22,7 @@ export type PluginUiReadAuthorityReferenceV1 = z.infer<typeof PluginUiReadAuthor
 
 /** Closed host-read identity. Action admission still owns caller policy and input validation. */
 export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.strictObject({
-  hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get']),
+  hostRead: z.enum(['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'action.operations.get']),
   input: PluginUiJsonValueV1Schema,
 }), PluginUiMachineServiceReadReferenceV1Schema]));
 export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferenceV1Schema>;
@@ -34,6 +37,15 @@ export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadRefe
   }
 }
 
+
+/** Existing qualified operation and transport evidence, without reclassifying acceptance or settlement. */
+export const PluginUiActionOperationHostReadResultV1Schema = lazyZodSchema(() => z.strictObject({
+  operation: z.nullable(ActionOperationSnapshotV1Schema),
+  observation: z.enum(['available', 'reconnecting', 'unavailable']),
+}));
+export type PluginUiActionOperationHostReadResultV1 = z.infer<typeof PluginUiActionOperationHostReadResultV1Schema>;
+export const PluginUiActionOperationHostReadResultV1ProtocolSchema = lazyDefinition(() =>
+  projectZodProtocolSchema(PluginUiActionOperationHostReadResultV1Schema));
 
 /**
  * The resource a subscription observes: a **resource contribution** reference,

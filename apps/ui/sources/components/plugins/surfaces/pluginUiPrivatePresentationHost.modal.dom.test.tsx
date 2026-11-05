@@ -235,12 +235,14 @@ function createHostApi(
         version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }),
         context: async () => context,
         admitAction: async () => unexpectedHostApiCall('admitAction'),
+        actionControl: async () => unexpectedHostApiCall('actionControl'),
         widgetArea: async () => unexpectedHostApiCall('widgetArea'),
         readEntityDragItem: async () => unexpectedHostApiCall('readEntityDragItem'),
         updateEntityDragDrop: async () => unexpectedHostApiCall('updateEntityDragDrop'),
         watchEntityDragDrop: async () => unexpectedHostApiCall('watchEntityDragDrop'),
         watchContext: async () => ({ dispose() {} }),
         readSession: async () => unexpectedHostApiCall('readSession'),
+        readMachineDisplayName: async () => ({ status: 'unavailable' }),
         readStoredImage: async () => unexpectedHostApiCall('readStoredImage'),
         watchSession: async () => unexpectedHostApiCall('watchSession'),
         watchLiveStream: async () => unexpectedHostApiCall('watchLiveStream'),
@@ -262,6 +264,7 @@ function createHostApi(
         selectActionInput: async () => unexpectedHostApiCall('selectActionInput'),
         openNewSession: async () => unexpectedHostApiCall('openNewSession'),
         openAutomationEvent: async () => unexpectedHostApiCall('openAutomationEvent'),
+        revealSessionInput: async () => unexpectedHostApiCall('revealSessionInput'),
         openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
         readResource: async () => {
             throw new Error('not used by this menu');

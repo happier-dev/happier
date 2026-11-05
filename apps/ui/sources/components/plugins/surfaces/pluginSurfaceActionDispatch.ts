@@ -1,3 +1,4 @@
+import { createPluginRevealSessionInputHandler } from './pluginRevealSessionInput';
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
 import { readActionSecretInputAdmission } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -752,7 +753,7 @@ function createClientActionUi(
         version: () => ({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []), ...(accountLifetime ? ['openAutomationEvent' as const] : []),
+            methods: ['context', 'executeAction', ...(authority && accountLifetime ? ['selectActionInput' as const, 'openNewSession' as const] : []), ...(accountLifetime ? ['revealSessionInput' as const, 'openAutomationEvent' as const] : []),
                 ...(selection.binding.openSurface ? ['openSurface' as const] : [])],
         }),
         context,
@@ -811,6 +812,14 @@ function createClientActionUi(
             if (!accountLifetime) throw new PluginError({ code: 'plugin_action_automation_event_unavailable' });
             const open = createPluginOpenAutomationEventHandler({ accountLifetime, lifetimeSignal: signal, isCurrent });
             const result = await open(request, options);
+            const failure = readPluginSurfaceHostApiErrorPayload(result);
+            if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
+        },
+        revealSessionInput: async (request, options) => {
+            assertCurrent();
+            if (!accountLifetime) throw new PluginError({ code: 'unavailable' });
+            const reveal = createPluginRevealSessionInputHandler({ accountLifetime, lifetimeSignal: signal, isCurrent });
+            const result = await reveal(request, options);
             const failure = readPluginSurfaceHostApiErrorPayload(result);
             if (failure) throw new PluginError(createPluginSurfaceHostApiPluginErrorData(failure.code, failure.diagnostics, failure.message, failure));
         },

@@ -6,6 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/github-forge-native": "./src/ui/forge/renderForgeSurface.tsx",
+    "./happier-plugin-ui/github-local-act-actions": "./src/ui/actions/local/activate.ts",
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",

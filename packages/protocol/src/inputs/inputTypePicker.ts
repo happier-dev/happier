@@ -30,7 +30,8 @@ export async function invokeInputTypePicker(request: Readonly<{
   if (!field.inputType) return { status: 'error', reasonCode: 'input_type_unavailable' };
   try {
     if ('hostType' in field.inputType) {
-      if (field.inputType.hostType !== 'usageQuery' && field.inputType.hostType !== 'agentParticipant') return { status: 'error', reasonCode: 'input_type_picker_unavailable' };
+      if (field.inputType.hostType !== 'usageQuery' && field.inputType.hostType !== 'agentParticipant'
+        && field.inputType.hostType !== 'savedSecretReference') return { status: 'error', reasonCode: 'input_type_picker_unavailable' };
       if (!host.openHostPicker) return { status: 'error', reasonCode: 'input_type_picker_unavailable' };
       const constraint = readInputFieldOptionsConstraint(field);
       const options = constraint.kind === 'static' ? constraint.options : constraint.kind === 'dynamic' ? await host.resolveOptions(field) : undefined;

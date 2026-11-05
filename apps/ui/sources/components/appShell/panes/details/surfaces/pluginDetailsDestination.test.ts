@@ -1,3 +1,4 @@
+import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import * as React from 'react';
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -296,6 +297,71 @@ describe('pluginDetailsDestination', () => {
             executionOrigin: null,
         });
     });
+
+    it('retains a pane seed through unavailable authority, but retires it for a known replacement occurrence', async () => {
+        const { panePlacement, projection } = createDetailsPaneProjection();
+        const mount = { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
+            platform: 'web' as const, projectionPhase: 'current' as const, projectionInteractionEnabled: true };
+        let staging: ReturnType<typeof usePluginDetailsPaneLaunchStaging> = null;
+        let delivered: ReturnType<typeof usePluginDetailsPaneLaunch> = null;
+        function Launcher() { staging = usePluginDetailsPaneLaunchStaging(); return null; }
+        function Destination(props: Readonly<{ placement: PluginUiSurfacePlacementProjection | null; phase: PluginUiProjectionPhase }>) {
+            delivered = usePluginDetailsPaneLaunch({ placement: props.placement,
+                projection: props.placement ? projection : EMPTY_PLUGIN_UI_PROJECTION,
+                mount: { ...mount, projectionPhase: props.phase, projectionInteractionEnabled: props.phase === 'current' },
+                targetKind: 'session', destination: panePlacement.binding.destination, instanceKey: 'activity:run-1' });
+            return null;
+        }
+        const view = (destination: PluginUiSurfacePlacementProjection | null | undefined, phase: PluginUiProjectionPhase = 'current') => React.createElement(
+            PluginDetailsDestinationLaunchScope, null, React.createElement(Launcher),
+            destination === undefined ? null : React.createElement(Destination, { placement: destination, phase }));
+        const screen = await renderScreen(view(undefined));
+        await act(async () => {
+            expect(staging?.stage({ placement: panePlacement, targetKind: 'session',
+                instanceKey: 'activity:run-1', input: { seed: { workflowPath: '.github/workflows/test.yml' } },
+                scopedLaunchFacts: { serverId: runtime.serverId, machineId: 'machine-1', interactionEnabled: true } })).not.toBeNull();
+        });
+        await screen.update(view(null, 'unavailable'));
+        expect(delivered).toBeNull();
+        await screen.update(view(null, 'retainedOffline'));
+        expect(delivered).toBeNull();
+        await screen.update(view(null, 'establishing'));
+        expect(delivered).toBeNull();
+        await screen.update(view(panePlacement));
+        expect(delivered).toMatchObject({ input: { seed: { workflowPath: '.github/workflows/test.yml' } } });
+        await screen.update(view(null, 'establishing'));
+        expect(delivered).toBeNull();
+        await screen.update(view(panePlacement));
+        expect(delivered, 'A projection refresh must retain input already handed to this overlay')
+            .toMatchObject({ input: { seed: { workflowPath: '.github/workflows/test.yml' } } });
+        await screen.update(view({ ...panePlacement, occurrenceId: 'replacement-occurrence' }));
+        expect(delivered).toBeNull();
+        await screen.update(view(panePlacement));
+        expect(delivered, 'A replacement retires the original handoff').toBeNull();
+        await screen.update(view(undefined));
+        await act(async () => {
+            expect(staging?.stage({ placement: panePlacement, targetKind: 'session',
+                instanceKey: 'activity:run-1', input: { seed: { workflowPath: '.github/workflows/second.yml' } },
+                scopedLaunchFacts: { serverId: runtime.serverId, machineId: 'machine-1', interactionEnabled: true } })).not.toBeNull();
+        });
+        await screen.update(view(null));
+        await screen.update(view(panePlacement));
+        expect(delivered, 'A missing placement does not establish a different launch authority')
+            .toMatchObject({ input: { seed: { workflowPath: '.github/workflows/second.yml' } } });
+        await screen.update(view(undefined));
+        await act(async () => {
+            expect(staging?.stage({ placement: panePlacement, targetKind: 'session',
+                instanceKey: 'activity:run-1', input: { seed: { workflowPath: '.github/workflows/third.yml' } },
+                scopedLaunchFacts: { serverId: runtime.serverId, machineId: 'machine-1', interactionEnabled: true } })).not.toBeNull();
+        });
+        await screen.update(view(null, 'unavailable'));
+        await screen.update(view({ ...panePlacement, occurrenceId: 'replacement-occurrence' }));
+        expect(delivered).toBeNull();
+        await screen.update(view(panePlacement));
+        expect(delivered, 'A known replacement retires the pending handoff before the original returns').toBeNull();
+        await screen.unmount();
+    });
+
 
     it('creates one durable tab resource from a qualified destination and optional instance identity', async () => {
         const module = await import('./pluginDetailsDestination');

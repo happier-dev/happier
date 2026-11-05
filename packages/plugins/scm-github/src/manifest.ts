@@ -1,3 +1,5 @@
+import { GITHUB_LOCAL_ACT_ACTIONS_V1 } from './actions/local/contribution.js';
+import { GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1, GITHUB_LOCAL_ACT_PROJECT_VIEW_ID_V1, GITHUB_FORGE_ARTIFACT_ID_V1, GITHUB_FORGE_RENDERER_ID_V1 } from './ui/forge/surfaceIds.js';
 import {
   CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
   ConversationProvidersContributionProtocolV1,
@@ -425,9 +427,15 @@ function createGithubPlugin() {
       capability: 'storage.account',
       reason: 'Persist one GitHub Event checkpoint per authenticated Automation trigger source.',
       scope: { enabled: true },
+    }, {
+      id: 'github-local-act-probes', capability: 'process',
+      reason: 'Inspect the user-installed act executable on this Machine without starting a workflow.',
+      scope: { executables: [{ kind: 'systemTool', id: 'act' }] },
     }],
     optional: [],
   },
+  systemTools: { act: { title: 'act', description: 'User-installed local workflow runner. Install it on the accepted checkout’s primary Machine.',
+    executableNames: ['act'], allowedArguments: ['--version', '--help'] } },
   accountCollections: {
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID]: GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   },
@@ -439,8 +447,28 @@ function createGithubPlugin() {
     },
   },
   ui: {
-    views: [],
+    views: [{
+      id: GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1,
+      container: 'detailsPane',
+      target: { kind: 'session' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.actions.local.title', fallback: 'Local run' },
+      instancePolicy: 'singleton',
+    }, {
+      id: GITHUB_LOCAL_ACT_PROJECT_VIEW_ID_V1,
+      container: 'detailsPane',
+      target: { kind: 'project' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.actions.local.title', fallback: 'Local run' },
+      instancePolicy: 'singleton',
+    }, ],
     renderers: [{
+      id: GITHUB_FORGE_RENDERER_ID_V1,
+      kind: 'reactNative',
+      artifact: GITHUB_FORGE_ARTIFACT_ID_V1,
+      // Every page reads and acts through this plugin's own CI Actions.
+      requiredHostMethods: ['executeAction'],
+    }, {
       id: GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
       kind: 'reactNative',
       artifact: GITHUB_TRIAGE_DETAIL_ARTIFACT_ID_V1,
@@ -493,6 +521,7 @@ function createGithubPlugin() {
   // The Event observer activates this plugin independently of Triage use. Keep
   // Action contracts available here, but initialize Triage execution on invocation.
   actions: {
+    ...GITHUB_LOCAL_ACT_ACTIONS_V1,
     [GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits]: {
       title: 'List GitHub repositories',
       description: 'Lists selectable repositories or the retained configured selection.',

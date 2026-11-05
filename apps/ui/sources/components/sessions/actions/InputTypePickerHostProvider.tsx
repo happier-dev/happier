@@ -114,11 +114,18 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             return now && entry?.occurrenceId && plugin?.enabled === true ? { now, entry } : null;
         };
         return createInputTypePickerPort({
-            canOpenHostPicker: (reference) => reference.hostType === 'agentParticipant'
-                && readHost()?.props.pickAgentParticipant !== undefined,
+            canOpenHostPicker: (reference) => reference.hostType === 'savedSecretReference' ? readHost() !== null
+                : reference.hostType === 'agentParticipant' && readHost()?.props.pickAgentParticipant !== undefined,
             openHostPicker: async (request, field) => {
                 const admitted = readHost();
                 if (!admitted?.accountLifetime?.isCurrent() || request.signal.aborted) return { kind: 'cancelled' };
+                if (request.reference.hostType === 'savedSecretReference') {
+                    const { presentSavedSecretReferencePicker } = await import('@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker');
+                    if (!readHost() || request.signal.aborted) return { kind: 'cancelled' };
+                    const selected = await presentSavedSecretReferencePicker({ accountLifetime: admitted.accountLifetime,
+                        selected: request.value, signal: request.signal, isCurrent: () => readHost() !== null });
+                    return selected ? { kind: 'completed', input: selected } : { kind: 'cancelled' };
+                }
                 if (request.reference.hostType === 'agentParticipant') {
                     const pick = admitted.props.pickAgentParticipant;
                     if (!pick) return { kind: 'cancelled' };

@@ -1,4 +1,5 @@
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -88,3 +89,5 @@ export function readSecretReferenceOverlayV1Reference(
     ? overlay.bindings[requirementName] ?? null
     : null;
 }
+
+export const SecretReferenceOverlayV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SecretReferenceOverlayV1Schema));

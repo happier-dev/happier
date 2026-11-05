@@ -364,6 +364,20 @@ export type ProjectExecutionActionResultById = {
                             remedy: string;
                         } | undefined;
                     };
+                } | {
+                    kind: 'managedAgentIsolation';
+                    phase: 'machines.agentIsolation.set';
+                    code: 'conflict' | 'plan_changed';
+                    expectedMetadataVersion: number;
+                    metadataVersion: number;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -873,6 +887,20 @@ export type ProjectExecutionActionResultById = {
                             remedy: string;
                         } | undefined;
                     };
+                } | {
+                    kind: 'managedAgentIsolation';
+                    phase: 'machines.agentIsolation.set';
+                    code: 'conflict' | 'plan_changed';
+                    expectedMetadataVersion: number;
+                    metadataVersion: number;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -1381,6 +1409,20 @@ export type ProjectExecutionActionResultById = {
                             requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
                             remedy: string;
                         } | undefined;
+                    };
+                } | {
+                    kind: 'managedAgentIsolation';
+                    phase: 'machines.agentIsolation.set';
+                    code: 'conflict' | 'plan_changed';
+                    expectedMetadataVersion: number;
+                    metadataVersion: number;
+                    expectedPolicy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
+                    };
+                    policy: {
+                        enabled: boolean;
+                        memberProvisioning?: 'linuxUsersV1' | undefined;
                     };
                 } | undefined;
             } | undefined;

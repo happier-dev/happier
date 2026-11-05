@@ -56,14 +56,18 @@ export function createPluginSurfaceHostReadStore(input: Readonly<{
                         subscription.release ??= entry.subscribe(() => { void ensureAdmission(); }, subscription.live);
                     }
                     admitted = true;
-                    notify();
                     return entry;
                 }, error => {
                     refuse(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                         ? error.code : 'plugin_resource_unavailable');
-                    notify();
                     return null;
-                }).finally(() => { admission = null; });
+                }).finally(() => {
+                    admission = null;
+                    // Read/watch readiness can publish while this admission is
+                    // coalescing callbacks. Expose its final snapshot only after
+                    // clearing that guard so those publications are not lost.
+                    notify();
+                });
                 notify();
                 return admission;
             };

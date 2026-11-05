@@ -1,3 +1,11 @@
+export type {
+    PluginUiRevealSessionInputRequestV1,
+    PluginUiReadMachineDisplayNameRequestV1,
+    PluginUiReadMachineDisplayNameResultV1,
+} from '@happier-dev/protocol/plugins/ui/client';
+export type RevealSessionInputRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiRevealSessionInputRequestV1>;
+export type ReadMachineDisplayNameRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameRequestV1>;
+export type ReadMachineDisplayNameResult = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameResultV1>;
 import type { PluginUiOpenAutomationEventRequestV1 } from './publicContract.js';
 export type OpenAutomationEventRequest = PluginUiOpenAutomationEventRequestV1;
 import type { EntityDragItemV1 } from '../entityDragDrop.js';
@@ -66,6 +74,20 @@ export const normalizePluginUiSubPathV1: (value: string) => string | null =
     canonicalNormalizePluginUiSubPathV1;
 
 import type { PluginCancellationOptions, Disposable } from '../lifecycle.js';
+import type {
+    PluginUiActionControl,
+    PluginUiActionControlController,
+    PluginUiActionControlExecution,
+    PluginUiActionControlPreparation,
+    PluginUiActionControlPresentation,
+} from '@happier-dev/cli-common/plugins/ui';
+export type {
+    PluginUiActionControl,
+    PluginUiActionControlController,
+    PluginUiActionControlExecution,
+    PluginUiActionControlPreparation,
+    PluginUiActionControlPresentation,
+} from '@happier-dev/cli-common/plugins/ui';
 import type { StoredImageRefV1, PluginUiReadStoredImageResultV1 } from './publicContract.js';
 import type { PluginLiveStreamReferenceV1 } from './publicContract.js';
 export type { PluginLiveStreamReferenceV1 } from './publicContract.js';
@@ -460,6 +482,13 @@ export type OpenConnectedAccountsRequest =
 export type OpenConnectedAccountsResult = import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenConnectedAccountsResultV1;
 
 export interface PluginUiHostApi {
+    /** Register a host-rendered control. Only its physical host gesture prepares an invocation. */
+    actionControl(
+        control: Readonly<{ action: PluginReference; presentation: PluginUiActionControlPresentation }>,
+        controller: PluginUiActionControlController,
+        options?: PluginCancellationOptions,
+    ): Promise<PluginUiActionControl>;
+
     /**
      * Native/declarative page areas use this shared host binding; the host stamps identity and
      * delegates to canonical widget Actions. Hosted HTML cannot embed host areas: this method is
@@ -730,6 +759,15 @@ export interface PluginUiHostApi {
      * scope is the Account's own Session visibility, not a plugin ACL.
      */
     readSession(sessionId: string, options?: PluginCancellationOptions): Promise<SessionStateV1 | null>;
+    /** Read a visible Machine's display name in this mounted Account; another Home or unknown id is unavailable. */
+    readMachineDisplayName(request: ReadMachineDisplayNameRequest, options?: PluginCancellationOptions): Promise<ReadMachineDisplayNameResult>;
+    /**
+     * Open this mounted Account's exact committed user input in the Session transcript.
+     * The existing transcript route owns loading, scrolling and highlighting; resolution
+     * means navigation was requested, not that a row has already rendered. Missing inputs,
+     * another active Account, retirement and cancellation fail without navigation.
+     */
+    revealSessionInput(request: RevealSessionInputRequest, options?: PluginCancellationOptions): Promise<void>;
     /**
      * Observe one Session's state. Same acknowledged-async establishment and
      * bounded invalidation signal as {@link PluginUiHostApi.watchResource}:

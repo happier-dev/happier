@@ -32,6 +32,7 @@ const HOST_METHOD_INTRODUCTION_VERSION = Object.freeze({
   context: '1.0.0',
   publishCurrentUiContext: '1.0.0',
   watchContext: '1.0.0',
+  actionControl: '1.1.0',
   executeAction: '1.0.0',
   admitAction: '1.0.0',
   readResource: '1.0.0',
@@ -62,6 +63,8 @@ const HOST_METHOD_INTRODUCTION_VERSION = Object.freeze({
   pickComposerMedia: '1.0.0',
   inspectComposerContent: '1.0.0',
   releaseComposerContent: '1.0.0',
+  readMachineDisplayName: '1.0.0',
+  revealSessionInput: '1.0.0',
   readSession: '1.0.0',
   readStoredImage: '1.0.0',
   watchSession: '1.0.0',
@@ -135,6 +138,7 @@ export type PluginUiHostApiRequestMethodV1 =
 
 /** The subscription-establishing subset remains inside the sole tuple. */
 export const PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1 = Object.freeze([
+  'actionControl',
   'watchEntityDragDrop',
   'watchContext',
   'watchResource',

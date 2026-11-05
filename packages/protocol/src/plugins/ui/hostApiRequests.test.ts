@@ -1,3 +1,4 @@
+import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from './hostApiRequests.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod/mini';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
@@ -960,5 +961,20 @@ describe('plugin UI app-page location replacement', () => {
       backLocation: 'b',
     }).success).toBe(false);
     expect(PluginUiReplacePageLocationResultV1Schema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('qualified Machine display read', () => {
+  it('keeps the identity and disclosure envelopes closed and unknown Machines unavailable', () => {
+    const request = { serverId: 'home-a', machineId: 'machine-a' };
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.parse(request)).toEqual(request);
+    expect(PluginUiHostMethodV1Schema.parse('readMachineDisplayName')).toBe('readMachineDisplayName');
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ machineId: 'machine-a' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameRequestV1Schema.safeParse({ ...request, accountId: 'forged' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'ready', displayName: 'Studio' }))
+      .toEqual({ status: 'ready', displayName: 'Studio' });
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.parse({ status: 'unavailable' })).toEqual({ status: 'unavailable' });
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'unavailable', displayName: 'secret' }).success).toBe(false);
+    expect(PluginUiReadMachineDisplayNameResultV1Schema.safeParse({ status: 'ready', displayName: 'Studio', metadata: {} }).success).toBe(false);
   });
 });

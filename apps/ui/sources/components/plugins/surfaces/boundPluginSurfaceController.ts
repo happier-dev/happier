@@ -1,5 +1,13 @@
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { actionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
+import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import type { PluginUiActionOperationHostReadResultV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { createPluginSurfaceMachineDisplayNameHandler } from './pluginSurfaceMachineDisplayName';
+import { createPluginRevealSessionInputHostApiHandler } from './pluginRevealSessionInput';
 import { createPluginOpenAutomationEventHostApiHandler } from './pluginOpenAutomationEventHostApi';
 import * as React from 'react';
+import { createPluginSurfaceActionControls, type PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import { useUiSurfaceOwnerLifetime } from '@/components/plugins/hostApi/useUiSurfaceOwnerLifetime';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
@@ -403,6 +411,7 @@ export type BoundPluginSurfaceBinding = Readonly<{
 }>;
 
 export type BoundPluginSurfaceController = Readonly<{
+    actionControls?: PluginSurfaceActionControls;
     /** The one exact surface context for this mount. */
     surfaceContext: PluginUiSurfaceContextV1;
     hostApi: PluginSurfaceHostApiV1;
@@ -771,6 +780,7 @@ function omitControllerOwnedHostApiHandlers(
         publishCurrentUiContext: _ignoredCurrentUiContext,
         openConnectedAccounts: _ignoredConnectedAccounts,
         watchLiveStream: _ignoredLiveStream,
+        actionControl: _ignoredActionControl,
         ...retained
     } = handlers;
     return retained;
@@ -1169,8 +1179,16 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         }) : null;
     };
     let storedImages = createStoredImages();
+    const revealSessionInput = accountLifetime && !isOpenableContentViewer
+        ? createPluginRevealSessionInputHostApiHandler({ accountLifetime, lifetimeSignal: mountLifetime.signal, isCurrent })
+        : null;
+    const readMachineDisplayName = accountLifetime && !isOpenableContentViewer
+        ? createPluginSurfaceMachineDisplayNameHandler({ accountLifetime, isCurrent })
+        : null;
     const readHostApiMountedHandlers = (): PluginSurfaceHostApiHandlers => sessionHandlers
         ? {
+            ...(readMachineDisplayName ? { readMachineDisplayName } : {}),
+            ...(revealSessionInput ? { revealSessionInput } : {}),
             ...readMountedHostApiHandlers(),
             readSession: sessionHandlers.handlers.readSession,
             watchSession: sessionHandlers.handlers.watchSession,
@@ -1251,6 +1269,51 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         execute: binding?.executeHostAction ?? (homeFamilyScope ? scopedHomeActionExecutor(homeFamilyScope) : createFrontDoorActionExecute()),
         get context() { return readHostActionContext(); },
     };
+    const actionControls = callerBinding && homeFamilyScope && !isOpenableContentViewer
+        ? createPluginSurfaceActionControls({
+            pluginId: surfaceContext.pluginId, surfaceId: surfaceContext.surfaceId, hostAction,
+            signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
+            captureCurrentBinding: () => {
+                const authorityKey = readMachineAuthorityKey(readActionInputFacts());
+                return () => isInteractionCurrent() && authorityKey === readMachineAuthorityKey(readActionInputFacts());
+            },
+        }) : undefined;
+    const readOperationHostProjection = (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => {
+        if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'action.operations.get') {
+            throw Object.assign(new Error('Unsupported operation host read'), { code: 'unsupported_method', retryable: false });
+        }
+        const address = ActionOperationAddressV1Schema.parse(reference.input);
+        if (!accountLifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(address.serverId, accountLifetime.scope.serverId)) {
+            throw Object.assign(new Error('Operation Account is unavailable'), { code: 'plugin_resource_unavailable', retryable: false });
+        }
+        const projection = actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address);
+        return projection?.snapshot.scope.accountId === accountLifetime.scope.accountId
+            && projection.snapshot.scope.machineId === address.machineId ? projection : null;
+    };
+    const operationHostReadStore = accountLifetime && callerBinding && !isOpenableContentViewer
+        ? createPluginUiResourceStore({ accountLifetime, client: {
+            async readResource(reference) {
+                const projection = readOperationHostProjection(reference);
+                const result = { operation: projection?.snapshot ?? null,
+                    observation: projection?.observation ?? 'unavailable' } satisfies PluginUiActionOperationHostReadResultV1;
+                const bytes = new TextEncoder().encode(JSON.stringify(result));
+                return { contentType: 'application/json', bytes, digest: computePluginUiArtifactSha256DigestV1(bytes) };
+            },
+            async watchResource(reference, listener, options) {
+                let previous = readOperationHostProjection(reference);
+                const unwatch = actionOperationStore.subscribe(() => {
+                    if (!accountLifetime.isCurrent() || options?.signal?.aborted) return;
+                    const next = readOperationHostProjection(reference);
+                    if (next?.snapshot === previous?.snapshot && next?.observation === previous?.observation) return;
+                    previous = next;
+                    listener({ kind: 'invalidated' });
+                });
+                const dispose = () => { unwatch(); options?.signal?.removeEventListener('abort', dispose); };
+                options?.signal?.addEventListener('abort', dispose, { once: true });
+                if (options?.signal?.aborted) dispose();
+                return { dispose };
+            },
+        } }) : null;
     const hostReadResourceStore = accountLifetime && homeFamilyScope && callerBinding && hostAction.execute.prepare && !isOpenableContentViewer
         ? createPluginSurfaceHostReadStore({
             isCurrent: isInteractionCurrent,
@@ -1281,7 +1344,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                         hostAction, signal, isCurrent: isInteractionCurrent,
                     }, actionId);
                     if (!admission.ok) throw Object.assign(new Error(admission.reason), { code: admission.reason });
-                    return getUsageQueryResourceStore(account).getEntry(reference);
+                    return reference.hostRead === 'action.operations.get'
+                        ? operationHostReadStore!.getEntry(reference) : getUsageQueryResourceStore(account).getEntry(reference);
                 } finally { account.dispose(); }
             },
         }) : null;
@@ -1440,7 +1504,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ...(clientAction ? { clientAction } : {}),
         ...(daemon && binding?.openableContent ? { openableContent: binding.openableContent } : {}),
         ...(binding?.openSurface ? { openSurface: binding.openSurface } : {}),
-        readMountedHostApiHandlers: () => ({ ...readHostApiMountedHandlers(), ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}), ...(widgetArea ? { widgetArea } : {}) }),
+        readMountedHostApiHandlers: () => ({ ...readHostApiMountedHandlers(), ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}), ...(widgetArea ? { widgetArea } : {}), ...(actionControls ? { actionControl: actionControls.handleRequest } : {}) }),
         ...(disposeHostApiMountedHandlers
             ? { disposeMountedHostApiHandlers: disposeHostApiMountedHandlers }
             : {}),
@@ -1523,6 +1587,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         accountRetirement?.dispose();
         parentRetirement?.dispose();
         hostApi.dispose?.();
+        operationHostReadStore?.dispose();
         resourceStore?.dispose();
         resourceInvalidationListeners.clear();
     };
@@ -1572,6 +1637,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         applyComposer,
         openSurface,
         widgetArea: widgetAreaDispatch,
+        actionControls,
         isCurrent,
         onRetire,
         retire,
@@ -1597,6 +1663,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 declaredResourceStore = createDeclaredResourceStore();
                 resourceStore = hostReadResourceStore ?? declaredResourceStore;
                 if (authorityChanged) {
+                    actionControls?.invalidatePreparations();
                     liveStreams?.dispose();
                     storedImages?.dispose();
                     liveStreams = createLiveStreams();

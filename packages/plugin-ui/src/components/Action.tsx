@@ -18,6 +18,8 @@ import {
 import { Button, type ButtonVariant } from './Button.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
+import { ActionControl } from './ActionControl.js';
+export type { ActionControlProps } from './ActionControl.js';
 
 /**
  * The action family (§3.9) — how anything a plugin surface offers actually
@@ -262,6 +264,7 @@ ActionRefresh.happierInlineControl = true as const;
  * inert.
  */
 export const Action = Object.freeze({
+  Control: ActionControl,
   Execute: ActionExecute,
   Copy: ActionCopy,
   OpenExternal: ActionOpenExternal,

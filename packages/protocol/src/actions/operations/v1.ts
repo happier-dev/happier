@@ -1,3 +1,4 @@
+import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
@@ -5,7 +6,7 @@ import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineVitalsHostFactsV1Schema } from '../../machines/vitals/machineVitalsSampleV1.js';
 import { MachineSudoPasswordPromptV1Schema, MachineElevationFailureV1Schema } from '../../machines/adminAccessV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
 import { z } from 'zod/mini';
 
@@ -568,3 +569,5 @@ export const ManagedMachineBootstrapEstablishPromptV1Schema = lazyZodSchema(() =
 export type ManagedMachineBootstrapEstablishPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapEstablishPromptV1Schema>>;
 
 export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;
+
+export const ActionOperationGetV1ResponseProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ActionOperationGetV1ResponseSchema));

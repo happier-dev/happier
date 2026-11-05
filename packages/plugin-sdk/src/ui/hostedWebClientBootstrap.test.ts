@@ -1,3 +1,4 @@
+import { isRecord } from '../identity.js';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
@@ -101,6 +102,45 @@ function readyAcknowledgementMessage(input: Readonly<{
 }
 
 describe('hosted-web UI client bootstrap', () => {
+    it('isolates old and current SDK negotiations while sharing the same document lifecycle', async () => {
+        const harness = createRealm();
+        expect(installHostedWebPluginUiHostApiClientBootstrap(harness.realm)).toBe(true);
+        harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: bootstrapMessage() });
+        const bootstrap = await awaitHostedWebPluginUiHostApiClientBootstrap(harness.realm);
+        const legacy = vi.fn();
+        const current = vi.fn();
+        bootstrap.transport.subscribe(legacy);
+        bootstrap.transport.send({ wireVersion: 1, identity, kind: 'negotiate', apiRange: '^1.0.0' });
+        bootstrap.transport.subscribe(current);
+        expect(() => bootstrap.transport.send({ wireVersion: 1, identity, kind: 'negotiate', apiRange: '^1.1.0' })).not.toThrow();
+        const answer = (apiVersion: string, methods: string[]) => {
+            const request = harness.posted.map(item => PluginHostedWebBridgeEnvelopeV1Schema.parse(item.message))
+                .find(envelope => envelope.kind === 'hostApi' && isRecord(envelope.payload)
+                    && Reflect.get(envelope.payload, 'apiRange') === `^${apiVersion}`);
+            if (!request) throw new Error('Missing client negotiation');
+            harness.dispatch({ source: harness.parent, origin: 'https://host.test', data: {
+                version: 1, identity, sequence: 7, requestSequence: request.sequence, kind: 'result',
+                payload: { wireVersion: 1, identity, kind: 'negotiated', apiVersion, methods },
+            },
+            });
+        };
+        answer('1.1.0', ['context', 'actionControl']);
+        expect(current).toHaveBeenCalledWith(expect.objectContaining({ apiVersion: '1.1.0', methods: ['context', 'actionControl'] }));
+        expect(legacy).not.toHaveBeenCalled();
+        answer('1.0.0', ['context']);
+        expect(legacy).toHaveBeenCalledWith(expect.objectContaining({ apiVersion: '1.0.0', methods: ['context'] }));
+        expect(legacy).toHaveBeenCalledTimes(1);
+        const lateLegacy = vi.fn();
+        bootstrap.transport.subscribe(lateLegacy);
+        bootstrap.transport.send({ wireVersion: 1, identity, kind: 'negotiate', apiRange: '^1.0.0' });
+        expect(lateLegacy).toHaveBeenCalledWith(expect.objectContaining({ apiVersion: '1.0.0', methods: ['context'] }));
+        const requests = harness.posted.map(item => PluginHostedWebBridgeEnvelopeV1Schema.parse(item.message))
+            .filter(envelope => envelope.kind === 'hostApi' && isRecord(envelope.payload)
+                && Reflect.get(envelope.payload, 'kind') === 'negotiate');
+        expect(requests).toHaveLength(2);
+    });
+
+
     it('projects only semantic 1.0 context presentation, including observed context updates', async () => {
         // The installed generation's strict theme reader rejects statusTint:
         // ownerfix-iteration2-old-context-admission.json pins the real refusal.

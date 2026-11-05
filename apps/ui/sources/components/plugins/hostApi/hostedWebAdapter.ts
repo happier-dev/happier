@@ -1,3 +1,4 @@
+import { PluginUiActionControlEventV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
@@ -131,6 +132,7 @@ export type PluginHostedWebHostMessageSink = (
  */
 const HOSTED_WEB_PRODUCED_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
     [
+        'actionControl',
         'watchContext',
         'watchResource',
         'watchComposer',
@@ -142,6 +144,7 @@ const HOSTED_WEB_PRODUCED_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
 );
 const HOSTED_WEB_HOST_RESOURCE_SUBSCRIPTION_METHODS = new Set<PluginUiHostMethodV1>(
     [
+        'actionControl',
         'watchResource',
         'watchComposer',
         'acquireComposerInputLock',
@@ -694,6 +697,19 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     requestId: `${params.requestIdPrefix}:canonical:${message.requestId}`,
                     method: message.method,
                     payload: requestPayload,
+                    ...(message.method === 'actionControl' ? { options: { actionControlSubscription: {
+                        retain: (release: () => void) => {
+                            const state = hostResourceState(message.subscriptionId);
+                            if (disposed || !isCurrent() || (state !== 'pending' && state !== 'active')) { release(); return; }
+                            hostResourceSubscriptions.set(message.subscriptionId, { state, release });
+                        },
+                        publish: (event: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1) => {
+                            if (!isPublishableHostResourceState(hostResourceState(message.subscriptionId))) return;
+                            const parsed = PluginUiActionControlEventV1Schema.parse(event);
+                            pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({ wireVersion: 1, kind: 'subscription',
+                                identity: binding.identity, subscriptionId: message.subscriptionId, event: parsed }));
+                        },
+                    } } } : {}),
                     ...(message.method === 'watchEntityDragDrop' ? { options: { entityDragDropSubscription: {
                         retain: (release: () => void) => { hostResourceSubscriptions.set(message.subscriptionId, { state: 'pending', release }); },
                         publish: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => {

@@ -1,3 +1,4 @@
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import type { PublicActionInputById } from '../actions/actionSpecs.js';
 import { z } from 'zod/mini';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '../plugins/actions/jsonSchemaValidation.js';
@@ -25,6 +26,11 @@ function isInputOptionAvailable(value: unknown, options: readonly Pick<InputOpti
 export function validateHostInputTypeValue(reference: HostInputTypeReferenceV1, value: unknown, options?: readonly InputOption[]): ReturnType<typeof validateInputTypeValue> {
   if (options && !isInputOptionAvailable(value, options)) {
     return { status: 'invalid', reasonCode: 'input_type_option_invalid' };
+  }
+  if (reference.hostType === 'savedSecretReference') {
+    const selected = SharedSavedSecretReferenceSelectionV1Schema.safeParse(value);
+    return selected.success ? { status: 'valid', value: selected.data }
+      : { status: 'invalid', reasonCode: 'input_type_value_invalid' };
   }
   if (reference.hostType === 'usageQuery') {
     if (reference.field) {

@@ -7792,3 +7792,15 @@ and runs after the existing approval visibility admission. Older controllers
 without the observation method leave the outcome unknown. Relationship listing
 and conflict reads use Account placement; their WorkspaceRef or relationship
 selects the controller without requiring a Session execution target.
+
+In unreleased 0.3 Plugin UI source, `Action.Control` binds a host-rendered control
+to an Action reference and controller. Its button is physically owned by the mounted
+host on native and hosted-web, including details panes. A press asks that controller
+to freshly prepare one invocation; the host then executes it with `surface: 'ui'`,
+`authority: 'present_user'` and a host caller. The plugin never receives that authority.
+Its ordinary `executeAction` and `Action.Execute` requests remain plugin automation.
+The canonical approval policy therefore keeps direct person-UI compute distinct from
+Agent, MCP and raw plugin defaults, while explicit Settings Ask and setup consent
+continue to apply. Allowing a Project preference does not run its command. Settlement
+returns the existing Action envelope to the preparing controller; an uncertain
+acceptance is never retried automatically. See [mounted host Action controls](plugin-platform.md#mounted-host-action-controls-03-development).

@@ -233,3 +233,20 @@ export { defineHostedWebBridgeMessage } from './hostedWeb.js';
 export type { PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1 } from './hostApi.js';
 
 export type { PluginDeclarativeDataFieldV1 } from './declarativeData.js';
+
+export type {
+    PluginUiActionControlEventV1,
+    PluginUiActionControlRequestV1,
+    PluginUiActionControlExecutionV1,
+    PluginUiActionControlPreparationV1,
+    PluginUiActionControlPresentationV1,
+} from './publicContract.js';
+export type {
+    PluginUiActionControl,
+    PluginUiActionControlController,
+    PluginUiActionControlExecution,
+    PluginUiActionControlPreparation,
+    PluginUiActionControlPresentation,
+} from './hostApi.js';
+
+export type { PluginUiRevealSessionInputRequestV1, PluginUiReadMachineDisplayNameRequestV1, PluginUiReadMachineDisplayNameResultV1, ReadMachineDisplayNameRequest, ReadMachineDisplayNameResult, RevealSessionInputRequest } from './hostApi.js';

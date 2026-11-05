@@ -3,7 +3,6 @@ import type { HappierMarkdownRenderInput } from '@happier-dev/plugin-ui/presenta
 import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { useWorkspaceRefById } from '@/components/projects/detail/useWorkspaceRefById';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
@@ -19,18 +18,13 @@ function SessionMarkdown({ input, sessionId, serverId }: Readonly<{ input: Happi
     return <MarkdownContent input={input} scope={scope} />;
 }
 
-function ProjectMarkdown({ input, workspaceRefId, serverId }: Readonly<{ input: HappierMarkdownRenderInput; workspaceRefId: string; serverId: string }>) {
-    const scope = useWorkspaceRefById(workspaceRefId, serverId);
-    return <MarkdownContent input={input} scope={scope} />;
-}
-
 /** Resolve only the host-admitted target, and subscribe only while a plugin actually renders images. */
 export function PluginUiMarkdown({ input, workspace }: Readonly<{ input: HappierMarkdownRenderInput; workspace?: PluginMarkdownWorkspace }>) {
     if (input.images && workspace?.target.kind === 'session') {
         return <SessionMarkdown input={input} sessionId={workspace.target.sessionId} serverId={workspace.serverId} />;
     }
-    if (input.images && workspace?.target.kind === 'project') {
-        return <ProjectMarkdown input={input} workspaceRefId={workspace.target.projectId} serverId={workspace.serverId} />;
+    if (input.images && workspace?.target.kind === 'project' && workspace.target.checkout) {
+        return <MarkdownContent input={input} scope={workspace.target.checkout} />;
     }
     return <MarkdownContent input={input} />;
 }

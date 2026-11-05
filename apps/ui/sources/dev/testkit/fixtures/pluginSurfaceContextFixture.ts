@@ -3,6 +3,14 @@ import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { createPluginSurfaceContext } from '@/components/plugins/surfaces/pluginSurfaceContext';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { lightTheme } from '@/theme';
+import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { readProjectWidgetAreaContextV1, type ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+
+/** Project mount fixtures cross the real ref ingress and canonical context producer. */
+export function createPluginProjectContextFixture(overrides: Partial<WorkspaceRefV1> = {}): ProjectWidgetAreaContextV1 {
+    const checkout = WorkspaceRefV1Schema.parse({ id: 'project-1', serverId: 'server_1', machineId: 'machine_1', rootPath: '/repo', createdAtMs: 1, ...overrides });
+    return readProjectWidgetAreaContextV1({ serverId: checkout.serverId, projectRef: checkout, activeCheckout: checkout });
+}
 
 /**
  * A public `SurfaceContext` built through the REAL context and theme owners, so

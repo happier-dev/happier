@@ -1,3 +1,5 @@
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { PluginUiHostApiSurfaceContextV1Schema, type PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import { act } from 'react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -6,7 +8,7 @@ import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/plugin
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storage';
 
-import { createPluginSurfaceContext, usePluginSurfaceEnvironment } from './pluginSurfaceContext';
+import { createPluginSurfaceContext, getPluginSurfaceTargetAuthorityKey, resolvePluginSurfaceTarget, usePluginSurfaceEnvironment } from './pluginSurfaceContext';
 
 const targetedContributions: PluginUiTargetedContributionsV1 = {
     target: {
@@ -18,6 +20,27 @@ const targetedContributions: PluginUiTargetedContributionsV1 = {
 };
 
 describe('createPluginSurfaceContext', () => {
+    it('publishes the canonical logical Project target through the public context reader', () => {
+        const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout-address', projectKey: 'logical-project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
+            futurePrivateFact: 'not disclosed', source: { sourceId: 'source', revision: 1, futurePrivateFact: 'not disclosed' },
+            repositoryIdentity: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo', futurePrivateFact: 'not disclosed' } });
+        const read = readProjectWidgetAreaContextV1({ serverId: 'home', activeCheckout: checkout });
+        const resolution = resolvePluginSurfaceTarget({ targetKind: 'project', project: read.target });
+        expect(resolution).toEqual({ resolved: true, target: read.target });
+        if (!resolution.resolved) throw new Error('Project identity was not resolved');
+        expect(resolution.target).toBe(read.target);
+        const fixture = createPluginSurfaceContextFixture();
+        const published = createPluginSurfaceContext({ mount: fixture.mount, target: resolution.target,
+            accountEncryptionMode: fixture.accountEncryptionMode, environment: { ...fixture, columnVisible: false }, translations: fixture.translations });
+        expect(PluginUiHostApiSurfaceContextV1Schema.parse(published).target).toEqual(read.target);
+        expect(checkout).not.toHaveProperty('futurePrivateFact');
+        expect(checkout.source).not.toHaveProperty('futurePrivateFact');
+        expect(checkout.repositoryIdentity).not.toHaveProperty('futurePrivateFact');
+        const anotherCheckout = readProjectWidgetAreaContextV1({ serverId: 'home', activeCheckout: { ...checkout, id: 'another-checkout', rootPath: '/other' } }, read);
+        expect(anotherCheckout.target).not.toBe(read.target);
+        expect(getPluginSurfaceTargetAuthorityKey(anotherCheckout.target!)).toBe(getPluginSurfaceTargetAuthorityKey(read.target!));
+        expect(resolvePluginSurfaceTarget({ targetKind: 'project', project: null })).toEqual({ resolved: false, reason: 'project_target_identity_unavailable' });
+    });
     it('freezes host-owned surface facts while fresh changed publications leave previous content intact', () => {
         const fixture = createPluginSurfaceContextFixture();
         const translations = { title: 'Original' };

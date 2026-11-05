@@ -48,7 +48,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'ApprovalPrompt', 'ApprovalPendingNotice', 'Timeline',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
   'Button', 'IconButton',
-  'Action.Execute', 'Action.Copy', 'Action.OpenExternal', 'Action.OpenSurface', 'Action.Refresh',
+  'Action.Control', 'Action.Execute', 'Action.Copy', 'Action.OpenExternal', 'Action.OpenSurface', 'Action.Refresh',
   'ActionPanel', 'ActionPanel.Section',
   'List', 'List.Section', 'List.Item', 'Item', 'ItemGroup', 'ItemAddRow',
   'CountedDisclosureItem', 'TechnicalDetailsDisclosure',

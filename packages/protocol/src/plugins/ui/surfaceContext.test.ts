@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PluginUiHostApiSurfaceContextV1Schema,
+  PluginUiHostApiSurfaceTargetV1Schema,
   PluginUiMountContextV1Schema,
   PluginUiSurfaceContextV1Schema,
   PluginUiSurfacePlacementV1Schema,
@@ -9,6 +10,24 @@ import {
 import { PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 } from '../contributions/ui/surfaceRegistry.js';
 
 describe('plugin UI surface context', () => {
+  it('discloses canonical Project identity and accepted context through a closed target', () => {
+    const target = { kind: 'project', projectKey: 'logical-project',
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/repo' },
+      source: { serverId: 'home', source: { id: 'source', revision: 1, name: 'Repo', audience: [], createdByAccountId: 'owner',
+        repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+          repository: { nameWithOwner: 'acme/repo', cloneUrl: 'https://github.com/acme/repo.git', visibility: 'private' }, protocol: 'https' } } },
+      checkout: { id: 'checkout', serverId: 'home', machineId: 'offline', rootPath: '/repo', createdAtMs: 1 } };
+    expect(PluginUiHostApiSurfaceTargetV1Schema.parse(target)).toMatchObject(target);
+    expect(PluginUiHostApiSurfaceTargetV1Schema.parse({ kind: 'project', projectKey: 'logical-project' }))
+      .toEqual({ kind: 'project', projectKey: 'logical-project' });
+    for (const candidate of [{ kind: 'project', projectId: 'checkout' }, { ...target, projectId: 'checkout' },
+      { ...target, source: { serverId: 'home', source: {} } },
+      { ...target, source: { ...target.source, credentials: 'secret' } },
+      { ...target, repository: { ...target.repository, credentials: 'secret' } },
+      { ...target, checkout: { ...target.checkout, futureAuthority: true } }]) {
+      expect(PluginUiHostApiSurfaceTargetV1Schema.safeParse(candidate).success).toBe(false);
+    }
+  });
   it('owns the complete strict author-facing Host API context separately from the private request key', () => {
     const surface = {
       mount: {
@@ -60,6 +79,10 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...surface, mountId: 'physical-renderer-instance' }))
+      .toHaveProperty('mountId', 'physical-renderer-instance');
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).not.toHaveProperty('mountId');
+    expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...surface, mountId: '   ' }).success).toBe(false);
     const accountScope = { serverId: 'home-a', accountId: 'viewer-a' };
     expect(PluginUiHostApiSurfaceContextV1Schema.parse({ ...surface, accountScope }).accountScope).toEqual(accountScope);
     for (const invalid of [{ serverId: '', accountId: 'viewer-a' }, { serverId: 'home-a' }, { ...accountScope, grant: 'writer' }]) {

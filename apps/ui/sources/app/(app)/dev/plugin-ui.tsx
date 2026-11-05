@@ -213,6 +213,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
             wireVersion: 1,
             methods: ['context', 'watchContext'],
         }),
+        actionControl: async () => {
+            throw Object.assign(new Error('Host Action controls are unavailable in this gallery'), { code: 'unsupported_method' });
+        },
         context: async () => current,
         widgetArea: async () => {
             throw new Error('dev surface has no Widget area');
@@ -290,7 +293,11 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         releaseComposerContent: async () => {
             throw new Error('dev surface has no Composer');
         },
+        revealSessionInput: async () => {
+            throw new Error('dev surface cannot reveal Session input');
+        },
         readSession: async () => null,
+        readMachineDisplayName: async () => ({ status: 'unavailable' }),
         readEntityDragItem: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         updateEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },
         watchEntityDragDrop: async () => { throw new Error('dev surface has no mounted entity runtime'); },

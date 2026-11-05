@@ -65,3 +65,5 @@ export const ProjectKeyV1Schema = lazyZodSchema(() => z.union([
   QualifiedProjectKeyV1Schema,
 ]));
 export type ProjectKeyV1 = z.infer<typeof ProjectKeyV1Schema>;
+
+export const WorkspaceAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceAddressV1Schema));

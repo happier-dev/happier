@@ -1,7 +1,8 @@
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { z } from 'zod/mini';
 
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { MachinePoolIdV1Schema } from '../machines/pools/v1.js';
 import { ProjectServicePlacementV1Schema } from './projectServicePlacementV1.js';
 
@@ -181,3 +182,9 @@ export function resolveProjectExecutionChoiceV1(input: Readonly<{
   }
   return { status: 'resolved', choice: { kind: 'primary' }, provenance: 'default' };
 }
+
+export const WorkspaceExecutionConfigAddressV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceExecutionConfigAddressV1Schema));
+
+export const WorkspaceWorkerPreferenceReadResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceReadResultV1Schema));
+
+export const WorkspaceWorkerPreferenceMutationResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceMutationResultV1Schema));

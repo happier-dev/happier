@@ -1,3 +1,5 @@
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -75,11 +77,24 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     /** Only a rendered Run-on selector needs the full Machine label projection. */
     includeMachineCandidates?: boolean;
     contextualTarget?: PluginExecutionOriginContextualTarget | null;
+    surfaceTarget?: PluginUiHostApiSurfaceTargetV1 | null;
 }>) {
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier(params.pluginId);
     // Selection is plugin-scoped, just like the shell's Administration
     // reporter. The open page narrows only the selected producer's supply,
     // never the candidates or defaults used to choose that producer.
+    const checkout = params.surfaceTarget?.kind === 'project' ? params.surfaceTarget.checkout : undefined;
+    const projectMachineId = checkout?.machineId;
+    const projectServerIdentityId = checkout ? resolvePortableServerIdentityForRoutingId(checkout.serverId) : null;
+    const projectTarget = React.useMemo(() => {
+        if (!projectMachineId) return undefined;
+        return projectServerIdentityId ? { serverIdentityId: projectServerIdentityId, machineId: projectMachineId } : null;
+    }, [projectServerIdentityId, projectMachineId]);
+    // The accepted checkout supplies an initial target, never executable
+    // authority. Administration admits its actual installation and custody.
+    const contextualTarget = params.contextualTarget !== undefined ? params.contextualTarget : projectTarget;
+    // Uncontextual selection is plugin-scoped, like the shell's Administration
+    // reporter. An accepted contextual target uses that same selection owner.
     const readCurrentCandidates = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(params.pluginId), [params.pluginId]);
     const supplied = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readCurrentCandidates, readCurrentCandidates);
     const readSourceCandidates = React.useCallback(() => readCurrentCandidates().sourceCandidates, [readCurrentCandidates]);
@@ -89,7 +104,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         pluginId: params.pluginId, enabled: params.enabled, classifyRelease,
         includeMachineCandidates: params.includeMachineCandidates,
         ...supplied, readSourceCandidates, readMachineRejections, readDeclaredDefaultOrigins,
-        contextualTarget: params.contextualTarget,
+        contextualTarget,
     });
     const selectedSupplyFromSelection = React.useMemo(() => selection.selectedOrigin
         ? readPluginUiContributionSupplies(params.entry).find(supply => supply.executionOrigin

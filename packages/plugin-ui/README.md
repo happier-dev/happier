@@ -529,3 +529,48 @@ record of the public surface, and an author reads `API.md` from
 `src/**`, test, fixture, or config file is included. Feature QA proves this
 selection through source-owned inclusion tests and does not create or install a
 local release archive.
+
+### Host-rendered Action controls (0.3 development source)
+
+Use `Action.Control` when a person's host-owned button must freshly prepare an
+invocation through your existing controller:
+
+```tsx
+<Action.Control
+  action="projects.compute.exec"
+  titleKey="localRun.run"
+  disabled={!canRun}
+  controller={runController}
+  signal={renderContext.signal}
+  fallback={<Text valueKey="localRun.controlUnavailable" />}
+/>
+```
+
+`runController.prepare({signal})` returns `{input}` after current validation, or
+`null` to cancel. `runController.onSettled(execution)` receives the full canonical
+Action envelope, including pending approval, operation identity and unknown failure
+details. A controller replacement during a run does not take settlement away from
+the controller that prepared it. Preparation must honor cancellation; never replay
+an uncertain acceptance.
+
+The component registers the control in the mounted host's action slot; it renders
+no author-owned button. The host uses its existing button on native and hosted-web,
+outside the iframe, including `detailsPane` destinations. `title` / `titleKey`,
+`variant` and `disabled` update presentation without rebinding a running operation.
+Unsupported hosts show `fallback` and call optional `onUnavailable(error)`. The SDK
+`hostApi.actionControl` supplies the same binding directly for non-React authors;
+dispose its handle on cleanup. It exposes only `update(presentation)` and `dispose()`.
+
+For author tests, install `handlers.actionControl` in the existing SDK
+`createPluginUiTestkit`. The handler receives `{request, signal, publish}`: retain
+`publish` on `bind`, emit `{kind:'prepare', requestId}` to request preparation, then
+answer the corresponding `prepared` request with
+`{kind:'settled', requestId, execution}`. A bind handler may return a `Disposable`;
+subscription or fixture retirement aborts its signal and releases it. This tests
+the public controller transport, not physical person authority; that remains a
+mounted-host test.
+
+Ordinary `Action.Execute` and `useExecutePluginAction` retain plugin-automation
+authority. A host control grants no waiver: explicit Ask and setup consent stay
+effective, and Allow for a Project must remain a separate control from Run. See the
+[canonical ownership contract](../../docs/plugin-platform.md#mounted-host-action-controls-03-development).

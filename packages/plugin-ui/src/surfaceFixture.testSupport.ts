@@ -35,6 +35,7 @@ export function createHostApiStub(
   return {
     version: () => ({ apiVersion: PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.ui.hostApiVersion, wireVersion: 1, methods: [] }),
     context: async () => context,
+    actionControl: async () => unsupportedHostMethod(),
     widgetArea: async () => unsupportedHostMethod(),
     readEntityDragItem: async () => unsupportedHostMethod(),
     updateEntityDragDrop: async () => unsupportedHostMethod(),
@@ -71,6 +72,8 @@ export function createHostApiStub(
     inspectComposerContent: async () => unsupportedHostMethod(),
     releaseComposerContent: async () => unsupportedHostMethod(),
     readSession: async () => unsupportedHostMethod(),
+    readMachineDisplayName: async () => ({ status: 'unavailable' }),
+    revealSessionInput: async () => unsupportedHostMethod(),
     readStoredImage: async () => unsupportedHostMethod(),
     watchSession: async () => unsupportedHostMethod(),
     watchLiveStream: async () => unsupportedHostMethod(),

@@ -142,6 +142,114 @@ const FACTS = {
 const TARGETED_RESOURCE_MOUNT_INSTANCE_KEY = 'targeted-surface:v1:review:mount-a';
 
 describe('mounted host Resource admission', () => {
+    it('withdraws a pending host preparation when the mounted Machine binding changes', async () => {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({}));
+        const binding = { executeHostAction: executor.execute };
+        let machineId = 'machine_1';
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, readActionInputFacts: () => ({ machineId }) }, binding,
+        });
+        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+        let pending: Promise<void> | undefined;
+        try {
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: () => {}, publish: event => { events.push(event); },
+            } });
+            pending = controller.actionControls!.press('run');
+            expect(events[0]).toMatchObject({ kind: 'prepare' });
+            machineId = 'machine_2';
+            expect(controller.updateMountedBindings?.({})).toBe(true);
+            await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'settled',
+                execution: { ok: false, errorCode: 'stale_surface' } }));
+            await pending;
+            expect(controller.actionControls!.getSnapshot()).toMatchObject([{ id: 'run', busy: false }]);
+        } finally { controller.dispose(); await pending; }
+    });
+    it('prepares one person invocation from a mounted host control while raw requests retain approval', async () => {
+        let launches = 0;
+        const setupHold = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' } as const;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectAction: async () => { launches += 1; return setupHold; },
+        }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS,
+            binding: { executeHostAction: executor.execute } });
+        try {
+            expect(controller.installedMethods).toContain('actionControl');
+            const input = { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                executable: 'act', argv: ['--rm=true', '--reuse=false'], cwd: '/work' };
+            const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+            let prepared = 0;
+            const release: (() => void)[] = [];
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: cleanup => release.push(cleanup),
+                publish: event => {
+                    events.push(event);
+                    if (event.kind === 'prepare') {
+                        prepared += 1;
+                        void controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
+                            requestId: event.requestId, preparation: { input } }));
+                    }
+                },
+            } });
+            expect(launches).toBe(0);
+            expect(prepared).toBe(0);
+            const snapshot = controller.actionControls!.getSnapshot();
+            const publication = vi.fn();
+            const unsubscribe = controller.actionControls!.subscribe(publication);
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'update', subscriptionId: 'run', presentation: { title: 'Run' } }));
+            expect(controller.actionControls!.getSnapshot()).toBe(snapshot);
+            expect(publication).not.toHaveBeenCalled();
+            unsubscribe();
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'prepared', subscriptionId: 'run',
+                requestId: 'forged', preparation: { input } }));
+            expect(launches).toBe(0);
+            await expect(controller.hostApi.handleRequest(request('executeAction', { action: 'projects.compute.exec', input })))
+                .resolves.toMatchObject({ code: 'unavailable', diagnostics: ['approvals_not_supported'] });
+            await controller.actionControls!.press('run');
+            expect(prepared).toBe(1);
+            expect(launches).toBe(1);
+            expect(events.at(-1)).toMatchObject({ kind: 'settled', execution: { ok: true, result: setupHold } });
+            release.forEach(cleanup => cleanup());
+            expect(controller.actionControls!.getSnapshot()).toHaveLength(0);
+        } finally { controller.dispose(); }
+    });
+    it.each(['cancel', 'misbound', 'retire'] as const)('never executes a withdrawn or mis-bound host preparation (%s)', async disposition => {
+        let effects = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectAction: async () => { effects += 1; return { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup' }; },
+        }));
+        const controller = createBoundPluginSurfaceController({ facts: FACTS, binding: { executeHostAction: executor.execute } });
+        const events: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1[] = [];
+        try {
+            await controller.hostApi.handleRequest(request('actionControl', { kind: 'bind', subscriptionId: 'run',
+                action: 'projects.compute.exec', presentation: { title: 'Run' } }), { actionControlSubscription: {
+                retain: () => {}, publish: event => { events.push(event); },
+            } });
+            const pending = controller.actionControls!.press('run');
+            const event = events[0]!;
+            if (event.kind !== 'prepare') throw new Error('Host did not request preparation');
+            const reply = { kind: 'prepared', subscriptionId: 'run', requestId: event.requestId,
+                preparation: { input: { workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                    executable: 'act', argv: [], cwd: '/work' } } };
+            if (disposition === 'retire') {
+                controller.retire();
+                expect(await controller.hostApi.handleRequest(request('actionControl', reply))).toMatchObject({ code: 'stale_surface' });
+                controller.dispose();
+            } else {
+                if (disposition === 'misbound') {
+                    expect(await controller.hostApi.handleRequest(request('actionControl', { ...reply, requestId: 'other-gesture' })))
+                        .toMatchObject({ code: 'invalid_payload' });
+                    expect(effects).toBe(0);
+                }
+                await controller.hostApi.handleRequest(request('actionControl', { ...reply, preparation: null }));
+            }
+            await pending;
+            expect(effects).toBe(0);
+            expect(events.filter(event => event.kind === 'settled')).toEqual([]);
+        } finally { controller.dispose(); }
+    });
     it('distinguishes complete current full-describe Resource sets from absent, partial and retired sources', async () => {
         const installed = { ...widgetInstalledPackage('acme.browser', 'Browser'), occurrenceId: FACTS.occurrenceId };
         const orphanRows = { 'acme.browser/stale': {

@@ -89,6 +89,13 @@ export const PluginUiOpenAutomationEventRequestV1Schema = lazyZodSchema(() => z.
 }));
 export type PluginUiOpenAutomationEventRequestV1 = z.infer<typeof PluginUiOpenAutomationEventRequestV1Schema>;
 
+/** The mounted Account supplies Home authority; author input supplies only an exact lookup key. */
+export const PluginUiRevealSessionInputRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  sessionId: asProtocolZod(SessionIdSchema),
+  localId: PendingLocalIdSchema,
+}));
+export type PluginUiRevealSessionInputRequestV1 = z.infer<typeof PluginUiRevealSessionInputRequestV1Schema>;
+
 export {
   PLUGIN_UI_INSTANCE_KEY_MAX_UTF8_BYTES_V1,
   PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
@@ -335,6 +342,19 @@ export type PluginUiReadSessionRequestV1 = z.infer<typeof PluginUiReadSessionReq
 /** `null` is a Session this Account's client cannot reach, never an error. */
 export const PluginUiReadSessionResultV1Schema = lazyZodSchema(() => z.nullable(PluginUiSessionStateV1Schema));
 export type PluginUiReadSessionResultV1 = z.infer<typeof PluginUiReadSessionResultV1Schema>;
+
+/** Qualified presentation lookup only; Account authority belongs to the mounted host. */
+export const PluginUiReadMachineDisplayNameRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: z.string().check(z.trim(), z.minLength(1)),
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+}));
+export type PluginUiReadMachineDisplayNameRequestV1 = z.infer<typeof PluginUiReadMachineDisplayNameRequestV1Schema>;
+/** Unknown or out-of-scope identities disclose no Machine content. */
+export const PluginUiReadMachineDisplayNameResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('ready'), displayName: z.string() }),
+  z.strictObject({ status: z.literal('unavailable') }),
+]));
+export type PluginUiReadMachineDisplayNameResultV1 = z.infer<typeof PluginUiReadMachineDisplayNameResultV1Schema>;
 
 /**
  * A Session watch is the same bounded invalidation signal as `watchResource`:

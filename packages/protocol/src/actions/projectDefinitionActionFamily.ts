@@ -1,7 +1,8 @@
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
 export { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
 import { z } from 'zod/mini';
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectManifestFileBasisV1Schema, ProjectManifestFileSnapshotSchema, ProjectManifestUpdateResultSchema } from '../workspaces/projectSetup/projectManifestDocument.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -90,3 +91,5 @@ export const PROJECT_DEFINITION_ACTION_SPECS = [
 export function isProjectDefinitionActionId(value: string): value is ProjectDefinitionActionId {
   return (PROJECT_DEFINITION_ACTION_IDS as readonly string[]).includes(value);
 }
+
+export const ProjectDefinitionInspectOutputProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(ProjectDefinitionInspectOutputSchema));

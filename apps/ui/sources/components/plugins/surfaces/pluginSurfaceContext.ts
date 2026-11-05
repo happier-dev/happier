@@ -1,3 +1,4 @@
+import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -71,8 +72,8 @@ export type PluginSurfaceTargetFacts = Readonly<{
     targetKind: PluginSurfaceTargetKind | null;
     sessionId?: string | null;
     agentId?: string | null;
-    /** Exact WorkspaceRef.id for checkout grants, never the stable presentation projectKey. */
-    projectId?: string | null;
+    /** Supplied by the canonical admitted Project context, never a checkout-address alias. */
+    project?: ProjectSurfaceTargetV1 | null;
     browserTarget?: BrowserViewTargetV1 | null;
 }>;
 
@@ -157,9 +158,8 @@ export function resolvePluginSurfaceTarget(
             return resolvedTarget({ kind: 'session', sessionId, ...(agentId ? { agentId } : {}) });
         }
         case 'project': {
-            const projectId = readId(facts.projectId);
-            return projectId
-                ? resolvedTarget({ kind: 'project', projectId })
+            return facts.project && readId(facts.project.projectKey)
+                ? Object.freeze({ resolved: true as const, target: facts.project })
                 : unresolvedTarget('project_target_identity_unavailable');
         }
         case 'browser': {
@@ -195,7 +195,9 @@ export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget):
         case 'session':
             return JSON.stringify([target.kind, target.sessionId, target.agentId ?? null]);
         case 'project':
-            return JSON.stringify([target.kind, target.projectId]);
+            // Account/Home and exact-checkout resource authority have their own
+            // lifetimes. Enrichment does not replace the logical Project page.
+            return JSON.stringify([target.kind, target.projectKey]);
         case 'browser':
             return JSON.stringify([target.kind, target.targetId, target.origin ?? null]);
     }

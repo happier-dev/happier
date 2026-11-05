@@ -8124,7 +8124,7 @@ export type ActionInputFieldHint = {
         hostType: 'usageQuery';
         field?: 'session' | 'period' | undefined;
     } | {
-        hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
     } | undefined;
     contextMode?: 'follow' | 'own' | undefined;
     required?: boolean | undefined;
@@ -8205,7 +8205,7 @@ export type ActionInputHints = {
             hostType: 'usageQuery';
             field?: 'session' | 'period' | undefined;
         } | {
-            hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
         } | undefined;
         contextMode?: 'follow' | 'own' | undefined;
         required?: boolean | undefined;
@@ -8278,7 +8278,7 @@ export type EffectiveActionInputField = {
         hostType: 'usageQuery';
         field?: 'session' | 'period' | undefined;
     } | {
-        hostType: 'workspace' | 'session' | 'machine' | 'agentParticipant';
+        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
     } | undefined;
     contextMode?: 'follow' | 'own' | undefined;
     required?: boolean | undefined;

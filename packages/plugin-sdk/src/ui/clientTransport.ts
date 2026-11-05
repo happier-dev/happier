@@ -1,3 +1,5 @@
+import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenConnectedAccountsResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
@@ -7,6 +9,8 @@ import { ComposerContentHandleV1Schema, ComposerContentInspectWireResultV1Schema
 import { OpenableContentReadResultV1Schema, OpenableContentStatResultV1Schema } from '@happier-dev/protocol/plugins/openableContent';
 import type { PluginUiHostApiWireEnvelopeV1, PluginUiHostApiWireIdentityV1, PluginUiHostMethodV1 as ProtocolPluginUiHostMethodV1, PluginUiSelectActionInputResultV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginUiActionControlRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { createPluginUiActionControlBinding } from '@happier-dev/cli-common/plugins/ui';
 
 import { PluginError } from '../errors.js';
 import {
@@ -157,6 +161,7 @@ type SubscriptionRecord = {
     admitted: boolean;
     retired: boolean;
     readonly buffered: JsonValue[];
+    readonly onRetire?: () => void;
 };
 type EstablishedSubscription = Readonly<{
     subscriptionId: string;
@@ -165,7 +170,7 @@ type EstablishedSubscription = Readonly<{
 }>;
 type SubscriptionHostMethod = Extract<
     CanonicalHostMethod,
-    'watchContext' | 'watchResource' | 'watchComposer' | 'acquireComposerInputLock' | 'watchSession' | 'watchLiveStream' | 'watchEntityDragDrop'
+    'actionControl' | 'watchContext' | 'watchResource' | 'watchComposer' | 'acquireComposerInputLock' | 'watchSession' | 'watchLiveStream' | 'watchEntityDragDrop'
 >;
 
 /**
@@ -424,6 +429,7 @@ export async function createPluginUiHostApiClientFromTransport(
     const createSubscriptionId = options.createSubscriptionId ?? (() => defaultId('plugin-ui-subscription'));
     const pending = new Map<string, PendingRequest>();
     const subscriptions = new Map<string, SubscriptionRecord>();
+    const lifetime = new AbortController();
     const issuedInjectedRequestIds = options.createRequestId === undefined ? undefined : new Set<string>();
     const issuedInjectedSubscriptionIds = options.createSubscriptionId === undefined ? undefined : new Set<string>();
     let online = true;
@@ -470,6 +476,7 @@ export async function createPluginUiHostApiClientFromTransport(
     function terminate(error: PluginUiHostApiClientError): void {
         if (!online) return;
         online = false;
+        lifetime.abort();
         terminalError = error;
         if (negotiationTimeout) clearTimeout(negotiationTimeout);
         rejectNegotiation(error);
@@ -713,6 +720,7 @@ export async function createPluginUiHostApiClientFromTransport(
     ): void {
         if (!record || record.retired) return;
         record.retired = true;
+        record.onRetire?.();
         record.buffered.length = 0;
         subscriptions.delete(subscriptionId);
         if (!online || !atHost) return;
@@ -728,16 +736,18 @@ export async function createPluginUiHostApiClientFromTransport(
      */
     async function subscribe(
         method: SubscriptionHostMethod,
-        payload: JsonValue | undefined,
+        payload: JsonValue | ((subscriptionId: string) => JsonValue) | undefined,
         deliver: (value: JsonValue, subscriptionId: string) => void,
         signal?: AbortSignal,
+        onRetire?: () => void,
     ): Promise<EstablishedSubscription> {
         if (!online) throw unavailable();
         if (!advertises(method)) throw new PluginUiHostApiClientError('unsupported_method', `Host method ${method} is unavailable.`);
         if (signal?.aborted) throw new PluginUiHostApiClientError('aborted');
         const subscriptionId = nextSubscriptionId();
+        const subscriptionPayload = typeof payload === 'function' ? payload(subscriptionId) : payload;
         const requestId = nextRequestId();
-        const record: SubscriptionRecord = { method, deliver, admitted: false, retired: false, buffered: [] };
+        const record: SubscriptionRecord = { method, deliver, admitted: false, retired: false, buffered: [], onRetire };
         subscriptions.set(subscriptionId, record);
         let abandoned = false;
         let establishment: JsonValue | undefined;
@@ -746,7 +756,7 @@ export async function createPluginUiHostApiClientFromTransport(
                 method,
                 requestId,
                 ...(signal ? { signal } : {}),
-                envelope: { wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'subscribe', identity: options.identity, requestId, subscriptionId, method, ...(payload === undefined ? {} : { payload }) },
+                envelope: { wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'subscribe', identity: options.identity, requestId, subscriptionId, method, ...(subscriptionPayload === undefined ? {} : { payload: subscriptionPayload }) },
                 onAbandon: () => { abandoned = true; },
             });
         } catch (error) {
@@ -790,6 +800,15 @@ export async function createPluginUiHostApiClientFromTransport(
 
     const initial = negotiated;
     const api = {
+        actionControl: async (control, controller, requestOptions) => {
+            const parsed = PluginUiActionControlRequestV1Schema.safeParse({ kind: 'bind', subscriptionId: 'binding', ...control });
+            if (!parsed.success || parsed.data.kind !== 'bind') throw new PluginUiHostApiClientError('invalid_payload');
+            const payload = parsed.data;
+            return await createPluginUiActionControlBinding({ controller, signal: requestOptions?.signal, lifetimeSignal: lifetime.signal,
+                subscribe: (listener, onRetire, signal) => subscribe('actionControl', subscriptionId => ({ ...payload, subscriptionId }), listener, signal, onRetire),
+                request: (requestPayload, signal) => request('actionControl', requestPayload, signal),
+            });
+        },
         version: () => initial.version,
         publishCurrentUiContext: (enrichment) => {
             const payload = PluginUiPublishCurrentUiContextRequestV1Schema.safeParse({ enrichment });
@@ -957,6 +976,11 @@ export async function createPluginUiHostApiClientFromTransport(
                 selected?.success ? true : undefined,
             );
         },
+        revealSessionInput: async (input, requestOptions) => {
+            const payload = PluginUiRevealSessionInputRequestV1Schema.safeParse(input);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Session input reveal is invalid.');
+            await request('revealSessionInput', payload.data, requestOptions?.signal);
+        },
         settleEphemeralInput: async (settlement, requestOptions) => {
             const payload = PluginUiEphemeralInputSettlementV1Schema.safeParse(settlement);
             if (!payload.success) {
@@ -1018,6 +1042,13 @@ export async function createPluginUiHostApiClientFromTransport(
                 throw new PluginUiHostApiClientError('invalid_payload', 'readSession request is invalid.');
             }
             return readSessionReadResult(await request('readSession', payload.data, requestOptions?.signal));
+        },
+        readMachineDisplayName: async (readRequest, requestOptions) => {
+            const payload = PluginUiReadMachineDisplayNameRequestV1Schema.safeParse(readRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload', 'Machine display request is invalid.');
+            const result = PluginUiReadMachineDisplayNameResultV1Schema.safeParse(await request('readMachineDisplayName', payload.data, requestOptions?.signal));
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'Machine display response is invalid.');
+            return result.data;
         },
         readStoredImage: async (image, requestOptions) => {
             const payload = PluginUiReadStoredImageRequestV1Schema.safeParse({ image });

@@ -13,6 +13,29 @@ const type: ResolvedInputTypeV1 = { identity, occurrenceId: 'one', definition: {
 const field = { path: 'repository', title: 'Repository', widget: 'select' as const, inputType: identity };
 
 describe('host-admitted input type picker', () => {
+  it('settles a Saved Secret picker only as an exact shared reference, never a pending choice or bytes', async () => {
+    const field = InputFieldHintSchema.parse({ path: 'secret', title: 'Secret', widget: 'select',
+      inputType: { hostType: 'savedSecretReference' } });
+    let answer: unknown = { kind: 'completed', input: { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3 } };
+    const host: InputTypePickerHostV1 = {
+      resolveType: async () => { throw new Error('Saved Secrets are host-owned'); },
+      resolveOptions: async () => { throw new Error('The picker owns its catalog'); },
+      openPicker: async () => { throw new Error('Saved Secrets do not mount a plugin picker'); },
+      openHostPicker: async () => answer,
+    };
+    const request = { field, host, signal: new AbortController().signal };
+    expect(await invokeInputTypePicker(request)).toEqual({ status: 'selected',
+      value: { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3 } });
+    for (const input of [{ ref: 'person_selects' }, { ref: 'personal-secret', resourceRevision: 3 },
+      { ref: 'happier:shared-secret:v1:resource', resourceRevision: 0 },
+      { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3, value: 'secret-sentinel' },
+      { service: 'connected-account', accountId: 'account' }, '********']) {
+      answer = { kind: 'completed', input };
+      expect(await invokeInputTypePicker(request)).toEqual({ status: 'error', reasonCode: 'input_type_value_invalid' });
+    }
+    answer = { kind: 'cancelled' };
+    expect(await invokeInputTypePicker(request)).toEqual({ status: 'cancelled' });
+  });
   it('never widens a Resource-owning type with consuming static choices', async () => {
     const constrained = InputFieldHintSchema.parse({ ...field,
       options: [{ value: 'one', label: 'One' }, { value: 'outside-resource', label: 'Outside' }] });

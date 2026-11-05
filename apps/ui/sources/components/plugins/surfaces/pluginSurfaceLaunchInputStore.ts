@@ -26,8 +26,8 @@ export type PluginSurfaceLaunchInputStore<TLaunch extends Readonly<{
     /** Retires the pending value unless one exact authority still owns it. */
     retireOutside: (authorities: readonly PluginSurfaceLaunchAuthority[]) => void;
     /**
-     * Removes a stale pending record for one host destination without touching
-     * a current handoff addressed to a different destination.
+     * Removes a pending record only when a known different authority owns its
+     * host destination. Missing authority does not establish a replacement.
      */
     retireHandoffIfAuthorityChanged: (query: Readonly<{
         authority: PluginSurfaceLaunchAuthority | null;
@@ -90,8 +90,8 @@ export function createPluginSurfaceLaunchInputStore<TLaunch extends Readonly<{
         retireHandoffIfAuthorityChanged: (query) => {
             if (!pending || handoffKeyFor(pending) !== query.handoffKey) return;
             if (
-                query.authority
-                && isSamePluginSurfaceLaunchAuthority(pending.authority, query.authority)
+                !query.authority
+                || isSamePluginSurfaceLaunchAuthority(pending.authority, query.authority)
             ) return;
             pending = null;
             notify();

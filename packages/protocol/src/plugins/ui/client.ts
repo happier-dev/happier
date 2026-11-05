@@ -190,6 +190,9 @@ export {
   PluginUiReadComposerRequestV1Schema,
   PluginUiReadComposerResultV1Schema,
   PluginUiReadSessionRequestV1Schema,
+  PluginUiReadMachineDisplayNameRequestV1Schema,
+  PluginUiReadMachineDisplayNameResultV1Schema,
+  PluginUiRevealSessionInputRequestV1Schema,
   PluginUiReadSessionResultV1Schema,
   PluginUiReleaseComposerContentRequestV1Schema,
   PluginUiRespondToSessionPermissionRequestV1Schema,
@@ -235,6 +238,9 @@ export type {
   PluginUiReadComposerRequestV1,
   PluginUiReadComposerResultV1,
   PluginUiReadSessionRequestV1,
+  PluginUiReadMachineDisplayNameRequestV1,
+  PluginUiReadMachineDisplayNameResultV1,
+  PluginUiRevealSessionInputRequestV1,
   PluginUiReadSessionResultV1,
   PluginUiReleaseComposerContentRequestV1,
   PluginUiRespondToSessionPermissionRequestV1,
@@ -349,3 +355,9 @@ export type {
 } from './surfaceContext.js';
 export * from './liveStream.js';
 export * from './widgetArea.js';
+
+export {
+  PluginUiActionOperationHostReadResultV1Schema,
+  PluginUiActionOperationHostReadResultV1ProtocolSchema,
+  type PluginUiActionOperationHostReadResultV1,
+} from './subscriptions.js';

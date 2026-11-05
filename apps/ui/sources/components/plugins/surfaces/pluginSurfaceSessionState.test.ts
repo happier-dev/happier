@@ -1,3 +1,9 @@
+import { router } from 'expo-router';
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,6 +52,17 @@ import { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUn
 const { createBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
 
 const initialStorageState = storage.getState();
+
+function applyRevealHome(serverId: string, serverUrl = 'https://input.test') {
+    const previous = getAppliedActiveServerSnapshot();
+    const available = isAppliedActiveServerRuntimeAvailable();
+    // The network boundary has completed an Account connection. Publish the
+    // actual connection owner's applied facts; merely selecting a saved Home
+    // does not establish active Account authority.
+    storage.setState({ profileScope: { serverId, accountId: 'account-a' } });
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl, generation: previous.generation + 1 });
+    return () => publishAppliedActiveServerSnapshot(previous, available);
+}
 
 const CURRENT_ACCOUNT_LIFETIME = Object.freeze({
     scope: { serverId: 'server-1', accountId: 'account-a' },
@@ -115,6 +132,7 @@ function waitingSession(overrides: Partial<Session> = {}): Session {
 
 describe('mounted plugin UI linked-Session state (r0.42)', () => {
     beforeEach(async () => {
+        vi.mocked(router.push).mockClear();
         await homes.reset();
         installHomeGovernanceBoundaries(homes);
         storage.setState(initialStorageState, true);
@@ -123,6 +141,92 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         clearDaemonMergedProjectionCacheForTests();
         mockMachineRpcWithServerScope.mockReset();
     });
+
+    it('reads only an exact visible Machine display from the mounted Account without scanning its inventory', async () => {
+        const scope = CURRENT_ACCOUNT_LIFETIME.scope;
+        const display: MachineDisplayRenderable = { id: 'same-machine-id', updatedAt: 1, active: false, activeAt: 1,
+            metadataVersion: 1, metadata: { displayName: 'Studio', host: 'studio.local' } };
+        const displays = new Proxy(Object.fromEntries<MachineDisplayRenderable>([display, ...Array.from({ length: 128 }, (_, index) => ({
+            ...display, id: `unrelated-${index}`, metadata: { displayName: `Other ${index}` },
+        }))].map(machine => [machine.id, machine])), {
+            ownKeys() { throw new Error('Machine display reads must not scan the inventory'); },
+        });
+        storage.setState({ profileScope: scope, machineDisplayById: displays });
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readMachineDisplayName({ serverId: scope.serverId, machineId: display.id }))
+                .resolves.toEqual({ status: 'ready', displayName: 'Studio' });
+            await expect(mounted.api.readMachineDisplayName({ serverId: 'other-home', machineId: display.id }))
+                .resolves.toEqual({ status: 'unavailable' });
+            await expect(mounted.api.readMachineDisplayName({ serverId: scope.serverId, machineId: 'unknown' }))
+                .resolves.toEqual({ status: 'unavailable' });
+            await expect(mounted.api.readMachineDisplayName({ serverId: scope.serverId, machineId: 'toString' }))
+                .resolves.toEqual({ status: 'unavailable' });
+            displays[display.id] = { ...display, revokedAt: 1 };
+            await expect(mounted.api.readMachineDisplayName({ serverId: scope.serverId, machineId: display.id }))
+                .resolves.toEqual({ status: 'unavailable' });
+            displays[display.id] = display;
+            storage.setState({ profileScope: { ...scope, accountId: 'other-account' } });
+            await expect(mounted.api.readMachineDisplayName({ serverId: scope.serverId, machineId: display.id }))
+                .resolves.toEqual({ status: 'unavailable' });
+            expect(mockMachineRpcWithServerScope).not.toHaveBeenCalled();
+        } finally { mounted.dispose(); }
+    });
+
+    it('reveals an exact committed input through the mounted host and canonical scoped transcript route without scanning history', async () => {
+        const serverId = await homes.addHome({ name: 'Input Home', serverUrl: 'https://input.test', accountId: 'account-a', currentAccount: true });
+        const restoreAppliedHome = applyRevealHome(serverId);
+        const localId = 'plugin-input/exact:opaque';
+        const sessionId = 'session/exact';
+        const path = `/v2/sessions/${encodeURIComponent(sessionId)}/messages/by-local-id/${encodeURIComponent(localId)}`;
+        homes.answer(serverId, path, { body: { message: SessionMessageV1Schema.parse({
+            id: 'committed-input', localId, seq: 21, messageRole: 'user', createdAt: 1,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'PR update' } } },
+        }) } });
+        const mounted = mountSurface({ serverId, accountId: 'account-a' });
+        try {
+            await mounted.api.revealSessionInput({ sessionId, localId });
+            expect(router.push).toHaveBeenCalledWith(`/session/session%2Fexact/message/server%3Acommitted-input?serverId=${encodeURIComponent(serverId)}`);
+            expect(homes.requestsFor(path)).toHaveLength(1);
+            expect(homes.requests.filter(request => request.path.includes('/messages') && request.path !== path)).toEqual([]);
+        } finally { mounted.dispose(); restoreAppliedHome(); }
+    });
+
+    it.each(['wrongLocalId', 'notInput', 'sidechain', 'retired', 'cancelled', 'otherAccount', 'otherHome'] as const)(
+        'refuses input reveal without navigation when %s changes before commitment', async fault => {
+            const serverId = await homes.addHome({ name: 'Input Home', serverUrl: 'https://input.test', accountId: 'account-a', currentAccount: true });
+            const restoreAppliedHome = applyRevealHome(serverId);
+            const ready = createDeferred<void>();
+            const release = createDeferred<void>();
+            homes.answer(serverId, '/v2/sessions/exact-session/messages/by-local-id/exact-input', { select: async () => {
+                ready.resolve();
+                await release.promise;
+                return { body: { message: SessionMessageV1Schema.parse({ id: 'committed', seq: 21,
+                    localId: fault === 'wrongLocalId' ? 'other-input' : 'exact-input',
+                    messageRole: fault === 'notInput' ? 'agent' : 'user',
+                    sidechainId: fault === 'sidechain' ? 'other-run' : null, createdAt: 1,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'PR update' } } },
+                }) } };
+            } });
+            const mounted = mountSurface({ serverId, accountId: 'account-a' });
+            const abort = new AbortController();
+            try {
+                const outcome = mounted.api.revealSessionInput({ sessionId: 'exact-session', localId: 'exact-input' }, { signal: abort.signal });
+                const rejected = expect(outcome).rejects.toMatchObject({ code: expect.stringMatching(/unavailable|stale_surface/) });
+                await Promise.race([ready.promise, outcome.then(() => { throw new Error('Reveal completed before the exact input read'); })]);
+                if (fault === 'retired') mounted.dispose();
+                if (fault === 'cancelled') abort.abort();
+                if (fault === 'otherAccount') storage.setState({ profileScope: { serverId, accountId: 'different-account' } });
+                if (fault === 'otherHome') {
+                    const other = await homes.addHome({ name: 'Other Home', serverUrl: 'https://other-input.test', accountId: 'account-a', currentAccount: true });
+                    applyRevealHome(other, 'https://other-input.test');
+                }
+                release.resolve();
+                await rejected;
+                expect(router.push).not.toHaveBeenCalled();
+            } finally { release.resolve(); mounted.dispose(); restoreAppliedHome(); }
+        },
+    );
 
     it.each(['ready', 'empty', 'hidden', 'unavailable', 'paged', 'missingWitness', 'modeMismatch'] as const)('publishes %s external-shareable activity through the real bound controller without marking read', async (outcome) => {
         const serverId = await homes.addHome({ name: 'Activity Home', serverUrl: 'https://activity.test', accountId: 'account-a' });

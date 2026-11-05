@@ -1,3 +1,4 @@
+import type { PluginUiActionControlRequestV1, PluginUiActionControlEventV1 } from '@happier-dev/protocol/plugins/ui';
 import { readFile } from 'node:fs/promises';
 import { createContext, Script } from 'node:vm';
 
@@ -264,6 +265,98 @@ function createMutableSemanticAdapter(initialNodes: readonly PluginUiSemanticAda
 }
 
 describe('readPluginUiTestkitTargetedSurfaceAdmission', () => {
+it('routes a host Action control through its installed testkit boundary and retires event delivery', async () => {
+    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
+    let hostSignal: AbortSignal | undefined;
+    let releases = 0;
+    const requests: PluginUiActionControlRequestV1[] = [];
+    const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown', details: { operationId: 'original' } };
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            requests.push(input.request);
+            if (input.request.kind === 'bind') {
+                publish = input.publish; hostSignal = input.signal;
+                return { dispose() { releases += 1; } };
+            }
+            if (input.request.kind === 'prepared') input.publish({ kind: 'settled', requestId: input.request.requestId, execution });
+        } },
+    });
+    const prepare = vi.fn(() => ({ input: { freshlyReviewed: true } }));
+    const onSettled = vi.fn();
+    try {
+        const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
+        expect(fixture.context.hostApi.version().methods).toContain('actionControl');
+        expect(prepare).not.toHaveBeenCalled();
+        publish?.({ kind: 'prepare', requestId: 'physical-press' });
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution));
+        expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', requestId: 'physical-press',
+            preparation: { input: { freshlyReviewed: true } } }));
+        await control.update({ title: 'Run again', disabled: true });
+        expect(requests.at(-1)).toMatchObject({ kind: 'update', presentation: { title: 'Run again', disabled: true } });
+        await control.dispose();
+        await vi.waitFor(() => expect(releases).toBe(1));
+        expect(hostSignal?.aborted).toBe(true);
+        publish?.({ kind: 'prepare', requestId: 'late-press' });
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(onSettled).toHaveBeenCalledTimes(1);
+    } finally { await fixture.dispose(); }
+    expect(releases).toBe(1);
+});
+
+it('aborts testkit Action preparation on retirement and never forwards late input', async () => {
+    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
+    let finish: ((value: { input: string }) => void) | undefined;
+    let preparationSignal: AbortSignal | undefined;
+    const requests: PluginUiActionControlRequestV1[] = [];
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            requests.push(input.request); publish = input.publish;
+        } },
+    });
+    const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
+        prepare(options) { preparationSignal = options.signal; return new Promise<{ input: string }>(resolve => { finish = resolve; }); }, onSettled() {},
+    });
+    publish?.({ kind: 'prepare', requestId: 'pending-press' });
+    expect(preparationSignal?.aborted).toBe(false);
+    await fixture.dispose();
+    expect(preparationSignal?.aborted).toBe(true);
+    finish?.({ input: 'late' });
+    await Promise.resolve();
+    expect(requests.map(request => request.kind)).toEqual(['bind']);
+    await control.dispose();
+});
+
+it('retires a late Action control admission exactly once after caller cancellation', async () => {
+    let finish: ((value: { dispose(): void }) => void) | undefined;
+    let hostSignal: AbortSignal | undefined;
+    let releases = 0;
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            hostSignal = input.signal;
+            return new Promise<{ dispose(): void }>(resolve => { finish = resolve; });
+        } },
+    });
+    const cancellation = new AbortController();
+    try {
+        const pending = fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
+            prepare: () => null, onSettled() {},
+        }, { signal: cancellation.signal });
+        await vi.waitFor(() => expect(hostSignal).toBeDefined());
+        cancellation.abort();
+        await expect(pending).rejects.toMatchObject({ code: 'aborted' });
+        expect(hostSignal?.aborted).toBe(true);
+        finish?.({ dispose() { releases += 1; } });
+        await vi.waitFor(() => expect(releases).toBe(1));
+    } finally { await fixture.dispose(); }
+    expect(releases).toBe(1);
+});
+
     it('projects one exact strict cold admission and changes only its lifecycle key across generations', () => {
         const first = targetedSurfaceAdmissionFixture();
         const admission = readPluginUiTestkitTargetedSurfaceAdmission({
@@ -1916,4 +2009,41 @@ describe('createPluginUiTestkit', () => {
         }
         await fixture.dispose();
     });
+    it('serves typed unavailable Machine names until an exact fixture read is provided', async () => {
+        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter };
+        const request = { serverId: 'home', machineId: 'machine' };
+        const unavailable = await createPluginUiTestkit(options);
+        try {
+            await expect(unavailable.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'unavailable' });
+        } finally { await unavailable.dispose(); }
+        const available = await createPluginUiTestkit({ ...options, handlers: {
+            readMachineDisplayName: ({ request: target }) => target.serverId === request.serverId && target.machineId === request.machineId
+                ? { status: 'ready', displayName: 'Studio' } : { status: 'unavailable' },
+        } });
+        try {
+            await expect(available.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'ready', displayName: 'Studio' });
+        } finally { await available.dispose(); }
+    });
+    it('offers exact input reveal only with its installed host boundary and keeps opaque lookup IDs', async () => {
+        const revealSessionInput = vi.fn(async () => undefined);
+        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter };
+        const fixture = await createPluginUiTestkit({ ...options, handlers: { revealSessionInput } });
+        try {
+            const request = { sessionId: 'exact-session', localId: '  opaque/input  ' };
+            await fixture.context.hostApi.revealSessionInput(request);
+            expect(revealSessionInput).toHaveBeenCalledWith({ request, signal: expect.any(AbortSignal) });
+        } finally { await fixture.dispose(); }
+        const unsupported = await createPluginUiTestkit(options);
+        try {
+            expect(unsupported.context.hostApi.version().methods).not.toContain('revealSessionInput');
+            await expect(unsupported.context.hostApi.revealSessionInput({ sessionId: 'exact-session', localId: 'exact-input' }))
+                .rejects.toMatchObject({ code: 'unsupported_method' });
+        } finally { await unsupported.dispose(); }
+    });
+
+
 });

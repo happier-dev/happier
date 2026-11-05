@@ -1,9 +1,13 @@
+import { createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { defineUiSurface } from '../surfaceEntry.js';
+import { useSurfaceContext } from './PluginUiProvider.js';
 import type { ActionContract } from '@happier-dev/plugin-sdk/actions';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ReactNode } from 'react';
-import { act } from 'react';
+import { act, Suspense, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
@@ -85,6 +89,159 @@ async function press(element: HTMLElement): Promise<void> {
 }
 
 describe('plugin-ui Action family dispatches through the canonical host API', () => {
+  it.each([true, false])('registers and updates Action.Control through the public testkit when optional presentation props are omitted (%s)', async omitted => {
+    type HostInput = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
+    const requests: HostInput['request'][] = [];
+    let publish: HostInput['publish'] | undefined;
+    const onUnavailable = vi.fn();
+    const onSettled = vi.fn();
+    const execution = { ok: true as const, result: { operationId: 'original' } };
+    const controller = { prepare: () => ({ input: { reviewed: true } }), onSettled };
+    function AuthorControl() {
+      const { locale } = useSurfaceContext();
+      if (locale === context.locale) return null;
+      return <Action.Control action="projects.compute.exec" title={`Run (${locale})`} controller={controller} onUnavailable={onUnavailable}
+        {...(omitted ? {} : { disabled: false, variant: 'plain' as const })} />;
+    }
+    const context = createSurfaceContext();
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'action-control-author', mountNonce: 'action-control-author-mount' },
+      authorPlugin: { id: 'com.acme.action-control', version: '1.0.0' },
+      surface: defineUiSurface(AuthorControl), surfaceContext: context,
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { actionControl(input) {
+        requests.push(input.request);
+        if (input.request.kind === 'bind') publish = input.publish;
+        if (input.request.kind === 'prepared') input.publish({ kind: 'settled', requestId: input.request.requestId, execution });
+      } },
+    });
+    try {
+      await act(async () => { await fixture.updateSurface({ ...context, locale: 'de-CH' }); });
+      await vi.waitFor(() => expect(requests.find(request => request.kind === 'bind')).toMatchObject({
+        presentation: { title: 'Run (de-CH)' },
+      }));
+      expect(onUnavailable).not.toHaveBeenCalled();
+      await act(async () => { publish!({ kind: 'prepare', requestId: 'host-press' }); });
+      await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution));
+      expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', preparation: { input: { reviewed: true } } }));
+      await act(async () => { await fixture.updateSurface({ ...context, locale: 'fr-CH' }); });
+      await vi.waitFor(() => expect(requests.at(-1)).toMatchObject({ kind: 'update', presentation: { title: 'Run (fr-CH)' } }));
+      expect(onUnavailable).not.toHaveBeenCalled();
+    } finally { await fixture.dispose(); }
+  });
+  it('ignores a retired presentation failure after the Action reference changes', async () => {
+    let rejectOldUpdate: ((error: Error) => void) | undefined;
+    const onUnavailable = vi.fn();
+    const controller = { prepare: () => null, onSettled() {} };
+    const host = createHostApiStub(createSurfaceContext(), {
+      version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['actionControl'] }),
+      actionControl: async control => ({ dispose() {}, update: async presentation => {
+        if (control.action === 'projects.compute.exec' && presentation.title === 'Again') {
+          await new Promise<void>((_resolve, reject) => { rejectOldUpdate = reject; });
+        }
+      } }),
+    });
+    const renderControl = (action: 'projects.compute.exec' | 'projects.worker.preferences.set', title: string) =>
+      <Action.Control action={action} title={title} controller={controller} onUnavailable={onUnavailable} fallback={<output>Unavailable</output>} />;
+    const mount = mountSurface(renderControl('projects.compute.exec', 'Run'), host);
+    try {
+      await act(async () => {});
+      await mount.render(<PluginUiProvider hostApi={host} context={createSurfaceContext()}>{renderControl('projects.compute.exec', 'Again')}</PluginUiProvider>);
+      expect(rejectOldUpdate).toBeTypeOf('function');
+      await mount.render(<PluginUiProvider hostApi={host} context={createSurfaceContext()}>{renderControl('projects.worker.preferences.set', 'Again')}</PluginUiProvider>);
+      await act(async () => { rejectOldUpdate!(new Error('retired')); });
+      expect(onUnavailable).not.toHaveBeenCalled();
+      expect(mount.container.querySelector('output')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+  it('withdraws the old host Action before a changed reference can receive a commit-time gesture', async () => {
+    const offered = new Map<string, import('@happier-dev/plugin-sdk/ui').PluginUiActionControlController>();
+    const oldAction = 'projects.compute.exec';
+    const nextAction = 'projects.worker.preferences.set';
+    const prepared = vi.fn(() => ({ input: null }));
+    const controller = { prepare: prepared, onSettled() {} };
+    const host = createHostApiStub(createSurfaceContext(), {
+      version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['actionControl'] }),
+      actionControl: async (control, binding) => {
+        const key = String(control.action);
+        offered.set(key, binding);
+        return { dispose: () => { offered.delete(key); }, update: async () => {} };
+      },
+    });
+    function CommitGesture({ changed }: { changed: boolean }) {
+      useLayoutEffect(() => {
+        if (changed) void offered.get(oldAction)?.prepare({ signal: new AbortController().signal });
+      }, [changed]);
+      return null;
+    }
+    const mount = mountSurface(<><Action.Control action={oldAction} title="Run" controller={controller} /><CommitGesture changed={false} /></>, host);
+    try {
+      await act(async () => {});
+      await mount.render(<PluginUiProvider hostApi={host} context={createSurfaceContext()}>
+        <Action.Control action={nextAction} title="Allow" controller={controller} /><CommitGesture changed />
+      </PluginUiProvider>);
+      expect(prepared).not.toHaveBeenCalled();
+    } finally { mount.unmount(); }
+  });
+  it('never prepares a host control from an uncommitted suspended controller', async () => {
+    let bound: import('@happier-dev/plugin-sdk/ui').PluginUiActionControlController | undefined;
+    const host = createHostApiStub(createSurfaceContext(), {
+      version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['actionControl'] }),
+      actionControl: async (_control, controller) => {
+        bound = controller;
+        return { dispose() {}, update: async () => {} };
+      },
+    });
+    const stalled = new Promise<void>(() => {});
+    function Suspend({ pending }: { pending: boolean }) { if (pending) throw stalled; return null; }
+    const first = { prepare: () => ({ input: 'committed' }), onSettled() {} };
+    const second = { prepare: () => ({ input: 'uncommitted' }), onSettled() {} };
+    const mount = mountSurface(<Suspense fallback={null}>
+      <Action.Control action="projects.compute.exec" title="Run" controller={first} /><Suspend pending={false} />
+    </Suspense>, host);
+    try {
+      await act(async () => {});
+      await mount.render(<PluginUiProvider hostApi={host} context={createSurfaceContext()}><Suspense fallback={null}>
+        <Action.Control action="projects.compute.exec" title="Run" controller={second} /><Suspend pending />
+      </Suspense></PluginUiProvider>);
+      expect(await bound!.prepare({ signal: new AbortController().signal })).toEqual({ input: 'committed' });
+    } finally { mount.unmount(); }
+  });
+  it('binds a host-rendered control without adding an author gesture entry and retains the preparing controller', async () => {
+    expect(Action).toHaveProperty('Control');
+    let bound: import('@happier-dev/plugin-sdk/ui').PluginUiActionControlController | undefined;
+    let bindings = 0;
+    let releases = 0;
+    const updates: string[] = [];
+    const firstSettled = vi.fn();
+    const secondSettled = vi.fn();
+    const first = { prepare: () => ({ input: { reviewed: 1 } }), onSettled: firstSettled };
+    const second = { prepare: () => ({ input: { reviewed: 2 } }), onSettled: secondSettled };
+    const host = createHostApiStub(createSurfaceContext(), {
+      version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: ['actionControl'] }),
+      actionControl: async (_control, controller) => {
+        bindings += 1;
+        bound = controller;
+        return { dispose: () => { releases += 1; }, update: async presentation => { updates.push(presentation.title); } };
+      },
+    });
+    const mount = mountSurface(<Action.Control action="projects.compute.exec" title="Run" controller={first} />, host);
+    try {
+      await act(async () => {});
+      expect(mount.container.querySelector('[role="button"]')).toBeNull();
+      const signal = new AbortController().signal;
+      expect(await bound!.prepare({ signal })).toEqual({ input: { reviewed: 1 } });
+      await mount.render(<PluginUiProvider hostApi={host} context={createSurfaceContext()}>
+        <Action.Control action="projects.compute.exec" title="Run again" controller={second} />
+      </PluginUiProvider>);
+      bound!.onSettled({ ok: true, result: { operationId: 'original' } });
+      expect(firstSettled).toHaveBeenCalledWith({ ok: true, result: { operationId: 'original' } });
+      expect(secondSettled).not.toHaveBeenCalled();
+      expect(bindings).toBe(1);
+      expect(updates).toContain('Run again');
+    } finally { mount.unmount(); }
+    expect(releases).toBe(1);
+  });
   it('exposes the host mount approval fact while an Action is pending and clears it at settlement', async () => {
     let settle: ((value: JsonValue) => void) | undefined;
     let publish: ((context: SurfaceContext) => void) | undefined;

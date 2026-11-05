@@ -1,4 +1,6 @@
+import { PluginUiRevealSessionInputRequestV1Schema, PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
+    PluginUiActionControlRequestV1Schema,
     PluginUiWidgetAreaRequestV1Schema,
     PluginUiWidgetAreaResultV1Schema,
     PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema,
@@ -118,6 +120,7 @@ type PluginReactNativeHostRequestSubscription = Readonly<{
  * context or a second source of author-visible surface facts.
  */
 type PluginReactNativeHostRequestTransport = Readonly<{
+    actionControl: (payload: Extract<import('@happier-dev/protocol/plugins/ui').PluginUiActionControlRequestV1, { kind: 'bind' }>, listener: (event: unknown, subscriptionId: string) => void, onRetire: () => void, options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginReactNativeHostRequestSubscription>;
     watchEntityDragDrop: (payload: import('@happier-dev/protocol/plugins/ui').PluginUiWatchEntityDragDropRequestV1 & Readonly<{ subscriptionId: string }>, listener: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => void, options?: PluginSurfaceHostApiRequestOptions) => Promise<PluginReactNativeHostRequestSubscription>;
     watchLiveStream: (payload: import('@happier-dev/protocol/plugins/ui').PluginUiWatchLiveStreamRequestV1,
         listener: (event: PluginUiResourceSubscriptionEventV1) => void,
@@ -595,6 +598,23 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
 
     return Object.freeze({
         request,
+        actionControl: async (payload, listener, onRetire, options) => {
+            let active = true;
+            let release: (() => void) | undefined;
+            const retire = () => { if (!active) return; active = false; onRetire(); release?.(); };
+            subscriptions.register({ surface: params.requestSurface, subscriptionId: payload.subscriptionId,
+                release: retire, deliverValue: value => listener(value, payload.subscriptionId) });
+            try {
+                await request('actionControl', payload, { ...options, actionControlSubscription: {
+                    retain: value => { if (active) release = value; else value(); },
+                    publish: event => { subscriptions.publishValue(params.requestSurface, {
+                        subscriptionId: payload.subscriptionId, value: PluginUiJsonValueV1Schema.parse(event),
+                    }); },
+                } });
+            } catch (error) { subscriptions.dispose({ surface: params.requestSurface, subscriptionId: payload.subscriptionId }); throw error; }
+            return { subscriptionId: payload.subscriptionId,
+                dispose: async () => { subscriptions.dispose({ surface: params.requestSurface, subscriptionId: payload.subscriptionId }); } };
+        },
         watchEntityDragDrop: async (payload, listener, options) => {
             let active = true;
             let release: (() => void) | undefined;
@@ -846,6 +866,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
 }>): CanonicalPluginReactNativeHostApiAdapter {
     let retired = false;
     let disposed = false;
+    const lifetime = new AbortController();
     const isCurrent = () => !retired && !disposed && params.isCurrent?.() !== false;
     const transport = createPluginReactNativeHostRequestTransport({
         requestSurface: params.requestSurface,
@@ -932,6 +953,23 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     }
 
     const apiShape: PluginUiHostApi = {
+        actionControl: async (control, controller, options) => {
+            assertActive(options?.signal);
+            assertInstalled('actionControl');
+            const payload = PluginUiActionControlRequestV1Schema.safeParse({ kind: 'bind',
+                subscriptionId: randomUUID(), ...control });
+            if (!payload.success || payload.data.kind !== 'bind') throwHostApiError('invalid_payload');
+            const bind = payload.data;
+            const { createPluginUiActionControlBinding } = await loadPluginUiHostSupport();
+            assertActive(options?.signal);
+            const binding = await createPluginUiActionControlBinding({ controller,
+                signal: options?.signal, lifetimeSignal: lifetime.signal,
+                subscribe: (listener, onRetire, signal) => transport.actionControl(bind, listener, onRetire, { signal }),
+                request: (request, signal) => transport.request('actionControl', request, { signal }),
+            });
+            const owned = disposable(() => { void binding.dispose(); });
+            return Object.freeze({ update: binding.update, dispose: owned.dispose });
+        },
         widgetArea: async (request, options) => {
             assertActive(options?.signal);
             assertInstalled('widgetArea');
@@ -1194,6 +1232,14 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                     : { admittedDigest: subscription.admittedDigest }),
             });
         },
+        revealSessionInput: async (input, options) => {
+            assertActive(options?.signal);
+            assertInstalled('revealSessionInput');
+            const payload = PluginUiRevealSessionInputRequestV1Schema.safeParse(input);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('revealSessionInput', payload.data,
+                options?.signal ? { signal: options.signal } : undefined);
+        },
         readSession: async (sessionId, options) => {
             assertActive(options?.signal);
             assertInstalled('readSession');
@@ -1203,6 +1249,17 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 'readSession',
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
+            ));
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
+        },
+        readMachineDisplayName: async (readRequest, options) => {
+            assertActive(options?.signal);
+            assertInstalled('readMachineDisplayName');
+            const payload = PluginUiReadMachineDisplayNameRequestV1Schema.safeParse(readRequest);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            const result = PluginUiReadMachineDisplayNameResultV1Schema.safeParse(await transport.request(
+                'readMachineDisplayName', payload.data, options?.signal ? { signal: options.signal } : undefined,
             ));
             if (!result.success) throwHostApiError('invalid_payload');
             return result.data;
@@ -1561,12 +1618,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 }
             }
         },
-        retire: () => { retired = true; },
+        retire: () => { retired = true; lifetime.abort(); },
         isCurrent,
         dispose: () => {
             if (disposed) return;
             retired = true;
             disposed = true;
+            lifetime.abort();
             selectedInputs.dispose();
             for (const dispose of [...disposables]) dispose();
             contextWatchers.clear();

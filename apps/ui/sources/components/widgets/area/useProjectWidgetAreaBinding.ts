@@ -5,6 +5,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema, pluginUiWidgetAreaOperationHasOutwardEffectV1, type PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { WidgetInstanceActionInputSchemasV1, WidgetSurfaceReadV1Schema, WidgetSurfaceRefV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { ProjectSourcesReadOutputV1Schema, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import type { WidgetSurfaceContext, WidgetSurfaceContextSlot } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -47,9 +48,9 @@ export type ProjectWidgetAreaBindingInput = Readonly<{
     serverId: string;
     projectName: string;
     /** Accepted base ref anchors the stable Project even when no active checkout is available. */
-    projectRef?: unknown;
+    projectRef?: WorkspaceRefV1 | null;
     /** The page's exact checkout behind its checkout chip; never portable Source identity. */
-    activeCheckout?: unknown;
+    activeCheckout?: WorkspaceRefV1 | null;
     activeCheckoutLabel?: string;
     layoutId?: string;
     artifactId?: string;

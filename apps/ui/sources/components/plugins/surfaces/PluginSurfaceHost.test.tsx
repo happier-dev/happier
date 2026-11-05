@@ -1,3 +1,4 @@
+import { createPluginProjectContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
 import { createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -550,6 +551,8 @@ function surfaceFixtureDiagnostics(screen: Awaited<ReturnType<typeof renderScree
  * prove the same cold, target-scoped A→B composition contract.
  */
 describe('external targeted source products through the bound surface host', () => {
+
+
     beforeEach(async () => {
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
     });
@@ -8637,11 +8640,13 @@ describe('PluginSurfacePlacementHost', () => {
             displayName: 'External plugin', version: '3.2.1',
         }).projection;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const projectContext = targetKind === 'project' ? createPluginProjectContextFixture({ id: 'project_1' }) : undefined;
         const panel = (active: boolean) => (
             <RetainedPanelSurface isActive={active} mode={targetKind === 'session' ? 'absolute-overlay' : 'flow'}>
                 <PluginSurfacePlacementHost placement={placement} machineId="machine_1" serverId="server_1"
                     sessionId={targetKind === 'session' ? 'session_1' : undefined}
                     projectId={targetKind === 'project' ? 'project_1' : undefined}
+                    projectContext={projectContext}
                     pluginUiProjection={projection} platform="web"
                     reactNativeLoaderBackend={{ backendId: 'commonJs', available: true }} />
             </RetainedPanelSurface>
@@ -12860,8 +12865,8 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                     container: 'detailsTab',
                     target: { kind: 'project', workspaceRefIdPath: '/workspaceRefId' },
                 }),
-                props: { projectId: 'project-4' },
-                expected: { kind: 'project', projectId: 'project-4' },
+                props: { projectId: 'project-4', projectContext: createPluginProjectContextFixture({ id: 'project-4', projectKey: 'logical-project-4' }) },
+                expected: createPluginProjectContextFixture({ id: 'project-4', projectKey: 'logical-project-4' }).target,
             },
             {
                 placement: reactNativeSurfacePlacementFixture({
@@ -15302,6 +15307,67 @@ describe('installed Session widget through the mounted plugin controller', () =>
 });
 
 describe('canonical action dispatch reaches every mounted placement (EU-2)', () => {
+    it.each(['session', 'project'] as const)('renders separate Allow and Run host controls in an installed %s details pane', async target => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { createDefaultWorkspaceWorkerPreferenceV1 } = await import('@happier-dev/protocol/workspaces/projectWorkerPreferencesV1');
+        let allowed = false;
+        let launches = 0;
+        let preparations = 0;
+        const setupHold = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed-setup' } as const;
+        const next = { ...createDefaultWorkspaceWorkerPreferenceV1(), allowAdHoc: true };
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectWorkerAction: async () => { allowed = true; return { status: 'applied', preference: next, revision: 1, provenance: 'saved' }; },
+            projectAction: async () => { launches += 1; return setupHold; },
+        }));
+        reactNativeSurfaceProps.length = 0;
+        await primeCrossPathArtifact();
+        const { model, placement } = await projectPlacementFromBinding(bindingDeclaration({
+            id: `host-action-${target}`, container: 'detailsPane',
+            target: target === 'session' ? { kind: 'session', sessionIdPath: '/sessionId' }
+                : { kind: 'project', workspaceRefIdPath: '/workspaceRefId' },
+        }));
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} pluginUiProjection={model}
+            machineId="machine_1" serverId="server-1" platform="web" sessionId={target === 'session' ? 'session-91' : undefined}
+            projectId={target === 'project' ? 'project-91' : undefined}
+            projectContext={target === 'project' ? createPluginProjectContextFixture({ id: 'project-91', serverId: 'server-1' }) : undefined}
+            binding={{ executeHostAction: executor.execute }} reactNativeLoaderBackend={{ backendId: 'commonJs', available: true,
+                loadInstalledBundle: vi.fn(async () => () => null) }} />);
+        const settlements: import('@happier-dev/plugin-sdk/ui').PluginUiActionControlExecution[] = [];
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
+            const host = readMountedHostApi();
+            expect(host.version().methods).toContain('actionControl');
+            await act(async () => { await host.actionControl({ action: 'projects.worker.preferences.set', presentation: { title: 'Allow for this project' } }, {
+                prepare: () => ({ input: { workspace: { serverId: 'server-1', refId: 'workspace-a' },
+                    expectedRevision: 'absent', expected: { kind: 'absent' }, next } }),
+                onSettled: execution => { settlements.push(execution); },
+            }); });
+            await act(async () => { await host.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
+                prepare: () => { preparations += 1; return allowed ? { input: {
+                    workspace: { serverId: 'server-1', machineId: 'machine_1', workspaceId: 'workspace-a', rootPath: '/work' },
+                    executable: 'act', argv: ['--rm=true', '--reuse=false'], cwd: '/work',
+                } } : null; },
+                onSettled: execution => { settlements.push(execution); },
+            }); });
+            const button = (title: string) => screen.root.findAll(node => node.props.title === title && typeof node.props.onPress === 'function')[0]!;
+            expect(button('Allow for this project')).toBeTruthy();
+            expect(button('Run')).toBeTruthy();
+            expect(launches).toBe(0);
+            expect(preparations).toBe(0);
+            await act(async () => { button('Allow for this project').props.onPress(); });
+            await vi.waitFor(() => expect(allowed).toBe(true));
+            expect(launches).toBe(0);
+            expect(preparations).toBe(0);
+            await act(async () => { button('Run').props.onPress(); });
+            await vi.waitFor(() => expect(settlements).toHaveLength(2));
+            expect(preparations).toBe(1);
+            expect(launches).toBe(1);
+            expect(settlements[1]).toMatchObject({ ok: true, result: setupHold });
+            expect(screen.findByTestId('plugin-surface-approval-pending')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
     beforeEach(async () => {
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_dash_1' });
     });
@@ -15664,7 +15730,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 container: 'rightSidebarTab',
                 target: { kind: 'project', workspaceRefIdPath: '/workspaceRefId' },
             }),
-            props: { projectId: 'project-91' },
+            props: { projectId: 'project-91', projectContext: createPluginProjectContextFixture({ id: 'project-91', serverId: 'server-1' }) },
         },
         {
             name: 'services panel',

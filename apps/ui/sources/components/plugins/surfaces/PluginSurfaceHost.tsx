@@ -1,3 +1,7 @@
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
+import { useProjectContext } from '@/components/projects/useProjectContext';
+import { MountedPluginActionControls } from './MountedPluginActionControls';
 import * as React from 'react';
 import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -2286,6 +2290,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     agentId?: string | null;
     /** §3.2: the exact identities this placement owns for its declared target. */
     projectId?: string | null;
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     platform?: LocalServicePreviewPlatform;
@@ -2418,6 +2423,23 @@ function PluginSurfaceHostMount(props: Readonly<(
     const selectedInlineBinding = selectedSurfaceBinding?.kind === 'inline'
         ? selectedSurfaceBinding
         : null;
+    const surfaceScope = React.useMemo(
+        () => targetedBinding
+            ? Object.freeze({ declared: false as const, reason: 'surface_target_undeclared' as const })
+            : composerBinding
+                ? resolveResourceScope({ kind: 'session' })
+                : ephemeralBinding
+                    ? resolveResourceScope({ kind: 'app' })
+            : resolveSurfaceResourceScope(selectedSurfaceBinding),
+        [composerBinding, ephemeralBinding, selectedSurfaceBinding, targetedBinding],
+    );
+    const addressedProjectRef = useProjectAccountWorkspaceRef(surfaceScope.declared && surfaceScope.targetKind === 'project'
+        && props.projectContext === undefined ? props.projectId ?? null : null, props.serverId ?? undefined);
+    const readProjectContext = useProjectContext({ serverId: props.serverId ?? addressedProjectRef?.serverId ?? '',
+        projectRef: addressedProjectRef, activeCheckout: addressedProjectRef });
+    const suppliedProjectContext = props.projectContext === undefined ? readProjectContext : props.projectContext;
+    const projectContext = suppliedProjectContext && (suppliedProjectContext.scope.authority?.isCurrent() ?? true)
+        && (!props.serverId || areServerProfileIdentifiersEquivalent(suppliedProjectContext.scope.serverId, props.serverId)) ? suppliedProjectContext : null;
     // F7 — an app-scope projection is a UNION across every eligible online
     // machine, so the CONTRIBUTION carries the machine that produced it. Every
     // effect this mount performs — action dispatch, resource reads, artifact
@@ -2475,6 +2497,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         enabled: needsMachineExecution,
         includeMachineCandidates: showsExecutionOriginSelector,
         contextualTarget: props.contextualExecutionTarget,
+        surfaceTarget: surfaceScope.declared && surfaceScope.targetKind === 'project' ? projectContext?.target : undefined,
     });
     // A host-only renderer still has a real mounted caller. Retain only the
     // producer already stamped on this declaration, never elect a Machine for
@@ -2773,28 +2796,18 @@ function PluginSurfaceHostMount(props: Readonly<(
     // One scope resolution for this mount. An undeclared/unrecognized target kind
     // reaches the target resolver as `null`, which fails resolution there rather
     // than being coerced into a target the descriptor never declared.
-    const surfaceScope = React.useMemo(
-        () => targetedBinding
-            ? Object.freeze({ declared: false as const, reason: 'surface_target_undeclared' as const })
-            : composerBinding
-                ? resolveResourceScope({ kind: 'session' })
-                : ephemeralBinding
-                    ? resolveResourceScope({ kind: 'app' })
-            : resolveSurfaceResourceScope(selectedSurfaceBinding),
-        [composerBinding, ephemeralBinding, selectedSurfaceBinding, targetedBinding],
-    );
     const surfaceTargetResolution = React.useMemo(() => resolvePluginSurfaceTarget({
         targetKind: surfaceScope.declared ? surfaceScope.targetKind : null,
         sessionId: props.sessionId,
         agentId: props.agentId,
-        projectId: props.projectId,
+        project: projectContext?.target,
         browserTarget: declaredBrowserTarget,
     }), [
         declaredBrowserTarget?.kind,
         declaredBrowserTarget?.targetId,
         declaredBrowserTargetUrl,
         props.agentId,
-        props.projectId,
+        projectContext?.target,
         props.sessionId,
         surfaceScope,
     ]);
@@ -3676,12 +3689,13 @@ function PluginSurfaceHostMount(props: Readonly<(
         [controller.isCurrent, machineId, resolveBrandTarget, serverId, surfaceLocale],
     );
     const policyContext = React.useMemo(() => createPluginUiPolicyEvaluationContext(
+        surfaceScope.declared && surfaceScope.targetKind === 'project' ? projectContext?.policyContext : undefined,
         props.policyContext,
         {
             platform: surfacePlatform,
             channel: surfaceChannel,
         },
-    ), [props.policyContext, surfaceChannel, surfacePlatform]);
+    ), [props.policyContext, projectContext?.policyContext, surfaceScope, surfaceChannel, surfacePlatform]);
     const renderMountedTargetedSurface = React.useCallback((request: TargetedPluginSurfaceMountRequest): React.ReactNode => {
         if (!resolvedSurfaceTarget.resolved) return null;
         return (
@@ -4516,6 +4530,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 {rendererHost}
             </PluginArtifactHostingStatusProvider>
         </PluginSurfaceSourceCauseContext.Provider>
+        {controller.actionControls ? <MountedPluginActionControls controls={controller.actionControls} /> : null}
         {pluginActionApproval.approvalPending && pluginActionApproval.approvalId ? (
             <ActionApprovalPendingNotice testID="plugin-surface-approval-pending"
                 message={t('approvals.status.open')} summary={pluginActionApproval.approvalSummary}
@@ -4535,6 +4550,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
     sessionId?: string | null;
     agentId?: string | null;
     projectId?: string | null;
+    projectContext?: ProjectWidgetAreaContextV1 | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     platform?: LocalServicePreviewPlatform;
@@ -4573,6 +4589,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
             sessionId={props.sessionId}
             agentId={props.agentId}
             projectId={props.projectId}
+            projectContext={props.projectContext}
             pluginUiProjection={props.pluginUiProjection}
             localServicePreviewState={props.localServicePreviewState}
             platform={props.platform}

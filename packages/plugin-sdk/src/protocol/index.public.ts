@@ -82,3 +82,24 @@ export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositor
 
 export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';
 export { projectNativeJsonValueForTransport } from './strictJsonValue.js';
+
+/** Canonical policy deferral for feature protocols forwarding host Action results. */
+export { ProtocolActionApprovalRequestCreatedResultSchema } from './actionApproval.js';
+/** Declared environment requirements contain names and policy, never secret values. */
+export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
+/** Project admission and preference values remain owned by the host's existing Actions. */
+export {
+    ProtocolWorkspaceAddressV1Schema,
+    ProtocolSecretReferenceOverlayV1Schema,
+    ProtocolWorkspaceExecutionConfigAddressV1Schema,
+    ProtocolWorkspaceWorkerPreferenceSetInputV1Schema,
+    ProtocolWorkspaceWorkerPreferenceReadResultV1Schema,
+    ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema,
+    ProtocolProjectDefinitionInspectOutputSchema,
+    ProtocolProjectComputeExecResultV1Schema,
+} from './projectExecution.js';
+export { ProjectExecutionOperationRefV1ProtocolSchema } from './projectExecution.js';
+export { ActionOperationGetV1ResponseProtocolSchema } from './projectExecution.js';
+export { PluginUiActionOperationHostReadResultV1ProtocolSchema } from './projectExecution.js';
+export type { PluginUiActionOperationHostReadResultV1 } from './projectExecution.js';
+export type { ActionOperationGetV1Response, ProjectSetupConsentRequiredV1 } from './projectExecution.js';

@@ -22,6 +22,24 @@ const surface: SurfaceContext = createSurfaceContextFixture();
 const identity = { instanceId: 'mount-1', mountNonce: 'nonce-1' } as const;
 
 describe('Host API negotiation admission', () => {
+    it('retains an explicitly requested base generation and refuses a silent default downgrade', async () => {
+        const create = (apiRange?: string) => {
+            let receive: ((message: unknown) => void) | undefined;
+            return createPluginUiHostApiClientFromTransport({ identity, ...(apiRange ? { apiRange } : {}), transport: {
+                subscribe(listener) { receive = listener; return { dispose() {} }; },
+                send(message) {
+                    if (message.kind === 'negotiate') receive?.({ wireVersion: 1, identity, kind: 'negotiated',
+                        apiVersion: '1.0.0', methods: ['context'] });
+                },
+            } });
+        };
+        const base = await create('^1.0.0');
+        expect(base.version().apiVersion).toBe('1.0.0');
+        await expect(base.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } },
+            { prepare: () => ({ input: null }), onSettled() {} })).rejects.toMatchObject({ code: 'unsupported_method' });
+        await expect(create()).rejects.toMatchObject({ code: 'incompatible_api_version' });
+    });
+
     it('settles a malformed addressed negotiation instead of waiting for an absent version', async () => {
         let receive: ((message: unknown) => void) | undefined;
         await expect(createPluginUiHostApiClientFromTransport({ identity, negotiationTimeoutMs: 25, transport: {
@@ -3025,5 +3043,78 @@ describe('plugin UI domain client transport adapter', () => {
         void api.watchContext(() => undefined).catch(() => undefined);
         await expect(api.watchContext(() => undefined)).rejects.toMatchObject({ code: 'duplicate_subscription_id' });
         expect(sent.filter((message) => message.kind === 'subscribe')).toHaveLength(1);
+    });
+});
+
+describe('qualified Machine display name', () => {
+    it('negotiates the exact read and validates disclosure', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        let result: unknown = { status: 'ready', displayName: 'Studio' };
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: PLUGIN_UI_HOST_METHODS_V1 });
+                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result }); }
+            },
+        } });
+        const request = { serverId: 'home-a', machineId: 'machine-1' };
+        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
+        expect(requests).toEqual([expect.objectContaining({ method: 'readMachineDisplayName', payload: request })]);
+        result = { status: 'unavailable' };
+        await expect(api.readMachineDisplayName(request)).resolves.toEqual(result);
+        result = { status: 'ready', displayName: 'Studio', metadata: { homeDir: '/private' } };
+        await expect(api.readMachineDisplayName(request)).rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.readMachineDisplayName({ ...request, accountId: 'forged' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(requests).toHaveLength(3);
+        const cancelled = new AbortController(); cancelled.abort();
+        await expect(api.readMachineDisplayName(request, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
+    });
+    it('refuses an older host that does not advertise the Machine read', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['context'] });
+                if (message.kind === 'request') requests.push(message);
+            },
+        } });
+        await expect(api.readMachineDisplayName({ serverId: 'home', machineId: 'machine' }))
+            .rejects.toMatchObject({ code: 'unsupported_method' });
+        expect(requests).toEqual([]);
+    });
+});
+
+describe('exact Session input reveal', () => {
+    it.each([true, false])('uses negotiated exact-input navigation and refuses unsupported or author routing authority: %s', async supported => {
+        let receive: ((message: unknown) => void) | undefined;
+        const requests: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: supported ? PLUGIN_UI_HOST_METHODS_V1 : ['context'] });
+                if (message.kind === 'request') { requests.push(message); receive?.({ wireVersion: 1,
+                    kind: 'result', identity, requestId: message.requestId, method: message.method, result: null }); }
+            },
+        } });
+        const input = { sessionId: 'exact-session', localId: '  opaque/local:input  ' };
+        if (!supported) {
+            await expect(api.revealSessionInput(input)).rejects.toMatchObject({ code: 'unsupported_method' });
+            expect(requests).toEqual([]);
+            return;
+        }
+        await expect(api.revealSessionInput(input)).resolves.toBeUndefined();
+        expect(requests).toEqual([expect.objectContaining({ method: 'revealSessionInput', payload: input })]);
+        await expect(api.revealSessionInput({ ...input, serverId: 'author-home' } as never)).rejects.toMatchObject({ code: 'invalid_payload' });
+        await expect(api.revealSessionInput({ ...input, localId: ' ' })).rejects.toMatchObject({ code: 'invalid_payload' });
+        const cancelled = new AbortController(); cancelled.abort();
+        await expect(api.revealSessionInput(input, { signal: cancelled.signal })).rejects.toMatchObject({ code: 'aborted' });
+        expect(requests).toHaveLength(1);
     });
 });

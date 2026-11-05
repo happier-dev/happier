@@ -1,6 +1,9 @@
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { PluginUiActionOperationHostReadResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, onTestFailed } from 'vitest';
 import { createActionExecutor, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 import { UsageExportInputSchema, UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -32,6 +35,7 @@ let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 const controllers: ReturnType<typeof createBoundPluginSurfaceController>[] = [];
 afterEach(async () => {
     standardCleanup();
+    actionOperationStore.reset();
     for (const controller of controllers.splice(0)) controller.dispose();
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
 });
@@ -62,7 +66,8 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], en
         mount: { kind: 'destination', destination: { pluginId: 'acme.usage', localId: 'summary' }, container: 'appPage' }, target: { kind: 'app' },
     }), requestSurface: controller.surfaceContext, requestIdPrefix: 'usage-native', handleRequest: controller.hostApi.handleRequest,
         installedMethods: controller.installedMethods });
-    return { controller, native, hostEntry, lifetime };
+    const unwatchNative = controller.subscribeResourceInvalidations(event => native.publishResourceSubscriptionEvent(event));
+    return { controller, native: { ...native, dispose() { unwatchNative(); native.dispose(); } }, hostEntry, lifetime };
 }
 
 function hosted(controller: ReturnType<typeof createBoundPluginSurfaceController>) {
@@ -99,6 +104,102 @@ async function settleUsageDetail(entry: PluginUiResourceEntry) {
 }
 
 describe('mounted native and hosted host reads', () => {
+    it('shares the qualified operation owner with native and hosted readers without unrelated invalidations or stale disclosure', async () => {
+        let phase = 'mount';
+        onTestFailed(() => { console.error('Qualified operation host-read failed during:', phase); });
+        let enabled = true;
+        const { controller, native, lifetime } = await mount(() => undefined, () => enabled);
+        const frame = hosted(controller);
+        const address = { serverId: lifetime.scope.serverId, machineId: 'machine-1', operationId: 'command-a' };
+        const resource = { hostRead: 'action.operations.get', input: address } as const;
+        const accepted = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: address.operationId,
+            revision: 1, actionId: 'projects.compute.exec', state: 'accepted',
+            scope: { accountId: lifetime.scope.accountId, machineId: address.machineId },
+            title: 'Local command', createdAt: 1, cancellation: 'supported' });
+        const publish = (snapshot: typeof accepted) => actionOperationStore.mergeSnapshots({ serverId: address.serverId, snapshots: [snapshot] });
+        const decode = (content: Awaited<ReturnType<typeof native.api.readResource>>) =>
+            PluginUiActionOperationHostReadResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
+        const events: unknown[] = [];
+        let watch: Awaited<ReturnType<typeof native.api.watchResource>> | undefined;
+        const invalidations = () => frame.pushes.filter(value => value && typeof value === 'object'
+            && 'payload' in value && JSON.stringify(value).includes('"kind":"invalidated"'));
+        try {
+            publish(accepted);
+            phase = 'raw admission read';
+            expect(await controller.hostApi.handleRequest({ version: 1, requestId: 'operation-admission',
+                surface: controller.surfaceContext, method: 'readResource', payload: { resource } }))
+                .toMatchObject({ contentType: 'application/json' });
+            phase = 'native initial read';
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: accepted, observation: 'available' });
+            phase = 'native watch acknowledgment';
+            watch = await native.api.watchResource(resource, event => events.push(event));
+            phase = 'hosted negotiate';
+            await frame.send({ kind: 'negotiate', apiRange: '*' });
+            phase = 'hosted watch acknowledgment';
+            expect((await frame.send({ kind: 'subscribe', method: 'watchResource', requestId: 'operation-watch',
+                subscriptionId: 'operation-watch', payload: { resource } })).payload).toMatchObject({ kind: 'result' });
+            const readsBefore = home!.requests.length;
+            const unrelated = Array.from({ length: 1000 }, (_, index) => ({ ...accepted, operationId: `unrelated-${index}` }));
+            actionOperationStore.mergeSnapshots({ serverId: address.serverId, snapshots: unrelated });
+            actionOperationStore.mergeSnapshots({ serverId: 'other-home', snapshots: [accepted] });
+            actionOperationStore.setMachineObservation({ serverId: address.serverId, machineId: 'other-machine' }, 'reconnecting');
+            phase = 'unrelated changes';
+            await flushHookEffects();
+            expect(events).toHaveLength(0);
+            expect(invalidations()).toHaveLength(0);
+            expect(home!.requests).toHaveLength(readsBefore);
+            const running = ActionOperationSnapshotV1Schema.parse({ ...accepted, revision: 2, state: 'running', startedAt: 2 });
+            publish(running);
+            phase = 'running invalidation';
+            await expect.poll(() => events.length).toBe(1);
+            await expect.poll(() => invalidations().length).toBe(1);
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: running, observation: 'available' });
+            phase = 'hosted current read';
+            const hostedRead = await frame.send({ kind: 'request', method: 'readResource', requestId: 'operation-read', payload: { resource } });
+            expect(hostedRead.payload).toMatchObject({ kind: 'result' });
+            const hostedPayload = hostedRead.payload as { result: { bytesBase64: string } };
+            expect(PluginUiActionOperationHostReadResultV1Schema.parse(JSON.parse(new TextDecoder().decode(decodeBase64(hostedPayload.result.bytesBase64)))))
+                .toEqual({ operation: running, observation: 'available' });
+            actionOperationStore.setMachineObservation(address, 'reconnecting');
+            phase = 'reconnecting invalidation';
+            await expect.poll(() => events.length).toBe(2);
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: running, observation: 'reconnecting' });
+            actionOperationStore.setMachineObservation(address, 'unavailable');
+            phase = 'unavailable invalidation';
+            await expect.poll(() => events.length).toBe(3);
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: running, observation: 'unavailable' });
+            const stopped = ActionOperationSnapshotV1Schema.parse({ ...running, revision: 3,
+                observation: { kind: 'stop_unconfirmed', code: 'machine_rpc_failed' } });
+            publish(stopped);
+            phase = 'unconfirmed-stop invalidation';
+            await expect.poll(() => events.length).toBe(4);
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: stopped, observation: 'unavailable' });
+            const failed = ActionOperationSnapshotV1Schema.parse({ ...running, revision: 4, state: 'failed', settledAt: 4,
+                error: { errorCode: 'command_failed', error: 'Exited with an error' } });
+            publish(failed);
+            phase = 'settled invalidation';
+            await expect.poll(() => events.length).toBe(5);
+            expect(decode(await native.api.readResource(resource))).toEqual({ operation: failed, observation: 'available' });
+            const wrongMachine = { ...resource, input: { ...address, machineId: 'other-machine' } };
+            phase = 'qualified authority denials';
+            expect(decode(await native.api.readResource(wrongMachine))).toEqual({ operation: null, observation: 'unavailable' });
+            const otherAccount = ActionOperationSnapshotV1Schema.parse({ ...accepted, operationId: 'other-account',
+                scope: { ...accepted.scope, accountId: 'other-account' } });
+            publish(otherAccount);
+            expect(decode(await native.api.readResource({ ...resource, input: { ...address, operationId: otherAccount.operationId } })))
+                .toEqual({ operation: null, observation: 'unavailable' });
+            await expect(native.api.readResource({ ...resource, input: { ...address, serverId: 'other-home' } }))
+                .rejects.toMatchObject({ code: 'server_scope_mismatch' });
+            enabled = false;
+            phase = 'revoked admission';
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'action_disabled' });
+            controller.dispose();
+            phase = 'retired surface';
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'stale_surface' });
+        } finally { phase = `cleanup after ${phase}`; await watch?.dispose(); frame.dispose(); native.dispose(); }
+    });
+
+
     it('exports only selected fields through native and hosted executeAction, and refuses denied or retired mounts', async () => {
         let enabled = true;
         const { controller, native } = await mount(request => request.path === '/v2/usage/query'

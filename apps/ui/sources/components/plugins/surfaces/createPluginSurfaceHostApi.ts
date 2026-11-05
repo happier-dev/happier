@@ -32,6 +32,12 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCop
  * must not report the withdrawal as a user decision.
  */
 export type PluginSurfaceHostApiRequestOptions = Readonly<{
+    /** Mounted control delivery/release belongs to the physical subscription, never author JSON. */
+    actionControlSubscription?: Readonly<{
+        publish: (event: import('@happier-dev/protocol/plugins/ui').PluginUiActionControlEventV1) => void;
+        retain: (release: () => void) => void;
+    }>;
+
     /** The existing subscription carrier owns delivery and release, never author JSON. */
     entityDragDropSubscription?: Readonly<{
         publish: (state: import('@happier-dev/protocol/plugins/ui').PluginUiEntityDragDropStateV1) => void;

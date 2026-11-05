@@ -1,3 +1,6 @@
+import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
+import { WorkspaceRefV1WriteSchema } from '../../workspaces/workspaceRefV1.js';
+import { ProjectSourceV1Schema } from '../../projects/sources/projectSourceV1.js';
 import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUiPageNavigationProjectionV1Schema } from './pageNavigation.js';
@@ -77,7 +80,14 @@ export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discri
   }),
   z.strictObject({
     kind: z.literal('project'),
-    projectId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    projectKey: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    source: z.optional(z.strictObject({
+      serverId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+      source: ProjectSourceV1Schema,
+    })),
+    checkout: z.optional(WorkspaceRefV1WriteSchema),
+    repository: z.optional(ScmHostingRepositoryIdentityV1Schema),
+    branch: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   }),
   z.strictObject({
     kind: z.literal('browser'),
@@ -222,6 +232,8 @@ function surfaceFinishGradientSchema() {
  * request dispatch key. It is not an alternate author payload grammar.
  */
 export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Exact physical renderer instance, stable until that renderer retires; never an execution grant. */
+  mountId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
   mount: PluginUiMountContextV1Schema,
   target: PluginUiHostApiSurfaceTargetV1Schema,
   /** Identity only from this mount's admitted Account lifetime; never an execution grant. */

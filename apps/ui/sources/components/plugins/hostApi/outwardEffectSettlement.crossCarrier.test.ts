@@ -1,3 +1,8 @@
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { createPluginSurfaceActionControls } from '../surfaces/pluginSurfaceActionControls';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createPluginUiHostApiClientFromTransport } from '../../../../../../packages/plugin-sdk/src/ui/clientTransport';
 import type {
     PluginHostedWebBridgeEnvelopeV1,
     PluginHostedWebBridgeHostMessageEnvelopeV1,
@@ -177,6 +182,26 @@ async function createHostedCarrier(mount: MountFixture, methods: readonly Plugin
     return handler;
 }
 
+async function createAuthorCarrier(mount: MountFixture, kind: 'native' | 'hosted'): Promise<Readonly<{
+    api: PluginUiHostApi;
+    dispose(): void;
+}>> {
+    if (kind === 'native') return createNativeCarrier(mount);
+    let receive: ((value: unknown) => void) | undefined;
+    const handler = await createHostedCarrier(mount, mount.installedMethods, message => receive?.(message.payload));
+    let sequence = 20;
+    const lifetime = new AbortController();
+    const api = await createPluginUiHostApiClientFromTransport({ identity: canonicalIdentity, signal: lifetime.signal,
+        transport: {
+            subscribe: listener => { receive = listener; return { dispose: () => { receive = undefined; } }; },
+            send: async message => {
+                const response = await handler(createHostedEnvelope('hostApi', message, sequence++));
+                if (response.kind === 'result') receive?.(response.payload);
+            },
+        } });
+    return { api, dispose: () => { lifetime.abort(); handler.dispose(); } };
+}
+
 function hostedRequest(
     handler: Awaited<ReturnType<typeof createHostedCarrier>>,
     input: Readonly<{ requestId: string; method: string; payload?: unknown; sequence?: number }>,
@@ -192,6 +217,126 @@ function hostedRequest(
 }
 
 describe('outward-effect settlement across the React Native and hosted-web carriers', () => {
+    it.each(['native', 'hosted'] as const)('preserves host Action preparation and original settlement custody through %s', async kind => {
+        const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown',
+            details: { operationId: 'original-operation' } };
+        // Authenticated Project transport is the external boundary; control,
+        // canonical executor, policy and both physical adapters remain real.
+        const projectAction = vi.fn(async () => execution);
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction }));
+        const lifetime = new AbortController();
+        const controls = createPluginSurfaceActionControls({ pluginId: surface.pluginId, surfaceId: surface.surfaceId,
+            hostAction: { execute: executor.execute, context: { serverId: 'home', runtimeAccountId: 'account' } },
+            signal: lifetime.signal, isCurrent: () => mount.isCurrent(), captureCurrentBinding: () => () => mount.isCurrent() });
+        const mount = createMount({ handlers: { actionControl: controls.handleRequest } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        const preparedInput = { workspace: { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' },
+            executable: '/usr/bin/tool', argv: ['check'], cwd: '/repo', choice: { kind: 'primary' as const } };
+        const prepare = vi.fn(() => ({ input: preparedInput }));
+        const onSettled = vi.fn();
+        try {
+            const control = await carrier.api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
+            expect(prepare).not.toHaveBeenCalled();
+            expect(projectAction).not.toHaveBeenCalled();
+            expect(controls.getSnapshot()).toHaveLength(1);
+            await controls.press(controls.getSnapshot()[0]!.id);
+            expect(prepare).toHaveBeenCalledTimes(1);
+            expect(projectAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actionId: 'projects.compute.exec', input: preparedInput,
+                context: expect.objectContaining({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }) }));
+            expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution);
+            await control.update({ title: 'Run again', disabled: true });
+            expect(controls.getSnapshot()[0]?.presentation).toEqual({ title: 'Run again', disabled: true });
+            await controls.press(controls.getSnapshot()[0]!.id);
+            expect(projectAction).toHaveBeenCalledTimes(1);
+            await control.dispose();
+            await vi.waitFor(() => expect(controls.getSnapshot()).toEqual([]));
+        } finally { lifetime.abort(); carrier.dispose(); mount.host.dispose?.(); }
+    });
+
+    it.each(['native', 'hosted'] as const)('retires %s preparation without accepting late input or executing an Action', async kind => {
+        const projectAction = vi.fn(async () => ({ ok: false as const, errorCode: 'unexpected_execution', error: 'unexpected_execution' }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction }));
+        const lifetime = new AbortController();
+        const controls = createPluginSurfaceActionControls({ pluginId: surface.pluginId, surfaceId: surface.surfaceId,
+            hostAction: { execute: executor.execute, context: {} }, signal: lifetime.signal,
+            isCurrent: () => mount.isCurrent(), captureCurrentBinding: () => () => mount.isCurrent() });
+        const mount = createMount({ handlers: { actionControl: controls.handleRequest } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        let finish: ((value: { input: null }) => void) | undefined;
+        let signal: AbortSignal | undefined;
+        const prepare = vi.fn((options: { signal: AbortSignal }) => {
+            signal = options.signal;
+            return new Promise<{ input: null }>(resolve => { finish = resolve; });
+        });
+        const onSettled = vi.fn();
+        try {
+            const control = await carrier.api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
+            const press = controls.press(controls.getSnapshot()[0]!.id);
+            await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+            await control.dispose();
+            expect(signal?.aborted).toBe(true);
+            finish?.({ input: null });
+            await press;
+            expect(projectAction).not.toHaveBeenCalled();
+            expect(onSettled).not.toHaveBeenCalled();
+            expect(controls.getSnapshot()).toEqual([]);
+        } finally { lifetime.abort(); carrier.dispose(); mount.host.dispose?.(); }
+    });
+
+    it.each(['native', 'hosted'] as const)('invalidates %s preparation on authority change while retaining the control for a fresh press', async kind => {
+        const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown',
+            details: { operationId: 'original-operation' } };
+        const projectAction = vi.fn(async () => execution);
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ projectAction }));
+        const lifetime = new AbortController();
+        let authority = 'machine-one';
+        const controls = createPluginSurfaceActionControls({ pluginId: surface.pluginId, surfaceId: surface.surfaceId,
+            hostAction: { execute: executor.execute, context: {} }, signal: lifetime.signal,
+            isCurrent: () => mount.isCurrent(), captureCurrentBinding: () => {
+                const captured = authority;
+                return () => mount.isCurrent() && authority === captured;
+            } });
+        const mount = createMount({ handlers: { actionControl: controls.handleRequest } });
+        const carrier = await createAuthorCarrier(mount, kind);
+        let finish: ((value: { input: null }) => void) | undefined;
+        let preparedSignal: AbortSignal | undefined;
+        let preparations = 0;
+        const prepare = vi.fn((options: { signal: AbortSignal }) => {
+            preparedSignal = options.signal;
+            preparations += 1;
+            if (preparations === 1) return new Promise<{ input: null }>(resolve => { finish = resolve; });
+            return { input: { workspace: { serverId: 'home', workspaceId: 'workspace', machineId: authority, rootPath: '/repo' },
+                executable: '/usr/bin/tool', argv: ['check'], cwd: '/repo', choice: { kind: 'primary' } } };
+        });
+        const onSettled = vi.fn();
+        let firstPress: Promise<void> | undefined;
+        try {
+            const control = await carrier.api.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
+            const id = controls.getSnapshot()[0]!.id;
+            firstPress = controls.press(id);
+            await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+            authority = 'machine-two';
+            controls.invalidatePreparations();
+            await firstPress;
+            expect(preparedSignal?.aborted).toBe(true);
+            expect(onSettled).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ok: false, errorCode: 'stale_surface' }));
+            expect(projectAction).not.toHaveBeenCalled();
+            expect(controls.getSnapshot()).toHaveLength(1);
+            finish?.({ input: null });
+            await Promise.resolve();
+            await controls.press(id);
+            expect(prepare).toHaveBeenCalledTimes(2);
+            expect(projectAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ input: expect.objectContaining({
+                workspace: expect.objectContaining({ machineId: 'machine-two' }),
+            }) }));
+            expect(onSettled).toHaveBeenNthCalledWith(2, execution);
+            await control.dispose();
+        } finally {
+            lifetime.abort(); carrier.dispose(); mount.host.dispose?.();
+            await firstPress;
+        }
+    });
+
     it('projects exact-source semantic feedback through both real carriers and retires their existing subscription leases', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };

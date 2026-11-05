@@ -7,7 +7,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 
 export const HostInputTypeReferenceV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ hostType: z.literal('usageQuery'), field: z.optional(z.enum(['period', 'session'])) }),
-  z.strictObject({ hostType: z.enum(['session', 'workspace', 'machine', 'agentParticipant']) }),
+  z.strictObject({ hostType: z.enum(['session', 'workspace', 'machine', 'agentParticipant', 'savedSecretReference']) }),
 ]));
 export type HostInputTypeReferenceV1 = z.infer<typeof HostInputTypeReferenceV1Schema>;
 export const InputTypeReferenceV1Schema = lazyZodSchema(() => z.union([HostInputTypeReferenceV1Schema, asProtocolZod(PluginContributionIdentityV1Schema)]));
@@ -26,6 +26,7 @@ export function parseInputTypeOptionsSourceId(value: string): InputTypeReference
   if (value === 'host-input:workspace') return { hostType: 'workspace' };
   if (value === 'host-input:machine') return { hostType: 'machine' };
   if (value === 'host-input:agentParticipant') return { hostType: 'agentParticipant' };
+  if (value === 'host-input:savedSecretReference') return { hostType: 'savedSecretReference' };
   return value.startsWith('plugin-input:')
     ? parseQualifiedPluginContributionKey(value.slice('plugin-input:'.length)) : null;
 }
