@@ -971,6 +971,8 @@ test('measured native workload reservations round the recorded peak without a bl
     ['validation', 1824752],
     // validation-floor-sizing-1104/measurements.json, loaded Linux workers.
     ['focused-validation', 779072],
+    // focused-vitest-reservation-1105/measure-v2.log, loaded UI components.
+    ['focused-validation-ui', 2995796],
     ['entry-loads', 2361852],
     // 2026-11-04 admission holder tree RSS; compile-reservation-peaks-1104/holder-snapshot.json.
     ['compilation', 38992620],
@@ -992,8 +994,8 @@ test('focused source validation uses its measured shape while compiler and suite
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const [component, tail, expected] of [
-    ['apps/ui', ['sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'focused-validation'],
-    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'focused-validation'],
+    ['apps/ui', ['sources/utils/path/resolvePathRelativeToRoot.test.ts'], 'focused-validation-ui'],
+    ['apps/cli', ['src/utils/path/expandHomeDirPath.test.ts'], 'validation'],
     ['apps/server', ['sources/app/session/turns/parseSessionTurnState.test.ts'], 'focused-validation'],
     ['packages/channels-protocol', ['src/v1/text.test.ts'], 'focused-validation'],
     ['packages/support', [], 'validation'],
@@ -1174,9 +1176,9 @@ test('focused test selections reserve compilation only for compiler files or com
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const [component, tail, expected] of [
-    ['apps/ui', ["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation'],
-    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'focused-validation'],
-    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts'], 'focused-validation'],
+    ['apps/ui', ["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation-ui'],
+    ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', '-t', 'x'], 'validation'],
+    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts'], 'focused-validation-ui'],
     ['apps/ui', ['sources/components/plain.test.tsx'], 'validation'],
     ['apps/cli', ['scripts/build.test.ts'], 'compilation'],
     ['apps/cli', ['src/api/artifacts/accountArtifactStore.test.ts', 'scripts/build.test.ts', '-t', 'x'], 'compilation'],
@@ -1188,7 +1190,7 @@ test('focused test selections reserve compilation only for compiler files or com
     ['apps/ui', [root], 'compilation'],
     ['apps/ui', [root.split('/').filter(Boolean).at(-1)], 'validation'],
     ['apps/ui', ['sources/utils/path'], 'validation'],
-    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts', '-t', 'declarationEmission.test.ts'], 'focused-validation'],
+    ['apps/ui', ['sources/utils/path/pathUtils.spec.ts', '-t', 'declarationEmission.test.ts'], 'focused-validation-ui'],
     ['apps/ui', ['-t', 'pathUtils.spec.ts'], 'compilation'],
     ['packages/plugin-sdk', ['--config', 'vitest.source.config.ts', 'src/plain.test.ts'], 'validation'],
     ['packages/plugin-sdk', ['src/plain.test.ts'], 'validation'],
@@ -2246,7 +2248,7 @@ test('compound build:packages then raw Vitest retains producer-before-payload ad
   const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const command = 'pnpm run build:packages @happier-dev/protocol @happier-dev/plugin-sdk && pnpm --dir apps/cli exec vitest run --config vitest.config.ts scripts/build-owned/bundledPlugins/typescriptModuleInspection.test.ts -t "inspects the Codex authored manifest within the worker heap budget"';
   const policy = await commandPolicy.resolvePackageCommandPolicy(['sh', '-c', command], { repoRoot, cwd: repoRoot });
-  assert.equal(policy.heavyClass, 'focused-validation', 'the coordinator delegates compilation to its targets');
+  assert.equal(policy.heavyClass, 'validation', 'the coordinator delegates compilation to its targets');
   assert.equal(policy.selfPublisher, '1', 'producer preparation cannot inherit test capacity');
   assert.ok(policy.admissionScript, 'the raw test must acquire its own admission after preparation');
   assert.doesNotMatch(policy.admissionScript, /'--local'/, 'the consumer retains AUTO target placement');
@@ -4839,7 +4841,7 @@ test('CLI integration skips publication and compilation admission only when setu
     await t.test(value || 'unset', async () => {
       const policy = resolveRemoteCommandPolicy(args, { cwd, env });
       assert.equal(policy.kind, skipped ? 'source-test' : 'runtime');
-      assert.equal(policy.heavyClass, skipped ? 'focused-validation' : 'compilation');
+      assert.equal(policy.heavyClass, skipped ? 'validation' : 'compilation');
       if (skipped) {
         assert.equal(policy.workspaceLock, '');
         const preparation = await (await import('./remote_validation_preparation.mjs')).prepareRemoteValidationWorkspace({

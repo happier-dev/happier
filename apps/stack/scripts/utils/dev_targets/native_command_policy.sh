@@ -11,6 +11,7 @@ heavyweight_memory_floor_kib() {
   case "$1" in
     validation) heavyweight_policy_floor='2097152' ;;
     focused-validation) heavyweight_policy_floor='1048576' ;;
+    focused-validation-ui) heavyweight_policy_floor='3145728' ;;
     entry-loads) heavyweight_policy_floor='3145728' ;;
     native-source-test) heavyweight_policy_floor='1048576' ;;
     native-custody) heavyweight_policy_floor='1048576' ;;
@@ -466,6 +467,9 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'focused-validation' ]; }; then
     policy_heavyClass='focused-validation'
+  fi
+  if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'focused-validation-ui' ]; }; then
+    policy_heavyClass='focused-validation-ui'
   fi
   if { [ "$policy_admissionWrapper" = '1' ]; } && { [ "$policy_admissionClass" = 'entry-loads' ]; }; then
     policy_heavyClass='entry-loads'

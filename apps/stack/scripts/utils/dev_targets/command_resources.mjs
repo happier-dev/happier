@@ -12,6 +12,10 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // largest successful sampled tree RSS 779,072 KiB, rounded without margin.
   // validation-floor-sizing-1104/measurements.json retains all run peaks.
   'focused-validation': { memoryKiB: 1 * 1024 * 1024, diskClass: 'validation' },
+  // 2026-11-05 windows1-linux UI component trees exceeded the
+  // utility-only calibration above. Round the measured peak without margin:
+  // focused-vitest-reservation-1105/measure-v2.log (2,995,796 KiB RSS).
+  'focused-validation-ui': { memoryKiB: 3 * 1024 * 1024, diskClass: 'validation' },
   // 2026-11-04 repeated loaded entry-load runs reached 2,361,852 KiB.
   // validation-floor-sizing-1104/measurements.json; round up without margin.
   'entry-loads': { memoryKiB: 3 * 1024 * 1024, diskClass: 'validation' },

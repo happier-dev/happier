@@ -4336,8 +4336,8 @@ test('AUTO resolves repository-relative cwd on the selected target and retains i
     assert.ok((await readFile(invocation.env.FIXTURE_TRACE, 'utf8')).includes(`cd -- '${repoRoot}/apps/cli'`));
   }
   for (const [files, expectedClass] of [
-    [["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation'],
-    [['sources/utils/path/pathUtils.spec.ts'], 'focused-validation'],
+    [["sources/components/settings/teams/credentials/TeamCredentialExternalApiScreen.test.tsx"], 'focused-validation-ui'],
+    [['sources/utils/path/pathUtils.spec.ts'], 'focused-validation-ui'],
     [['sources/utils/path/pathUtils.spec.ts', 'sources/text/declarationEmission.test.ts'], 'compilation'],
   ]) {
     await writeFile(invocation.env.FIXTURE_TRACE, '');

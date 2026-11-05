@@ -889,7 +889,10 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
     const filters = readVitestFileFilters(facts);
     if (filters.length === 1 && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(filters[0])
       && existsSync(resolve(repoRoot, facts.component, filters[0]))) {
-      policy.heavyClass = 'focused-validation';
+      // CLI's measured 1,601,992 KiB peak fits the existing validation envelope.
+      policy.heavyClass = facts.component === 'apps/ui' ? 'focused-validation-ui'
+        : facts.component === 'apps/cli' ? 'validation'
+          : 'focused-validation';
     }
   }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
