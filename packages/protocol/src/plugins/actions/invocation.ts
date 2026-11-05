@@ -94,6 +94,8 @@ export type PluginActionInvocationResult = Readonly<
      * payload is not JSON-safe.
      */
     data?: StrictJsonValue;
+    /** Canonical host admission may refuse before entering the handler. */
+    actionHandlerInvocation?: 'notStarted';
   }
 >;
 
@@ -1005,6 +1007,10 @@ export function createPluginActionInvocation(params: Readonly<{
             if (linked.signal.aborted) {
               return unavailableBeforeHandler('plugin_action_aborted', 'Plugin action invocation was aborted');
             }
+            const pluginError = readPluginActionError(settlement.error);
+            if (pluginError) return Object.freeze({
+              status: 'failed' as const, ...pluginError, actionHandlerInvocation: 'notStarted' as const,
+            });
             return unavailableBeforeHandler(
               'plugin_action_pre_dispatch_unavailable',
               'Plugin action invocation could not be admitted',

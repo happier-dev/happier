@@ -651,6 +651,21 @@ describe('createPluginActionInvocation', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('preserves canonical host pre-dispatch failures without accepting unknown errors (typed=%s)', async (typed) => {
+    const failureCause = { phase: 'deployment.target.admission.link.provider_identity', errorClass: 'Error', errorCode: null, httpStatus: null };
+    const error = typed ? Object.assign(new Error('deployment_access_denied'), {
+      name: 'PluginError', code: 'deployment_access_denied', retryable: false,
+      data: { name: 'PluginError', code: 'deployment_access_denied', failureCause },
+    }) : Object.assign(new Error('private admission detail'), { code: 'deployment_access_denied', data: { failureCause } });
+    const handler = vi.fn(() => ({ committed: true }));
+    const result = await createInvocation().invoke(null, { preDispatch: () => { throw error; }, handler });
+    expect(result).toMatchObject(typed ? {
+      status: 'failed', code: 'deployment_access_denied', data: { failureCause }, actionHandlerInvocation: 'notStarted',
+    } : { status: 'unavailable', code: 'plugin_action_pre_dispatch_unavailable', actionHandlerInvocation: 'notStarted' });
+    expect(handler).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('private admission detail');
+  });
+
   it('does not enter the handler when caller cancellation wins during host pre-dispatch', async () => {
     const caller = new AbortController();
     const preDispatch = vi.fn(() => new Promise<never>(() => {}));
