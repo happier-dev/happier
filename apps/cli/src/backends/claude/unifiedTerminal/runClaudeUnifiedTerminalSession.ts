@@ -1183,6 +1183,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
   let spawn: ClaudeUnifiedTerminalSpawn | null = null;
   let spawnArtifactsHandedOff = false;
   let spawnEnvForRuntimeControl: Readonly<Record<string, string>> | null = null;
+  const readProviderInvocation = () => spawn?.providerInvocation;
   const ensureSpawn = async (): Promise<ClaudeUnifiedTerminalSpawn> => {
     if (spawn) return spawn;
     spawn = await (opts.buildSpawn ?? buildDefaultSpawn)({
@@ -1269,12 +1270,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
   const failForTerminalHostLoss = (
     activeHandle: TerminalHostHandle,
     error: ClaudeUnifiedTerminalHostDeadError,
-    providerStopped = false,
   ): void => {
-    if (!currentTerminalProcess) {
-      if (providerStopped) observeProviderProcessExit();
-      else observeUnverifiedProviderExit(error);
-    }
     void publishHostDeadHealth(activeHandle, error.liveness);
     fatalRuntimeError ??= error;
     if (!runtimeAbortController.signal.aborted) runtimeAbortController.abort(error);
@@ -2719,15 +2715,16 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             isExpectedHostExit: (liveness) => expectedPromptInputExit && isCleanTerminalExit(liveness),
             // Owned processes already deliver qualified exit through IPC. Independently
             // launched hosts may qualify only the actual provider invocation, never a runner.
-            providerInvocation: currentTerminalProcess ? undefined : spawn?.providerInvocation,
+            providerInvocation: currentTerminalProcess ? undefined : readProviderInvocation(),
             onProviderGone: ({ liveness }) => {
+              observeProviderProcessExit();
               if (expectedPromptInputExit) {
                 if (!runtimeAbortController.signal.aborted) {
                   runtimeAbortController.abort('claude-unified-terminal-graceful-exit');
                 }
                 return;
               }
-              failForTerminalHostLoss(activeHandle, new ClaudeUnifiedTerminalHostDeadError(liveness), true);
+              failForTerminalHostLoss(activeHandle, new ClaudeUnifiedTerminalHostDeadError(liveness));
             },
             onHostExited: () => {
               if (!currentTerminalProcess) {
@@ -2740,6 +2737,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               }
             },
             onHostDead: (error) => {
+              if (!currentTerminalProcess) observeUnverifiedProviderExit(error);
               failForTerminalHostLoss(activeHandle, error);
             },
           }),
