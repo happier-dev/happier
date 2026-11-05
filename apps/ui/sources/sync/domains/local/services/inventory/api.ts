@@ -74,7 +74,7 @@ export async function fetchLocalServiceInventorySnapshot(
  *
  * `sinceGeneratedAt` is the `generatedAt` of the snapshot the caller already holds, so a change
  * that lands between the caller's snapshot read and its first watch is answered immediately
- * instead of being missed. Exactly one watch is outstanding per subscribed store entry.
+ * instead of being missed.
  */
 export type LocalServiceInventoryWatchClientInput = Readonly<{
     machineId: string;
@@ -82,6 +82,8 @@ export type LocalServiceInventoryWatchClientInput = Readonly<{
     accountId?: string | null;
     sessionId?: string | null;
     sinceGeneratedAt?: number | null;
+    /** Own producer demand until cancellation; snapshot watches may answer and re-arm alongside it. */
+    observationOnly?: true;
     signal?: AbortSignal;
 }>;
 

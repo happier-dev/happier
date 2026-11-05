@@ -537,8 +537,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // Discovery freshness is independent of the last material publication's watch cursor.
     let lastInventoryObservationAt: number | null = null;
 
-    // Only parked inventory readers demand periodic native/HTTP work. The Machine
-    // summary publisher passively observes those refreshes; it is not a live reader.
+    // The mounted inventory observation holds demand across individual value replies.
+    // The Machine summary publisher is passive and owns no observation lifetime.
     // Plain inventory reads stay fresh through the same single-flight owner.
     let activeInventoryWatchers = 0;
     const ensureFreshInventory = async (): Promise<void> => {
@@ -586,9 +586,14 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         // a caller-selected path must not enroll another filesystem root.
         const requestedRoots = roots ? [...new Set(roots.flatMap(root => knownRoots.flatMap(known =>
             isWorkspacePathWithin(known, root) ? [root] : isWorkspacePathWithin(root, known) ? [known] : [])))] : knownRoots;
-        return await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
+        const targets = await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
             acceptedWorkspaceRefs: source.acceptedWorkspaceRefs.filter(ref => requestedRoots.some(root =>
                 isWorkspacePathWithin(root, ref.rootPath) || isWorkspacePathWithin(ref.rootPath, root))) });
+        // Successful scoped discovery admits package observation only inside a
+        // current project Workspace. A Session ancestor never admits its whole tree.
+        if (roots && options?.includePackageScripts !== false) declarationWatch.updatePackageRoots(requestedRoots.filter(root =>
+            source.acceptedWorkspaceRefs.some(ref => isWorkspacePathWithin(ref.rootPath, root))));
+        return targets;
     };
     const runTargetsProvider = params.runTargets ?? defaultRunTargetsProvider;
     const defaultResolveSessionWorkspacePaths = async (sessionId: string): Promise<readonly string[]> =>
@@ -650,8 +655,8 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
     };
     const declarationWatch = createLocalServiceDeclarationWatch({
         readWorkspaceFacts,
-        async onChanged(roots, signal) {
-            await scannedLauncherFeed.refreshRunTargets(roots, signal);
+        async onChanged(roots, signal, options) {
+            await scannedLauncherFeed.refreshRunTargets(roots, signal, options);
             if (signal.aborted) return;
             declarationObservationFailure = undefined;
             const snapshot = inventoryRegistry.getSnapshot();

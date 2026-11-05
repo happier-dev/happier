@@ -138,13 +138,22 @@ const store = createSharedSubscriptionStore<
     },
     defaultWatchClient,
     watchAfterRefresh: true,
+    observeWatch: async ({ input, watchClient, signal }) => {
+        await watchClient({
+            machineId: input.machineId,
+            serverId: input.serverId,
+            accountId: input.accountId,
+            observationOnly: true,
+            signal,
+        });
+    },
     // Preview membership shares this Machine watch. Its canonical snapshot must
     // be re-read even if a launcher projection never observed the registration.
     // One notification per shared watch, not one per Session/launcher consumer.
     onWatchSnapshot: (input) => invalidateLocalServicePreviewStore(input),
-    // Freshness comes from the daemon: one parked watch per subscribed machine, re-armed on each
-    // answer. `sinceGeneratedAt` closes the window between this store's snapshot read and its
-    // first watch so a service that starts in between is not missed.
+    // Freshness comes from the daemon: one snapshot watch per subscribed Machine, re-armed on each
+    // answer alongside its shared observation lifetime. `sinceGeneratedAt` closes the window
+    // between the snapshot read and first watch so a service that starts in between is not missed.
     watch: async ({ input, state, watchClient, signal }) => {
         const result = await watchClient({
             machineId: input.machineId,

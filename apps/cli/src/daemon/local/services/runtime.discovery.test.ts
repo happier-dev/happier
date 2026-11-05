@@ -6,6 +6,7 @@ import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/loca
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 
 import { createLocalServicesDaemonRuntime } from './runtime';
+import { removeSessionMarker, writeSessionMarker } from '@/daemon/sessionRegistry';
 
 const observations = vi.hoisted(() => ({ directories: [] as string[], attachments: new Set<string>(), starts: [] as string[], events: [] as string[],
     failedWatchPath: undefined as string | undefined,
@@ -46,7 +47,77 @@ function scripts(snapshot: LocalServiceLauncherSnapshotV1) {
         ? `${target.sourceClass.packageName}:${target.sourceClass.scriptName}` : target.id);
 }
 
+function declaredWorkspaces(roots: readonly string[]) {
+    return { facts: roots.map(path => ({ path })), acceptedWorkspaceRefs: roots.map((rootPath, index) => ({
+        id: `workspace-${index}`, serverId: 'home', machineId: 'machine', rootPath, createdAtMs: 1,
+    })), diagnostics: [] };
+}
+
 describe('Services declaration discovery demand', () => {
+    it('does not turn a Session-only home scope into recursive native observation', async () => {
+        const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-session-scope-')));
+        const home = join(base, 'home');
+        const cache = join(home, '.cache', 'tools', 'deep');
+        const project = join(home, 'project');
+        await mkdir(cache, { recursive: true });
+        await mkdir(join(project, '.happier'), { recursive: true });
+        await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'project', scripts: { dev: 'serve' } }));
+        await writeSessionMarker({ pid: process.pid, happySessionId: 'raw-home', cwd: home });
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
+            workspaceFacts: () => ({ facts: [{ path: home }], acceptedWorkspaceRefs: [{ id: 'project', serverId: 'home',
+                machineId: 'machine', rootPath: project, createdAtMs: 1 }], diagnostics: [] }),
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const cancellation = new AbortController();
+        let observing: Promise<unknown> | undefined;
+        try {
+            await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
+            observing = runtime.inventoryRoutes.watchSnapshot({ observationOnly: true, signal: cancellation.signal });
+            await vi.waitFor(() => expect(observations.attachments.has(project)).toBe(true));
+            observations.starts.length = 0;
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ sessionId: 'raw-home' }))).toEqual(['project:dev']);
+            await vi.waitFor(() => expect(observations.starts).toContain(join(project, '.happier')));
+            expect(observations.starts.filter(path => path === join(home, '.cache') || path.startsWith(`${home}/.cache/`))).toEqual([]);
+        } finally {
+            cancellation.abort(); await observing; await runtime.stop(); await removeSessionMarker(process.pid);
+            await rm(base, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps Machine observation proportional to accepted declaration directories, independently of retained Session trees', async () => {
+        const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-machine-scope-')));
+        const retained = join(base, 'home');
+        const root = join(base, 'project');
+        await mkdir(join(retained, '.cache', 'tools', 'deep'), { recursive: true });
+        await mkdir(join(root, 'source', 'deep'), { recursive: true });
+        await mkdir(join(root, '.happier'), { recursive: true });
+        const manifest = join(root, '.happier', 'project.json');
+        await writeFile(manifest, JSON.stringify({ version: 1, services: { worker: { source: { kind: 'command', command: 'worker' } } } }));
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
+            workspaceFacts: () => ({ facts: [{ path: retained }, { path: root }], acceptedWorkspaceRefs: [{ id: 'project',
+                serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 }], diagnostics: [] }),
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const cancellation = new AbortController();
+        let observing: Promise<void> | undefined;
+        try {
+            expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine' })).targets).toHaveLength(1);
+            observations.starts.length = 0;
+            observations.directories.length = 0;
+            observing = (async () => {
+                while (!cancellation.signal.aborted) await runtime.inventoryRoutes.watchSnapshot({
+                    sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                });
+            })();
+            await vi.waitFor(() => expect(observations.attachments.has(join(root, '.happier'))).toBe(true));
+            expect(observations.starts.filter(path => path === retained || path.startsWith(`${retained}/`))).toEqual([]);
+            expect(observations.starts.filter(path => path === join(root, 'source') || path.startsWith(`${root}/source/`))).toEqual([]);
+            expect(observations.directories).toEqual([]);
+            await writeFile(manifest, JSON.stringify({ version: 1, services: { jobs: { source: { kind: 'command', command: 'jobs' } } } }));
+            await vi.waitFor(async () => expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' }))
+                .targets.map(target => target.declaration?.selection)).toEqual([{ kind: 'manifest', name: 'jobs' }]));
+            expect(observations.directories).toEqual([]);
+        } finally { cancellation.abort(); await observing; await runtime.stop(); await rm(base, { recursive: true, force: true }); }
+    });
+
     it('discovers each requested root once and admits filesystem changes through mounted observation', async () => {
         const directory = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-discovery-')));
         const selected = join(directory, 'selected');
@@ -60,7 +131,7 @@ describe('Services declaration discovery demand', () => {
             inventoryEnabled: () => true, now: () => 1_000,
             workspaceFacts: () => {
                 if (failSource) throw new Error('Workspace transport unavailable');
-                return [{ id: 'selected', path: selected }, { id: 'sibling', path: sibling }];
+                return declaredWorkspaces([selected, sibling]);
             },
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
@@ -133,7 +204,7 @@ describe('Services declaration discovery demand', () => {
         await writeFile(join(root, 'README.md'), 'initial');
         await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'watched', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false,
-            inventoryEnabled: () => true, workspaceFacts: () => [{ id: 'workspace', path: root }],
+            inventoryEnabled: () => true, workspaceFacts: () => declaredWorkspaces([root]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         const otherCancellation = new AbortController();
@@ -224,7 +295,7 @@ describe('Services declaration discovery demand', () => {
         await writeScript(target, 'dev');
         await symlink(target, packageFile);
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            workspaceFacts: () => [{ id: 'workspace', path: root }],
+            workspaceFacts: () => declaredWorkspaces([root]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;
@@ -263,7 +334,7 @@ describe('Services declaration discovery demand', () => {
         const writeScript = (script: string) => writeFile(packageFile, JSON.stringify({ name: 'retirement', packageManager: 'npm@10', scripts: { [script]: 'serve' } }));
         await writeScript('dev');
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            workspaceFacts: () => [{ id: 'workspace', path: root }],
+            workspaceFacts: () => declaredWorkspaces([root]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let watch: Promise<unknown> | undefined;
@@ -313,12 +384,15 @@ describe('Services declaration discovery demand', () => {
         await mkdir(root);
         await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'existing', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            workspaceFacts: () => [{ path: root }, { path: missing }],
+            workspaceFacts: () => declaredWorkspaces([root, missing]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;
         try {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
+            // Session facts do not demand recursive observation. The explicit
+            // Workspace read admits this missing package-discovery scope.
+            await runtime.launcherRoutes.getSnapshot({ workspaceRoot: missing });
             pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
                 signal: cancellation.signal });
             await vi.waitFor(() => expect(observations.attachments.has(root)
@@ -345,7 +419,7 @@ describe('Services declaration discovery demand', () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-watch-unavailable-')));
         await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'recovery', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            workspaceFacts: () => [{ id: 'workspace', path: root }],
+            workspaceFacts: () => declaredWorkspaces([root]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;
@@ -378,7 +452,7 @@ describe('Services declaration discovery demand', () => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-renewal-')));
         await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'renewal', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
-            now: () => 1_000, workspaceFacts: () => [{ id: 'workspace', path: root }],
+            now: () => 1_000, workspaceFacts: () => declaredWorkspaces([root]),
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         let cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;

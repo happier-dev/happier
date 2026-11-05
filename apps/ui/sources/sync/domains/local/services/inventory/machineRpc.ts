@@ -76,7 +76,7 @@ export async function fetchLocalServiceInventorySnapshotViaMachineRpc(
 /**
  * Park on the daemon's inventory change producer.
  *
- * The daemon owns the park deadline. Omitted operation timeout uses the transport's
+ * Omitted operation timeout uses the transport's
  * caller/remote lifetime, while connection setup remains bounded and AbortSignal retires demand.
  */
 export async function watchLocalServiceInventorySnapshotViaMachineRpc(
@@ -88,6 +88,7 @@ export async function watchLocalServiceInventorySnapshotViaMachineRpc(
     try {
         const payload = DaemonLocalServiceInventoryWatchRequestV1Schema.parse({
             machineId: input.machineId,
+            ...(input.observationOnly ? { observationOnly: true } : {}),
             ...(typeof input.sinceGeneratedAt === 'number'
                 ? { sinceGeneratedAt: input.sinceGeneratedAt }
                 : {}),

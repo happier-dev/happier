@@ -109,6 +109,8 @@ export type SharedSubscriptionStoreConfig<
      * without any interval. Domains that do not supply it keep the pull-only lifecycle.
      */
     defaultWatchClient?: TWatchClient;
+    /** Optional cancellation-owned producer demand spanning the entire series of watch replies. */
+    observeWatch?: (params: SharedSubscriptionWatchParams<TInput, TState, TWatchClient>) => Promise<void>;
     watch?: (
         params: SharedSubscriptionWatchParams<TInput, TState, TWatchClient>,
     ) => Promise<SharedSubscriptionWatchOutcome<TSnapshot>> | SharedSubscriptionWatchRequest<TSnapshot>;
@@ -155,6 +157,7 @@ type SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient, TWatchClient>
     readStarted: boolean;
     abortController: AbortController | null;
     watchAbortController: AbortController | null;
+    observationAbortController: AbortController | null;
     watching: boolean;
     watchRetired: boolean;
     watchRecoveryRequested: boolean;
@@ -223,6 +226,7 @@ export function createSharedSubscriptionStore<
                 readStarted: false,
                 abortController: null,
                 watchAbortController: null,
+                observationAbortController: null,
                 watching: false,
                 watchRetired: false,
                 watchRecoveryRequested: false,
@@ -300,11 +304,12 @@ export function createSharedSubscriptionStore<
         return promise;
     };
 
-    // The push half. Exactly one watch is outstanding per entry with subscribers; every answer
-    // re-arms the next one, so the cadence is the daemon's park window and there is no timer here.
+    // The push half shares one value-watch series per subscribed entry. Answers re-arm
+    // that series within its optional observation lifetime, without a renewal timer.
     // An unavailable watch retires until invalidation, publication or transport recovery.
     const retireWatch = (entry: Entry): void => {
         entry.watchRetired = !entry.watchRecoveryRequested;
+        if (entry.watchRetired) stopWatch(entry);
         if (entry.watchRetired && config.failWatch) setState(entry, config.failWatch(entry.state, entry.input));
     };
     const runWatchLoop = (entry: Entry): Promise<void> => {
@@ -318,6 +323,21 @@ export function createSharedSubscriptionStore<
         entry.watching = true;
         entry.watchRecoveryRequested = false;
         entry.watchRecoveryNeedsRefresh = false;
+        if (config.observeWatch && !entry.observationAbortController && typeof AbortController !== 'undefined') {
+            const observationController = new AbortController();
+            entry.observationAbortController = observationController;
+            const observationEnded = () => {
+                if (observationController.signal.aborted || entry.observationAbortController !== observationController) return;
+                retireWatch(entry);
+                // A recovery that preceded the old transport's terminal reply renews once.
+                if (!entry.watchRetired) {
+                    stopWatch(entry);
+                    void runWatchLoop(entry);
+                }
+            };
+            void config.observeWatch({ input: entry.input, state: entry.state, watchClient: entry.watchClient,
+                nowMs: entry.nowMs, signal: observationController.signal }).then(observationEnded, observationEnded);
+        }
         const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
         entry.watchAbortController = abortController;
         let dispatched = Promise.resolve();
@@ -372,6 +392,8 @@ export function createSharedSubscriptionStore<
     };
 
     const stopWatch = (entry: Entry): void => {
+        entry.observationAbortController?.abort();
+        entry.observationAbortController = null;
         entry.watchAbortController?.abort();
         entry.watchAbortController = null;
         entry.watching = false;

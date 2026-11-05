@@ -3,7 +3,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { createRenderCommitCounter, flushHookEffects, renderHook, useRenderCommitCounter } from '@/dev/testkit';
+import { createDeferred, createRenderCommitCounter, flushHookEffects, renderHook, useRenderCommitCounter } from '@/dev/testkit';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), launcher: vi.fn() }));
 // Only the transport is replaced; daemon publication, parked watches and UI stores stay real.
@@ -14,7 +15,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 
 import { createLocalServiceInventoryRegistry } from '../../../../../../../cli/src/daemon/local/services/inventory/registry';
 import { createLocalServiceInventoryRoutes } from '../../../../../../../cli/src/daemon/local/services/inventory/routes';
-import { resetLocalServiceInventoryStoreForTests } from '../inventory/sharedStore';
+import { getLocalServiceInventoryState, resetLocalServiceInventoryStoreForTests, subscribeLocalServiceInventoryStore } from '../inventory/sharedStore';
 import { getLocalServiceLauncherState, resetLocalServiceLauncherStoreForTests, subscribeLocalServiceLauncherStore } from './sharedStore';
 
 afterEach(() => {
@@ -23,21 +24,102 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
+it('keeps mounted Machine observation enrolled across 75 material inventory replies and cancels on the final unmount', async () => {
+    const registry = createLocalServiceInventoryRegistry();
+    registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
+        refreshState: 'idle', entries: [], diagnostics: [] });
+    const demand: number[] = [];
+    const routes = createLocalServiceInventoryRoutes({ registry, onWatcherCountChanged: count => demand.push(count) });
+    const observationSignals: AbortSignal[] = [];
+    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            if (request.payload.observationOnly) observationSignals.push(request.signal);
+            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
+        }
+        return { protocolVersion: 1, snapshot: registry.getSnapshot() };
+    });
+    const key = { machineId: 'machine-a', serverId: 'server-a' };
+    const first = subscribeLocalServiceInventoryStore(key, () => {});
+    const second = subscribeLocalServiceInventoryStore({ ...key, sessionId: 'session-a' }, () => {});
+    try {
+        await vi.waitFor(() => expect(getLocalServiceInventoryState(key).generatedAt).toBe(1_000));
+        await flushHookEffects();
+        demand.length = 0;
+        for (let index = 1; index <= 75; index++) {
+            registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 1_000 + index,
+                diagnostics: [{ code: `material_change_${index}`, severity: 'info' }] });
+            await flushHookEffects();
+            expect(getLocalServiceInventoryState(key).generatedAt).toBe(1_000 + index);
+        }
+        expect(demand).not.toContain(0);
+        expect(observationSignals).toHaveLength(1);
+        expect(observationSignals[0].aborted).toBe(false);
+        first();
+        await flushHookEffects();
+        expect(routes.watcherCount()).toBe(2);
+        expect(observationSignals[0].aborted).toBe(false);
+        second();
+        await flushHookEffects();
+        expect(observationSignals[0].aborted).toBe(true);
+        expect(routes.watcherCount()).toBe(0);
+    } finally { first(); second(); }
+});
+
+it.each(['observation', 'snapshot'] as const)('releases producer demand after a terminal %s transport failure and restores it on reconnect', async failedRequest => {
+    const registry = createLocalServiceInventoryRegistry();
+    registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
+        refreshState: 'idle', entries: [], diagnostics: [] });
+    const routes = createLocalServiceInventoryRoutes({ registry });
+    const failure = createDeferred<never>();
+    let failCurrentTransport = true;
+    const signals: AbortSignal[] = [];
+    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: true }; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            signals.push(request.signal);
+            const reply = routes.watchSnapshot({ ...request.payload, signal: request.signal });
+            return { protocolVersion: 1, ...await (failCurrentTransport
+                && Boolean(request.payload.observationOnly) === (failedRequest === 'observation')
+                ? Promise.race([reply, failure.promise]) : reply) };
+        }
+        return { protocolVersion: 1, snapshot: registry.getSnapshot() };
+    });
+    const key = { machineId: 'machine-a', serverId: 'server-a' };
+    const release = subscribeLocalServiceInventoryStore(key, () => {});
+    try {
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
+        failCurrentTransport = false;
+        failure.reject(new Error('connection dropped'));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(0));
+        expect(signals.every(signal => signal.aborted)).toBe(true);
+        expect(getLocalServiceInventoryState(key).generatedAt).toBe(1_000);
+        expect(getLocalServiceInventoryState(key).refreshState).toBe('error');
+        const failedRequests = signals.length;
+        await flushHookEffects();
+        expect(signals).toHaveLength(failedRequests);
+        registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 2_000,
+            diagnostics: [{ code: 'connection_recovered', severity: 'info' }] });
+        publishHomeAccountChange('server-a', ['self'], { source: 'connected' });
+        await vi.waitFor(() => expect(getLocalServiceInventoryState(key).generatedAt).toBe(2_000));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
+    } finally { release(); }
+    await flushHookEffects();
+    expect(routes.watcherCount()).toBe(0);
+});
+
 it('refreshes a retained Session projection after a managed-only Stop while sharing the Machine watch', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const registry = createLocalServiceInventoryRegistry();
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
     const routes = createLocalServiceInventoryRoutes({ registry });
-    const cancellation = new AbortController();
     let running = true;
     let reads = 0;
     const unrelated = { id: 'unrelated', machineId: 'machine-a', source: 'inventory_entry',
         sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'unrelated' },
         title: 'Unrelated listener', confidence: 'high', state: 'available', actions: [] } as const;
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; sessionId?: string } }) => {
+    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean; sessionId?: string }; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: cancellation.signal }) };
+            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
         }
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
             return { protocolVersion: 1, snapshot: registry.getSnapshot() };
@@ -57,7 +139,7 @@ it('refreshes a retained Session projection after a managed-only Stop while shar
     const releaseMachine = subscribeLocalServiceLauncherStore(machine, () => {});
     try {
         await vi.waitFor(() => expect(getLocalServiceLauncherState(session).targetIds).toEqual(['managed', 'unrelated']));
-        await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
         await flushHookEffects();
         const retainedUnrelated = getLocalServiceLauncherState(session).targetsById.get('unrelated');
         releaseSession();
@@ -76,12 +158,12 @@ it('refreshes a retained Session projection after a managed-only Stop while shar
         }
         expect(reads).toBe(settledReads);
         expect(sessionListener).not.toHaveBeenCalled();
-        expect(routes.watcherCount()).toBe(1);
+        expect(routes.watcherCount()).toBe(2);
         const settledWatches = rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length;
         await vi.advanceTimersByTimeAsync(60_000);
         expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH))
             .toHaveLength(settledWatches);
-    } finally { releaseSession(); releaseMachine(); cancellation.abort(); }
+    } finally { releaseSession(); releaseMachine(); }
 });
 
 it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and no-change launcher replies', async () => {
@@ -89,11 +171,10 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
     const routes = createLocalServiceInventoryRoutes({ registry });
-    const cancellation = new AbortController();
     let reads = 0;
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number } }) => {
+    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: cancellation.signal }) };
+            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
         }
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
             return { protocolVersion: 1, snapshot: registry.getSnapshot() };
@@ -116,7 +197,7 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
     });
     try {
         await vi.waitFor(() => expect(hook.getCurrent()?.id).toBe('scoped-service'));
-        await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
         await flushHookEffects();
         const initialReads = reads;
         counter.reset();
@@ -134,7 +215,7 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
         expect(reads - initialReads).toBe(75);
         expect(counter.read().commits).toBe(0);
         expect(hook.getCurrent()?.id).toBe('scoped-service');
-    } finally { await hook.unmount(); cancellation.abort(); }
+    } finally { await hook.unmount(); }
 });
 
 it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wakes for a material change', async () => {
@@ -142,10 +223,9 @@ it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wa
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
     const routes = createLocalServiceInventoryRoutes({ registry });
-    const cancellation = new AbortController();
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number } }) => {
+    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: cancellation.signal }) };
+            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
         }
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
             return { protocolVersion: 1, snapshot: registry.getSnapshot() };
@@ -156,7 +236,7 @@ it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wa
         snapshot: LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: 'machine-a', updatedAt: 1_000, targets: [] }) });
     const release = subscribeLocalServiceLauncherStore({ machineId: 'machine-a', serverId: 'server-a' }, () => {});
     try {
-        await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
         await flushHookEffects();
         const initialReads = rpc.launcher.mock.calls.length;
         for (let index = 1; index <= 75; index++) {
@@ -167,5 +247,5 @@ it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wa
         registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 761_000,
             diagnostics: [{ code: 'local_services_process_facts_unavailable', severity: 'warning' }] });
         await vi.waitFor(() => expect(rpc.launcher.mock.calls.length - initialReads).toBe(1));
-    } finally { release(); cancellation.abort(); }
+    } finally { release(); }
 });

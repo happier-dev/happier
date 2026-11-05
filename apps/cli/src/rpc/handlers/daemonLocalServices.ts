@@ -116,8 +116,8 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
         );
 
         // The push half of local-service freshness (G10): a parked read that answers when the
-        // daemon's inventory registry actually changes. Clients keep exactly one of these
-        // outstanding per mounted surface and re-arm on the answer, so nothing polls.
+        // daemon's inventory registry actually changes. Clients share one observation lifetime
+        // per Machine and re-arm snapshot reads on each answer, so nothing polls.
         if (options.localServicesInventory.watchSnapshot) {
             rpc.registerHandler(
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
@@ -129,6 +129,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                         throw new Error('Local service inventory watch runtime is unavailable');
                     }
                     const result = await watchSnapshot({
+                        ...(request.observationOnly ? { observationOnly: true } : {}),
                         ...(request.sinceGeneratedAt === undefined ? {} : { sinceGeneratedAt: request.sinceGeneratedAt }),
                         ...(context ? { signal: context.signal } : {}),
                     });

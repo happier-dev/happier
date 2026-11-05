@@ -40,6 +40,7 @@ const snapshot = LocalServiceInventorySnapshotV1Schema.parse({
         lastSeenAt: 1_000,
         state: 'listening',
         source: 'detected',
+        classification: { kind: 'vite', signals: [] },
         labels: [],
         confidence: 'high',
         processOwnershipConfidence: 'medium',
@@ -188,7 +189,8 @@ describe('shared local-service inventory store', () => {
     });
     beforeEach(() => {
         rpc.snapshot.mockReset();
-        rpc.machine.mockReset().mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockReset().mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 return new Promise(() => {});
             }
@@ -204,7 +206,8 @@ describe('shared local-service inventory store', () => {
     it('retains only qualified inventory content while closed and revalidates once on reopen', async () => {
         const key = { machineId: 'machine-a', serverId: 'server-a', accountId: 'account-a', credentialKey: 'credential-a' };
         const watchSignals: AbortSignal[] = [];
-        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 watchSignals.push(request.signal);
                 return new Promise(() => {});
@@ -256,7 +259,8 @@ describe('shared local-service inventory store', () => {
 
     it.each(['unavailable', 'rejection'] as const)('rearms the real watch transport after fresh publication overtakes %s', async failure => {
         const watches: Array<{ resolve(value: unknown): void; reject(error: unknown): void }> = [];
-        rpc.machine.mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 return await new Promise((resolve, reject) => { watches.push({ resolve, reject }); });
             }

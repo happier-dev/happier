@@ -52,11 +52,12 @@ async function flushMicrotasks(): Promise<void> {
 describe('shared local-service launcher store', () => {
     beforeEach(() => {
         rpc.launcher.mockReset();
-        rpc.machine.mockReset().mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockReset().mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
                 return { protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000,
                     refreshState: 'idle', entries: [], diagnostics: [] } };
             }
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
             return rpc.launcher(request);
         });
@@ -96,7 +97,8 @@ describe('shared local-service launcher store', () => {
         const key = { machineId: 'machine-a', serverId: 'server-a', sessionId: 'session-a',
             accountId: 'account-a', credentialKey: 'credential-a' };
         const watchSignals: AbortSignal[] = [];
-        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 watchSignals.push(request.signal);
                 return new Promise(() => {});
@@ -136,7 +138,8 @@ describe('shared local-service launcher store', () => {
         const binding = { machineId: 'machine-a', serverId: 'server-a', accountId: 'account-a', credentialKey: 'credential-a' };
         const key = { ...binding, scope: 'workspace' as const, workspaceRoot: '/repo', projection: 'managed_bindings' as const };
         const watchSignals: AbortSignal[] = [];
-        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; signal: AbortSignal; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 watchSignals.push(request.signal);
                 return new Promise(() => {});
@@ -203,7 +206,8 @@ describe('shared local-service launcher store', () => {
     it('keeps last-known rows stale after watch retirement and recovers even at the same inventory generation', async () => {
         const watches: Array<(value: unknown) => void> = [];
         let available = true;
-        rpc.machine.mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => watches.push(resolve));
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) return { protocolVersion: 1,
                 snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000, refreshState: 'idle', entries: [], diagnostics: [] } };
@@ -232,7 +236,8 @@ describe('shared local-service launcher store', () => {
     it('recovers stale Session rows on a new ready Machine observation without polling or healthy receipt rereads', async () => {
         const watches: Array<(value: unknown) => void> = [];
         rpc.launcher.mockResolvedValue({ protocolVersion: 1, snapshot });
-        rpc.machine.mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => watches.push(resolve));
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) return { protocolVersion: 1,
                 snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000, refreshState: 'idle', entries: [], diagnostics: [] } };
@@ -296,7 +301,8 @@ describe('shared local-service launcher store', () => {
             const launcherReply = createDeferred<unknown>();
             let holdInventory = false;
             let holdLauncher = false;
-            rpc.machine.mockImplementation(async (request: { method: string }) => {
+            rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+                if (request.payload?.observationOnly) return new Promise(() => {});
                 if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => watches.push(resolve));
                 if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) return holdInventory ? inventoryReply.promise
                     : { protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000,
@@ -350,7 +356,8 @@ describe('shared local-service launcher store', () => {
         const watches: Array<(value: unknown) => void> = [];
         let generation = 1_000;
         let running = true;
-        rpc.machine.mockImplementation(async (request: { method: string; payload: { projection?: string; workspaceRoot?: string } }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload: { projection?: string; workspaceRoot?: string; observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 return await new Promise(resolve => watches.push(resolve));
             }
@@ -442,7 +449,8 @@ describe('shared local-service launcher store', () => {
         let running = true;
         let generation = 1_000;
         let watches = 0;
-        rpc.machine.mockImplementation(async (request: { method: string }) => {
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
             if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 if (++watches === 1) return { ok: false };
                 return await new Promise(() => {});

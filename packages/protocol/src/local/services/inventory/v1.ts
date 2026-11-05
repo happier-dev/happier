@@ -243,6 +243,8 @@ export type LocalServiceInventoryUpdateEventV1 = z.infer<typeof LocalServiceInve
 
 export const DaemonLocalServiceInventoryWatchRequestV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
+  /** Hold observation demand until transport cancellation, independently of snapshot replies. */
+  observationOnly: z.optional(z.literal(true)),
   /**
    * The `generatedAt` of the snapshot the caller already holds. The daemon answers immediately
    * when it has produced a newer snapshot, which closes the gap between a caller's snapshot read

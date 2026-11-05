@@ -27,6 +27,8 @@ export type LocalServiceInventoryRoutes = Readonly<{
      */
     watchSnapshot(input?: Readonly<{
         sinceGeneratedAt?: number;
+        /** Retain producer demand until cancellation, across material value replies. */
+        observationOnly?: boolean;
         signal?: AbortSignal;
     }>): Promise<LocalServiceInventoryWatchResult>;
     /** Live count of parked watchers. The scan loop follows this rather than running unconditionally. */
@@ -66,6 +68,16 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
         },
         async watchSnapshot(request = {}) {
             if (request.signal?.aborted) return { changed: false };
+            if (request.observationOnly) {
+                // The same parking owner counts this mounted lifetime. Material
+                // events wake value readers, never release the consumer's demand.
+                return await watches.parkWatch({
+                    isNewer: () => false,
+                    subscribe: () => () => {},
+                    read: input.registry.getSnapshot,
+                    signal: request.signal,
+                });
+            }
             if (input.ensureFreshSnapshot) await input.ensureFreshSnapshot();
             return await watches.parkWatch({
                 isNewer: () => typeof request.sinceGeneratedAt === 'number'

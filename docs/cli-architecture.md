@@ -3869,9 +3869,19 @@ neither add a census timer nor alter the inventory/watch owners' cadence.
 
 The first launcher read discovers its requested workspace roots. Later ordinary
 reads project those admitted observations without repeating discovery. The feed
-retains those observations without a discovery TTL. Parked inventory watches
-attach declaration filesystem observers, release them with the last viewer,
-and reconcile edits made while detached on the next attachment. An unchanged
+retains those observations without a discovery TTL. In 0.3 development, Local Services observes native listeners at the inventory
+runtime's existing cadence while a consumer is subscribed. One cancellation-owned
+`inventory.watch` request with `observationOnly: true` holds that demand across
+the ordinary value-watch replies. Last-consumer departure or transport disconnect
+releases it; real replies do not dispose and re-enroll declaration watches.
+Machine declaration observation follows accepted Workspace roots and only the
+directories of the declaration paths read by discovery. Retained Session paths
+alone never admit recursive observation, including home, filesystem-root and
+cache paths. A successful scoped package-discovery read admits only requested roots
+inside a current accepted project Workspace to the existing package traversal.
+A Session ancestor does not inherit its child project's watch scope. Admitted scope identities
+survive an inactive interval, but their native watches do not. The updated 0.3 UI
+and daemon load together for the optional observation-only request field. An unchanged
 watch waits for a material change or caller cancellation without a periodic
 unchanged reply. Native inventory discovery retains its existing cadence
 while readers are parked. Its registry advances `generatedAt` and wakes that

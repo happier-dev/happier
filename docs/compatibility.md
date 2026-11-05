@@ -2,6 +2,14 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Local Services observation lifetime (unreleased 0.3)
+
+The existing closed inventory-watch request accepts optional `observationOnly`.
+That request retains mounted producer demand until cancellation; value watches
+continue to answer on material changes. The updated UI and daemon load together.
+Older strict development daemons reject the field. No released contract,
+persistence format, protocol epoch or migration changes.
+
 ## Home-owned Machine presence (unreleased 0.3)
 
 Home stamps `presenceProtocolVersion: 1` on published Machine rows. This additive

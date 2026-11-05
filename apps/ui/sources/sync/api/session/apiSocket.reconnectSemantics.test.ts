@@ -45,12 +45,13 @@ async function readCurrentRpcRequestDisposition(error: unknown) {
     const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
     return readRpcRequestDisposition(error);
 }
-async function boot(options: Readonly<{ autoConnect?: boolean; token?: string; credentials?: AuthCredentials }> = {}) {
+async function boot(options: Readonly<{ autoConnect?: boolean; token?: string; credentials?: AuthCredentials; serverId?: string }> = {}) {
     const boundary = createSocketIoBoundaryStub(options);
     ioSpy.mockReturnValue(boundary.socket);
     const { apiSocket } = await import('./apiSocket');
     activeSocket = apiSocket;
     const config = { endpoint, token: options.token ?? options.credentials?.token ?? 'token-1',
+        ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.credentials ? { credentials: options.credentials } : {}) };
     apiSocket.initialize(config, null);
     return { apiSocket, ...boundary };
@@ -379,17 +380,19 @@ describe('apiSocket reconnect semantics', () => {
 
     it.each(['socket-drop', 'home-outage', 'first-connection', 'daemon-restart'] as const)('recovers a demanded retired inventory watch through the focused Home connection (%s)', async recovery => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'self' })).toString('base64')}.signature`;
-        const { socket, trigger } = await boot({ token });
+        const serverId = 'inventory-reconnect-home';
+        const { apiSocket, socket, trigger } = await boot({ token, serverId });
         if (recovery !== 'first-connection') await connect(socket);
-        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         const inventory = await import('@/sync/domains/local/services/inventory/sharedStore');
-        const key = { serverId: getActiveServerSnapshot().serverId, machineId: 'inventory-machine' };
+        const key = { serverId, machineId: 'inventory-machine' };
+        expect(apiSocket.getMachineRequestScope()).toEqual({ serverId: key.serverId, accountId: 'self' });
         const snapshot = { v: 1 as const, machineId: key.machineId, generatedAt: 1,
             refreshState: 'idle' as const, entries: [], diagnostics: [] };
         let watches = 0;
         const dispose = inventory.subscribeLocalServiceInventoryStore(key, () => {}, {
             snapshotClient: async () => ({ ok: true, snapshot }),
-            watchClient: async () => {
+            watchClient: async input => {
+                if (input.observationOnly) return new Promise(() => {});
                 if (++watches === 1) return { ok: false, reason: 'request_failed' };
                 if (watches === 2) return { ok: true, changed: true, snapshot: { ...snapshot, generatedAt: 2 } };
                 return new Promise(() => {});

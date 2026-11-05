@@ -1,5 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises';
-import { basename, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { startDirectoryTopologyWatchers } from '@/integrations/watcher/startDirectoryTopologyWatcher';
@@ -11,9 +11,17 @@ import { PROJECT_MANIFEST_RELATIVE_PATH } from '@/workspaces/projectSetup/projec
 import type { LocalServiceWorkspaceFactsSnapshot } from '../inventory/workspaces';
 import type { LocalServiceInventoryDiagnostic } from '../inventory/scanner';
 import { isWorkspacePathWithin } from '../inventory/provenance';
+import type { LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 
-function declarationPath(root: string, path: string): boolean {
+// Machine discovery reads these fixed paths only. Package discovery is admitted
+// separately by an explicit declared Workspace read, never by Session facts.
+const DECLARATION_FILES = [PROJECT_MANIFEST_RELATIVE_PATH,
+    ...NATIVE_PROJECT_DEFINITION_FILES.filter(file => file !== 'package.json')];
+
+function declarationPath(root: string, path: string, packages: boolean): boolean {
     const file = relative(root, path).replaceAll('\\', '/');
+    if (DECLARATION_FILES.some(candidate => candidate === file)) return true;
+    if (!packages) return false;
     if (file.split('/').slice(0, -1).some(part => !isNativePackageDiscoveryDirectory(part))) return false;
     return file === PROJECT_MANIFEST_RELATIVE_PATH
         || NATIVE_PROJECT_DEFINITION_FILES.some(candidate => candidate === file)
@@ -21,11 +29,11 @@ function declarationPath(root: string, path: string): boolean {
         || /^\.devcontainer\/[^/]+\/devcontainer\.json$/.test(file);
 }
 
-/** Existing Machine inventory watches are unscoped: their mounted lifetime owns
- * declaration observation for known roots. Plain launcher reads own no watches. */
+/** Mounted inventory demand observes accepted declarations and package scopes
+ * already requested by Workspace readers. Plain launcher reads own no watches. */
 export function createLocalServiceDeclarationWatch(input: Readonly<{
     readWorkspaceFacts(): Promise<LocalServiceWorkspaceFactsSnapshot>;
-    onChanged(workspaceRoots: readonly string[] | undefined, signal: AbortSignal): Promise<void>;
+    onChanged(workspaceRoots: readonly string[] | undefined, signal: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void>;
     onError(error: unknown, diagnostic: LocalServiceInventoryDiagnostic): void;
 }>) {
     const reportError = (error: unknown, role: 'project_root' | 'declaration_file' | 'workspace_facts' | 'declaration_discovery') => {
@@ -47,6 +55,8 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
     };
     let demand: AbortController | undefined;
     let roots: readonly string[] = [];
+    let acceptedRoots: readonly string[] = [];
+    let packageRoots: readonly string[] = [];
     let workspaceIdentities: readonly (readonly string[])[] = [];
     let dispose: (() => void) | undefined;
     let observation: AbortController | undefined;
@@ -63,9 +73,9 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
         roots = next;
         const attachment = new AbortController();
         observation = attachment;
-        const changed = async (changedRoots?: readonly string[]) => {
+        const changed = async (changedRoots?: readonly string[], packages = false) => {
             if (lifetime.signal.aborted || attachment.signal.aborted) return;
-            try { await input.onChanged(changedRoots, attachment.signal); }
+            try { await input.onChanged(changedRoots, attachment.signal, { includePackageScripts: packages }); }
             catch (error) { if (!lifetime.signal.aborted && !attachment.signal.aborted) reportError(error, 'declaration_discovery'); }
         };
         if (next.length === 0) {
@@ -97,7 +107,7 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
                 }
                 throw error;
             });
-            return directory === null ? null : { root, directory };
+            return directory === null ? null : { root, directory, packages: packageRoots.includes(root) };
         })).then(results => {
             if (lifetime.signal.aborted || attachment.signal.aborted) return;
             const mappings = results.filter(mapping => mapping !== null);
@@ -106,24 +116,33 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
                 if (!directories.some(parent => isWorkspacePathWithin(parent, directory))) directories.push(directory);
             }
             const changedPaths = async (directory: string, path?: string, structural = false) => {
-                if (path && relative(directory, path).split(/[\\/]/).some(part => !isNativePackageDiscoveryDirectory(part))) return;
-                const affected: string[] = [];
+                const declarations: string[] = [];
+                const packages: string[] = [];
                 for (const mapping of mappings) {
                     if (!isWorkspacePathWithin(directory, mapping.directory)) continue;
-                    if (path && !(isWorkspacePathWithin(mapping.directory, path) && (structural || declarationPath(mapping.directory, path)))
+                    if (path && mapping.packages && relative(mapping.directory, path).split(/[\\/]/)
+                        .some(part => !isNativePackageDiscoveryDirectory(part))) continue;
+                    if (path && !(isWorkspacePathWithin(mapping.directory, path) && (structural
+                        ? mapping.packages || DECLARATION_FILES.some(file => isWorkspacePathWithin(path, join(mapping.directory, file)))
+                        : declarationPath(mapping.directory, path, mapping.packages)))
                         && !(structural && isWorkspacePathWithin(path, mapping.directory))) continue;
+                    const affected = mapping.packages ? packages : declarations;
                     if (!affected.some(parent => isWorkspacePathWithin(parent, mapping.root))) affected.push(mapping.root);
                 }
-                if (affected.length > 0) await changed(affected);
+                if (declarations.length > 0) await changed(declarations);
+                if (packages.length > 0) await changed(packages, true);
             };
             const observeAlias = async (directory: string, path: string) => {
                 const alias = await lstat(path).catch(() => undefined);
                 if (!alias?.isSymbolicLink()) return;
                 const actual = await realpath(path).catch(() => undefined);
                 if (!actual || !isWorkspacePathWithin(directory, actual) || attachment.signal.aborted) return;
-                const file = relative(directory, path).replaceAll('\\', '/');
-                const candidates = declarationPath(directory, path) ? [path]
-                    : NATIVE_PROJECT_DEFINITION_FILES.filter(name => name.startsWith(`${file}/`)).map(name => join(directory, name));
+                const candidates = mappings.flatMap(mapping => {
+                    if (!isWorkspacePathWithin(mapping.directory, path) || !isWorkspacePathWithin(mapping.directory, actual)) return [];
+                    const file = relative(mapping.directory, path).replaceAll('\\', '/');
+                    return declarationPath(mapping.directory, path, mapping.packages) ? [path]
+                        : DECLARATION_FILES.filter(name => name.startsWith(`${file}/`)).map(name => join(mapping.directory, name));
+                });
                 for (const candidate of candidates) {
                     if (attachment.signal.aborted || entryWatches.has(candidate)) continue;
                     const stop = startFileWatcher(candidate, () => changedPaths(directory, candidate), {
@@ -136,14 +155,21 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
             };
             dispose = startDirectoryTopologyWatchers(directories.map(directory => ({
                 directory,
-                shouldWatchDirectory: (child: string) => isNativePackageDiscoveryDirectory(basename(child)),
+                shouldWatchDirectory: (child: string) => mappings.some(mapping =>
+                    isWorkspacePathWithin(child, mapping.directory)
+                    || isWorkspacePathWithin(mapping.directory, child) && (mapping.packages
+                        ? relative(mapping.directory, child).split(/[\\/]/).every(isNativePackageDiscoveryDirectory)
+                        : DECLARATION_FILES.some(file => isWorkspacePathWithin(child, dirname(join(mapping.directory, file)))))),
                 onFileChange: (path?: string) => changedPaths(directory, path),
                 onSymbolicLink: (path: string) => observeAlias(directory, path),
                 // The watcher owns removed-directory membership. A missing ordinary
                 // file is not an unknown topology change.
                 onStructuralChange: (path?: string, kind?: 'directory' | 'file' | 'unknown') => changedPaths(directory, path, kind !== 'file'),
             })), {
-                onReady: () => { void changed(); },
+                onReady: () => {
+                    void changed();
+                    if (packageRoots.length > 0) void changed(packageRoots, true);
+                },
                 onUnavailable: error => { if (!attachment.signal.aborted) reportError(error, 'project_root'); },
             });
         }).catch(error => { if (!attachment.signal.aborted) reportError(error, 'project_root'); });
@@ -152,7 +178,8 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
     const updateWorkspaceFacts = (source: LocalServiceWorkspaceFactsSnapshot) => {
         const lifetime = demand;
         if (!lifetime || lifetime.signal.aborted) return;
-        const next = [...new Set([...source.facts.map(fact => fact.path), ...source.acceptedWorkspaceRefs.map(ref => ref.rootPath)])]
+        acceptedRoots = source.acceptedWorkspaceRefs.map(ref => ref.rootPath);
+        const next = [...new Set([...acceptedRoots, ...packageRoots])]
             .filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
         const identities = source.acceptedWorkspaceRefs.map(ref => [ref.serverId, ref.machineId, ref.id, ref.rootPath] as const)
             .sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2]) || a[3].localeCompare(b[3]));
@@ -160,7 +187,7 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
             if (!isDeepStrictEqual(workspaceIdentities, identities)) {
                 workspaceIdentities = identities;
                 const attachment = observation;
-                if (attachment) void input.onChanged(undefined, attachment.signal).catch(error => {
+                if (attachment) void input.onChanged(undefined, attachment.signal, { includePackageScripts: false }).catch(error => {
                     if (!attachment.signal.aborted) reportError(error, 'declaration_discovery');
                 });
             }
@@ -172,6 +199,16 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
 
     return {
         updateWorkspaceFacts,
+        updatePackageRoots(requested: readonly string[]) {
+            // Match the launcher's admitted package observations across reconnects;
+            // retaining scope identities while detached owns no native watches.
+            const next = [...new Set([...packageRoots, ...requested])].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
+            if (isDeepStrictEqual(next, packageRoots)) return;
+            packageRoots = next;
+            const lifetime = demand;
+            if (lifetime && !lifetime.signal.aborted) observeRoots([...new Set([...acceptedRoots, ...packageRoots])]
+                .sort((a, b) => a.length - b.length || a.localeCompare(b)), lifetime);
+        },
         setDemand(active: boolean) {
             if (!active) {
                 demand?.abort();
@@ -182,6 +219,7 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
                 stopEntryWatches();
                 dispose = undefined;
                 roots = [];
+                acceptedRoots = [];
                 workspaceIdentities = [];
                 return;
             }
