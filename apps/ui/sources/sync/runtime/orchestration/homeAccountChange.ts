@@ -22,6 +22,7 @@ export type HomeAccountChangeEvent = Readonly<{
     serverId: string;
     /** Transport connection, or an early socket wake before detailed catch-up has answered. */
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
+    changesCatchUp?: true;
     /** Exact only for a consumed focused-Home change page; absent wakes remain conservative. */
     entityIds?: readonly string[];
     /** Revision hints from the consumed change page; never inferred from a socket wake. */
@@ -62,6 +63,7 @@ type HomeAccountChangeDetails = Readonly<{
     workflowRunsMaterialized?: true;
     savedSecretResourcesRefreshStarted?: true;
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
+    changesCatchUp?: true;
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Exact content-free record/access routing; an empty list excludes record changes. */
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
@@ -93,9 +95,28 @@ export function isHomeAdministrationAccountChange(event: HomeAccountChangeEvent)
 
 type HomeAccountChangeObserver = (event: HomeAccountChangeEvent) => void;
 
+/**
+ * How an observer treats a primary-Home reconnect wake (`connected` + `changesCatchUp`). That Home's
+ * changes catch-up delivers what changed while away through its own exact publications, so a reconnect
+ * is not "everything changed":
+ * - omitted: the observer's data is in the changes feed; it does not hear the reconnect wake.
+ * - `'refresh'`: its data can change while away outside the feed (live/runtime state); it re-reads.
+ * - `readNotCurrent`: its data is in the feed, but the reconnect is its only retry after a read that
+ *   failed during the outage; it hears the wake only while its own existing read state is not current.
+ * A `connected` wake without a catch-up (a secondary Home transport) and every other wake reach all.
+ */
+export type HomeAccountReconnectClass = 'refresh' | Readonly<{ readNotCurrent: () => boolean }>;
+
+function hearsHomeAccountChange(event: HomeAccountChangeEvent, reconnect: HomeAccountReconnectClass | undefined): boolean {
+    if (event.source !== 'connected' || event.changesCatchUp !== true) return true;
+    if (reconnect === undefined) return false;
+    return reconnect === 'refresh' || reconnect.readNotCurrent();
+}
+
 const homeAccountChangeObservers = new Map<HomeAccountChangeObserver, Readonly<{
     includeCatchUpPending: boolean;
     serverIds: readonly string[];
+    reconnect?: HomeAccountReconnectClass;
 }>>();
 const homeAccountChangeDemandListeners = new Set<() => void>();
 
@@ -164,11 +185,13 @@ export function subscribeHomeAccountChange(
     options?: Readonly<{
         includeCatchUpPending?: boolean;
         serverIds?: readonly string[];
+        reconnect?: HomeAccountReconnectClass;
     }>,
 ): () => void {
     const subscription = {
         includeCatchUpPending: options?.includeCatchUpPending === true,
         serverIds: (options?.serverIds ?? []).map(resolveServerProfileScopeIdForIdentifier).filter(Boolean),
+        ...(options?.reconnect !== undefined ? { reconnect: options.reconnect } : {}),
     };
     homeAccountChangeObservers.set(observer, subscription);
     if (subscription.serverIds.length > 0) {
@@ -257,6 +280,7 @@ export function publishHomeAccountChangeForRouting(
             machineIds: Object.freeze([...sessionReadinessChanges.machineIds]),
         }),
         ...(details?.source ? { source: details.source } : {}),
+        ...(details?.source === 'connected' && details.changesCatchUp ? { changesCatchUp: true as const } : {}),
         ...(entityIds ? { entityIds: Object.freeze([...new Set(entityIds)]) } : {}),
         ...(details?.entityRevisions ? { entityRevisions: Object.freeze({ ...details.entityRevisions }) } : {}),
         ...(details?.workflowRunsMaterialized ? { workflowRunsMaterialized: true as const } : {}),
@@ -281,9 +305,10 @@ export function publishHomeAccountChangeForRouting(
                 || (workflowDefinitionsAffect ?? accountChangeKindsAffectWorkflowDefinitions(changeKinds)))),
         ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
     });
-    for (const [observer, { includeCatchUpPending }] of [...homeAccountChangeObservers]) {
+    for (const [observer, { includeCatchUpPending, reconnect }] of [...homeAccountChangeObservers]) {
         if (event.source === 'catch-up-pending' && !includeCatchUpPending) continue;
         try {
+            if (!hearsHomeAccountChange(event, reconnect)) continue;
             observer(event);
         } catch {
             // One observer cannot suppress the wake for its siblings or for

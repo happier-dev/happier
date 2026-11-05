@@ -60,7 +60,7 @@ describe('serverReachabilitySupervisorPool (transport identity)', () => {
             next: { homeCarrier: carrierForEndpoint('endpoint-b') },
             sameTransport: false,
         },
-    ])('$name: same transport=$sameTransport', async ({ initial, next, sameTransport }) => {
+    ])('$name: same transport=$sameTransport', async ({ initial, next }) => {
         setRuntimeFetch(async () => new Response(null, { status: 200, headers: new Headers() }));
         const serverUrl = 'https://example.test';
         const phases: string[] = [];
@@ -76,13 +76,10 @@ describe('serverReachabilitySupervisorPool (transport identity)', () => {
 
             await startServerReachabilitySupervisor({ serverUrl, token: null, ...next });
 
-            if (sameTransport) {
-                // Not a transport change: the supervisor, and the sync socket mirroring its state, must not be torn down.
-                expect(phases).not.toContain('shutting_down');
-                expect(phases).not.toContain('connecting');
-            } else {
-                expect(phases).toContain('shutting_down');
-            }
+            // A healthy readiness re-probe is not an outage, even when another
+            // caller selects a different byte transport for this same Home.
+            expect(phases).not.toContain('shutting_down');
+            expect(phases).not.toContain('connecting');
             expect(peekServerReachabilityState(serverUrl, null)?.phase).toBe('online');
         } finally {
             unsubscribe();

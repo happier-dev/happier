@@ -1,16 +1,17 @@
 import * as React from 'react';
-import { createDeploymentReadControllerV1, type DeploymentReadControllerV1, type DeploymentReadDemandV1, type DeploymentCollectionQueryV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1, isDeploymentReadDemandActiveV1, type DeploymentReadControllerV1, type DeploymentReadDemandV1, type DeploymentCollectionQueryV1 } from '@happier-dev/deployments';
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isAccountCurrentnessEntityIdV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
 import { useDeploymentCollection } from './useDeploymentReads';
 
 type ProjectOwner = Readonly<{
     controller: DeploymentReadControllerV1;
+    acquireDemand(): () => void;
 }>;
 const projects = new WeakMap<ServerAccountScopeLifetime, Map<string | undefined, ProjectOwner>>();
 
@@ -25,6 +26,7 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
         accountId: lifetime.scope.accountId, projectSourceId,
     }, transport: createDeploymentReadTransport(lifetime) });
     let retired = false;
+    let presentedBorrowers = 0;
     function retire() {
         if (retired) return;
         retired = true;
@@ -34,10 +36,19 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
     }
     const owner: ProjectOwner = {
         controller,
+        acquireDemand() {
+            if (retired) return () => {};
+            presentedBorrowers++;
+            if (presentedBorrowers === 1) replaceChangeSubscription(true);
+            return () => {
+                presentedBorrowers--;
+                if (!retired && presentedBorrowers === 0) replaceChangeSubscription(false);
+            };
+        },
     };
     // Keep the content-free invalidation owner across navigation. The controller
-    // records stale retained pages and fetches only pages with active demand.
-    const stopChanges = subscribeHomeAccountChange(event => {
+    // records stale retained pages; only presented borrowers demand its Home transport.
+    const onChange = (event: HomeAccountChangeEvent) => {
         if (retired || !lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
         if (event.changeKinds && !event.changeKinds.includes('account')) return;
         if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
@@ -50,7 +61,14 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
             return hint ? [hint] : [];
         });
         controller.invalidate(changes);
-    }, { serverIds: [lifetime.scope.serverId] });
+    };
+    let stopChanges = subscribeHomeAccountChange(onChange, { reconnect: 'refresh' });
+    function replaceChangeSubscription(demanded: boolean) {
+        stopChanges();
+        stopChanges = subscribeHomeAccountChange(onChange, {
+            ...(demanded ? { serverIds: [lifetime.scope.serverId] } : {}), reconnect: 'refresh',
+        });
+    }
     sources.set(projectSourceId, owner);
     lifetime.onRetire(retire);
     return owner;
@@ -58,7 +76,7 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
 
 /** Account-wide and selected-Source consumers share the same lifetime/push owner. */
 function useDeploymentOwner(lifetime: ServerAccountScopeLifetime | null, projectSourceId: string | undefined,
-    enabled: boolean) {
+    enabled: boolean, demand: DeploymentReadDemandV1) {
     const [binding, setBinding] = React.useState<Readonly<{
         lifetime: ServerAccountScopeLifetime; projectSourceId: string | undefined; owner: ProjectOwner;
     }> | null>(null);
@@ -67,14 +85,28 @@ function useDeploymentOwner(lifetime: ServerAccountScopeLifetime | null, project
         setBinding({ lifetime, projectSourceId, owner: readProject(lifetime, projectSourceId) });
     }, [lifetime, projectSourceId, enabled]);
     const owner = enabled && binding?.lifetime === lifetime && binding?.projectSourceId === projectSourceId ? binding.owner : null;
+    const presented = isDeploymentReadDemandActiveV1(demand);
+    React.useEffect(() => {
+        if (presented) return owner?.acquireDemand();
+    }, [owner, presented]);
     return { controller: owner?.controller ?? null };
 }
 
+/** One Source shares its demand owner only within the captured Account lifetime. */
+export function useDeploymentProject(lifetime: ServerAccountScopeLifetime | null, projectSourceId: string | null,
+    demand: DeploymentReadDemandV1) {
+    return useDeploymentOwner(lifetime, projectSourceId ?? undefined, projectSourceId !== null, demand);
+}
+
+/** The Account-wide owner alone, for a consumer that reads one known Environment (an API token's grant). */
+export function useDeploymentAccountController(lifetime: ServerAccountScopeLifetime | null, enabled: boolean, demand: DeploymentReadDemandV1) {
+    return useDeploymentOwner(lifetime, undefined, enabled, demand).controller;
+}
 
 /** Store Installed consumes one admitted page, with native coverage and explicit continuation. */
 export function useDeploymentInventory(lifetime: ServerAccountScopeLifetime | null, demand: DeploymentReadDemandV1,
     query: DeploymentCollectionQueryV1 & Readonly<{ projectSourceId?: string }> = {}) {
-    const { controller } = useDeploymentOwner(lifetime, query.projectSourceId, true);
+    const { controller } = useDeploymentOwner(lifetime, query.projectSourceId, true, demand);
     const read = useDeploymentCollection(controller, demand, { machineId: query.machineId, cursor: query.cursor, environmentIds: query.environmentIds,
         previewRepositoryId: query.previewRepositoryId, previewPullRequestIds: query.previewPullRequestIds,
         previewTemplateEnvironmentId: query.previewTemplateEnvironmentId });

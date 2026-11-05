@@ -505,6 +505,32 @@ export async function waitForServerReachable(params: Readonly<{
     }
 }
 
+async function recheckOnlineEntry(entry: ReachabilitySupervisorEntry): Promise<void> {
+    // Readiness belongs to the Home, not to one caller's byte transport. Prove a
+    // newly selected route before publishing an outage to every socket owner.
+    const scope = entry.supervisor.captureProbeReportScope?.();
+    if (!scope) return;
+    const { runtimeOrigin, homeCarrier, token } = entry;
+    const probe = await probeServerReadiness({
+        endpoint: runtimeOrigin ?? entry.serverUrl,
+        token,
+        homeCarrier,
+    });
+    if (!networkAllowed || entry.supervisor.captureProbeReportScope?.().generation !== scope.generation
+        || entry.runtimeOrigin !== runtimeOrigin || entry.token !== token
+        || (entry.homeCarrier?.endpointId ?? null) !== (homeCarrier?.endpointId ?? null)) return;
+    if (probe.status !== 'ready') {
+        entry.supervisor.reportProbeResult?.(probe, scope);
+        // Reporting awaits the old transport's cleanup inside the supervisor.
+        // Admission must observe its failure state, not the previous online one.
+        await waitForState({ entry, startup: Promise.resolve(), predicate: state => state.phase !== 'online' });
+    } else {
+        // Socket owners reconcile their own selected transport. An unchanged,
+        // healthy socket keeps its connection and the supervisor's real backoff.
+        entry.subscribers.forEach((listener) => listener(entry.state));
+    }
+}
+
 export async function invalidateServerReachabilitySupervisor(params: Readonly<{
     serverUrl: string;
     token: string | null;
@@ -534,21 +560,7 @@ export async function invalidateServerReachabilitySupervisor(params: Readonly<{
             // A request to recheck reachability is not an outage verdict. Stopping
             // the synthetic supervisor here disconnects healthy request sockets
             // before the probe can answer, including leased RPCs on foreground return.
-            const scope = entry.supervisor.captureProbeReportScope?.();
-            if (!scope) return;
-            const probe = await probeServerReadiness({
-                endpoint: entry.runtimeOrigin ?? entry.serverUrl,
-                token: entry.token,
-                homeCarrier: entry.homeCarrier,
-            });
-            if (!networkAllowed || entry.supervisor.captureProbeReportScope?.().generation !== scope.generation) return;
-            if (probe.status !== 'ready') {
-                entry.supervisor.reportProbeResult?.(probe, scope);
-            } else {
-                // A disconnected socket still needs the fresh online observation
-                // to dial again; healthy sockets keep their existing transport.
-                entry.subscribers.forEach((listener) => listener(entry.state));
-            }
+            await recheckOnlineEntry(entry);
             return;
         }
         if (entry.state.phase === 'connecting' || entry.state.phase === 'offline') {
@@ -705,6 +717,8 @@ export async function startServerReachabilitySupervisor(params: Readonly<{
 
         if (entry.state.phase === 'idle' || entry.state.phase === 'shutting_down') {
             await entry.supervisor.start();
+        } else if (transportChanged && entry.state.phase === 'online') {
+            await recheckOnlineEntry(entry);
         } else if (transportChanged || (entry.state.phase === 'auth_failed' && tokenChanged)) {
             await entry.supervisor.stop();
             throwIfAborted(params.signal);
