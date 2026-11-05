@@ -123,7 +123,7 @@ export const APPEARANCE_GLASS_SETTINGS = defineSettingsPage({
                 atmospherePictureRef: { storage: atmosphereFieldStorageBinding('appearance.atmospherePictureRef') },
                 atmospherePictureLayout: { storage: atmosphereFieldStorageBinding('appearance.atmospherePictureLayout') },
                 atmosphereLooks: { storage: homeAtmosphereStorageBinding('appearance.atmosphereLooks') },
-                atmosphereBehindSessions: { storage: atmosphereFieldStorageBinding('appearance.atmosphereBehindSessions') },
+                atmosphereShowOn: { storage: atmosphereFieldStorageBinding('appearance.atmosphereShowOn') },
                 projectAtmosphere: {},
                 atmospherePictureLibrary: {},
                 atmospherePictureAdd: { operation: { kind: 'invoke', requiresHumanInteraction: false, requiresApproval: false,

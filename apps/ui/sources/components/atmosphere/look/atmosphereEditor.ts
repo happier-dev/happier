@@ -2,6 +2,7 @@ import * as React from 'react';
 import type {
   HomeAtmosphere,
   AtmospherePresentation,
+  AtmospherePlace,
 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { useSetting } from '@/sync/store/hooks';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -24,6 +25,8 @@ export type AtmospherePictureActions = Readonly<{
  */
 export type AtmosphereEditor = Readonly<{
   value: AtmospherePresentation;
+  showOn?: readonly AtmospherePlace[];
+  setShowOn?(places: readonly AtmospherePlace[]): void;
   update(edit: (current: AtmospherePresentation) => AtmospherePresentation): void;
   pictureActions?: AtmospherePictureActions;
   sameAsHome?: boolean;
@@ -45,6 +48,8 @@ export function useHomeAtmosphereEditor(): AtmosphereEditor &
     };
     return {
       value,
+      showOn: value.showOn,
+      setShowOn: places => setSetting({ anchor: 'appearance.atmosphereShowOn' }, [...places]),
       updateHome,
       update: (edit) =>
         updateHome((current) => ({ ...current, ...edit(current) })),

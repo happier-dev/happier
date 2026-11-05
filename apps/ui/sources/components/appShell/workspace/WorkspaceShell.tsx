@@ -1,3 +1,4 @@
+import { PageAtmosphereStage } from '@/components/atmosphere/PageAtmosphereStage';
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { View } from 'react-native';
@@ -170,10 +171,10 @@ function WorkspaceCanvas(props: Readonly<{
                     <DestinationInstanceHost tabId={tabId} ref={tab.target}
                         pathname={pathname ?? ''} focused={isFocused && isVisible} visible={isVisible}
                         navigation={workspace.navigationForTab(tabId)} phone={workspace.phone !== null && workspace.phone !== undefined}>
-                            {pathname ? <React.Suspense fallback={<PaneLoadingFallback />}>
+                            {pathname ? <PageAtmosphereStage pathname={pathname} params={tab.target.params}><React.Suspense fallback={<PaneLoadingFallback />}>
                                 <DestinationBody target={tab.target} pathname={pathname}
                                     renderSession={renderSession} renderSessionDetails={renderSessionDetails} />
-                            </React.Suspense> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
+                            </React.Suspense></PageAtmosphereStage> : <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />}
                     </DestinationInstanceHost>
                 </View> }];
         })), [props.catalog, props.presentation, visibleGroups, workspace]);

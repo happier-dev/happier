@@ -1,6 +1,24 @@
 import * as z from 'zod/mini';
 import { lazyDefinition } from '../../lazyZodSchema.js';
-import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
+
+export const ATMOSPHERE_PLACES = ['home', 'new-session', 'projects', 'sessions', 'pages'] as const;
+export type AtmospherePlace = typeof ATMOSPHERE_PLACES[number];
+export const AtmosphereShowOnSchema = lazyDefinition(() => z.array(z.enum(ATMOSPHERE_PLACES))
+    .check(z.refine(places => new Set(places).size === places.length)));
+
+/** Defaults belong to the authored layout, independent of glass or device availability. */
+export function defaultAtmosphereShowOn(layout: 'horizon' | 'wallpaper'): AtmospherePlace[] {
+    return layout === 'wallpaper' ? [...ATMOSPHERE_PLACES] : ['home', 'new-session', 'projects'];
+}
+
+function readAtmospherePlaces(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const showOn = AtmosphereShowOnSchema.safeParse(Reflect.get(value, 'showOn'));
+    const picture: unknown = Reflect.get(value, 'picture');
+    const wallpaper = picture && typeof picture === 'object' && Reflect.get(picture, 'layout') === 'wallpaper';
+    return { ...value, showOn: showOn.success ? showOn.data : defaultAtmosphereShowOn(wallpaper ? 'wallpaper' : 'horizon') };
+}
 
 const PlanetSchema = lazyDefinition(() => z.strictObject({
     placement: z.enum(['corner', 'side', 'rise']), style: z.enum(['airy', 'balanced', 'rich']), digits: z.boolean(),
@@ -23,20 +41,36 @@ export const AtmospherePresentationSchema = lazyDefinition(() => z.strictObject(
     source: z.enum(['none', 'planet', 'picture']), planet: PlanetSchema, picture: AtmospherePictureSchema,
     looks: z.record(z.string(), AtmosphereLookOverrideSchema),
 }));
-export const ProjectAtmosphereSchema = lazyDefinition(() => z.strictObject({
-    ...AtmospherePresentationSchema.shape, behindSessions: z.boolean(),
+const ProjectAtmosphereObjectSchema = lazyDefinition(() => z.strictObject({
+    ...AtmospherePresentationSchema.shape, showOn: AtmosphereShowOnSchema,
 }));
-export const HomeAtmosphereSchema = lazyDefinition(() => z.strictObject({
-    ...ProjectAtmosphereSchema.shape, moments: z.record(z.string(), z.boolean()),
+export const ProjectAtmosphereSchema = defineStoredReadProjection(ProjectAtmosphereObjectSchema,
+    () => z.pipe(z.transform(readAtmospherePlaces), createStoredReadSchema(z.strictObject(ProjectAtmosphereObjectSchema.shape))));
+const HomeAtmosphereObjectSchema = lazyDefinition(() => z.strictObject({
+    ...ProjectAtmosphereObjectSchema.shape, moments: z.record(z.string(), z.boolean()),
 }));
+export const HomeAtmosphereSchema = defineStoredReadProjection(HomeAtmosphereObjectSchema,
+    () => z.pipe(z.transform(readAtmospherePlaces), createStoredReadSchema(z.strictObject(HomeAtmosphereObjectSchema.shape))));
 export type HomeAtmosphere = z.infer<typeof HomeAtmosphereSchema>;
 export type ProjectAtmosphere = z.infer<typeof ProjectAtmosphereSchema>;
 export type AtmosphereLookOverride = z.infer<typeof AtmosphereLookOverrideSchema>;
 export type AtmospherePresentation = z.infer<typeof AtmospherePresentationSchema>;
 
+/** A layout's untouched default follows the new layout; deliberate custom place sets survive. */
+export function applyAtmosphereLayoutDefault<T extends AtmospherePresentation & { showOn?: AtmospherePlace[] }>(
+    current: AtmospherePresentation & { showOn?: readonly AtmospherePlace[] }, next: T,
+): T {
+    if (current.picture.layout === next.picture.layout || !current.showOn || !next.showOn) return next;
+    const previousDefault = defaultAtmosphereShowOn(current.picture.layout);
+    const samePlaces = (left: readonly AtmospherePlace[], right: readonly AtmospherePlace[]) =>
+        left.length === right.length && left.every(place => right.includes(place));
+    return samePlaces(current.showOn, previousDefault) && samePlaces(next.showOn, current.showOn)
+        ? { ...next, showOn: defaultAtmosphereShowOn(next.picture.layout) } : next;
+}
+
 export const DEFAULT_HOME_ATMOSPHERE: HomeAtmosphere = {
     source: 'planet', planet: { placement: 'corner', style: 'balanced', digits: true },
-    picture: { ref: { kind: 'builtin', id: 'white-rocks-open-sea' }, layout: 'horizon' }, looks: {}, behindSessions: false,
+    picture: { ref: { kind: 'builtin', id: 'white-rocks-open-sea' }, layout: 'horizon' }, looks: {}, showOn: defaultAtmosphereShowOn('horizon'),
     moments: { welcome: true, loading: true, send: true, qr: true, pairing: true, themeSwitch: true,
         sessionFinished: true, idleResettle: true, releaseCaption: true, yourHome: true },
 };

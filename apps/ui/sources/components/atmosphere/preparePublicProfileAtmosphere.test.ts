@@ -39,7 +39,7 @@ describe('profile atmosphere preparation at the local store boundary', () => {
         expect(retained).not.toContain('privateOtherPicture');
         expect(retained).not.toContain('https://images');
         expect(retained).not.toContain('moments');
-        expect(retained).not.toContain('behindSessions');
+        expect(retained).not.toContain('showOn');
         boundary.replace();
         boundary.picture.look = { effect: 'original' };
         boundary.picture.src.full = 'https://changed/source';

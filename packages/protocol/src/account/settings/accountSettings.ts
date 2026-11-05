@@ -11,7 +11,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { GlassSurfaceMaterialsSchema, GlassSurfaceMaterialsStoredSchema } from './glassSurfaceMaterials.js';
 import { DEFAULT_GLASS_TINT_INTENSITY, GlassTintIntensitySchema } from './glassTint.js';
 import { HomeAtmosphereSchema, DEFAULT_HOME_ATMOSPHERE } from './homeAtmosphere.js';
-export { HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
+export { ATMOSPHERE_PLACES, AtmosphereShowOnSchema, defaultAtmosphereShowOn, applyAtmosphereLayoutDefault, type AtmospherePlace, HomeAtmosphereSchema, ProjectAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, DEFAULT_HOME_ATMOSPHERE, type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation, type AtmosphereLookOverride } from './homeAtmosphere.js';
 import { DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, MachineRetentionDefaultsV1Schema } from './machineRetentionDefaultsV1.js';
 import { DEFAULT_MACHINE_OFFLINE_ALERTS_V1, MachineOfflineAlertsV1Schema } from './machineOfflineAlertsV1.js';
 import { UsagePacingTargetsV1Schema, UsageQuotaNotificationsV1Schema, DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1 } from './usagePacingPreferencesV1.js';

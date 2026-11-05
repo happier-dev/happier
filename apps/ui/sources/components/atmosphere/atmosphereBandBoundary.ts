@@ -7,6 +7,8 @@ type Boundary = Readonly<{
     onFocusChange: (focused: boolean) => void;
 }>;
 
+export type AtmosphereBackdrop = Readonly<{ kind: 'picture'; bytes: Blob | string }> | Readonly<{ kind: 'planet' }>;
+
 export const AtmosphereBandBoundary = React.createContext<Boundary | null>(null);
 /** Attach at the actual composer or Project tabs; embedded composers have no atmosphere boundary. */
 export const useAtmosphereBandBoundary = () => React.useContext(AtmosphereBandBoundary);

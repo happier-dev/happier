@@ -13,12 +13,29 @@ const input = { surface: 'home' as const, home, pictures: [picture], pictureReco
     glassEnvironment: {}, isPhone: false, reduceTransparency: false, reducedMotion: false };
 
 describe('effective atmosphere owner', () => {
+    it('decides each place from the effective Project selection, keeping planets off reading pages', () => {
+        const everywhere = ['home', 'new-session', 'projects', 'sessions', 'pages'] as const;
+        for (const layout of ['horizon', 'wallpaper'] as const) {
+            for (const place of everywhere) {
+                const surface = { place, project: { serverId: 'home', projectKey: 'project' } };
+                const project = { ...home, picture: { ...home.picture, layout }, showOn: [...everywhere] };
+                expect(resolveAtmosphere({ ...input, surface, projectOverride: project })).toMatchObject({ shown: true, source: 'picture',
+                    atmosphereBehind: layout === 'wallpaper' ? 'wallpaper' : 'band' });
+                expect(resolveAtmosphere({ ...input, surface, projectOverride: { ...project, showOn: [] } }))
+                    .toMatchObject({ shown: false, source: 'none', pictureRecord: null, builtinPicture: null, atmosphereBehind: 'none' });
+                const planet = resolveAtmosphere({ ...input, surface, projectOverride: { ...project, source: 'planet' } });
+                expect(planet.shown).toBe(place !== 'sessions' && place !== 'pages');
+                const inherited = resolveAtmosphere({ ...input, surface, home: { ...project, showOn: ['home'] }, projectOverride: 'home' });
+                expect(inherited.shown).toBe(place === 'home');
+            }
+        }
+    });
     it('resolves a profile candidate independently of Home and never substitutes missing reviewed pixels', () => {
-        const { moments: _moments, behindSessions: _behind, ...presentation } = home;
+        const { moments: _moments, showOn: _showOn, ...presentation } = home;
         const candidate = { ...presentation, planet: { ...presentation.planet, placement: 'rise' as const, style: 'rich' as const } };
         const surface = { publicProfile: candidate };
         const resolved = resolveAtmosphere({ ...input, home: { ...home, source: 'none' }, surface, isPhone: true });
-        expect(resolved).toMatchObject({ source: 'picture', behindSessions: false, planet: { placement: 'corner', style: 'rich' }, pictureRecord });
+        expect(resolved).toMatchObject({ source: 'picture', showOn: [], planet: { placement: 'corner', style: 'rich' }, pictureRecord });
         expect(resolved.moments).toEqual({});
         const missing = resolveAtmosphere({ ...input, surface,
             pictureRecord: undefined, shownPicture: resolved, readingPicture: true });
@@ -87,14 +104,14 @@ describe('effective atmosphere owner', () => {
     it('holds available pixels while applying current layout, accessibility, planet and moment decisions', () => {
         const shown = resolveAtmosphere(input);
         const other: HomeAtmosphere = { ...home, planet: { ...home.planet, placement: 'rise' },
-            picture: { ...home.picture, ref: { kind: 'builtin', id: 'p347' } }, moments: { send: true }, behindSessions: true };
+            picture: { ...home.picture, ref: { kind: 'builtin', id: 'p347' } }, moments: { send: true }, showOn: ['home', 'new-session', 'projects', 'sessions'] };
         const fresh = { ...input, home: other, pictures: [picture, { ...picture, id: 'p347' }], pictureRecord: undefined,
             isPhone: true, reducedMotion: true, reduceTransparency: true };
         // The owner must resolve the current environment even while the displayed image is retained.
         const held = resolveAtmosphere({ ...fresh, shownPicture: shown, readingPicture: true });
         expect(held).toMatchObject({ source: 'picture', pictureRecord: shown.pictureRecord,
             picture: { layout: 'wallpaper' }, reducedMotion: true, reduceTransparency: true,
-            moments: { send: true }, planet: { placement: 'corner' }, behindSessions: true });
+            moments: { send: true }, planet: { placement: 'corner' }, showOn: ['home', 'new-session', 'projects', 'sessions'] });
         const disabled = resolveAtmosphere({ ...fresh, home: { ...other, source: 'none' }, shownPicture: shown, readingPicture: true });
         expect(disabled).toMatchObject({ source: 'none', pictureRecord: null });
     });

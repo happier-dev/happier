@@ -38,6 +38,7 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
   props: Readonly<{ sheetRadius: number; chrome: boolean }>,
 ) {
   const snapshot = useAtmosphereStageSnapshot();
+  const { theme } = useUnistyles();
   const window = useWindowDimensions();
   const stage = snapshot.stage;
   // The send dissolve is one of Home's moments (moments are always Home's); off, the page simply hands over.
@@ -90,6 +91,7 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
       style={[StyleSheet.absoluteFill, styles.window]}
     >
       {current?.geometry && origin ? (
+        <>
         <AtmospherePicture
           stage={current}
           panes={snapshot.panes}
@@ -100,6 +102,16 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
           chrome={props.chrome}
           onLeft={onLeft}
         />
+        {/* Exclusion belongs to the shell backing, beneath the shared reading material.
+            Page bodies remain clear, and focus never re-decides the admitted pane's inclusion. */}
+        {snapshot.excludedPanes.map(pane => pane.geometry ? (
+          <View key={pane.id} testID="atmosphere-excluded-pane" style={{
+            position: 'absolute', left: pane.geometry.rect.x - origin.x, top: pane.geometry.rect.y - origin.y,
+            width: pane.geometry.rect.width, height: pane.geometry.rect.height,
+            backgroundColor: `rgb(${atmospherePageRgb(theme.colors.surface.base).join(', ')})`,
+          }} />
+        ) : null)}
+        </>
       ) : null}
     </View>
   );

@@ -15,7 +15,7 @@ import {
   withShuffledPicture,
   withoutPictureLook,
 } from './atmosphereEdits';
-import { buildHomeAtmosphereControlMutation } from '../atmosphereSettings';
+import { buildHomeAtmosphereControlMutation, homeAtmosphereStorageBinding } from '../atmosphereSettings';
 import { projectAtmosphereEdit } from './projectAtmosphereEdit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 
@@ -29,6 +29,15 @@ const onPainting: HomeAtmosphere = withPicture(DEFAULT_HOME_ATMOSPHERE, {
 });
 
 describe('Look edits: per-picture memory keeps only what differs from the release look', () => {
+  it('uses the same layout defaults for complete Home and Project edits and preserves explicit place edits', () => {
+    const binding = homeAtmosphereStorageBinding('appearance.homeAtmosphere');
+    if (binding.scope !== 'account' || !('mutate' in binding)) throw new Error('Missing Home mutation owner');
+    const next = { ...DEFAULT_HOME_ATMOSPHERE, picture: { ...DEFAULT_HOME_ATMOSPHERE.picture, layout: 'wallpaper' as const } };
+    expect(binding.mutate(settingsDefaults, next)?.homeAtmosphere?.showOn).toEqual(['home', 'new-session', 'projects', 'sessions', 'pages']);
+    expect(projectAtmosphereEdit(DEFAULT_HOME_ATMOSPHERE, 'home', current => ({ ...current,
+      picture: { ...current.picture, layout: 'wallpaper' } })).showOn).toEqual(['home', 'new-session', 'projects', 'sessions', 'pages']);
+    expect(binding.mutate(settingsDefaults, { ...next, showOn: ['pages'] })?.homeAtmosphere?.showOn).toEqual(['pages']);
+  });
   it('preserves an absent plugin release across unrelated Home and Project edits and reappearance', () => {
     const plugin = { id: 'com.acme/sky', look: { effect: 'original', strength: 0.5, dissolve: { style: 'gradient' } } } as const;
     const authored: HomeAtmosphere = { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture',
@@ -36,7 +45,7 @@ describe('Look edits: per-picture memory keeps only what differs from the releas
       looks: { [plugin.id]: { look: 'fine', strength: 1, dissolve: 'ordered' } } };
     const home = buildHomeAtmosphereControlMutation({ ...settingsDefaults, homeAtmosphere: authored }, 'appearance.atmospherePlanetPlacement', 'side')?.homeAtmosphere;
     expect(home?.looks).toEqual(authored.looks);
-    const project = projectAtmosphereEdit(authored, undefined, current => ({ ...current, behindSessions: true }));
+    const project = projectAtmosphereEdit(authored, undefined, current => ({ ...current, showOn: ['home', 'new-session', 'projects', 'sessions'] }));
     expect(project.looks).toEqual(authored.looks);
     expect(effectivePictureLook(project, [plugin])).toMatchObject({ effect: 'fine', strength: 1, fade: 'ordered' });
     expect(withPictureLook(authored, { strength: 0.7 }, []).looks[plugin.id]).toEqual({ look: 'fine', strength: 0.7, dissolve: 'ordered' });

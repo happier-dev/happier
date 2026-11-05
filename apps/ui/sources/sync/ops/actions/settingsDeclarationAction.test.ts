@@ -306,7 +306,7 @@ describe('Home atmosphere settings declarations', () => {
         }
         expect(owner.account().homeAtmosphere).toMatchObject({ source: 'picture',
             planet: { placement: 'rise', style: 'rich', digits: false },
-            picture: { ref: { kind: 'builtin', id: 'calm-sea' }, layout: 'wallpaper' }, behindSessions: true,
+            picture: { ref: { kind: 'builtin', id: 'calm-sea' }, layout: 'wallpaper' }, showOn: ['home', 'new-session', 'projects', 'sessions'],
             moments: { send: false, loading: true },
         });
         expect(await owner.action({ actionId: 'settings.reset', input: {
@@ -355,11 +355,11 @@ describe('Home atmosphere settings declarations', () => {
 
 describe('Home atmosphere picture and Project mutations', () => {
     it('edits the captured public-profile draft through Settings Actions without changing Home or glass', async () => {
-        const { moments: _moments, behindSessions: _behindSessions, ...initial } = settingsDefaults.homeAtmosphere;
+        const { moments: _moments, showOn: _showOn, ...initial } = settingsDefaults.homeAtmosphere;
         let draft = initial;
         let current = true;
         const owner = ownerWithServices({ ...services(), publicProfileAtmosphereDraft: {
-            serverId: 'home-a', isCurrent: () => current, read: () => ({ ...draft, behindSessions: true, moments: { private: true } }),
+            serverId: 'home-a', isCurrent: () => current, read: () => ({ ...draft, showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { private: true } }),
             update: edit => { draft = edit(draft); },
         } });
         const executor = throughActionExecutor(owner.action);
@@ -373,12 +373,12 @@ describe('Home atmosphere picture and Project mutations', () => {
         expect(await executor.execute('settings.get', { anchor: 'appearance.homeAtmosphere', target }, context))
             .toEqual({ ok: true, result: { anchor: 'appearance.homeAtmosphere', value: { ...initial, source: 'none' } } });
         expect(await executor.execute('settings.set', { anchor: 'appearance.homeAtmosphere', target,
-            value: { ...initial, behindSessions: true } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+            value: { ...initial, showOn: ['home', 'new-session', 'projects', 'sessions'] } }, context)).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
         expect(await owner.action({ actionId: 'settings.reset', input: { anchor: 'appearance.atmosphereSource', target } }))
             .toMatchObject({ value: initial.source });
         await executor.execute('settings.set', { anchor: 'appearance.atmosphereSource', target, value: 'none' }, context);
         expect(owner.account()).toEqual(settingsDefaults);
-        expect(await executor.execute('settings.set', { anchor: 'appearance.atmosphereBehindSessions', target, value: true }, context))
+        expect(await executor.execute('settings.set', { anchor: 'appearance.atmosphereShowOn', target, value: ['sessions'] }, context))
             .toMatchObject({ ok: false, errorCode: 'setting_target_mismatch' });
         expect(await executor.execute('settings.set', { anchor: 'appearance.atmosphereSource', target: { ...target, serverId: 'home-b' }, value: 'planet' }, context))
             .toMatchObject({ ok: false, errorCode: 'setting_target_mismatch' });
@@ -398,7 +398,7 @@ describe('Home atmosphere picture and Project mutations', () => {
     }
 
     it('acquires a picked picture into the captured draft and discovers the same device library without Home writes', async () => {
-        const { moments: _moments, behindSessions: _behindSessions, ...initial } = settingsDefaults.homeAtmosphere;
+        const { moments: _moments, showOn: _showOn, ...initial } = settingsDefaults.homeAtmosphere;
         let draft = initial;
         const picked = new Blob(['picked-picture'], { type: 'image/png' });
         // OS image decode/canvas and picker are platform boundaries; ingress/store/Actions remain real.

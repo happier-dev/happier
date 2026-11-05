@@ -4713,6 +4713,23 @@ the saved choice; its per-picture controls and credit describe the shown picture
 Glass preset and intensity retain their
 existing `appearance.glassPreset` and `appearance.glassIntensity` bindings.
 
+`appearance.atmosphereShowOn` reads and sets `homeAtmosphere.showOn`, an array
+representing a set of `home`, `new-session`, `projects`, `sessions` and `pages`.
+Empty sets are valid; unknown places and duplicate entries are rejected by the
+same strict setting schema used for full-object writes. Stored absent or unknown
+sets recover to the authored layout's default: all five places for Wallpaper,
+Home/New/Projects for Horizon. A layout change follows the new layout's default
+when the place set still equals the previous default; custom sets survive.
+Planet never supplies a backdrop on Sessions or
+other pages. Project-linked Sessions and pages use the Project's override, or
+inherit Home when the override is absent or `home`; membership comes from the
+accepted Session/Project relationship, never a title or inferred path. The
+resolver exposes visibility and the shared shell picture's backing. The shell
+content-plane owner applies Sessions' existing reading coat once for every main
+area while the picture is shown; individual pages do not select another coat.
+This is the development contract; page
+composition and the place picker are integrated by the Home atmosphere UI lane.
+
 `appearance.projectAtmosphere` requires
 `target:{kind:'project',serverId,projectKey}`. Its complete override, or `'home'`,
 is stored through the current Account's existing Project organization row CAS,

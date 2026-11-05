@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { AtmosphereSurface } from './resolveAtmosphere';
+import type { AtmosphereBackdrop } from './atmosphereBandBoundary';
+import { atmosphereSurfaceKey, type AtmosphereSurface } from './resolveAtmosphere';
 
 /**
  * The surface on screen that carries the atmosphere (Home now; new session and projects later) tells the
@@ -26,15 +27,19 @@ export type AtmosphereStage = Readonly<{
   id: number;
   surface: AtmosphereSurface;
   geometry: AtmosphereStageGeometry | null;
+  /** The frame’s resolved bytes; floating surfaces never acquire the picture again. */
+  backdrop?: AtmosphereBackdrop | null;
 }>;
 type Snapshot = Readonly<{
   stage: AtmosphereStage | null;
   panes: readonly AtmosphereStage[];
+  /** Visible panes whose owner excluded artwork; the shell paints their page backing. */
+  excludedPanes: readonly AtmosphereStage[];
   sending: boolean;
   pictureShown: boolean;
 }>;
 
-let snapshot: Snapshot = { stage: null, panes: [], sending: false, pictureShown: false };
+let snapshot: Snapshot = { stage: null, panes: [], excludedPanes: [], sending: false, pictureShown: false };
 const scrollOffsets = new Map<number, number>();
 let nextStageId = 1;
 const stages = new Map<number, Readonly<{ stage: AtmosphereStage; focused: boolean; carriesAtmosphere: boolean }>>();
@@ -52,11 +57,14 @@ function publishStage() {
     ?? candidates[0];
   const stage = selected?.stage ?? null;
   const panes = [...stages.values()].map(value => value.stage);
+  const excludedPanes = [...stages.values()].filter(value => !value.carriesAtmosphere).map(value => value.stage);
   if (stage === snapshot.stage && panes.length === snapshot.panes.length
-    && panes.every((pane, index) => pane === snapshot.panes[index])) return;
+    && panes.every((pane, index) => pane === snapshot.panes[index])
+    && excludedPanes.length === snapshot.excludedPanes.length
+    && excludedPanes.every((pane, index) => pane === snapshot.excludedPanes[index])) return;
   // Surface cleanup/re-registration can be batched while the shell keeps its ready canvas. Only
   // the picture layer's readiness/unmount publishes pictureShown; stage selection cannot erase it.
-  emit({ ...snapshot, stage, panes });
+  emit({ ...snapshot, stage, panes, excludedPanes });
 }
 
 export const atmosphereStageStore = {
@@ -123,17 +131,16 @@ export function useAtmosphereStage(
   geometry: AtmosphereStageGeometry | null,
   focused = true,
   carriesAtmosphere = true,
+  backdrop: AtmosphereBackdrop | null = null,
 ) {
   const [id] = React.useState(() => nextStageId++);
   const surfaceKey =
     surface === null
       ? null
-      : typeof surface === 'string'
-        ? surface
-        : `${surface.project.serverId}/${surface.project.projectKey}`;
+      : atmosphereSurfaceKey(surface);
   React.useEffect(() => {
     if (surface === null) return;
-    atmosphereStageStore.setStage({ id, surface, geometry }, focused, carriesAtmosphere);
+    atmosphereStageStore.setStage({ id, surface, geometry, backdrop }, focused, carriesAtmosphere);
     return () => atmosphereStageStore.clearStage(id);
     // The surface identity is its key; a new object for the same surface keeps the stage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,11 +148,11 @@ export function useAtmosphereStage(
   React.useEffect(() => {
     if (!surface) return;
     const current = stages.get(id);
-    if (current?.focused === focused && current.carriesAtmosphere === carriesAtmosphere && sameGeometry(current.stage.geometry, geometry)) return;
-    atmosphereStageStore.setStage({ id, surface, geometry }, focused, carriesAtmosphere);
+    if (current?.focused === focused && current.carriesAtmosphere === carriesAtmosphere && current.stage.backdrop === backdrop && sameGeometry(current.stage.geometry, geometry)) return;
+    atmosphereStageStore.setStage({ id, surface, geometry, backdrop }, focused, carriesAtmosphere);
     // The stable surface key owns identity, rather than the object allocated by its caller.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometry, id, focused, carriesAtmosphere, surfaceKey]);
+  }, [geometry, id, focused, carriesAtmosphere, surfaceKey, backdrop]);
   return id;
 }
 

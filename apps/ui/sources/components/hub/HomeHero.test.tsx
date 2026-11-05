@@ -8,6 +8,30 @@ import { HomeHero, useHomeHeroFrame } from './HomeHero';
 import { HomePlanet } from '@/components/atmosphere/HomePlanet';
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
+import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
+
+it('reports an excluded visible unfocused Home without a headline, and withdraws its backing when hidden', async () => {
+    function Home() {
+        const frame = useHomeHeroFrame({ active: false, focused: false, phone: false });
+        return <View testID="excluded-home" ref={frame.paneRef} onLayout={frame.measure} />;
+    }
+    const scene = (visible: boolean) => <DestinationInstanceContext.Provider value={{
+        tabId: 'excluded-home', ref: { kind: 'home', params: {} }, pathname: '/', visible, focused: false,
+    }}><Home /></DestinationInstanceContext.Provider>;
+    const screen = await renderScreen(scene(true), { createNodeMock: () => ({
+        measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(400, 20, 600, 800),
+    }) });
+    try {
+        await act(async () => { screen.findHostByTestId('excluded-home')!.props.onLayout(); });
+        expect(atmosphereStageStore.get().excludedPanes).toEqual([expect.objectContaining({
+            surface: 'home', geometry: expect.objectContaining({ rect: { x: 400, y: 20, width: 600, height: 800 } }),
+        })]);
+        expect(atmosphereStageStore.get().stage).toBeNull();
+        await screen.update(scene(false));
+        expect(atmosphereStageStore.get().excludedPanes).toHaveLength(0);
+    } finally { await screen.unmount(); }
+});
 
 it('keeps a mounted planet fade aligned with the section moved by Corner → Rise → Side → Rise', async () => {
     const pane = { width: 1104, height: 852 };

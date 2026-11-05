@@ -1,5 +1,5 @@
 import { releaseLook, type AtmosphereLookPicture } from '@happier-dev/brand/atmosphere';
-import { DEFAULT_HOME_ATMOSPHERE, HomeAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation,
+import { DEFAULT_HOME_ATMOSPHERE, HomeAtmosphereSchema, AtmospherePresentationSchema, atmospherePresentation, applyAtmosphereLayoutDefault,
     type HomeAtmosphere, type ProjectAtmosphere, type AtmospherePresentation } from '@happier-dev/protocol/account/settings/accountSettings';
 import { buildBuiltInAccountSettingMutationV1, parseBuiltInAccountSettingValueV1,
     readBuiltInAccountSettingValueV1, readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -59,7 +59,7 @@ export function buildHomeAtmosphereControlMutation(settings: Settings, anchor: s
     const delta = buildBuiltInAccountSettingMutationV1(declaration, settings, value);
     if (!delta) return null;
     const parsed = HomeAtmosphereSchema.safeParse(delta.homeAtmosphere);
-    return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(parsed.data) } : null;
+    return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(applyAtmosphereLayoutDefault(settings.homeAtmosphere, parsed.data)) } : null;
 }
 
 /** Full object and look-map writes need the picture release catalog; portable discovery routes them to this client owner. */
@@ -75,7 +75,7 @@ export function homeAtmosphereStorageBinding(anchor: 'appearance.homeAtmosphere'
         },
         mutate: (settings, value) => {
             const parsed = HomeAtmosphereSchema.safeParse(isLooks ? { ...settings.homeAtmosphere, looks: value } : value);
-            return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(parsed.data) } : null;
+            return parsed.success ? { homeAtmosphere: normalizeHomeAtmosphere(applyAtmosphereLayoutDefault(settings.homeAtmosphere, parsed.data)) } : null;
         },
     };
 }

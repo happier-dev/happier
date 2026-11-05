@@ -22,7 +22,7 @@ describe('reviewed atmosphere copy admission', () => {
             { kind: 'publication', id: 'asset-a', path: '/private/file' }]) {
             expect(PublicProfileAtmosphereV1Schema.safeParse({ ...applied, picture: { ...applied.picture, ref } }).success).toBe(false);
         }
-        expect(PublicProfileAtmosphereV1Schema.safeParse({ ...applied, moments: {}, behindSessions: true }).success).toBe(false);
+        expect(PublicProfileAtmosphereV1Schema.safeParse({ ...applied, moments: {}, showOn: ['home', 'new-session', 'projects', 'sessions'] }).success).toBe(false);
         expect(PublicProfileAtmosphereV1Schema.safeParse({ ...applied, picture: { ...applied.picture,
             descriptor: { ...picture.descriptor, src: { full: 'https://source/picture', thumb: 'https://source/thumb' } } } }).success).toBe(false);
         for (const url of ['not-a-url', 'javascript:alert(1)', 'http://credit.example/']) {

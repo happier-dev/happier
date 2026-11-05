@@ -35,7 +35,7 @@ import { AtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBo
 type Measured = Readonly<{ y: number; height: number }>;
 type Frame = Readonly<{
   rect: AtmosphereStageGeometry['rect'];
-  headline: Measured;
+  headline: Measured | null;
   composer: Measured | null;
   suggestions: Measured | null;
   next: Measured | null;
@@ -91,7 +91,7 @@ export function useHomeHeroFrame(
         measureInWindow(ref.current),
       ),
     ).then(([paneBox, headline, composer, suggestions, next]) => {
-      if (current !== generation.current || !paneBox || !headline) return;
+      if (current !== generation.current || !paneBox) return;
       // Page coordinates: where each thing sits in the scrolled content, independent of the scroll.
       const page = (
         box: { y: number; height: number } | null,
@@ -106,7 +106,7 @@ export function useHomeHeroFrame(
       );
       const next_: Frame = {
         rect: paneBox,
-        headline: page(headline)!,
+        headline: page(headline),
         composer: page(composer),
         suggestions: page(suggestions),
         next: page(next),
@@ -126,7 +126,7 @@ export function useHomeHeroFrame(
   const geometry = React.useMemo<AtmosphereStageGeometry | null>(() => {
     if (!frame) return null;
     const band = homeHorizonBand({
-      headlineTop: frame.headline.y,
+      headlineTop: frame.headline?.y ?? 0,
       composerBottom: frame.composer ? frame.composer.y + frame.composer.height : null,
       seam: homeAtmosphereSeam(frame.rect.height, input.phone),
       phone: input.phone,
@@ -138,17 +138,17 @@ export function useHomeHeroFrame(
       horizonAt: band.horizonAt,
       focus: {
         x: frame.rect.width / 2,
-        y: centre.y + centre.height / 2,
+        y: centre ? centre.y + centre.height / 2 : frame.rect.height / 2,
       },
     };
   }, [frame, input.phone]);
   const visible = useDestinationVisibility();
   const destinationKey = useDestinationInstanceKey();
-  const holdsStage = input.active && (destinationKey !== null ? visible : input.focused);
-  const stageId = useAtmosphereStage(holdsStage ? 'home' : null, holdsStage ? geometry : null, input.focused);
+  const holdsStage = destinationKey !== null ? visible : input.focused;
+  const stageId = useAtmosphereStage(holdsStage ? 'home' : null, holdsStage ? geometry : null, input.focused, input.active);
   const hero = React.useMemo<HomePlanetHero | null>(
     () =>
-      frame
+      frame?.headline
         ? {
             composerTop: frame.composer ? frame.composer.y : null,
             aboveBottom: bottomOf(frame.suggestions ?? frame.composer ?? frame.headline),

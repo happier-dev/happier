@@ -5,6 +5,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useHomeAtmosphereEditor } from '@/components/atmosphere/look/atmosphereEditor';
+import { useSetting } from '@/sync/store/settingsReadHooks';
+import { AtmospherePlacesField, AtmosphereShowOnSelector, useAtmosphereShowOn } from '@/components/atmosphere/look/AtmosphereShowOnControl';
 import {
   PictureControls,
   PlanetControls,
@@ -54,35 +56,22 @@ const MOMENTS = Object.keys(MOMENT_COPY) as MomentId[];
 
 /** How many of the atmosphere's moments are on, for the row that opens them. */
 export function useAtmosphereMomentsSummary(): string {
-  const { value } = useHomeAtmosphereEditor();
+  const value = useSetting('homeAtmosphere');
   const on = MOMENTS.filter((id) => isAtmosphereMomentOn(value.moments, id)).length;
   return t('settingsAppearance.momentsSummary', { on, total: MOMENTS.length });
 }
 
-/** Where the atmosphere shows: behind sessions is opt-in. */
+/** Where the background shows: Everywhere, Home only, or the places picked (plan A3). */
 export function AtmosphereWhereItShows() {
-  const { value, updateHome } = useHomeAtmosphereEditor();
-  const setBehind = (behindSessions: boolean) =>
-    updateHome((current) => ({ ...current, behindSessions }));
+  const state = useAtmosphereShowOn(useHomeAtmosphereEditor());
+  if (!state) return null;
   return (
     <ItemGroup
       title={lookCopy('whereItShows')}
       description={lookCopy('whereItShowsDescription')}
     >
-      <SettingAnchor
-        setting={APPEARANCE_SETTINGS.settings.atmosphereBehindSessions}
-      >
-        <Item
-          testID="atmosphere-behind-sessions"
-          title={lookCopy('behindSessions')}
-          subtitle={lookCopy('behindSessionsDescription')}
-          showChevron={false}
-          onPress={() => setBehind(!value.behindSessions)}
-          rightElement={
-            <Switch value={value.behindSessions} onValueChange={setBehind} />
-          }
-        />
-      </SettingAnchor>
+      <AtmosphereShowOnSelector state={state} presentation="page" />
+      {state.mode === 'custom' ? <AtmospherePlacesField state={state} /> : null}
     </ItemGroup>
   );
 }

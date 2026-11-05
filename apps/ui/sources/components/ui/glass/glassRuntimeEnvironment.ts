@@ -4,7 +4,13 @@ import type { GlassAtmosphereTone, GlassMaterialEnvironment } from './glassMater
 const DEFAULT_ENVIRONMENT: GlassMaterialEnvironment = Object.freeze({});
 const GlassRuntimeEnvironment = React.createContext<GlassMaterialEnvironment>(DEFAULT_ENVIRONMENT);
 
-export const GlassRuntimeEnvironmentProvider = GlassRuntimeEnvironment.Provider;
+const GlassReduceTransparency = React.createContext(false);
+
+/** Project the effective host preference once, including the native window accessibility input. */
+export function GlassRuntimeEnvironmentProvider(props: React.ProviderProps<GlassMaterialEnvironment>) {
+    return React.createElement(GlassReduceTransparency.Provider, { value: props.value.reduceTransparency === true },
+        React.createElement(GlassRuntimeEnvironment.Provider, { value: props.value }, props.children));
+}
 type AtmosphereBehind = NonNullable<GlassMaterialEnvironment['atmosphereBehind']>;
 const GlassAtmosphereBehindSetter = React.createContext<(value: AtmosphereBehind) => void>(() => {});
 export const GlassAtmosphereBehindSetterProvider = GlassAtmosphereBehindSetter.Provider;
@@ -25,4 +31,9 @@ export function useSetGlassAtmosphereTone() {
 /** Lightweight presentation input; subscribing does not import the runtime driver. */
 export function useGlassRuntimeEnvironment(): GlassMaterialEnvironment {
     return React.useContext(GlassRuntimeEnvironment);
+}
+
+/** Atmosphere readers consume only the effective host transparency preference. */
+export function useGlassReduceTransparency(): boolean {
+    return React.useContext(GlassReduceTransparency);
 }

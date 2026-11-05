@@ -24,6 +24,9 @@ vi.mock('socket.io-client', async importOriginal =>
 // Select the genuine browser persistence adapter over the fake IndexedDB system boundary.
 vi.mock('@/components/atmosphere/pictureStore', async () => import('../pictureStore.web'));
 
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
+
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { AtmosphereWhereItShows } = await import('@/components/settings/appearance/AtmosphereAppearanceRows');
@@ -33,39 +36,49 @@ const originalState = storage.getState();
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); storage.setState(originalState, true); });
 
+async function chooseShowOn(screen: Awaited<ReturnType<typeof renderScreen>>, mode: 'everywhere' | 'home' | 'custom', presentation: 'page' | 'panel' = 'page') {
+    if (presentation === 'panel') {
+        await screen.pressByTestIdAsync(`look-show-on:${mode}`);
+        return;
+    }
+    await screen.pressByTestIdAsync('atmosphere-show-on');
+    await vi.waitFor(() => expect(screen.findAllHostsByTestId(`atmosphere-show-on:${mode}`).length).toBeGreaterThan(0));
+    await screen.pressByTestIdAsync(`atmosphere-show-on:${mode}`);
+}
+
 describe('Home Atmosphere editor through declared Settings Actions', () => {
-    it('admits the real Behind sessions control under Off, Ask reject/approve and Allowed', async () => {
+    it('admits the real Show background on control under Off, Ask reject/approve and Allowed', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ memoryUseInNewSessions: false,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
         }) });
         const alert = vi.spyOn(Modal, 'alert');
         try {
             const screen = await renderScreen(<AtmosphereWhereItShows />);
-            await screen.pressByTestIdAsync('atmosphere-behind-sessions');
+            await chooseShowOn(screen, 'everywhere');
             await vi.waitFor(() => expect(alert).toHaveBeenCalled());
-            expect(account.persistedSettings.homeAtmosphere.behindSessions).toBe(false);
+            expect(account.persistedSettings.homeAtmosphere.showOn.includes('sessions')).toBe(false);
             expect(account.settingsWrites).toEqual([]);
 
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
             })); });
-            await screen.pressByTestIdAsync('atmosphere-behind-sessions');
+            await chooseShowOn(screen, 'everywhere');
             await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
             expect(account.settingsWrites).toEqual([]);
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
-            expect(account.persistedSettings.homeAtmosphere.behindSessions).toBe(false);
+            expect(account.persistedSettings.homeAtmosphere.showOn.includes('sessions')).toBe(false);
 
-            await screen.pressByTestIdAsync('atmosphere-behind-sessions');
+            await chooseShowOn(screen, 'everywhere');
             await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
             await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
-            await vi.waitFor(() => expect(account.persistedSettings.homeAtmosphere.behindSessions).toBe(true));
-            expect(storage.getState().settings.homeAtmosphere.behindSessions).toBe(true);
+            await vi.waitFor(() => expect(account.persistedSettings.homeAtmosphere.showOn.includes('sessions')).toBe(true));
+            expect(storage.getState().settings.homeAtmosphere.showOn.includes('sessions')).toBe(true);
 
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
             })); });
-            await screen.pressByTestIdAsync('atmosphere-behind-sessions');
-            await vi.waitFor(() => expect(account.persistedSettings.homeAtmosphere.behindSessions).toBe(false));
+            await chooseShowOn(screen, 'home');
+            await vi.waitFor(() => expect(account.persistedSettings.homeAtmosphere.showOn.includes('sessions')).toBe(false));
             expect(account.persistedSettings.memoryUseInNewSessions).toBe(false);
             expect(account.artifacts.list()).toHaveLength(2);
         } finally { standardCleanup(); await account.dispose(); }
@@ -83,7 +96,7 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
             const staleHomeUpdate = editor.getCurrent().updateHome;
             const currentHome = { ...account.persistedSettings.homeAtmosphere, source: 'picture' as const,
                 picture: { ref: { kind: 'user' as const, localId }, layout: 'horizon' as const },
-                behindSessions: true, moments: { ...account.persistedSettings.homeAtmosphere.moments, welcome: false },
+                showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { ...account.persistedSettings.homeAtmosphere.moments, welcome: false },
                 looks: { 'acme.gallery/aurora': { look: 'fine' as const, strength: 1 }, [localId]: { look: 'engraving' as const } },
             };
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, homeAtmosphere: currentHome })); });

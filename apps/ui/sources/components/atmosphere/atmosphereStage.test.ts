@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { atmosphereStageStore } from './atmosphereStage';
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { atmosphereStageStore, useAtmosphereStage } from './atmosphereStage';
 
-afterEach(() => { atmosphereStageStore.clearStage(-1); atmosphereStageStore.clearStage(-2); });
+afterEach(() => { standardCleanup(); atmosphereStageStore.clearStage(-1); atmosphereStageStore.clearStage(-2); });
+it('publishes the frame’s existing picture and replacement without acquiring it again', async () => {
+    const first = { kind: 'picture' as const, bytes: 'file:///first.jpg' };
+    const second = { kind: 'picture' as const, bytes: 'file:///second.jpg' };
+    const hook = await renderHook(({ backdrop }) => useAtmosphereStage('home', null, true, true, backdrop), { initialProps: { backdrop: first } });
+    expect(atmosphereStageStore.get().stage?.backdrop).toBe(first);
+    await hook.rerender({ backdrop: second });
+    expect(atmosphereStageStore.get().stage?.backdrop).toBe(second);
+});
+
 describe('one shell atmosphere across visible panes', () => {
     it('keeps scroll local to each stage and preserves it when focus changes', () => {
         const home = { id: -1, surface: 'home' as const, geometry: null };

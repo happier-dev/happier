@@ -200,9 +200,29 @@ describe('accountSettings', () => {
     const value = { source: 'picture', planet: { placement: 'rise', style: 'rich', digits: false },
       picture: { ref: { kind: 'user', localId: 'device-picture' }, layout: 'wallpaper' },
       looks: { 'device-picture': { strength: 1.8, look: 'original', dissolve: 'ordered' } },
-      behindSessions: true, moments: { send: false } };
+      showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { send: false } };
     expect(accountSettingsParse({ homeAtmosphere: { ...value, future: true,
       planet: { ...value.planet, future: true }, looks: { 'device-picture': { ...value.looks['device-picture'], fade: -0.2 } } } })).toHaveProperty('homeAtmosphere', value);
+  });
+  it('recovers only background places to the layout default and strictly admits deliberate sets', () => {
+    const base = accountSettingsParse({}).homeAtmosphere;
+    const horizon = ['home', 'new-session', 'projects'];
+    const everywhere = [...horizon, 'sessions', 'pages'];
+    expect(base.showOn).toEqual(horizon);
+    for (const layout of ['horizon', 'wallpaper'] as const) {
+      const expected = layout === 'wallpaper' ? everywhere : horizon;
+      for (const showOn of [undefined, ['future-place'], 'everywhere', null]) {
+        const value = { ...base, source: 'picture', picture: { ...base.picture, layout }, showOn };
+        expect(accountSettingsParse({ homeAtmosphere: value }).homeAtmosphere).toMatchObject({ source: 'picture', picture: { layout }, showOn: expected });
+      }
+    }
+    for (const showOn of [[], ['pages', 'home'], everywhere]) {
+      expect(ACCOUNT_SETTING_DEFINITIONS.homeAtmosphere.parseMutationValue({ ...base, showOn }).success).toBe(true);
+      expect(accountSettingsParse({ homeAtmosphere: { ...base, showOn } }).homeAtmosphere.showOn).toEqual(showOn);
+    }
+    for (const showOn of [['future-place'], ['home', 'home'], 'everywhere']) {
+      expect(ACCOUNT_SETTING_DEFINITIONS.homeAtmosphere.parseMutationValue({ ...base, showOn }).success).toBe(false);
+    }
   });
   it('retains only explicitly chosen night hours and rejects an empty or invalid window', () => {
     expect(accountSettingsParse({}).usageNightHoursV1).toBeNull();

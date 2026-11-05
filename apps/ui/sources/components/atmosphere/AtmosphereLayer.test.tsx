@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 import * as React from 'react';
+import Color from 'color';
+import { PageAtmosphereStage } from './PageAtmosphereStage';
+import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
 import { View } from 'react-native';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -487,5 +490,109 @@ it('veils the whole column where cards come to rest, wherever a surface stands i
         expect(regions.at.y - regions.reach.y).toBeLessThanOrEqual(rect.y / frame.height + 1e-9);
         expect(regions.at.y + regions.reach.y).toBeGreaterThanOrEqual((rect.y + rect.height) / frame.height - 1e-9);
         expect(regions.reach.x).toBeCloseTo(rect.width / frame.width / 2);
+    }
+});
+
+it.each(['page', 'Project'] as const)('keeps an excluded %s opaque beside Home through focus and inclusion changes without remounting', async kind => {
+    vi.stubGlobal('Worker', class {
+        onmessage: ((event: { data: BackdropWorkerResponse }) => void) | null = null;
+        postMessage(message: BackdropWorkerRequest) {
+            if (!('request' in message)) return;
+            const { width: w, height: h } = message.request;
+            queueMicrotask(() => this.onmessage?.({ data: { id: message.id, ok: true,
+                result: { rgba: new Uint8ClampedArray(w * h * 4), w, h } } }));
+        }
+        terminate() {}
+    });
+    vi.stubGlobal('ImageData', class {
+        constructor(public data: Uint8ClampedArray, public width: number, public height: number) {}
+    });
+    const previous = storage.getState();
+    const localId = `split-excluded-${kind}`;
+    let mounts = 0, unmounts = 0, paints = 0;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    function Content() {
+        React.useEffect(() => { mounts++; return () => { unmounts++; }; }, []);
+        return <View testID="excluded-content" />;
+    }
+    const pathname = kind === 'page' ? '/inbox' : '/projects/p1';
+    function Shell(props: { focusHome: boolean }) {
+        const rightColumn = React.useRef<View>(null);
+        const [atmosphereBehind, setBehind] = React.useState<NonNullable<GlassMaterialEnvironment['atmosphereBehind']>>('none');
+        return <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
+            <GlassAtmosphereBehindSetterProvider value={setBehind}>
+                <AtmosphereLayer sheetRadius={12} chrome={false} />
+                <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/',
+                    visible: true, focused: props.focusHome }}>
+                    <PageAtmosphereStage pathname="/" params={{}}>
+                        <AtmosphereSurfaceFrame surface="home" showLook={false}><View /></AtmosphereSurfaceFrame>
+                    </PageAtmosphereStage>
+                </DestinationInstanceContext.Provider>
+                <DestinationInstanceContext.Provider value={{ tabId: 'right', ref: { kind: 'x', params: {} }, pathname,
+                    visible: true, focused: !props.focusHome }}>
+                    <PageAtmosphereStage pathname={pathname} params={{}}>
+                        {kind === 'page' ? <Content /> : <AtmosphereSurfaceFrame
+                            surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} column={rightColumn} showLook={false}>
+                            <View ref={rightColumn} testID="right-column"><Content /></View>
+                        </AtmosphereSurfaceFrame>}
+                    </PageAtmosphereStage>
+                </DestinationInstanceContext.Provider>
+            </GlassAtmosphereBehindSetterProvider>
+        </GlassRuntimeEnvironmentProvider>;
+    }
+    const select = async (included: boolean) => act(async () => storage.setState(state => ({ ...state,
+        settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
+            showOn: included ? ['home', kind === 'page' ? 'pages' : 'projects'] : ['home'],
+        } },
+    })));
+    // The shell's backing owns exclusion; page bodies deliberately paint no coat.
+    const masks = () => screen!.findAllHostsByTestId('atmosphere-excluded-pane');
+    const expectOpaque = () => {
+        expect(masks()).toHaveLength(1);
+        expect(flattenTestStyle(masks()[0]!.props.style)).toMatchObject({ left: 80, top: 0, width: 80, height: 60 });
+        expect(Color(flattenTestStyle(masks()[0]!.props.style).backgroundColor as string).alpha()).toBe(1);
+    };
+    try {
+        await pictureStore.put({ localId, kind: 'user', data: new Blob(['prepared picture']) });
+        storage.setState(state => ({ ...state, settings: { ...state.settings, glassBlurEnabled: true,
+            glassSurfaceMaterials: glassPresetMaterials('auto'), homeAtmosphere: {
+                ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', showOn: ['home'],
+                picture: { ref: { kind: 'user', localId }, layout: 'wallpaper' },
+            },
+        } }));
+        screen = await renderScreen(<Shell focusHome />, { createNodeMock: element => element.type === 'canvas'
+            ? { getContext: () => ({ putImageData() { paints++; } }) }
+            : { measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
+                done(element.props.testID === 'right-column'
+                    || element.props.testID === 'page-atmosphere-coat' ? 80 : 0, 0, 80, 60) },
+        });
+        await vi.waitFor(() => expect(atmosphereStageStore.get().pictureShown).toBe(true));
+        expect(atmosphereStageStore.get().panes).toHaveLength(2);
+        const content = screen.findHostByTestId('excluded-content');
+        const canvas = screen.findAllHostsByTestId('atmosphere-wallpaper')[0];
+        expectOpaque();
+        await screen.update(<Shell focusHome={false} />);
+        expect(atmosphereStageStore.get().stage?.surface).toBe('home');
+        expectOpaque();
+        expect(screen.findAllHostsByTestId('atmosphere-wallpaper')[0]).toBe(canvas);
+        await select(true);
+        await vi.waitFor(() => expect(masks()).toHaveLength(0));
+        await select(false);
+        expect(atmosphereStageStore.get().stage?.surface).toBe('home');
+        // Removing the focused pane's demand hands the shell back to Home asynchronously.
+        // Check its explicit opaque coat after that picture is shown, as on initial arrival.
+        await vi.waitFor(() => expect(atmosphereStageStore.get().pictureShown).toBe(true));
+        expectOpaque();
+        await screen.update(<Shell focusHome />);
+        await vi.waitFor(() => expect(atmosphereStageStore.get().pictureShown).toBe(true));
+        expect(screen.findHostByTestId('excluded-content')).toBe(content);
+        expect(screen.findAllHostsByTestId('atmosphere-window-layer')).toHaveLength(1);
+        expect(paints).toBeGreaterThan(0);
+        expect(mounts).toBe(1);
+        expect(unmounts).toBe(0);
+    } finally {
+        await screen?.unmount();
+        storage.setState(previous, true);
+        await pictureStore.remove(localId);
     }
 });

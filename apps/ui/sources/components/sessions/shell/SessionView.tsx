@@ -842,7 +842,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     // loading, ready and blocked re-publishes its parts into the same slots.
     return props.presentation?.kind === 'embedded'
         ? <PluginSurfaceNestingBoundary><EmbeddedSessionPartClaimsScope>{surface}</EmbeddedSessionPartClaimsScope></PluginSurfaceNestingBoundary>
-        : <AtmosphereSurfaceFrame surface="home" session focused={isFocused} visible={isSurfaceVisible}>{surface}</AtmosphereSurfaceFrame>;
+        : <AtmosphereSurfaceFrame surface={{ session: routeAddress }} session focused={isFocused} visible={isSurfaceVisible}>{surface}</AtmosphereSurfaceFrame>;
 });
 
 const EMBEDDED_PANE_DRIVER_OPTIONS = Object.freeze({ registerDriver: false });

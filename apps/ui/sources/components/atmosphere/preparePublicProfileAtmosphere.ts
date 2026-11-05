@@ -47,7 +47,7 @@ export async function preparePublicProfileAtmosphere(input: Readonly<{
         const record = await input.store.get(localId);
         if (!input.isCurrent()) return { status: 'unavailable', reason: 'account_retired' };
         const resolved = resolveAtmosphere({ surface: { publicProfile: presentation },
-            home: { ...presentation, moments: {}, behindSessions: false }, pictures: retainedCatalog, pictureRecord: record,
+            home: { ...presentation, moments: {}, showOn: [] }, pictures: retainedCatalog, pictureRecord: record,
             isPhone: false, glassEnvironment: {}, reduceTransparency: false, reducedMotion: true });
         if (!resolved.pictureRecord) return { status: 'unavailable', reason: 'picture_unavailable' };
         const pixels = await input.store.prepare(resolved.pictureRecord.data, { format: 'png' });

@@ -1,8 +1,8 @@
-import type { HomeAtmosphere, ProjectAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
+import { applyAtmosphereLayoutDefault, type HomeAtmosphere, type ProjectAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
 import { normalizeProjectAtmosphere } from '../atmosphereSettings';
 
 export function projectAtmosphereEdit(home: HomeAtmosphere, override: ProjectAtmosphere | 'home' | undefined,
     edit: (value: ProjectAtmosphere) => ProjectAtmosphere): ProjectAtmosphere {
     const { moments: _moments, ...value } = override && override !== 'home' ? { ...override, moments: home.moments } : home;
-    return normalizeProjectAtmosphere(edit(value));
+    return normalizeProjectAtmosphere(applyAtmosphereLayoutDefault(value, edit(value)));
 }
