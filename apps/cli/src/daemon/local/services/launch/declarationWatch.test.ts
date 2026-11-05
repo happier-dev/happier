@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
+import { isWorkspacePathWithin } from '../inventory/provenance';
 import { createLocalServiceDeclarationWatch } from './declarationWatch';
+import { discoverLocalServiceRunTargets } from './runTargets';
 
 const native = vi.hoisted(() => ({ starts: [] as string[], active: new Set<string>() }));
 vi.mock('node:fs', async importOriginal => {
@@ -19,33 +21,45 @@ vi.mock('node:fs', async importOriginal => {
 });
 
 describe('Local Service declaration observation scope', () => {
-    it('enrolls finite accepted declaration directories without traversing retained Session roots or unrelated project trees', async () => {
+    it('enrolls three declaration watches under an accepted home root beside 5,000 unrelated directories', async () => {
         const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-declaration-scope-')));
-        const retained = join(base, 'home');
-        const root = join(base, 'project');
-        const unrelated = join(root, 'source', 'deep', 'tree');
+        const retained = join(base, 'retained-session');
+        const root = join(base, 'home');
+        const unrelated = join(root, '.cache', 'tools');
         await mkdir(unrelated, { recursive: true });
+        for (let index = 0; index < 5_000; index++) await mkdir(join(unrelated, `generated-${index}`));
         await mkdir(join(retained, '.cache', 'tools', 'nested'), { recursive: true });
         await mkdir(join(root, '.happier'), { recursive: true });
         await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({ version: 1 }));
+        const workspace = { id: 'project', serverId: 'server', machineId: 'machine', rootPath: root, createdAtMs: 1 };
         let observations = 0;
+        let services: string[] = [];
         const errors: unknown[] = [];
         const watcher = createLocalServiceDeclarationWatch({
             readWorkspaceFacts: async () => ({ facts: [{ path: retained }, { path: join(retained, '.cache') }, { path: root }],
-                acceptedWorkspaceRefs: [{ id: 'project', serverId: 'server', machineId: 'machine', rootPath: root, createdAtMs: 1 }], diagnostics: [] }),
-            onChanged: async () => { observations++; }, onError: error => errors.push(error),
+                acceptedWorkspaceRefs: [workspace], diagnostics: [] }),
+            onChanged: async (_roots, _signal, options) => {
+                services = (await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: [workspace], ...options }))
+                    .flatMap(target => 'title' in target ? [target.title] : []);
+                observations++;
+            }, onError: error => errors.push(error),
         });
         native.starts.length = 0;
         try {
             watcher.setDemand(true);
             await vi.waitFor(() => expect(observations).toBeGreaterThan(0));
-            expect(native.starts.filter(path => path === retained || path.startsWith(`${retained}/`))).toEqual([]);
-            expect(native.starts.filter(path => path === join(root, 'source') || path.startsWith(`${root}/source/`))).toEqual([]);
+            expect(native.starts.filter(path => isWorkspacePathWithin(retained, path))).toEqual([]);
+            const unrelatedRoot = join(root, '.cache');
+            expect(native.starts.filter(path => isWorkspacePathWithin(unrelatedRoot, path))).toEqual([]);
             expect(native.active.has(root)).toBe(true);
             expect(native.active.has(join(root, '.happier'))).toBe(true);
             // One native parent sentinel and the two existing declaration dirs;
             // descriptor cost does not depend on retained or source-tree size.
             expect(new Set(native.starts)).toEqual(new Set([base, root, join(root, '.happier')]));
+            expect(native.starts).toHaveLength(3);
+            await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({ version: 1,
+                services: { worker: { source: { kind: 'command', command: 'worker' } } } }));
+            await vi.waitFor(() => expect(services).toEqual(['worker']));
             expect(native.starts).toHaveLength(3);
             expect(errors).toEqual([]);
         } finally {
