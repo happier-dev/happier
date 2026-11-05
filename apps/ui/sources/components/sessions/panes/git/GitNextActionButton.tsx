@@ -85,7 +85,8 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                 labelColor={contentColor}
                 icon={running ? <ActivitySpinner size={14} color={contentColor} /> : <Icon name={actionIcon(primary.key)} size={14} color={contentColor} />}
                 onPress={onPrimary}
-                style={[styles.primaryPart, attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent', opacity: 1 } : null]}
+                joinedEdge="end"
+                style={[attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent', opacity: 1 } : null]}
             />
             <DropdownMenu
                 open={open}
@@ -105,7 +106,8 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                         tone={tone}
                         icon={<Icon name="caret-down" size={12} color={contentColor} />}
                         onPress={toggle}
-                        style={[styles.chevronPart, attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent' } : null]}
+                        joinedEdge="start"
+                        style={[attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent' } : null]}
                     />
                 )}
             />
@@ -180,15 +182,5 @@ const stylesheet = StyleSheet.create(() => ({
     split: {
         flexDirection: 'row',
         alignItems: 'stretch',
-    },
-    primaryPart: {
-        borderTopRightRadius: 0,
-        borderBottomRightRadius: 0,
-    },
-    chevronPart: {
-        borderTopLeftRadius: 0,
-        borderBottomLeftRadius: 0,
-        marginLeft: StyleSheet.hairlineWidth,
-        paddingHorizontal: 6,
     },
 }));

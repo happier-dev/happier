@@ -239,7 +239,6 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
       tabs={showTabs}
       activeTabId={props.changedOnly ? 'changed' : 'all'}
       onSelectTab={selectShow}
-      compact
       segmentSizing="content"
       accessibilityLabel={t('files.pane.showLabel')}
       testIDPrefix={`${prefix}-show`}

@@ -1,13 +1,18 @@
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
-import { Typography } from '@/constants/Typography';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
+import { ReviewCommentDraftFrame, reviewCommentDraftText } from './ReviewCommentDraftFrame';
 
+/**
+ * A draft comment being written: the saved card's own frame (author line, edge, radius) with the text
+ * as a field and one compact action line under it. Delete (an existing draft) leads; Cancel and Save
+ * end the line, Save the one filled action.
+ */
 export function ReviewCommentInlineComposer(props: {
     value: string;
     onChange: (next: string) => void;
@@ -18,10 +23,9 @@ export function ReviewCommentInlineComposer(props: {
     autoFocus?: boolean;
 }) {
     const { theme } = useUnistyles();
-    const paintColor = useHappierMaterialColorResolver();
 
     return (
-        <View style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.elevated ?? theme.colors.surface.base) }]}>
+        <ReviewCommentDraftFrame>
             <TextInput
                 value={props.value}
                 onChangeText={props.onChange}
@@ -29,49 +33,30 @@ export function ReviewCommentInlineComposer(props: {
                 placeholderTextColor={theme.colors.text.secondary}
                 multiline
                 autoFocus={props.autoFocus}
-                style={styles.input}
+                style={[reviewCommentDraftText.body, styles.input]}
             />
             <View style={styles.actions}>
                 {props.onDelete ? (
-                    <Pressable accessibilityRole="button" accessibilityLabel={t('common.delete')} accessibilityState={{ disabled: false }} onPress={props.onDelete} style={[styles.dangerButton, { backgroundColor: paintColor(theme.colors.surface.pressed) }]}>
-                        <Text style={styles.dangerText}>{t('common.delete')}</Text>
-                    </Pressable>
+                    <RoundButton testID="review-comment-composer-delete" size="small" display="destructive" title={t('common.delete')} accessibilityLabel={t('common.delete')} onPress={props.onDelete} />
                 ) : null}
-                <View style={{ flex: 1 }} />
-                <Pressable accessibilityRole="button" accessibilityLabel={t('common.cancel')} accessibilityState={{ disabled: false }} onPress={props.onCancel} style={[styles.secondaryButton, { backgroundColor: paintColor(theme.colors.surface.pressed ?? theme.colors.surface.base) }]}>
-                    <Text style={styles.secondaryText}>{t('common.cancel')}</Text>
-                </Pressable>
-                <Pressable accessibilityRole="button" accessibilityLabel={t('common.save')} accessibilityState={{ disabled: false }} onPress={props.onSave} style={[styles.primaryButton, { backgroundColor: paintColor(theme.colors.button?.primary?.background ?? theme.colors.text.primary, undefined, 'solidControl') }]}>
-                    <Text style={[styles.primaryText, { color: paintColor(theme.colors.button?.primary?.tint ?? theme.colors.surface.base, theme.colors.text.primary, 'solidControl') }]}>{t('common.save')}</Text>
-                </Pressable>
+                <View style={styles.grow} />
+                <RoundButton testID="review-comment-composer-cancel" size="small" display="secondary" title={t('common.cancel')} accessibilityLabel={t('common.cancel')} onPress={props.onCancel} />
+                <RoundButton testID="review-comment-composer-save" size="small" title={t('common.save')} accessibilityLabel={t('common.save')} onPress={props.onSave} />
             </View>
-        </View>
+        </ReviewCommentDraftFrame>
     );
 }
 
 const styles = StyleSheet.create((theme) => ({
-    container: {
-        marginLeft: 0,
-        marginRight: 8,
-        marginTop: 0,
-        marginBottom: 8,
-        padding: 10,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
-        gap: 10,
-    },
+
+    // Two lines of the comment's own text before it grows; a long comment scrolls inside the card.
     input: {
-        minHeight: 54,
+        minHeight: 36,
         maxHeight: 160,
         padding: 0,
-        color: theme.colors.text.primary,
-        ...Typography.default(),
-        fontSize: 13,
-        lineHeight: 18,
         ...(Platform.select({
             web: {
+                outlineStyle: 'none',
                 WebkitAppearance: 'none',
             },
             default: {},
@@ -80,44 +65,8 @@ const styles = StyleSheet.create((theme) => ({
     actions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: theme.space.s6,
+        paddingTop: theme.space.s2,
     },
-    primaryButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 8,
-        backgroundColor: theme.colors.button?.primary?.background ?? theme.colors.text.primary,
-    },
-    primaryText: {
-        color: theme.colors.button?.primary?.tint ?? theme.colors.surface.base,
-        fontSize: 12,
-        fontWeight: '700',
-        ...Typography.default('semiBold'),
-    },
-    secondaryButton: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 8,
-        backgroundColor: theme.colors.surface.pressed ?? theme.colors.surface.base,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    },
-    secondaryText: {
-        color: theme.colors.button?.secondary?.tint ?? theme.colors.text.secondary,
-        fontSize: 12,
-        fontWeight: '700',
-        ...Typography.default('semiBold'),
-    },
-    dangerButton: {
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        borderRadius: 8,
-        backgroundColor: theme.colors.surface.pressed,
-    },
-    dangerText: {
-        color: theme.colors.state.danger.foreground,
-        fontSize: 12,
-        fontWeight: '700',
-        ...Typography.default('semiBold'),
-    },
+    grow: { flex: 1 },
 }));

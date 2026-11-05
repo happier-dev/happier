@@ -51,7 +51,7 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
-import { useListPresentation, useWidgetBodyRowEdge } from './listPresentation';
+import { MenuSectionRowsContext, useListPresentation, useWidgetBodyRowEdge } from './listPresentation';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
 import { resolveHappierRowTitleMetaPlacement } from '@happier-dev/plugin-ui/advanced';
@@ -695,7 +695,7 @@ export const Item = React.memo<ItemProps>((props) => {
         leftElementWhenHovered,
         iconBoxSize: iconBoxSizeProp,
         leadingMedia,
-    rowRole,
+    rowRole: rowRoleProp,
         rightElement: rightElementProp,
         onPress: onPressProp,
         onDoublePress,
@@ -749,12 +749,17 @@ export const Item = React.memo<ItemProps>((props) => {
         reservesSectionLeadingColumn = true,
         fieldAccessory = false,
         fieldAccessorySiblingPx,
-        showDivider = true,
+        showDivider: showDividerProp,
         dividerInset = isIOS ? 15 : 16,
         pressableStyle,
         copy,
         itemGroupRadioIndex,
     } = props;
+    // A row of a grouped section laid out as a menu section (a popover's section) is a menu row, with
+    // no hairline between rows, unless it says otherwise.
+    const menuSectionRow = React.useContext(MenuSectionRowsContext);
+    const rowRole = rowRoleProp ?? (menuSectionRow ? 'menu' : undefined);
+    const showDivider = showDividerProp ?? !menuSectionRow;
     // Leading media is a sized identity mark: it takes the media box in every row style, and the
     // row's leading column (titles, dividers, stacked controls) follows the box's width.
     const leadingMediaBox = leadingMedia != null ? PAGE_LIST_METRICS.rowLeadingMediaPx : null;

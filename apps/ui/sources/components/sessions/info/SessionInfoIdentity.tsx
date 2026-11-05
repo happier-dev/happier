@@ -141,7 +141,7 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
   }
 
   return (
-    <ItemGroup surface="none" testID="session-info-identity">
+    <ItemGroup surface="none" header="none" testID="session-info-identity" style={styles.identityGroup}>
       <View style={styles.statusRow}>
         {statusLine}
         {action}
@@ -152,6 +152,12 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
 });
 
 const styles = StyleSheet.create((theme) => ({
+  // The pane's header band sits right above and already ends in its own air: the live line (held at the
+  // control's height for its action) starts at the band's edge, so the identity reads as the header's
+  // continuation rather than a block of its own.
+  identityGroup: {
+    paddingBottom: theme.space.s4,
+  },
   routeDetails: {
     gap: theme.space.s4,
     marginTop: theme.space.s4,

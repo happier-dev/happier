@@ -3,7 +3,6 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -22,7 +21,7 @@ const initialDraft = buildReviewCommentDraftFromCodeLine({
 });
 
 describe('saved inline review drafts', () => {
-    it('keeps draft cards and secondary actions translucent while preserving primary ink, editable text and save', async () => {
+    it('keeps the draft card and the composer on the translucent material, with editable text and save', async () => {
         const onSave = vi.fn();
         const ink = 'rgba(0, 0, 0, 0.1)';
         const screen = await renderScreen(<HappierMaterialRoleProvider role="content" translucentColor={ink} resolveMaterialColor={({ translucentColor }) => translucentColor ?? 'transparent'}>
@@ -35,12 +34,8 @@ describe('saved inline review drafts', () => {
         expect(StyleSheet.flatten(container.props.style).backgroundColor).toBe(ink);
         const input = composer.findAll(node => typeof node.type === 'string' && node.props.value === 'Keep this comment')[0]!;
         expect(input.props.value).toBe('Keep this comment');
-        const actions = composer.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function');
-        const cancel = actions[0]!;
-        const save = actions[1]!;
-        expect(StyleSheet.flatten(cancel.props.style).backgroundColor).toBe(ink);
-        expect(StyleSheet.flatten(save.props.style).backgroundColor).toBe(createThemeFixture().colors.button.primary.background);
-        await act(async () => save.props.onPress());
+        // Its actions are the shared buttons (their paint is RoundButton's); Save is the one that saves.
+        await screen.pressByTestIdAsync('review-comment-composer-save');
         expect(onSave).toHaveBeenCalledOnce();
     });
     afterEach(() => vi.useRealTimers());

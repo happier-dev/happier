@@ -240,27 +240,9 @@ describe('useCodeLinesReviewComments', () => {
             throw new Error('Expected inline composer container');
         }
         const composerContainerStyle = flattenTestStyle(input.parent.props.style);
-        const cancelText = screen.findAllByType('Text' as any).find((node) => node.props.children === 'Cancel');
-        const saveText = screen.findAllByType('Text' as any).find((node) => node.props.children === 'Save');
-        const cancelButton = screen.findAllByType(Pressable).find((node) => (
-            node.findAllByType('Text' as any).includes(cancelText!)
-        ));
-        const saveButton = screen.findAllByType(Pressable).find((node) => (
-            node.findAllByType('Text' as any).includes(saveText!)
-        ));
-        if (!cancelButton || !saveButton) {
-            throw new Error('Expected inline composer action buttons');
-        }
 
         expect(composerContainerStyle.borderColor).not.toBe('#ddd');
         expect(composerContainerStyle.backgroundColor).not.toBe('#fff');
-        expect(flattenTestStyle(cancelButton.props.style)).toMatchObject({
-            backgroundColor: expect.not.stringMatching(/^#fff$/i),
-            borderColor: expect.not.stringMatching(/^#ddd$/i),
-        });
-        expect(flattenTestStyle(saveButton.props.style)).toMatchObject({
-            backgroundColor: expect.not.stringMatching(/^#000$/i),
-        });
     });
 
     it('renders an existing draft on a moved file line by matching the stored line hash', async () => {

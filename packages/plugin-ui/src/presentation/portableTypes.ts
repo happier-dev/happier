@@ -97,6 +97,8 @@ export type HappierPortableStyle = Readonly<{
   borderBottomColor?: string;
   borderBottomLeftRadius?: number | string;
   borderBottomRightRadius?: number | string;
+  borderBottomStartRadius?: number | string;
+  borderBottomEndRadius?: number | string;
   borderBottomWidth?: number;
   borderColor?: string;
   borderLeftColor?: string;
@@ -104,10 +106,14 @@ export type HappierPortableStyle = Readonly<{
   borderRadius?: number | string;
   borderRightColor?: string;
   borderRightWidth?: number;
+  borderStartWidth?: number;
+  borderEndWidth?: number;
   borderStyle?: 'solid' | 'dotted' | 'dashed';
   borderTopColor?: string;
   borderTopLeftRadius?: number | string;
   borderTopRightRadius?: number | string;
+  borderTopStartRadius?: number | string;
+  borderTopEndRadius?: number | string;
   borderTopWidth?: number;
   borderWidth?: number;
   bottom?: HappierDimension;

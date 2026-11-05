@@ -65,6 +65,13 @@ export type ToolbarButtonProps = Readonly<{
     labelColor?: string;
     testID?: string;
     accessibilityLabel?: string;
+    /**
+     * The side this button shares with its sibling in a split button (Publish branch | ⌄), as
+     * `RoundButton` names it: that side is drawn square and the two halves meet with no gap, so they read
+     * as one control. The `start`-joined half (the menu chevron) draws the seam between them: the
+     * neighbour's hairline on the quiet tone, a quiet line in the label's ink on a filled one.
+     */
+    joinedEdge?: 'start' | 'end';
     style?: StyleProp<ViewStyle>;
 }>;
 
@@ -119,6 +126,31 @@ const stylesheet = StyleSheet.create((theme) => ({
     disabled: {
         opacity: 0.45,
     },
+    // A split button's halves: square where they meet. The menu half drops its own start hairline (the
+    // primary half's end hairline is the seam) and keeps a narrower inset around its lone chevron.
+    joinedEnd: {
+        borderTopEndRadius: 0,
+        borderBottomEndRadius: 0,
+    },
+    // A filled half has no hairline to share: its transparent end edge would read as a gap in the fill.
+    joinedEndFilled: {
+        borderEndWidth: 0,
+    },
+    joinedStart: {
+        borderTopStartRadius: 0,
+        borderBottomStartRadius: 0,
+        borderStartWidth: 0,
+        paddingHorizontal: theme.space.s6,
+    },
+    // On a filled half the seam is a short line in the label's ink, inset from the top and bottom edges.
+    joinedSeam: {
+        position: 'absolute',
+        start: 0,
+        top: theme.space.s6,
+        bottom: theme.space.s6,
+        width: StyleSheet.hairlineWidth,
+        opacity: 0.35,
+    },
     label: {
         minWidth: 0,
         flexShrink: 1,
@@ -153,6 +185,8 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
                 pressed && !props.disabled ? (isPrimary ? styles.primaryPressed : styles.pressed) : null,
                 !pressed && !props.disabled && !props.active ? (isPrimary ? styles.primaryRaised : styles.raised) : null,
                 props.disabled ? styles.disabled : null,
+                props.joinedEdge === 'end' ? styles.joinedEnd : props.joinedEdge === 'start' ? styles.joinedStart : null,
+                props.joinedEdge === 'end' && isPrimary ? styles.joinedEndFilled : null,
                 // Native caller styles cross the portable adapter unchanged.
                 props.style as HappierSurfaceProps['style'],
                 callerBackground !== undefined && typeof callerBackground !== 'string' ? null : {
@@ -163,6 +197,9 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
         >
             {({ pressed, focused }) => <>
             <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, isPrimary ? 'primaryButton' : 'secondaryButton', { pressed, focused, disabled: props.disabled || props.active })} borderRadius={8} />
+            {props.joinedEdge === 'start' && isPrimary ? (
+                <View pointerEvents="none" style={[styles.joinedSeam, { backgroundColor: props.labelColor ?? paintColor(theme.colors.button.primary.tint, theme.colors.text.primary, 'solidControl') }]} />
+            ) : null}
             {props.icon ? <View pointerEvents="none">{props.icon}</View> : null}
             <Text
                 numberOfLines={1}

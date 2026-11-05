@@ -130,15 +130,16 @@ export function useCodeLinesReviewComments(params: {
             ? drafts.find((d) => d.id === activeEditingDraftId) ?? null
             : null;
 
+        // One placement for both states, so saving a comment swaps the card in place.
         return (
-            <View>
+            <View style={{ marginTop: 6, marginRight: 8 }}>
                 {drafts.length > 0 && !isActive ? (
                     <ReviewCommentSavedDrafts
                         drafts={drafts}
                         onEditDraft={(draft) => startEditingDraft(line, draft)}
                         onDeleteDraft={onDeleteDraft}
                         onUpdateDraft={onUpsertDraft}
-                        style={{ marginLeft: 0, marginRight: 8, marginTop: 6, gap: 6 }}
+                        style={{ gap: 6 }}
                         testID={`review-comment-saved-drafts:${line.id}`}
                     />
                 ) : null}

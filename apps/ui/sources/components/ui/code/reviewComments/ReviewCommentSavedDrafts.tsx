@@ -1,22 +1,21 @@
 import * as React from 'react';
 import { type StyleProp, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { Avatar } from '@/components/ui/avatar/Avatar';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { getAvatarUrl } from '@/sync/domains/profiles/profile';
-import { useProfile } from '@/sync/domains/state/storage';
 import { isReviewCommentDraftIncludedInPrompt } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
 import { t } from '@/text';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+
+import { ReviewCommentDraftFrame, reviewCommentDraftText } from './ReviewCommentDraftFrame';
 
 export function ReviewCommentSavedDrafts(props: {
     drafts: readonly ReviewCommentDraft[];
@@ -50,8 +49,6 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
     onUpdateDraft?: (draft: ReviewCommentDraft) => void;
 }>) {
     const { theme } = useUnistyles();
-    const paintColor = useHappierMaterialColorResolver();
-    const profile = useProfile();
     const touchTargetFloor = resolveTouchTargetFloorPx();
     const [menuOpen, setMenuOpen] = React.useState(false);
     const { draft } = props;
@@ -61,12 +58,7 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
         ...(props.onDeleteDraft ? [{ id: 'delete', title: t('common.delete'), destructive: true, testID: `review-comment-draft-delete:${draft.id}` }] : []),
     ];
     return (
-        <View style={[styles.card, { backgroundColor: paintColor(theme.colors.surface.base) }]} testID={`review-comment-draft:${draft.id}`}>
-            <View style={styles.header}>
-                <Avatar id={profile.id} imageUrl={getAvatarUrl(profile)} thumbhash={profile.avatar?.thumbhash} size={18} />
-                <Text style={styles.author}>{t('detailsSurface.review.draftAuthor')}</Text>
-                <Text style={styles.meta}>{`· ${t('detailsSurface.review.draftStatus')}`}</Text>
-                <View style={styles.grow} />
+        <ReviewCommentDraftFrame testID={`review-comment-draft:${draft.id}`} headerTrailing={(
                 <DropdownMenu
                     open={menuOpen}
                     onOpenChange={setMenuOpen}
@@ -92,8 +84,8 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
                         />
                     )}
                 />
-            </View>
-            <MarkdownView markdown={draft.body} textStyle={styles.body} />
+            )}>
+            <MarkdownView markdown={draft.body} textStyle={reviewCommentDraftText.body} />
             {props.onUpdateDraft ? (
                 <HappierPressable
                     testID={`review-comment-draft-include:${draft.id}`}
@@ -111,7 +103,7 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
                     <Text style={styles.meta}>{t('detailsSurface.review.includeComment')}</Text>
                 </HappierPressable>
             ) : null}
-        </View>
+        </ReviewCommentDraftFrame>
     );
 }
 
@@ -119,23 +111,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         gap: 6,
     },
-    card: {
-        padding: 10,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-    },
-    header: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    author: { ...Typography.default('semiBold'), fontSize: 12, color: theme.colors.text.primary },
-    meta: { ...Typography.default(), fontSize: 12, color: theme.colors.text.secondary, flexShrink: 1 },
-    grow: { flex: 1 },
-    body: {
-        ...Typography.default(),
-        fontSize: 13,
-        lineHeight: 18,
-        color: theme.colors.text.primary,
-    },
+    meta: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
     includeRow: {
         flexDirection: 'row',
         alignItems: 'center',

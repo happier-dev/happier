@@ -359,7 +359,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     tabSurface: {
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: 'transparent',
-        paddingVertical: SEGMENT_PADDING_VERTICAL_PX.default,
+        paddingVertical: SEGMENT_PADDING_VERTICAL_PX.default - StyleSheet.hairlineWidth,
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: HAPPIER_SEGMENTED_METRICS.segmentRadiusPx.default,
@@ -368,13 +368,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     // An icon bar is as tall as a label bar (the lab draws both at 28 in a 32 track): the glyph's own
     // slot plus padding that makes up the label slot's difference.
     tabSurfaceIcon: {
-        paddingVertical: (SEGMENT_LABEL_SLOT_PX.default + SEGMENT_PADDING_VERTICAL_PX.default * 2 - SEGMENTED_TAB_ICON_SIZE_PX) / 2,
+        paddingVertical: (SEGMENT_LABEL_SLOT_PX.default + SEGMENT_PADDING_VERTICAL_PX.default * 2 - SEGMENTED_TAB_ICON_SIZE_PX) / 2 - StyleSheet.hairlineWidth,
     },
     tabSurfaceIconCompact: {
-        paddingVertical: Math.max(0, (SEGMENT_LABEL_SLOT_PX.compact + SEGMENT_PADDING_VERTICAL_PX.compact * 2 - SEGMENTED_TAB_ICON_SIZE_PX) / 2),
+        paddingVertical: Math.max(0, (SEGMENT_LABEL_SLOT_PX.compact + SEGMENT_PADDING_VERTICAL_PX.compact * 2 - SEGMENTED_TAB_ICON_SIZE_PX) / 2 - StyleSheet.hairlineWidth),
     },
     tabSurfaceCompact: {
-        paddingVertical: SEGMENT_PADDING_VERTICAL_PX.compact,
+        paddingVertical: SEGMENT_PADDING_VERTICAL_PX.compact - StyleSheet.hairlineWidth,
         borderRadius: HAPPIER_SEGMENTED_METRICS.segmentRadiusPx.compact,
     },
     tabSurfaceContent: {

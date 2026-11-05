@@ -35,9 +35,11 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { useListPresentation, usePageListInsets } from './listPresentation';
+import { MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets } from './listPresentation';
+import { MENU_ROW_METRICS } from './itemDensityMetrics';
+import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
-import { SectionItemDensityProvider, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
+import { SectionItemDensityProvider, usePageRowDensityOverride, useResolvedItemDensity, type ResolvedItemDensity } from './useResolvedItemDensity';
 import { ITEM_ROW_PADDING_HORIZONTAL } from './itemDensityMetrics';
 import { SectionLeadingColumnProvider } from './sectionLeadingColumn';
 import { BareRowBleedContext } from './bareRowBleed';
@@ -259,6 +261,20 @@ const stylesheet = StyleSheet.create((theme) => {
             color: theme.colors.text.secondary,
             marginTop: theme.space.s2,
         },
+        // An inspector pane's section description reads at the meta step, under a body-sized row list.
+        pageDescriptionInspector: {
+            ...Typography.variant('meta'),
+        },
+        // An inspector's rows are short and carry their own air (36px rows), so its section heading sits
+        // close to them and a step nearer the section above: a title reads as its rows' label, not as a
+        // gap between two lists.
+        pageHeaderInspector: {
+            paddingTop: theme.space.s24,
+            paddingBottom: theme.space.s4,
+        },
+        pageHeaderNoTitleInspector: {
+            paddingTop: theme.space.s24,
+        },
         // A page section's sheet sits on the same content margin as the grouped card; its look is the
         // shared page sheet's (`HappierPageSheet`).
         pageSheetFlat: {
@@ -280,6 +296,23 @@ const stylesheet = StyleSheet.create((theme) => {
         },
         footerText: {
             ...Typography.variant('body'),
+            color: theme.colors.text.secondary,
+        },
+        // A section on a floating surface is a menu section (the anatomy `ActionListSection` draws): no
+        // card inside the floating card, the label and rows on the menu's text edge, the menu's rhythm.
+        menuSection: {
+            width: '100%',
+            paddingVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
+        },
+        menuSectionRows: {
+            paddingHorizontal: MENU_ROW_METRICS.insetPx,
+        },
+        menuSectionDescription: {
+            paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+            paddingBottom: MENU_ROW_METRICS.paddingVerticalPx - MENU_ROW_METRICS.sectionPaddingVerticalPx,
+        },
+        menuSectionDescriptionText: {
+            ...Typography.variant('meta'),
             color: theme.colors.text.secondary,
         },
     };
@@ -605,6 +638,11 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         testID,
     } = props;
     const defaultSurface = React.useContext(ItemGroupDefaultSurfaceContext);
+    const floatingSurface = useFloatingListSurface();
+    const inspector = usePageRowDensityOverride() === 'inspector';
+    const renderPageDescription = (content: React.ReactNode) => (
+        <Text style={[styles.pageDescription, inspector ? styles.pageDescriptionInspector : null]}>{content}</Text>
+    );
     // Only page sections that choose no surface take it: menus and pickers opened from the pane reset to
     // grouped rows, and a section laid out as its own surface (`none`) stays as it is.
     const surface = surfaceProp ?? 'sheet';
@@ -621,6 +659,12 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         : containerStyle;
 
     const wantsColumns = (columns ?? 1) > 1;
+    // A section on a popover, menu or its phone sheet, carded or not: a floating surface draws no card, so
+    // both take the menu anatomy and every row there shares the menu's text edge (a flat group kept the
+    // grouped margin and sat 12 px in from the carded rows beside it). A column grid, a virtualized chunk
+    // or a contained scope keeps its own composition.
+    const floatingMenuSection = floatingSurface && !isPage && !contained && (surface === 'sheet' || surface === 'none')
+        && !wantsColumns && !virtualizedSegment;
     if (wantsColumns && clipContent) {
         throw new Error('ItemGroup clipContent cannot be combined with columns');
     }
@@ -637,6 +681,47 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         }
         return countSelectableItems(children);
     }, [children, selectableItemCountOverride]);
+
+    if (floatingMenuSection) {
+        return (
+            <View testID={testID} style={[styles.menuSection, style]}>
+                {props.header === 'none' ? null : typeof title === 'string'
+                    ? <SelectionListSectionHeader title={title} />
+                    : title ?? null}
+                <MenuSectionRowsContext.Provider value={true}>
+                    {/* Free content (a button row, a details head) stands on the menu rows' text edge, as rows bring
+                        their own padding: `BareSectionContent` takes this inset back. */}
+                    <BareRowBleedContext.Provider value={MENU_ROW_METRICS.paddingHorizontalPx}>
+                    <SectionItemDensityProvider value={density}>
+                        <HappierItemGroupBehavior
+                            accessibilityRole={accessibilityRole}
+                            accessibilityLabel={resolvedAccessibilityLabel}
+                            selectableItemCount={selectableItemCount}
+                            renderContent={(projectedChildren) => (
+                                <View
+                                    accessibilityRole={Platform.OS === 'web' ? undefined : accessibilityRole}
+                                    accessibilityLabel={resolvedAccessibilityLabel}
+                                    aria-label={Platform.OS === 'web' ? resolvedAccessibilityLabel : undefined}
+                                    role={Platform.OS === 'web' ? accessibilityRole : undefined}
+                                    style={[styles.menuSectionRows, containerStyle]}
+                                >
+                                    {projectedChildren}
+                                </View>
+                            )}
+                        >
+                            {children}
+                        </HappierItemGroupBehavior>
+                    </SectionItemDensityProvider>
+                    </BareRowBleedContext.Provider>
+                </MenuSectionRowsContext.Provider>
+                {description ? (
+                    <View style={styles.menuSectionDescription}>
+                        <Text style={styles.menuSectionDescriptionText}>{description}</Text>
+                    </View>
+                ) : null}
+            </View>
+        );
+    }
 
     return (
         <View testID={testID} style={[styles.wrapper, style]}>
@@ -660,12 +745,12 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.headingOpticalInsetPx}
                         renderText={(input) => input.role === 'sectionTitle'
                             ? <Text accessibilityRole="header" style={[styles.pageTitle, titleStyle]}>{input.text}</Text>
-                            : <Text style={styles.pageDescription}>{input.text}</Text>}
+                            : renderPageDescription(input.text)}
                         // App callers pass React Native layout styles; the shared header keeps its own anatomy under them.
-                        style={headerStyle as HappierPageSectionHeaderProps['style']}
+                        style={[inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}
                     />
                 ) : isPage ? (
-                    virtualizedSegment?.first !== false ? <View style={[styles.pageHeaderNoTitle, headerStyle]} /> : null
+                    virtualizedSegment?.first !== false ? <View style={[styles.pageHeaderNoTitle, inspector ? styles.pageHeaderNoTitleInspector : null, headerStyle]} /> : null
                 ) : title ? (
                     <View style={[styles.header, headerStyle]}>
                         {typeof title === 'string' ? (

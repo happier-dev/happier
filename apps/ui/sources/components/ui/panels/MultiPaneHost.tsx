@@ -585,9 +585,13 @@ function PaneColumn(props: Readonly<{
                             </PluginSurfaceFocusEligibilityProvider>
                             {overlay ? (
                                 // The rim runs past the anchored edge, so only the edge that shows (and its corners) is drawn.
-                                <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0,
-                                    ...(props.mirrored ? { right: 0, left: -2 * PANE_OVERLAY_CORNER_RADIUS_PX } : { left: 0, right: -2 * PANE_OVERLAY_CORNER_RADIUS_PX }) }}>
-                                    <SurfaceRim role="floating" radius={PANE_OVERLAY_CORNER_RADIUS_PX} border="modal" />
+                                // Its own clip keeps that overhang out of the pane's scrollable overflow: on the web a focused
+                                // field inside (a review comment) otherwise scrolled the whole pane sideways by the overhang.
+                                <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}>
+                                    <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0,
+                                        ...(props.mirrored ? { right: 0, left: -2 * PANE_OVERLAY_CORNER_RADIUS_PX } : { left: 0, right: -2 * PANE_OVERLAY_CORNER_RADIUS_PX }) }}>
+                                        <SurfaceRim role="floating" radius={PANE_OVERLAY_CORNER_RADIUS_PX} border="modal" />
+                                    </View>
                                 </View>
                             ) : null}
                         </GlassSurface>

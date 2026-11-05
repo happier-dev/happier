@@ -21,11 +21,28 @@ const ListPresentationContext = React.createContext<ListPresentation>('grouped')
 type PageListInsets = 'standard' | 'contained';
 const PageListInsetsContext = React.createContext<PageListInsets>('standard');
 const PageNoticeActiveContext = React.createContext(false);
+/**
+ * The scope's rows sit directly on a floating surface (a popover, menu or its phone sheet). Grouped
+ * sections there take the menu anatomy instead of drawing a card inside the floating card.
+ */
+const FloatingListSurfaceContext = React.createContext(false);
+
+/** True inside a floating surface's own list scope (see `ListPresentationProvider` `floating`). */
+export function useFloatingListSurface(): boolean {
+    return React.useContext(FloatingListSurfaceContext);
+}
+
 
 /** Whether a list row here stands on a widget body's edge. Floating surfaces reset this context. */
 export function useWidgetBodyRowEdge(): boolean {
     return React.useContext(HappierBodyEdgeContext);
 }
+
+/**
+ * Set by a grouped section laid out as a menu section on a floating surface: its rows take the menu row
+ * role (`Item` `rowRole="menu"`) unless they choose another.
+ */
+export const MenuSectionRowsContext = React.createContext(false);
 
 /** Only repeated states explained by the current page notice defer to this fact. */
 export function usePageNoticeActive(): boolean {
@@ -51,12 +68,14 @@ export function ListPresentationProvider(props: Readonly<{
         <HappierPageSectionContext.Provider value={null}>
             <PageListInsetsContext.Provider value={props.pageInsets ?? 'standard'}>
                 <PageNoticeActiveContext.Provider value={props.value === 'page' && props.pageNoticeActive === true}>
-                    {props.floating === true ? (
-                        // A floating surface opened from a widget body is off that body's edge: its rows keep their own inset.
-                        <HappierBodyEdgeContext.Provider value={false}>
-                            <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
-                        </HappierBodyEdgeContext.Provider>
-                    ) : <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>}
+                    <FloatingListSurfaceContext.Provider value={props.floating === true}>
+                        {props.floating === true ? (
+                            // A floating surface opened from a widget body is off that body's edge: its rows keep their own inset.
+                            <HappierBodyEdgeContext.Provider value={false}>
+                                <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>
+                            </HappierBodyEdgeContext.Provider>
+                        ) : <ListPresentationContext.Provider value={props.value}>{props.children}</ListPresentationContext.Provider>}
+                    </FloatingListSurfaceContext.Provider>
                 </PageNoticeActiveContext.Provider>
             </PageListInsetsContext.Provider>
         </HappierPageSectionContext.Provider>
