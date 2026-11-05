@@ -650,7 +650,7 @@ test('cold command preparation refreshes the executor owner before measured admi
   await writeFile(join(sourceDir, 'package.json'), '{"private":true,"packageManager":"pnpm@12.14.0"}');
   await writeFile(join(sourceDir, 'pnpm-workspace.yaml'), 'packages: []\n');
   await writeFile(join(sourceDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
-  const target = { name: 'mac2-linux', platform: 'posix', ssh: 'worker', repoDir: executorRepoDir,
+  const target = { name: 'nl3', platform: 'posix', ssh: 'worker', repoDir: executorRepoDir,
     cliHomeDir: join(root, 'home'), remotePath: [bin, ...process.env.PATH.split(':')] };
   const configPath = join(stackBaseDir, 'dev-targets.json');
   await writeFile(configPath, JSON.stringify({ version: 3, targets: [target],
@@ -2735,11 +2735,7 @@ async function createCliNativeCustodyDispatchFixture(t, placement) {
     const checkout = join(root, 'native-owner');
     await installCliNativeCustodySourceFixture(checkout);
     const cliDir = join(checkout, 'apps/cli');
-    const cliConfig = await readFile(new URL('../../../../cli/vitest.config.ts', import.meta.url), 'utf8');
-    await writeFile(join(cliDir, 'vitest.config.ts'), cliConfig.replace(
-      "'./scripts/vitestWorkspacePackageResolution'",
-      JSON.stringify(fileURLToPath(new URL('../../../../cli/scripts/vitestWorkspacePackageResolution.ts', import.meta.url))),
-    ));
+    await cp(new URL('../../../../cli/vitest.config.ts', import.meta.url), join(cliDir, 'vitest.config.ts'));
     await cp(new URL('../../../../cli/src/test-setup.unit.ts', import.meta.url), join(cliDir, 'src/test-setup.unit.ts'));
     const controlDir = join(checkout, 'packages/plugin-ui');
     mkdirSync(cliDir, { recursive: true });

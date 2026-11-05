@@ -1970,8 +1970,7 @@ test('native local fallback prepares dependencies through the local policy owner
   const checkout = resolve(native.launcher, '../../../..');
   await installCliNativeCustodySourceFixture(checkout);
   const cliDir = join(checkout, 'apps/cli');
-  const sourceResolver = relative(cliDir, join(repoRoot, 'apps/cli/scripts/vitestWorkspacePackageResolution.ts')).split(sep).join('/');
-  await writeFile(join(cliDir, 'vitest.config.ts'), `import { workspacePackageSourcesPlugin } from ${JSON.stringify(sourceResolver)};\nexport default { plugins: [workspacePackageSourcesPlugin] };\n`);
+  await writeFile(join(cliDir, 'vitest.config.ts'), "import { workspacePackageSourcesPlugin } from './scripts/vitestWorkspacePackageResolution';\nexport default { plugins: [workspacePackageSourcesPlugin] };\n");
   const nativeSource = join(cliDir, 'native/processcustody/main.go');
   const nativeExecutable = join(cliDir, 'tools/unpacked/happier-process-custody');
   await mkdir(dirname(nativeSource), { recursive: true });
