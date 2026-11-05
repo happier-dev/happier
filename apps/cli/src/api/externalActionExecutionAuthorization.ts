@@ -12,7 +12,7 @@ import { ManagedEnrollmentInstallationV1Schema } from '@happier-dev/protocol/mac
 import { sealManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecActionV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
@@ -560,7 +560,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || input.credentials.credentialProvenance === 'api_token')) return fail('requester_account_material_unavailable');
   }
   let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
-  const controllerCodec = Boolean(managedAdmission && foreign);
+  const controllerCodec = Boolean(foreign && (managedAdmission
+    || isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })));
   if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {
     if (!input.serverIdentityId) return fail('admission_unavailable');

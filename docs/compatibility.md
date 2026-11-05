@@ -11,6 +11,19 @@ are required for omission; older owners refuse the missing Machine. The request
 envelope remains closed. No persisted format, route, error code, ABI or epoch is
 added.
 
+## Credential-free Machine Agent reads (unreleased 0.3)
+
+The host-private Action declaration may set
+`originalExecution.requesterCredentials: 'none'` for a read that needs no
+requester Account credentials. Only `machines.agents.signIn.status` and
+`machines.agents.list` opt in. Foreign-Machine dispatch uses the existing sealed
+invocation codec carrier; it conveys a fresh request/reply key and invocation,
+never the requester's ordinary bearer or Account encryption key. Omission keeps
+the existing credential custody and disclosure gate. Home admission and Machine
+authorization are unchanged. The declaration and existing carrier envelopes
+remain closed, with matching development Protocol and dispatch/daemon readers;
+no wire field, codec purpose, epoch or rollback adapter is added.
+
 ## Local Services observation lifetime (unreleased 0.3)
 
 The existing closed inventory-watch request accepts optional `observationOnly`.

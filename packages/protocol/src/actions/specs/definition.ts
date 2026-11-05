@@ -325,6 +325,8 @@ machineRuntimeDemandForInput: z.optional(z.custom<(input: unknown, context: Acti
   originalExecution: z.optional(z.strictObject({
     accountRoot: z.optional(z.enum(['allowed', 'separate'])),
     terminalRoot: z.optional(z.enum(['allowed', 'host'])),
+    /** Foreign Machine transport carries only invocation codec material; omission retains requester credentials. Never serialized. */
+    requesterCredentials: z.optional(z.literal('none')),
     /** The admitted requester transport needs its persisted Account encryption mode. Never serialized. */
     accountEncryptionCurrentness: z.optional(z.literal(true)),
     nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start'])),

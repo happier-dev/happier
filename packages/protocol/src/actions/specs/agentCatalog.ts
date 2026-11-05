@@ -205,6 +205,7 @@ export const AGENT_CATALOG_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.signIn.status', executionPlacement: 'machine', approval: {result: 'none'},
+    originalExecution: { requesterCredentials: 'none' },
     title: 'Check agent sign-in', sideEffectClass: 'read', safety: 'safe', placements: [],
     bindings: { mcpToolName: 'machines_agents_sign_in_status', voiceClientToolName: 'machines_agents_sign_in_status' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -574,6 +575,7 @@ export const AGENT_INVENTORY_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.list', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { requesterCredentials: 'none' },
     title: 'List agents on a machine',
     sideEffectClass: 'read',
     description: 'Read daemon-owned Agent installation, sign-in, platform and update facts for a machine.',

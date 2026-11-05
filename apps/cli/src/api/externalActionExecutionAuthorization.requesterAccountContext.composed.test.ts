@@ -11,7 +11,7 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
-import { openExternalActionRequesterAccountContextV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { dispatchManagedSessionStart, dispatchOriginalAccountAction } from './externalActionExecutionAuthorization';
 import { encodeStoredCredentials, updateSettings, type StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -211,17 +211,20 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     const dispatched = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
     if (!dispatched.success) return respond({ v: 1, actionId, requestId: 'request-1',
       execution: { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } });
+    const codec = openManagedControllerActionCodecV1({ authorization: dispatched.data.executionAuthorization,
+      machineId: machine.id, installationId: machine.installationId, serverIdentityId: homeIdentityId,
+      installationPrivateKey: new Uint8Array([...seed, ...publicKey]) });
     if (dispatched.data.envelope.v === 2) return respond(prepareExternalActionResponseV2({ request: dispatched.data.envelope,
       binding: { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 },
         actionId, requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } },
-      material: { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)) },
+      material: codec ?? { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)) },
       executedMachineId: 'alice-machine', randomBytes: length => new Uint8Array(length).fill(6),
-      execution: options.originalOwnAction === 'machines.work.summary.get'
-        ? options.ownExecution ?? { ok: true, result: ownMachineResult }
-        : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } }).response);
-    return respond({ v: 1, actionId, requestId: 'request-1', execution: options.originalOwnAction === 'machines.work.summary.get'
-      ? options.ownExecution ?? { ok: true, result: ownMachineResult }
-      : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } });
+      execution: options.ownExecution ?? (options.originalOwnAction === 'machines.work.summary.get'
+        ? { ok: true, result: ownMachineResult }
+        : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' }) }).response);
+    return respond({ v: 1, actionId, requestId: 'request-1', execution: options.ownExecution ?? (options.originalOwnAction === 'machines.work.summary.get'
+      ? { ok: true, result: ownMachineResult }
+      : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' }) });
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -762,6 +765,57 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       machineId: 'alice-machine', installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
     expect(openExternalActionRequesterAccountContextV1(opening)).toEqual(encodeStoredCredentials(credentials));
     expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'machine_rpc', method: 'other', params: {} } })).toBeNull();
+    expect(JSON.stringify(received)).not.toContain(credentials.token);
+  });
+
+  it('still requires guest disclosure for an Action that carries requester credentials', async () => {
+    const events: string[] = [];
+    const target = await home('plain', events);
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: token(), encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
+      serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; },
+    });
+    await expect(executor.execute('machines.work.summary.get', ownMachineInput,
+      { surface: 'cli', actionRequestId: 'request-1' })).resolves.toMatchObject({
+      ok: false, errorCode: 'requester_credential_disclosure_declined',
+    });
+    expect(events).toContain('disclosed');
+    expect(events).not.toContain('dispatch');
+    expect(target.readReceived()).toBeUndefined();
+  });
+
+  it.each([
+    { actionId: 'machines.agents.signIn.status' as const, input: { machineId: 'alice-machine', agentId: 'codex' },
+      result: { status: 'signedIn', checkedAt: 1, nativeLogin: 'status_only', connectedServices: [], signInScope: 'machineOwner' } },
+    { actionId: 'machines.agents.list' as const, input: { machineId: 'alice-machine' }, result: { items: [] } },
+  ].flatMap(read => (['plain', 'e2ee'] as const).map(mode => ({ ...read, mode }))))('delivers the Use identity-free $actionId read without requester credential disclosure ($mode)', async ({ actionId, input, result, mode }) => {
+    const events: string[] = [];
+    const execution = { ok: true as const, result };
+    const target = await home(mode, events, { originalOwnAction: actionId, ownExecution: execution });
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+      serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+      onRequesterSessionCredentialDisclosure: async () => { events.push('disclosed'); return false; } });
+    await expect(executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1' })).resolves.toEqual(execution);
+    const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(received.executionAuthorization?.binding).toMatchObject({ accountId: 'bob', machineId: 'alice-machine', actionId });
+    const opening = { authorization: received.executionAuthorization, machineId: 'alice-machine',
+      installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
+    const codec = openManagedControllerActionCodecV1(opening);
+    expect(codec).not.toBeNull();
+    if (mode === 'e2ee') {
+      expect(received.envelope.v).toBe(2);
+      if (received.envelope.v !== 2 || !codec) throw new Error('Expected encrypted read and invocation codec');
+      expect(openExternalActionRequestV2({ envelope: received.envelope, material: codec,
+        binding: { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 },
+          actionId, requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } } })?.input).toEqual(input);
+      expect(codec.machineKey).not.toEqual(deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)));
+    }
+    expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'external_action' } })).toBeNull();
+    expect(events).not.toContain('disclosed');
     expect(JSON.stringify(received)).not.toContain(credentials.token);
   });
 

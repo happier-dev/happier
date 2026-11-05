@@ -9,6 +9,8 @@ import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/man
 import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { getActionSpec } from '../../actions/actionSpecs.js';
+import { ActionIdSchema } from '../../actions/actionIds.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -554,7 +556,9 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
   actionId: string;
   managedAdmission?: Pick<ExternalActionManagedAdmissionV1, 'actionId'>;
 }>): boolean {
-  return binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
+  const actionId = ActionIdSchema.safeParse(binding.actionId);
+  return actionId.success && getActionSpec(actionId.data).originalExecution?.requesterCredentials === 'none'
+    || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry';
 }
 
