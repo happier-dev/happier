@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createClaudeNativeAgentSdkContext } from '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices';
 
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createSessionScopedSocketConnection } from '@/api/session/sockets';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
-import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createSessionTranscriptHomeStub, createSessionRuntimeActivityHomeStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
@@ -18,12 +20,25 @@ import { createNativeAgentSessionWorkStateService } from './nativeAgentSessionWo
 import { composeNativeAgentSessionRuntimeContext, createNativeAgentSessionHostServices } from './nativeAgentSession';
 import { createExecutionRunTranscriptProjection } from '@/agent/runtime/bridges/executionRun/messages/sessionStateEmission';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
-import { getSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
+import { getSessionCommittedTranscriptLocalIds, shareSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
+import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
+import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 
 // Home Socket.IO is the transport boundary; Session custody and runtime owners remain real.
-vi.mock('socket.io-client', () => ({ io: () => createApiSessionSocketStub() }));
+vi.mock('socket.io-client', () => ({ io: () => {
+    const home = createSessionTranscriptHomeStub();
+    const activityHome = createSessionRuntimeActivityHomeStub({ machineId: 'native-transcript-machine' });
+    return createApiSessionSocketStub({
+        connected: true,
+        emit: (event, args) => {
+            if (event === 'ping' && typeof args[0] === 'function') args[0]();
+        },
+        emitWithAck: (event, payload) => home.answer(event, payload)
+            ?? activityHome.answer(event, payload) ?? resolveApiSessionSocketDefaultAck(event, payload),
+    });
+} }));
 
 describe('native Agent durable transcript publication', () => {
     it('projects a typed Session event through the canonical durable runtime transcript owner', async () => {
@@ -92,13 +107,27 @@ describe('native Agent durable transcript publication', () => {
         const sessionId = sidechainId ? 'session-source-fact-child' : 'session-source-fact';
         const token = 'native-transcript-test-token';
         const serverUrl = 'https://native-transcript.example.test';
+        const nativeFetch = globalThis.fetch;
+        const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { session: {
+            runtimeActivity: { protocolVersion: 2 }, pendingInput: { protocolVersion: 1 }, publisherAuthority: { protocolVersion: 1 },
+        } } });
+        const homeHttp = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+            const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+            if (url.origin === serverUrl && url.pathname === '/v1/features') return Response.json(features);
+            return nativeFetch(input, init);
+        });
+        const homeAuth = vi.spyOn(axios, 'get').mockImplementation(async input => {
+            const url = new URL(String(input));
+            if (url.origin === serverUrl && url.pathname === '/v1/auth/ping') return { status: 200, data: {} };
+            throw new Error(`Unexpected transcript Home HTTP boundary: ${url.pathname}`);
+        });
         let session: ApiSessionClient | undefined;
         let owners: ReturnType<typeof createNativeAgentSessionHostServiceOwners> | undefined;
         let publications: ReturnType<typeof createNativeAgentSessionPublications> | undefined;
         try {
             session = new ApiSessionClient(token, createPlainSessionFixture({ id: sessionId }), {
+                localMachineId: 'native-transcript-machine',
                 metadataAuthority: { kind: 'shared_editor' },
-                durableMutationDeliveryInitiallyActive: false,
                 transport: {
                     serverId: 'native-transcript-home', serverUrl,
                     createSessionSocketTransport: ({ sessionId, machineId }) => createSessionScopedSocketConnection({
@@ -146,6 +175,7 @@ describe('native Agent durable transcript publication', () => {
                 return { sessionId, updateMetadata: session.updateMetadata.bind(session), ...projection,
                     enqueueAgentMessageCommitted: projection.enqueueAgentMessageCommitted };
             })() : session;
+            shareSessionCommittedTranscriptLocalIds(transcriptSession, session);
             const sessionServices = createNativeAgentSessionHostServices({
                 owners, agentId: 'claude', sessionId, directory, signal, isCurrent: lease.isCurrent,
                 session: transcriptSession, publications: publications.services, readToolExecutionCapability: () => null,
@@ -199,7 +229,7 @@ describe('native Agent durable transcript publication', () => {
             // A native source can catch up after the Home baseline was read but
             // after this host prompt acquired durable custody. Its user echo must
             // not overwrite the consumed marker with a different role/timestamp.
-            const publishedIds: string[] = [];
+            const enqueueUser = vi.spyOn(session, 'enqueueUserTextMessageCommitted');
             const follow = createHostTerminalTranscriptFollowService({
                 signal,
                 loadCommittedLocalIdBaseline: async () => ({
@@ -209,16 +239,26 @@ describe('native Agent durable transcript publication', () => {
                     await listener({ kind: 'data', phase: 'initial_replay', fromCursor: null, nextCursor: 'tail', items: [
                         { kind: 'user', id: 'claude-jsonl:main:user:user-1', localId: 'claude-jsonl:main:user:user-1',
                             userProjection: 'source_fact', timestampMs: 200, data: { role: 'user', content: { type: 'text', text: 'Host-only prompt' } } },
-                        { kind: 'agent', id: 'new-assistant', timestampMs: 201, data: { role: 'agent', content: { type: 'text', text: 'New output' } } },
+                        { kind: 'agent', id: 'new-assistant', timestampMs: 201, data: { role: 'agent', content: { type: 'message', message: 'New output' } } },
                     ] });
                     return { status: 'following', startingCursor: 'tail', subscription: { dispose: async () => undefined } };
                 },
-                publish: async event => { if (event.kind === 'data') publishedIds.push(...event.items.map(item => item.id)); },
+                publish: createExternalSessionTerminalFollowProjector({
+                    sessionId, agentId: 'claude',
+                    projectRuntimeEvent: (event, admission, sourceReplayLocalId) => projectRuntimeTranscriptEvent({
+                        session: transcriptSession, provider: 'claude', event, admission, sourceReplayLocalId,
+                    }),
+                }),
             });
             try {
                 await expect(follow.bindProviderSession({ agentId: 'claude', providerSessionId: 'native-echo' }))
                     .resolves.toMatchObject({ status: 'following' });
-                expect(publishedIds).toEqual(['new-assistant']);
+                expect(enqueue.mock.calls).toEqual([expectedRecord, [
+                    'claude',
+                    { type: 'message', message: 'New output', ...(sidechainId ? { sidechainId } : {}) },
+                    expect.objectContaining({ localId: 'new-assistant' }),
+                ]]);
+                expect(enqueueUser).not.toHaveBeenCalled();
             } finally {
                 await follow.releaseActiveBindings();
             }
@@ -229,7 +269,8 @@ describe('native Agent durable transcript publication', () => {
                 localId: 'claude-jsonl:main:user:user-2',
                 reason: 'host_prompt_echo',
             })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
-            expect(enqueue.mock.calls).toEqual([expectedRecord]);
+            expect(enqueue.mock.calls).toHaveLength(2);
+            expect(enqueueUser).not.toHaveBeenCalled();
         } finally {
             try {
                 publications?.dispose();
@@ -239,7 +280,12 @@ describe('native Agent durable transcript publication', () => {
                     await session?.close();
                 }
             } finally {
-                await fixture.dispose();
+                try {
+                    await fixture.dispose();
+                } finally {
+                    homeHttp.mockRestore();
+                    homeAuth.mockRestore();
+                }
             }
         }
     });
