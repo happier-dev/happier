@@ -105,7 +105,12 @@ export interface DecryptedArtifactBase {
      */
     storageMode?: 'plain' | 'e2ee';
     /** Exact HTTP key envelopes used to open this row; never persisted or inferred from a cached key. */
-    storageIdentity?: Readonly<{ contentKeyEnvelope: string; provenanceKeyEnvelope: string | null }>;
+    storageIdentity?: Readonly<{
+        contentKeyEnvelope: string;
+        provenanceKeyEnvelope: string | null;
+        /** Exact stored header behind this opened projection; in-memory only. */
+        header?: string;
+    }>;
 }
 
 /**
