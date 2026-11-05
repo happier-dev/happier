@@ -12,30 +12,9 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { MachinePrivateNetworkObservationV1Schema } from '../plugins/contributions/accessProviders.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
-import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
-
-/** Content-free native service refusal facts; the host adds its actual operation receipt. */
-export const deploymentDomainFailureFactsV1 = {
-    service_docker: 'managedServiceDocker',
-    container_identity: 'nativeContainerIdentity',
-    service_replicas: 'nativeServiceReplicas',
-    route_upstreams: 'routeUpstreams',
-} as const;
-export type DeploymentDomainFailureStepV1 = keyof typeof deploymentDomainFailureFactsV1;
-const domainFailureSteps = Object.keys(deploymentDomainFailureFactsV1) as [DeploymentDomainFailureStepV1, ...DeploymentDomainFailureStepV1[]];
-const deploymentDomainServiceFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
-    environmentId: id, domainId: id, step: z.enum(domainFailureSteps),
-    requiredFact: z.enum(Object.values(deploymentDomainFailureFactsV1)),
-    operation: z.optional(ActionOperationAddressV1Schema),
-}).check(z.refine(value => deploymentDomainFailureFactsV1[value.step] === value.requiredFact)));
-export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.union([
-    deploymentDomainServiceFailureDetailsV1Schema,
-    z.strictObject({ environmentId: id, domainId: id, step: z.literal('native_execution'),
-        requiredFact: z.optional(z.literal('reachabilityPosture')),
-        remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
-        operation: z.optional(ActionOperationAddressV1Schema) }),
-]));
-export type DeploymentDomainFailureDetailsV1 = z.infer<typeof DeploymentDomainFailureDetailsV1Schema>;
+export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Schema,
+    DeploymentDomainFailureDetailsV1Schema, type DeploymentDomainFailureStepV1,
+    type DeploymentDomainFailureDetailsV1 } from './deploymentDomainFailureV1.js';
 
 /** Finite installed observations remain inside the private controller-to-target payload. */
 export const DeploymentDomainMachineTopologyV1Schema = lazyZodSchema(() => z.strictObject({
