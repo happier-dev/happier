@@ -1,3 +1,4 @@
+export { PluginManifestV2LoadSchema } from './load.js';
 export {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
