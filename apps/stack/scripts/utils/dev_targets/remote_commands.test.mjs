@@ -874,7 +874,7 @@ test('package binary invocations use payload placement instead of same-named scr
     binaries.push({ cwd, args: ['pnpm', 'exec', ...payload], payload });
   }
   for (const request of binaries) {
-    const expected = resolveRemoteCommandPolicy(request.payload ?? ['vitest', 'run', 'sample.test.ts'], { cwd, repoRoot: root });
+    const expected = await commandPolicy.resolvePackageCommandPolicy(request.payload ?? ['vitest', 'run', 'sample.test.ts'], { cwd, repoRoot: root });
     await t.test(`JS ${request.args.join(' ')}`, async () => {
       assert.equal(await isSelfDispatchingPackageCommand(request.args, { ...request, repoRoot: root }), false);
       assert.deepEqual(await commandPolicy.resolvePackageCommandPolicy(request.args, { cwd: request.cwd, repoRoot: root }), expected);
