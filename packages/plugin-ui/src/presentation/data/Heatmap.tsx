@@ -36,6 +36,7 @@ export type HeatmapProps = Readonly<{
 
 const AXIS_LABEL_BOX_PX = 80;
 const AXIS_LABEL_MIN_GAP_PX = 4;
+const MONTH_LABEL_FONT_SIZE_PX = 10;
 
 /** Only geometry: callers own dates, accounting, labels and missing-data decisions. */
 export function resolveFirstFullyVisibleColumn(visibleLeft: number, stride: number): number {
@@ -58,6 +59,23 @@ export function resolveVisibleAxisLabels(input: Readonly<{ labels: readonly stri
     if (clear) { visible.add(index); previous = { index, width }; }
   }
   return visible;
+}
+
+/**
+ * Which labels of a contribution grid's month axis fit their own month. A label starts at its month's first
+ * column and reads across that month's run of columns, up to the next month or the grid's end; a run too
+ * short to hold it (the part-month at either end of a period) goes unlabelled, as on GitHub's calendar.
+ */
+export function resolveFittingRunLabels(input: Readonly<{ labels: readonly string[]; stride: number; characterWidth: number }>): ReadonlySet<number> {
+  const fitting = new Set<number>();
+  let runEnd = input.labels.length;
+  for (let index = input.labels.length - 1; index >= 0; index -= 1) {
+    const label = input.labels[index];
+    if (!label) continue;
+    if ((runEnd - index) * input.stride >= label.length * input.characterWidth + AXIS_LABEL_MIN_GAP_PX) fitting.add(index);
+    runEnd = index;
+  }
+  return fitting;
 }
 
 export function Heatmap(props: HeatmapProps) {
@@ -135,10 +153,12 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
   const axisStride = axisWidth !== null && props.columns.length > 0 ? (axisWidth + gap) / props.columns.length : 0;
   const visibleAxisLabels = resolveVisibleAxisLabels({ labels: props.columns.map((column) => column.label), stride: axisStride,
     characterWidth: 11 * HAPPIER_DATA_METRICS.averageCharacterEm });
+  const monthLabels = resolveFittingRunLabels({ labels: props.columns.map((column) => column.label), stride,
+    characterWidth: MONTH_LABEL_FONT_SIZE_PX * HAPPIER_DATA_METRICS.averageCharacterEm });
   const content = (visibleLeft: number) => <View style={{ gap: dots || strip ? 4 : rowMajor ? gap : 8 }}>
     {!dots && !strip && props.columns.some((column) => column.label) ? <View style={{ height: 14, flexDirection: 'row', gap }}>
       {props.columns.map((column, index) => <View key={column.id} style={{ width: slotSize, position: 'relative' }}>
-        {index >= resolveFirstFullyVisibleColumn(visibleLeft, stride) && column.label ? <HappierText style={{ ...text.caption, position: 'absolute', fontSize: 10, lineHeight: 12 }}>{column.label}</HappierText> : null}
+        {index >= resolveFirstFullyVisibleColumn(visibleLeft, stride) && monthLabels.has(index) ? <HappierText style={{ ...text.caption, position: 'absolute', fontSize: MONTH_LABEL_FONT_SIZE_PX, lineHeight: 12 }}>{column.label}</HappierText> : null}
       </View>)}
     </View> : null}
     {rowMajor ? props.rows.map((row) => <View key={row.id} style={{ flexDirection: 'row', gap: dots ? 8 : 0, alignItems: 'center' }}>

@@ -85,6 +85,28 @@ describe('neutral public grids', () => {
   });
 });
 
+describe('the month axis of a contribution grid', () => {
+  const axis = (labels: readonly string[]) => labels.map((label, index) => ({ id: String(index), label }));
+  const grid = (labels: readonly string[]) => ({ ...props, rows: [{ id: 'r', label: '' }], columns: axis(labels), cells: [], testID: 'calendar' });
+  const months = (labels: readonly string[], size?: 'inline' | 'full') => {
+    const mounted = mountThroughReactNativeWeb(createElement(Presentation.Heatmap, { ...grid(labels), ...(size ? { size } : {}) }));
+    const text = mounted.container.textContent ?? '';
+    mounted.unmount();
+    return text;
+  };
+  it('leaves out a month whose run of columns cannot hold its label, keeping the months beside it', () => {
+    // Sep 28 – Nov 4: September and November own one column each, October four.
+    expect(months(['Sep', 'Oct', '', '', '', 'Nov'])).toBe('Oct');
+  });
+  it('keeps a short run that still holds its label', () => {
+    expect(months(['Sep', '', 'Oct', '', ''])).toBe('SepOct');
+  });
+  it('measures the run in the grid’s own cells: the same two columns are too narrow for a long label', () => {
+    expect(months(['janv.', '', 'févr.', '', '', ''])).toBe('févr.');
+    expect(months(['Sep', '', 'Oct', '', ''], 'inline')).toBe('Oct');
+  });
+});
+
 describe('resolveVisibleAxisLabels', () => {
   const labels = (count: number, every: number) => Array.from({ length: count }, (_, index) => (index % every === 0 ? String(index + 10) : ''));
   it('keeps every label that fits beside its neighbour', () => {
