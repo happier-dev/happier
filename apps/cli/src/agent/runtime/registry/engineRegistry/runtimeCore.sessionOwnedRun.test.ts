@@ -570,7 +570,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     }
   });
 
-  it('opens with the Run-bound tool profile and projects host transcript writes into the Run sidechain', async () => {
+  it('opens with the Run-bound tool profile and materializes terminal images after committing to the Run sidechain', async () => {
     const { backend, agent } = createContributions();
     const runtimeLifetime = new AbortController();
     const witness: AgentInvocationTurnAdmissionWitness = {
@@ -593,14 +593,19 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     });
 
     const enqueued: { provider: string; body: Record<string, unknown> }[] = [];
+    const publicationOrder: string[] = [];
+    type MediaRequest = Parameters<NonNullable<NonNullable<Parameters<typeof resolveBackendRuntimeCore>[0]['executionSurfaces']['externalSession']>['materializeTranscriptMedia']>>[0];
+    const materialized: MediaRequest[] = [];
     const parentSession = {
       sessionId: 'session-a',
       getMetadataSnapshot: () => ({ path: '/parent', machineId: 'machine-a' }),
       updateMetadata: async () => undefined,
       updateAgentState: async () => undefined,
+      fetchCommittedTranscriptLocalIdBaseline: async () => ({ localIds: new Set<string>(), complete: true }),
       enqueueAgentMessageCommitted: async (provider: string, body: Record<string, unknown>) => {
         enqueued.push({ provider, body });
-        return { persisted: true } as never;
+        publicationOrder.push('commit');
+        return { persisted: true, delivered: true };
       },
     };
     // The parent's durable writer must never receive a Session-owned Run event.
@@ -628,13 +633,50 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       openedSkills = request.skills;
       openedContext = context;
       await context.session.services.transcripts.publishSessionEvent({ type: 'switch', mode: 'local' });
+      await context.session.services.transcripts.followSource!({ providerSessionId: 'native-run-a', replay: 'fresh' });
       throw new Error('stop-after-open-request');
     });
 
+    // Native Agent source transport and durable transcript persistence are the boundaries;
+    // Run composition, terminal follow, and transcript projection remain real.
+    const externalSessionHostOperations: NonNullable<Parameters<typeof resolveBackendRuntimeCore>[0]['externalSessionHostOperations']> = {
+      bindSession: () => ({
+        executeFollow: async () => ({ status: 'unavailable', code: 'not-configured' }),
+        executeProviderSessionFollow: async ({ listener }) => {
+          await listener({
+            kind: 'data', providerSessionId: 'native-run-a', source: { kind: 'claudeConfig', projectId: 'project' },
+            fromCursor: null, nextCursor: 'image-cursor',
+            items: [{ id: 'image-item', timestampMs: 10, kind: 'event',
+              toolResultMedia: { sourceMessageId: 'image-source-message', toolCallId: 'read-image' },
+              data: { role: 'agent', content: { type: 'acp', agentId: AGENT_ID, data: {
+                type: 'tool-result', callId: 'read-image', output: [{ type: 'image' }],
+              } } },
+            }],
+          });
+          return { status: 'following', startingCursor: null, subscription: { dispose: async () => undefined } };
+        },
+        retire: async () => undefined,
+      }),
+    };
+    const executionSurfaces: Parameters<typeof resolveBackendRuntimeCore>[0]['executionSurfaces'] = {
+      ...createEmptyBackendExecutionSurfaces(),
+      externalSession: {
+        validateSource: ({ source }) => ({ ok: true, source }),
+        listCandidates: async () => ({ candidates: [], nextCursor: null }),
+        pageTranscript: async () => { throw new Error('Follow supplies the source page'); },
+        readAfterTranscript: async () => ({ outcome: 'already_current' }),
+        materializeTranscriptMedia: async request => {
+          request.signal?.throwIfAborted();
+          materialized.push(request);
+          publicationOrder.push('media');
+        },
+      },
+    };
     const adapter = await resolveBackendRuntimeCore({
       backend,
       agent,
-      executionSurfaces: createEmptyBackendExecutionSurfaces(),
+      executionSurfaces,
+      externalSessionHostOperations,
       runtimeOwner: {
         backendId: AGENT_ID,
         selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID },
@@ -689,7 +731,7 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     } as never);
     expect(runtime, 'retained Session-owned Run runtime').toBeTruthy();
 
-    await expect(runtime!.provisionRuntime()).rejects.toThrow('stop-after-open-request');
+    const openFailure = await runtime!.provisionRuntime().catch((error: unknown) => error);
 
     // The Run's own tool profile reached the provider open request.
     expect(openedMcpServers).toEqual({ happier: { command: 'happier-mcp', args: ['--run', 'run-a'] } });
@@ -704,8 +746,16 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
     expect(toolBindingRequest!.isCurrent()).toBe(true);
     // Host-service transcript publication landed in the Run sidechain, not the main transcript.
     expect(openedContext).toBeTruthy();
-    expect(parentEnqueue).toHaveBeenCalledTimes(1);
+    expect(parentEnqueue).toHaveBeenCalledTimes(2);
     expect(enqueued[0]?.body).toMatchObject({ sidechainId: 'sidechain-a', type: 'event' });
+    expect(enqueued[1]?.body).toMatchObject({ sidechainId: 'sidechain-a', type: 'tool-result', callId: 'read-image' });
+    expect(publicationOrder).toEqual(['commit', 'commit', 'media']);
+    expect(materialized).toEqual([expect.objectContaining({
+      source: { kind: 'claudeConfig', projectId: 'project' }, remoteSessionId: 'native-run-a',
+      itemId: 'image-item', sourceMessageId: 'image-source-message', toolCallId: 'read-image', cursor: 'image-cursor',
+      signal: expect.any(AbortSignal),
+    })]);
+    expect(openFailure).toMatchObject({ message: 'stop-after-open-request' });
 
     // A failed open releases the Run-specific tool binding, never the parent's.
     expect(disposeRunToolBinding).toHaveBeenCalledTimes(1);

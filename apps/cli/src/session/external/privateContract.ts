@@ -40,6 +40,7 @@ export type HostExternalTranscriptItem = Readonly<{
   sidechainId?: string;
   timestampMs?: number;
   kind: 'user' | 'agent' | 'system' | 'event';
+  toolResultMedia?: Readonly<{ sourceMessageId: string; toolCallId: string }>;
   data: JsonValue;
 }>;
 
@@ -57,6 +58,7 @@ export type HostExternalTranscriptFollowEvent =
       kind: 'data';
       phase?: 'initial_replay';
       providerSessionId?: string;
+      source?: ExternalSessionsSource;
       items: readonly (HostExternalTranscriptItem | HostExternalTerminalSourceObservation)[];
       fromCursor: string | null;
       nextCursor: string;

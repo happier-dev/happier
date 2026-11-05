@@ -2,7 +2,7 @@ import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime
 import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
-import { readTranscriptPeerSenderV1 } from '@happier-dev/protocol';
+import { readTranscriptPeerSenderV1, type ExternalSessionsSource } from '@happier-dev/protocol';
 
 import type { CommittedTranscriptAdmission } from '@/api/session/transcriptPort';
 
@@ -176,6 +176,16 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
   sessionId: string;
   agentId: string;
   observeSourceTranscript?: AgentSessionRuntime['observeSourceTranscript'];
+  materializeTranscriptMedia?(request: Readonly<{
+    source: ExternalSessionsSource;
+    remoteSessionId: string;
+    itemId: string;
+    sourceMessageId: string;
+    toolCallId: string;
+    cursor: string;
+    signal?: AbortSignal;
+    deadlineAtMs?: number;
+  }>): Promise<void>;
   projectRuntimeEvent(
     event: AgentSessionRuntimeEvent,
     admission?: ExternalSessionTerminalFollowProjectionAdmission,
@@ -213,6 +223,17 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
         throw new Error('external_session_terminal_transcript_projection_rejected');
       }
       sequence = runtimeEvent.sequence;
+      if (item.toolResultMedia) {
+        if (!event.providerSessionId || !event.source || !params.materializeTranscriptMedia) {
+          throw new Error('external_session_transcript_media_unavailable');
+        }
+        admission?.signal.throwIfAborted();
+        await params.materializeTranscriptMedia({
+          source: event.source, remoteSessionId: event.providerSessionId,
+          itemId: item.id, ...item.toolResultMedia, cursor: event.nextCursor,
+          ...(admission ? { signal: admission.signal, deadlineAtMs: admission.deadlineAtMs } : {}),
+        });
+      }
     }
   };
 }

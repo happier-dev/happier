@@ -121,6 +121,16 @@ export type ExternalSessionProviderOps = Readonly<{
     signal?: AbortSignal;
     deadlineAtMs?: number;
   }>) => Promise<readonly IndexedExternalSessionCandidate[]>;
+  materializeTranscriptMedia?: (params: Readonly<{
+    source: ExternalSessionsSource;
+    remoteSessionId: string;
+    itemId: string;
+    sourceMessageId: string;
+    toolCallId: string;
+    cursor: string;
+    signal?: AbortSignal;
+    deadlineAtMs?: number;
+  }>) => Promise<void>;
   pageTranscript: (params: Readonly<{
     projection?: 'terminal';
     source: ExternalSessionsSource;

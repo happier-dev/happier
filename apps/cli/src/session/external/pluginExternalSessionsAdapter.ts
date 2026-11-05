@@ -61,6 +61,7 @@ export type PluginExternalSessionsProviderOps = Pick<
   | 'externalLinkedTakeoverWriterSafety'
   | 'externalSessionTakeoverAdmitted'
   | 'readAfterTranscript'
+  | 'materializeTranscriptMedia'
   | 'resolveLinkIdentity'
 >>;
 type PluginExternalSessionCandidateQuery = (params: Readonly<{

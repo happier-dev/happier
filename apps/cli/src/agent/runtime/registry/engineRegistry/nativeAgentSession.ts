@@ -2052,6 +2052,7 @@ export function readConfiguredExternalSessionProviderOps(
         listCandidates: value.listCandidates,
         pageTranscript: value.pageTranscript,
         readAfterTranscript: value.readAfterTranscript,
+        ...(value.materializeTranscriptMedia ? { materializeTranscriptMedia: value.materializeTranscriptMedia } : {}),
         ...(value.resolveLinkIdentity
             ? { resolveLinkIdentity: value.resolveLinkIdentity }
             : {}),

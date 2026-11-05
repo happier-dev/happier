@@ -723,6 +723,12 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             }),
                                             publish: createExternalSessionTerminalFollowProjector({
                                                 sessionId, agentId: nativeIdentity.agentId,
+                                                materializeTranscriptMedia: async request => {
+                                                    if (!providerOps?.materializeTranscriptMedia) {
+                                                        throw new Error('external_session_transcript_media_unavailable');
+                                                    }
+                                                    await providerOps.materializeTranscriptMedia(request);
+                                                },
                                                 observeSourceTranscript: async (input) => {
                                                     const session = readSessionRuntime();
                                                     if (!session?.observeSourceTranscript) throw new Error('external_session_terminal_source_observation_unavailable');
