@@ -975,6 +975,9 @@ const SessionOwnerAgentRuntimeCapabilitiesV1Schema = lazyZodSchema(() => z.stric
       conversation: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
     }),
     usageReporting: z.optional(SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema),
+    usageLimitRecovery: z.optional(z.strictObject({
+      checkNow: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+    })),
     compaction: z.optional(z.nullable(PluginAgentSessionCompactionCapabilityV2Schema)),
   }))),
   tools: z.optional(z.nullable(z.strictObject({
