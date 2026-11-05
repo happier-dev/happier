@@ -14,6 +14,9 @@ export type CollectionFilterMapV1 = Readonly<{
 export type EntityListFilterV1<E extends keyof CollectionFilterMapV1> = CollectionFilterMapV1[E];
 
 export type SetSelectionV1<T> = Readonly<{ include: readonly T[]; exclude: readonly T[] }>;
+export const StringSetSelectionV1Schema: z.ZodMiniType<SetSelectionV1<string>> = lazyZodSchema(() => z.strictObject({
+    include: z.array(z.string()), exclude: z.array(z.string()),
+}));
 export type UpdatedSelectionV1 =
     | Readonly<{ op: 'before' | 'after'; atMs: number }>
     | Readonly<{ op: 'between'; fromMs: number; toMs: number }>;
