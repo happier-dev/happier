@@ -2064,6 +2064,7 @@
 | `./providers` | `ManagedProviderRuntime` | type | daemon |
 | `./providers` | `ManagedProviderRuntimeContext` | type | daemon |
 | `./providers` | `ManagedProviderStartRequest` | type | daemon |
+| `./providers` | `PROVIDER_REASONING_EFFORT_LEVELS_V1` | value | any |
 | `./providers` | `PROVIDER_REASONING_EFFORT_OPTION_ID` | value | any |
 | `./providers` | `ProviderApiKeyCredentialRequirementV1` | type | any |
 | `./providers` | `ProviderBindingCompatibilityResolutionInput` | type | any |
@@ -2132,6 +2133,7 @@
 | `./providers` | `SessionModelSelectionResolutionErrorCode` | type | any |
 | `./providers` | `SessionModelSelectionV1Schema` | value | any |
 | `./providers` | `areProviderContributionKeysEqualV1` | value | any |
+| `./providers` | `buildProviderReasoningModelOptions` | value | any |
 | `./providers` | `containsProviderRegisteredSensitiveValue` | value | any |
 | `./providers` | `normalizeProviderCredentialHeaderName` | value | any |
 | `./providers` | `readProviderReasoningEffortOption` | value | any |

@@ -1,5 +1,10 @@
 export type { AgentProviderRequirementsV1 } from './projections.js';
-export { PROVIDER_REASONING_EFFORT_OPTION_ID, readProviderReasoningEffortOption } from './projections.js';
+export {
+    PROVIDER_REASONING_EFFORT_LEVELS_V1,
+    PROVIDER_REASONING_EFFORT_OPTION_ID,
+    buildProviderReasoningModelOptions,
+    readProviderReasoningEffortOption,
+} from './projections.js';
 export type { ManagedProviderEndpoint } from './projections.js';
 export type { ManagedProviderRuntime } from './projections.js';
 export type { ManagedProviderRuntimeContext } from './projections.js';

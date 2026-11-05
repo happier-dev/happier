@@ -127,6 +127,8 @@ import type {
 } from './projections.js';
 
 const PROVIDER_EXPORTS = [
+    'PROVIDER_REASONING_EFFORT_LEVELS_V1',
+    'buildProviderReasoningModelOptions',
     'ProviderUsageParseResultV1',
     'ProviderUsageParser',
     'ProviderUsageParseResult',
@@ -210,6 +212,8 @@ const PROVIDER_EXPORTS = [
 ] as const;
 
 const PROVIDER_RUNTIME_EXPORTS = [
+    'PROVIDER_REASONING_EFFORT_LEVELS_V1',
+    'buildProviderReasoningModelOptions',
     'PROVIDER_REASONING_EFFORT_OPTION_ID',
     'readProviderReasoningEffortOption',
     'ProviderConnectionIdSchema',

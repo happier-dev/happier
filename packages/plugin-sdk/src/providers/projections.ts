@@ -52,7 +52,9 @@ export { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/provid
 export { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
 export { normalizeProviderCredentialHeaderName } from '@happier-dev/protocol/providers/credential-headers';
 export {
+    PROVIDER_REASONING_EFFORT_LEVELS_V1,
     PROVIDER_REASONING_EFFORT_OPTION_ID,
+    buildProviderReasoningModelOptions,
     readProviderReasoningEffortOption,
 } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 export { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
