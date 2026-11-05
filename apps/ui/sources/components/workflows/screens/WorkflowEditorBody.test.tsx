@@ -1816,6 +1816,20 @@ describe('workflow editor body', () => {
         expect(undo).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps the phone bottom bar above the floating page navigation instead of under it', async () => {
+        viewport.window = { width: 390, height: 700 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const { StyleSheet } = await import('react-native');
+        const { SessionCockpitBottomChromeHeightContext } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+        const floatingNavigation = ({ children }: React.PropsWithChildren) =>
+            <SessionCockpitBottomChromeHeightContext.Provider value={84}>{children}</SessionCockpitBottomChromeHeightContext.Provider>;
+        const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {}, saveStatus: { kind: 'unsaved' } },
+            { wrapper: floatingNavigation });
+        const bar = screen.findHostByTestId('workflow-editor-phone-bar');
+        expect(Number(StyleSheet.flatten(bar?.props.style)?.paddingBottom)).toBeGreaterThanOrEqual(84);
+    });
+
     it('recomposes on a phone: the name stays in the page, value rows, Steps | Flow and a bottom bar', async () => {
         viewport.window = { width: 390, height: 700 };
         paneState.detailsAvailable = false;

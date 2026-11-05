@@ -22,6 +22,7 @@ import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfaceP
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
@@ -244,15 +245,11 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s16,
         paddingTop: theme.space.s12,
     },
+    // The canonical pinned bar owns its edge, fill and the floating-navigation clearance; this is its row.
     phoneBar: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s8,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.default,
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     phoneBarSpacer: {
         flex: 1,
@@ -1427,7 +1424,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         </KeyboardAwareScrollView>
     );
     const phoneBar = !compactLayout ? null : (
-        <RoundButtonSizeScope size="small"><View testID={`${testIDPrefix}-phone-bar`} style={styles.phoneBar}>
+        <RoundButtonSizeScope size="small"><PagePinnedBar testID={`${testIDPrefix}-phone-bar`} style={styles.phoneBar}>
             {!documentEditable ? null : <WorkflowAddBlockMenu
                 testID={`${testIDPrefix}-phone-add`}
                 composerScope={props.composerScope}
@@ -1464,7 +1461,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 />
             )}
             {runNowButton}
-        </View></RoundButtonSizeScope>
+        </PagePinnedBar></RoundButtonSizeScope>
     );
 
     const flowAdapter: PaneBuiltinAdapter = {
