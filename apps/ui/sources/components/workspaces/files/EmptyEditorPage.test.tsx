@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { renderScreen } from '@/dev/testkit';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { ScrollView, StyleSheet } from 'react-native';
+import { EmptyEditorPage } from './EmptyEditorPage';
 
 let snapshot: unknown = null;
 
@@ -109,7 +112,6 @@ async function renderPage(
     open?: (...args: unknown[]) => void;
   }>,
 ) {
-  const { EmptyEditorPage } = await import('./EmptyEditorPage');
   return renderScreen(
     withSearch(
       <EmptyEditorPage
@@ -127,6 +129,18 @@ async function renderPage(
 }
 
 describe('EmptyEditorPage (empty editor column, lab EM1)', () => {
+  it('keeps the end of the Recent list scrollable above the shell floating chrome', async () => {
+    snapshot = changedSnapshot(0);
+    const page = <EmptyEditorPage scope={SCOPE} title="title" reason="reason" changedTitle="changed" onOpenFile={vi.fn()} />;
+    const plain = await renderScreen(page);
+    const plainInset = StyleSheet.flatten(plain.findAllByType(ScrollView)[0].props.contentContainerStyle).paddingBottom ??
+      StyleSheet.flatten(plain.findAllByType(ScrollView)[0].props.contentContainerStyle).paddingVertical;
+    await plain.unmount();
+    const covered = await renderScreen(<SessionCockpitBottomChromeHeightContext.Provider value={84}>{page}</SessionCockpitBottomChromeHeightContext.Provider>);
+    const content = StyleSheet.flatten(covered.findAllByType(ScrollView)[0].props.contentContainerStyle);
+    expect(content.paddingBottom).toBe(plainInset + 84);
+    await covered.unmount();
+  });
   it('opens quick open on this workspace and session from its one primary action', async () => {
     snapshot = changedSnapshot(0);
     const open = vi.fn();

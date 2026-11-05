@@ -75,7 +75,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             || (!pane?.details && !pane?.rightTabId && pane?.bottomTabId === 'terminal');
     };
     const sessionIdentity = (ref: DestinationRef) => {
-        if (ref.kind !== 'session' && !isSessionTerminal(ref)) return null;
+        if (ref.kind !== 'session' && ref.kind !== 'sessionDetails' && !isSessionTerminal(ref)) return null;
         const scope = input.getScope?.();
         const serverId = ref.params.serverId ?? scope?.serverId;
         // Missing qualifiers denote the current persisted workspace realm,
@@ -131,9 +131,12 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const href = hrefForDestinationRef(catalog, tab.target);
             const normalized = href ? resolveDestinationRefFromHref(catalog, href) : null;
             if (!normalized) return false;
-            // SessionAddress owns resource identity; pane URL state and anchors belong
-            // to the retained view, and must not turn Go to it into a duplicate tab.
-            if (identity) return sameSessionIdentity(normalized, target);
+            // Go to a Session retains its pane state. An addressed Details page is
+            // its own destination: sharing the Session address cannot select Chat
+            // or a different file when an Action asks to reuse an existing tab.
+            if (identity && target.kind !== 'sessionDetails') {
+                return sameSessionIdentity(normalized, target);
+            }
             if (projectIdentity(target)) return sameProjectIdentity(normalized, target);
             return sameDestinationRef(normalized, target);
         });

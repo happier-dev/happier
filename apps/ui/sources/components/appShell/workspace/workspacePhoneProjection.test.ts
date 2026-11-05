@@ -1,13 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceTab } from './workspaceState';
 import { projectWorkspacePhoneTabs, resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
-import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
+import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
+import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 import { parseWorkspaceLayout, serializeWorkspaceLayout } from './workspacePersistence';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 const tab = (id: string, kind: string): WorkspaceTab => ({ id, target: { kind, params: { id, serverId: 'home-a' } },
     pinned: false, preview: false });
 
 describe('workspace phone projection', () => {
+    it.each(['chat', 'files', 'git'])('keeps the unaddressed Session on its existing instance (%s)', surface => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+        expect(resolvePhoneWorkspaceTabHref(catalog, `/session/s1?serverId=home-a&mobileSurface=${surface}`))
+            .toBe('/session/s1?serverId=home-a');
+    });
+    it('presents the canonical file intent as its own phone Details page, preserving the addressed file and Home', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+        const href = buildWorkspaceFileLink({ target: { kind: 'session', sessionId: 's1', serverId: 'home-a' },
+            path: 'src/alpha.ts', view: 'changes', anchor: { kind: 'fileLine', startLine: 7 } });
+        const projected = resolvePhoneWorkspaceTabHref(catalog, `${href}&fileOpenAs=pinned`)!;
+        expect(resolveDestinationRefFromHref(catalog, projected)).toMatchObject({ kind: 'sessionDetails', params: {
+            id: 's1', serverId: 'home-a', details: 'file', path: 'src/alpha.ts', fileView: 'changes', fileOpenAs: 'pinned', startLine: '7',
+        } });
+    });
+    it('presents an addressed Git Review intent as its own phone Details page instead of the Session transcript', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, friends: false, workflows: false } });
+        const review = createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree', comparisonId: 'pending' }, view: 'walkthrough' });
+        const query = new URLSearchParams({ serverId: 'home-a', right: 'git', ...buildActiveDetailsRouteParams([review], review.key) });
+        const projected = resolvePhoneWorkspaceTabHref(catalog, `/session/s1?${query}`)!;
+        expect(resolveDestinationRefFromHref(catalog, projected)).toMatchObject({ kind: 'sessionDetails', params: {
+            id: 's1', serverId: 'home-a', details: 'scmReview',
+        } });
+    });
     it.each(['info', 'follow', 'permissions', 'runs', 'triggers', 'automations', 'runs/run-a'])('retains the requested Session leaf %s and Home', leaf => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, friends: false, workflows: true } });
         const href = `/session/session-a/${leaf}?serverId=home-a`;

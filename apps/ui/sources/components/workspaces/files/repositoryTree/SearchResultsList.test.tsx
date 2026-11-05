@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { Item } from '@/components/ui/lists/Item';
+import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { StyleSheet } from 'react-native';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,37 +14,9 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 
-// `@legendapp/list` is a third-party boundary. It is stubbed here exactly as the
-// sibling SearchResultsList suites stub it: the list keeps its real auxiliary
-// contract (header, rows via `renderItem`, `ListEmptyComponent` when empty) so
-// the assertions below still exercise the component's own rendering. Without
-// this the real web build mounts and its passive effect calls
-// `requestAnimationFrame`, which the node test environment does not provide.
-vi.mock('@legendapp/list/react-native', async () => {
-    const ReactModule = await import('react');
-    return {
-        LegendList: ReactModule.forwardRef((props: any, _ref) => {
-            const renderAuxiliary = (component: any) => {
-                if (!component) return null;
-                if (ReactModule.isValidElement(component)) return component;
-                return ReactModule.createElement(component);
-            };
-            const data: any[] = Array.isArray(props.data) ? props.data : [];
-            const items = data.map((item: any, index: number) => ReactModule.createElement(
-                'LegendListItem',
-                { key: props.keyExtractor?.(item, index) ?? String(index) },
-                props.renderItem?.({ item, index }),
-            ));
-            return ReactModule.createElement(
-                'LegendList',
-                props,
-                renderAuxiliary(props.ListHeaderComponent),
-                ...items,
-                data.length === 0 ? renderAuxiliary(props.ListEmptyComponent) : null,
-            );
-        }),
-    };
-});
+// The external recycler is replaced; the canonical factory retains its section-list exports.
+vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit/mocks/legendList'))
+    .createLegendListModuleMock({ renderItems: true }));
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -59,6 +33,16 @@ const searchResultsTheme = createThemeFixture({
 });
 
 describe('SearchResultsList', () => {
+    it('keeps search results above the shell floating chrome', async () => {
+        const { SearchResultsList } = await import('./SearchResultsList');
+        const page = <SearchResultsList theme={searchResultsTheme} searchQuery="a" searchResults={[]} isSearching={false} onFilePress={vi.fn()} />;
+        const plain = await renderScreen(page);
+        const inset = StyleSheet.flatten(plain.tree.findByType('LegendList').props.contentContainerStyle).paddingBottom;
+        await plain.unmount();
+        const covered = await renderScreen(<SessionCockpitBottomChromeHeightContext.Provider value={84}>{page}</SessionCockpitBottomChromeHeightContext.Provider>);
+        expect(StyleSheet.flatten(covered.tree.findByType('LegendList').props.contentContainerStyle).paddingBottom).toBe(inset + 84);
+        await covered.unmount();
+    });
     it('reports failed or incomplete searches instead of claiming there are no matches', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
         const props = { theme: searchResultsTheme, searchQuery: 'needle', searchResults: [], isSearching: false, onFilePress: vi.fn() };

@@ -48,7 +48,8 @@ function isPhoneMainTabKind(kind: string): boolean {
 /**
  * The tab a phone route shows, as the href the workspace keys it by, or null when the route is one of
  * the phone's main tabs. Explicit entity leaves retain their route and Home;
- * only the base Session's mobileSurface is device-local presentation.
+ * an addressed Session pane becomes its own phone page, while the base Session's
+ * mobileSurface remains device-local presentation.
  */
 export function resolvePhoneWorkspaceTabHref(catalog: readonly CompactAppDestination[], href: string): string | null {
     let url: URL;
@@ -58,6 +59,13 @@ export function resolvePhoneWorkspaceTabHref(catalog: readonly CompactAppDestina
     if (!target) return null;
     if (target.kind === 'session') {
         const { mobileSurface: _mobileSurface, ...params } = target.params;
+        // The same file/resource intent stays in the Session's pane on desktop.
+        // On phone the catalog's Details destination presents that pane as a page,
+        // without retargeting the retained Session to its default surface.
+        if (params.details) {
+            const detailsHref = hrefForDestinationRef(catalog, { kind: 'sessionDetails', params });
+            if (detailsHref) return detailsHref;
+        }
         return hrefForDestinationRef(catalog, { ...target, params });
     }
     const entityLeaf = Boolean(target.params.workspacePathname && target.params.id);

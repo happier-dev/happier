@@ -17,6 +17,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
+import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 
 type SearchResultsListProps = {
     theme: any;
@@ -47,9 +48,6 @@ const NATIVE_SEARCH_RESULTS_RENDER_BATCH_COUNT = 12;
 const WEB_SEARCH_RESULTS_INITIAL_RENDER_COUNT = 32;
 const WEB_SEARCH_RESULTS_RENDER_BATCH_COUNT = 32;
 const searchResultListStyle = { flex: 1, minHeight: 0 } as const;
-// `flexGrow` lets the loading/empty content fill the scroll viewport so it keeps
-// the centered composition it had when it was rendered as a standalone screen.
-const searchResultContentContainerStyle = { paddingBottom: 20, flexGrow: 1 } as const;
 
 function renderFileIconForSearch(file: FileItem, theme: any) {
     if (file.fileType === 'folder') {
@@ -82,6 +80,12 @@ export const SearchResultsList = React.memo(({
     scrollEventThrottle,
 }: SearchResultsListProps) => {
     const accountScope = useActiveServerAccountScope();
+    const bottomClearance = useFloatingChromeClearance();
+    // Keep empty/loading content centered and the last result above floating chrome.
+    const searchResultContentContainerStyle = React.useMemo(() => ({
+        paddingBottom: theme.space.s20 + bottomClearance,
+        flexGrow: 1,
+    }), [bottomClearance, theme.space.s20]);
     const showsPreviousResults = isSearching || (searchResultsQuery !== undefined && searchResultsQuery !== searchQuery.trim());
     const keyExtractor = React.useCallback((file: FileItem) => `file-${file.fullPath}`, []);
     // Retain both the scroll owner and the previous query's rows while updating.

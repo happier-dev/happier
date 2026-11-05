@@ -4,6 +4,7 @@ import { resolveCompactAppDestinations } from '../destinations/compactAppDestina
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
+import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { createWorkspaceEmptyTab, createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { serializeSessionPaneUrlState, parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -67,10 +68,11 @@ describe('workspace Action intent adapter', () => {
         expect(execute(actionId, name === 'workspace.tabs.close_all' ? { groupId: 'missing' } : { tabId: 'missing' }))
             .toMatchObject({ ok: false, errorCode: name === 'workspace.tabs.close_all' ? 'workspace_group_not_found' : 'workspace_tab_not_found' });
     });
-    it('opens an exact Session file Find through the private handoff without leaking or retargeting the query', () => {
+    it.each([false, true])('opens an exact Session file Find through the private handoff without leaking or retargeting the query (phone=%s)', (phone) => {
         let state = createWorkspaceState({ id: 'a', target: { kind: 'session', params: { id: 'session-a', serverId: 'home-a' } }, pinned: false, preview: false });
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
         const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            ...(phone ? { resolveOpenHref: (href: string) => resolvePhoneWorkspaceTabHref(catalog, href) } : {}),
             dispatch: action => { state = reduceWorkspaceState(state, action); }, transport: { commit: () => {} },
             createId: () => 'new', onChange: () => {} });
         const handoff = createFileFindSeedHandoff();
@@ -86,6 +88,8 @@ describe('workspace Action intent adapter', () => {
             scope: { serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' } };
         try {
             expect(execute('workspace.tabs.open', { file, find, mode: 'preview' })).toEqual({ ok: true });
+            const selected = state.tabs[state.groups[state.focusedGroupId].activeTabId];
+            expect(selected.target.kind).toBe(phone ? 'sessionDetails' : 'session');
             expect(handoff.takeCurrent(destination)?.seed).toEqual({ query: find.query, options: find.options,
                 target: { kind: 'file', path: file.path } });
             expect(JSON.stringify(state)).not.toContain(find.query);

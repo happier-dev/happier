@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useOptionalUniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Text } from '@/components/ui/text/Text';
+import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { Typography } from '@/constants/Typography';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
@@ -58,6 +59,7 @@ export const EmptyEditorPage = React.memo(function EmptyEditorPage(
   }>,
 ) {
   const { theme } = useUnistyles();
+  const bottomClearance = useFloatingChromeClearance();
   const sources = useQuickOpenEmptyState({
     scope: props.scope,
     sessionId: props.sessionId ?? null,
@@ -146,7 +148,7 @@ export const EmptyEditorPage = React.memo(function EmptyEditorPage(
     <ScrollView
       testID={props.testID ?? 'pane-details-empty-state'}
       style={styles.scroll}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingBottom: theme.space.s32 + bottomClearance }]}
     >
       <EmptyState
         testID="pane-empty-editor"

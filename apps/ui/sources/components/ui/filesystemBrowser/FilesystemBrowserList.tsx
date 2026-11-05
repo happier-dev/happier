@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -12,6 +12,7 @@ import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListProps } from '@/components/ui/lists/virtualized/virtualizedListTypes';
+import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 
 const FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE = 38;
 const FILESYSTEM_BROWSER_VIEWABILITY = { itemVisiblePercentThreshold: 0 } as const;
@@ -19,6 +20,13 @@ type FilesystemBrowserListNode = FilesystemBrowserListProps['nodes'][number];
 
 export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const bottomClearance = useFloatingChromeClearance();
+    const contentContainerStyle = React.useMemo(() => {
+        if (bottomClearance === 0) return props.contentContainerStyle;
+        const style = StyleSheet.flatten(props.contentContainerStyle);
+        const padding = style?.paddingBottom ?? style?.paddingVertical ?? style?.padding;
+        return [props.contentContainerStyle, { paddingBottom: bottomClearance + (typeof padding === 'number' ? padding : 0) }];
+    }, [bottomClearance, props.contentContainerStyle]);
     // A supplied empty-state node is the root's voice only while it is rendered, i.e. with no rows listed.
     // Once rows are shown, a failed refresh is named by the line header above them.
     const emptyStateOwnsRoot = props.listEmpty != null && props.nodes.length === 0;
@@ -109,7 +117,7 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
             data={props.nodes}
             keyExtractor={keyExtractor}
             style={props.style}
-            contentContainerStyle={props.contentContainerStyle}
+            contentContainerStyle={contentContainerStyle}
             extraData={props.extraData}
             ListHeaderComponent={listHeaderComponent}
             ListFooterComponent={props.listFooter ?? null}

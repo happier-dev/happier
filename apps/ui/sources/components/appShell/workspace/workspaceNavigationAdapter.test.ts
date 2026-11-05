@@ -23,7 +23,10 @@ import {
   workspaceLayoutScopeKey,
   writeScopedWorkspaceLayout,
 } from './workspacePersistence';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { createWorkspaceFileDetailsTab } from '../panes/details/fileDetailsTab';
 import {
+  buildSessionDetailsTabHref,
   parseSessionPaneUrlState,
   serializeSessionPaneUrlState,
 } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -269,6 +272,30 @@ describe('workspace navigation adapter', () => {
     expect(h.active().id).toBe(ids[1]);
     expect(h.active().target.params.page).toBe('details');
   });
+
+  it.each(['file-tree', 'file-recent', 'git-review'] as const)(
+    'reuses the addressed phone Details destination rather than the Session for %s', (entry) => {
+      const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+      h.adapter.initialize('/session/A1?serverId=home-a');
+      const session = h.state().tabs.A.target;
+      const tab = entry === 'git-review'
+        ? createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' } })
+        : createWorkspaceFileDetailsTab(entry === 'file-tree' ? 'tree.txt' : 'recent.txt');
+      const href = buildSessionDetailsTabHref({ sessionId: 'A1', serverId: 'home-a', tab })!;
+      const options = { mode: entry === 'file-recent' ? 'newTab' as const : 'preview' as const, reuseExisting: true };
+      expect(h.adapter.findOpenHref(href)).toBeNull();
+      expect(h.adapter.openHref(href, options)).toBe(true);
+      const opened = h.active().id;
+      expect(opened).not.toBe('A');
+      expect(h.active().target).toEqual(h.adapter.resolveOpenTarget(href));
+      expect(h.active().target.kind).toBe('sessionDetails');
+      expect(h.state().tabs.A.target).toEqual(session);
+      h.adapter.activateTab(h.state().focusedGroupId, 'A');
+      expect(h.adapter.openHref(href, options)).toBe(true);
+      expect(h.active().id).toBe(opened);
+      expect(Object.keys(h.state().tabs)).toHaveLength(2);
+    },
+  );
 
   it('keeps an already selected Computer pane when phone chrome projects Details and returns to Chat', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });

@@ -558,10 +558,6 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         if (detailsIsOpen && !hasDeepLinkedDetailsTarget) closeDetails();
     }, [closeDetails, closeRight, cockpit, detailsIsOpen, hasDeepLinkedDetailsTarget, isFocused, props.surface, rightIsOpen]);
 
-    const openDetailsSurface = React.useCallback(() => {
-        surfaceNavigation?.switchSurface('tabs');
-    }, [surfaceNavigation]);
-
     const openDetailsRoute = React.useCallback((
         target: Extract<SessionPaneUrlDetailsTarget, { kind: 'file' | 'commit' | 'scmReview' }>,
         intent?: { intent: 'pinned' },
@@ -579,14 +575,12 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
                 if (!tab) return;
 
                 pane.openDetailsTab(tab, intent);
-                openDetailsSurface();
                 return;
             }
 
             pane.openDetailsTab(createSessionScmReviewDetailsTab(), intent);
-            openDetailsSurface();
         });
-    }, [openDetailsSurface, openWorkspaceFile, pane, props.surface, sessionAddress]);
+    }, [openWorkspaceFile, pane, props.surface, sessionAddress]);
 
     const openFileInDetails = React.useCallback((fullPath: string) => {
         openDetailsRoute({ kind: 'file', path: fullPath });
@@ -611,9 +605,8 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         deferOnWeb(() => {
             const tab = createSessionScmStashDetailsTab();
             pane.openDetailsTab(tab, { intent: 'pinned' });
-            openDetailsSurface();
         });
-    }, [openDetailsSurface, pane]);
+    }, [pane]);
 
     const safeAreaTopMode = cockpit ? 'internal' : undefined;
     const headerSafeAreaTopMode = cockpit ? 'internal' : undefined;

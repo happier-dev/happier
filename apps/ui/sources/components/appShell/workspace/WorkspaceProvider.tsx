@@ -283,7 +283,15 @@ export function WorkspaceProvider(props: Readonly<{
             },
             transport: browser ?? { commit: mirror },
             createId: randomUUID, onChange: changed,
-            ...(phoneTransport ? { resolveOpenHref: (href: string) => resolvePhoneWorkspaceTabHref(latest.current.catalog, href) } : {}),
+            resolveOpenHref: (href: string) => {
+                const facts = latest.current;
+                if (!facts.phone) return href;
+                const projected = resolvePhoneWorkspaceTabHref(facts.catalog, href);
+                // Hosted web retains explicit main-page routes; native main tabs
+                // stay outside the workspace. Both present addressed phone panes.
+                return facts.phoneTransport ? projected : projected ?? href;
+            },
+
         });
         const mounted = { adapter, browser, initialized: false };
         return mounted;

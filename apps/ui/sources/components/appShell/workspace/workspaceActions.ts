@@ -10,6 +10,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { readProjectFileRouteTarget } from '@/components/projects/detail/projectRouteState';
+import { readDestinationSessionAddress } from '../destinations/compactAppDestinationCatalog';
 import type { getDesktopAppWindowTabPresentations, getDesktopAppWindowWorkspaceLayouts } from '@/desktop/window/appWindowRuntime';
 
 type WorkspaceActionOwner = Readonly<Pick<WorkspaceTabAddress, 'serverId' | 'accountId' | 'layoutId'>>;
@@ -345,11 +346,12 @@ export function createWorkspaceActionAdapter(input: Readonly<{
                                 serverId: authority.scope.serverId, accountId: authority.scope.accountId }, { ...data.find, target: findTarget }, authority);
                         } else {
                             const isSession = findTarget.kind === 'session-file';
+                            const sessionAddress = target ? readDestinationSessionAddress(target) : null;
                             const addressedFile = isSession
-                                ? target?.kind === 'session' ? parseSessionPaneUrlState(target.params)?.details : null
+                                ? sessionAddress && target ? parseSessionPaneUrlState(target.params)?.details : null
                                 : target?.kind === 'project' ? readProjectFileRouteTarget(target.params) : null;
                             if (addressedFile?.kind !== 'file' || addressedFile.path !== findTarget.path
-                                || (isSession ? target?.kind !== 'session' || target.params.id !== findTarget.sessionId
+                                || (isSession ? sessionAddress?.sessionId !== findTarget.sessionId
                                     : target?.kind !== 'project' || target.params.workspaceRefId !== findTarget.workspaceRefId)
                                 || (target?.params.serverId && target.params.serverId !== findTarget.serverId)
                                 || authority.scope.serverId !== findTarget.serverId) return workspaceActionFailure('workspace_find_unavailable');

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { FilesystemBrowserNode } from './filesystemBrowserTypes';
 import { t } from '@/text';
+import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { StyleSheet } from 'react-native';
 
 // Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
 // graph before this file's mocks and per-test setup have run.
@@ -39,7 +41,7 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: ({ data, renderItem, keyExtractor, ListHeaderComponent, estimatedItemSize }: any) => {
+    LegendList: ({ data, renderItem, keyExtractor, ListHeaderComponent, estimatedItemSize, contentContainerStyle }: any) => {
         const header = ListHeaderComponent
             ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
             : null;
@@ -47,7 +49,7 @@ vi.mock('@legendapp/list/react-native', () => ({
             const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
             return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
         });
-        return React.createElement('LegendList', { estimatedItemSize }, header, ...rows);
+        return React.createElement('LegendList', { estimatedItemSize, contentContainerStyle }, header, ...rows);
     },
 }));
 
@@ -74,6 +76,17 @@ describe('FilesystemBrowserList', () => {
 
     beforeEach(() => {
         platformState.os = 'web';
+    });
+
+    it('adds floating-chrome clearance to the scroll owner while preserving its existing inset', async () => {
+        const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
+        const screen = await renderScreen(<SessionCockpitBottomChromeHeightContext.Provider value={84}>
+            <FilesystemBrowserList nodes={nodes} rootLoading={false} rootError={null}
+                loadingLabel="Loading" inlineRetryLabel="Retry" retryRoot={vi.fn()}
+                contentContainerStyle={{ paddingBottom: 12 }} renderRow={({ node }) => <React.Fragment>{node.name}</React.Fragment>} />
+        </SessionCockpitBottomChromeHeightContext.Provider>);
+        expect(StyleSheet.flatten(screen.tree.findByType('LegendList').props.contentContainerStyle).paddingBottom).toBe(96);
+        await screen.unmount();
     });
 
     it('names a root listing failure, explains its cause and keeps diagnostics behind Details', async () => {
