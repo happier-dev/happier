@@ -4,6 +4,7 @@ import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierPageHeader,
+    HappierSkeletonBlock,
     HappierPageHeaderMetaId,
     happierPageTextMetrics,
     type HappierPageHeaderMetaIdHost,
@@ -14,6 +15,7 @@ import {
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { Text } from '@/components/ui/text/Text';
 import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
@@ -251,6 +253,31 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     );
 });
 
+
+/**
+ * A page header whose page is not known yet: the header owner's own geometry with a quiet bar on the title's
+ * line, so a real header lands where this one stood. Navigation chrome that draws the title keeps it there.
+ */
+export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(props: Readonly<{ testID?: string }>) {
+    const { theme } = useUnistyles();
+    const maxWidth = useLayoutMaxWidth();
+    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+    const largeTitle = useNavigationLeavesLargeTitle();
+    const reducedMotion = useReducedMotionPreference();
+    const lineHeight = happierPageTextMetrics(largeTitle ? 'heroTitle' : 'pageTitle').lineHeight;
+    return (
+        <HappierPageHeader
+            title={<View style={{ height: lineHeight, justifyContent: 'center' }}>
+                <HappierSkeletonBlock width={96} height={10} radius={5} color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+            </View>}
+            largeTitle={largeTitle}
+            showTitle={!chromeShowsTitle}
+            columnMaxWidthPx={maxWidth}
+            renderText={renderPageHeaderText}
+            testID={props.testID}
+        />
+    );
+});
 
 function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
     const { action } = props;

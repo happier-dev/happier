@@ -31,8 +31,7 @@ import { readWorkflowPlanResult } from '@/sync/domains/workflows/workflowPlanRev
 import { canStartWorkflowAnotherRound } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-import { PageFrame } from '@/components/ui/layout/PageFrame';
+import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { createWorkflowStartWhereChip } from '../run/workflowStartWhereChip';
@@ -158,10 +157,6 @@ const styles = StyleSheet.create((theme) => ({
     // In another page's pane the run sits on that pane's surface, not on a page canvas of its own.
     embeddedRoot: {
         flex: 1,
-    },
-    loadingPage: {
-        flex: 1,
-        paddingHorizontal: theme.space.s16,
     },
     centered: {
         flex: 1,
@@ -297,21 +292,6 @@ function resolveAnnouncementTerminal(
  * to the navigation chrome (or draws it on wide layouts), so a Run that no longer exists is never a
  * dead end. A pane that hosts the Run (`embedded`) owns Back itself and draws no header.
  */
-/**
- * A cold Run reserves its page in place (lab nav-N5): the rows hold where the Map lands, so the page never
- * swaps a centred spinner for its content. Only how the wait looks lives here; the read it waits on does not.
- */
-const WORKFLOW_RUN_LOADING_ROWS = 4;
-
-function WorkflowRunLoadingRows(): React.ReactElement {
-    return (
-        <View testID="workflow-run-loading" style={styles.loadingPage} accessible role="status"
-            accessibilityLabel={t('common.loading')} accessibilityLiveRegion="polite">
-            <PageFrame testID="workflow-run-loading-rows" content="column"><SkeletonRows rows={WORKFLOW_RUN_LOADING_ROWS} /></PageFrame>
-        </View>
-    );
-}
-
 function RunStateFrame(props: Readonly<{ embedded: boolean; testID?: string; children: React.ReactNode }>): React.ReactElement {
     return (
         <View testID={props.testID} style={props.embedded ? styles.embeddedRoot : styles.root}>
@@ -1994,7 +1974,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                             ? { label: visibleProblem.repairLabel, onPress: repairVisibleProblem } : undefined}
                         accessibilitySemantics={visibleProblem?.accessibilitySemantics ?? 'alert'}
                     />
-                </View> : <WorkflowRunLoadingRows />}
+                </View> : <PageLoadingRows testID="workflow-run-loading" />}
             </RunStateFrame>
         );
     }

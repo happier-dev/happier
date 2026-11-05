@@ -2,7 +2,6 @@ import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { loadWorkspaceRouteLayout, workspaceRouteBodies } from './workspaceRouteBodies';
@@ -10,6 +9,7 @@ import { matchWorkspaceDestinationRoute, workspaceMachinePageRouteKey, workspace
 import { MachinesDoorProvider } from '@/components/machines/page/machinesDoor';
 import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
+import { DestinationBodyLoading } from './DestinationBodyLoading';
 
 // Routes that share one editor loader also share its lazy identity: promotion
 // after Save must not suspend an already mounted editor on another route chunk.
@@ -35,14 +35,6 @@ function hostedLayout(key: string) {
 const PluginAppPageScreen = retryableLazy(async () => ({
     default: (await import('@/components/appShell/plugins/PluginAppPageScreen')).PluginAppPageScreen,
 }));
-
-/**
- * A lazy body still loading says so once. Beside a column, the column already speaks for its destination
- * ("Opening Boards"), so the page waits quietly, as a reading pane does; without one the page says it.
- */
-function DestinationBodyLoading() {
-    return useAppShellColumn().columnVisible ? null : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
-}
 
 /** Renders the catalog-admitted identity; the Expo entrypoint is only its URL sink. */
 export function WorkspaceDestinationBody(props: Readonly<{
