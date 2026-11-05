@@ -677,6 +677,46 @@ function boundedTransitionIntent(publicSsh: { kind: 'closed' } | { kind: 'open';
 }
 
 describe('native firewall bounded transition owner', () => {
+  it.each([
+    { family: 'IPv4', ip: 'ip', nfproto: 'ipv4', wildcard: '0.0.0.0', address: '100.96.0.4', source: '100.96.0.0/16' },
+    { family: 'IPv6', ip: 'ip6', nfproto: 'ipv6', wildcard: '::', address: 'fd00::4', source: 'fd00::/64' },
+  ])('applies $family service exposures when nft elides source-implied family selectors', async ({ ip, nfproto, wildcard, address, source }) => {
+    // Model nft's OS readback, including a redundant selector on either side
+    // of the source expression. Keep selectors that still constrain a wildcard.
+    const f = await fixture(undefined, table => table.split('\n').map(line =>
+      /\bip6? saddr\b/.test(line) ? line.replace(/meta nfproto (ipv4|ipv6) /g, '') : line).join('\n'));
+    f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4')], tun42: [nativeInterface(address)] } });
+    const base = boundedTransitionIntent({ kind: 'closed' });
+    const intent = MachineFirewallTransitionIntentV1Schema.parse({ ...base, kind: 'preserveSsh', caddy: {
+      publicBindings: [{ ...base.caddy.publicBindings![0], hostAddress: wildcard }],
+      privateBinding: { ...base.caddy.privateBinding, exposure: { ...base.caddy.privateBinding!.exposure, hostAddress: address },
+        sourceRanges: [source] },
+    } });
+    const native = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+    const materialized = materializeMachineFirewallTransitionV1(intent, native);
+    if (materialized.status !== 'ready') throw new Error(`Unexpected service transition ${materialized.reason}`);
+    const plans = await Promise.all(materialized.steps.map(async step => ({
+      plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }),
+    })));
+    const result = await applyMachineSetupEffectPlans({ plans, backend: f.backend, onStaged: async staged => {
+      expect(await staged.verifyNative()).toBe(true);
+      return staged.planIndex === 0 ? 'continue' : 'commit';
+    } });
+    expect(result.status).toBe('applied');
+    expect(await f.backend.observe(materialized.steps[1])).toMatchObject({ status: 'satisfied' });
+    const table = f.readEffectiveTable()!;
+    expect(table).toContain(`meta nfproto ${nfproto} tcp dport 443 accept`);
+    expect(table).toContain(`meta l4proto tcp meta nfproto ${nfproto} ct original proto-dst 443 accept`);
+    expect(table).toContain(`iifname "tun42" ${ip} saddr ${source} ${ip} daddr ${address} tcp dport 18080 accept`);
+    expect(table).toContain(`iifname "tun42" ${ip} saddr ${source} meta l4proto tcp ct original ${ip} daddr ${address} ct original proto-dst 18080 accept`);
+    // A sourced wildcard service is refused before rendering: it cannot
+    // produce the redundant family/source combination raised by the review.
+    const sourcedWildcard = MachineFirewallTransitionIntentV1Schema.parse({ ...intent, caddy: { ...intent.caddy,
+      privateBinding: { ...intent.caddy.privateBinding, exposure: { ...intent.caddy.privateBinding!.exposure, hostAddress: wildcard } },
+    } });
+    expect(materializeMachineFirewallTransitionV1(sourcedWildcard, native)).toEqual({ status: 'review_required', reason: 'plan_changed' });
+  });
+
   it('observes wildcard SSH bindings on every actual non-default interface in both families', async () => {
     const f = await fixture();
     f.setNetwork({ interfaces: { ens18: [nativeInterface('10.10.0.4'), nativeInterface('2001:db8::4')],
