@@ -9,6 +9,24 @@ import {
 } from './connectedServiceUxDiagnostics.js';
 
 describe('ConnectedServiceUxDiagnosticV1', () => {
+  it('retains optional reconnect provenance while rejecting an unrecognized cause', () => {
+    const diagnostic = { code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
+      failurePhase: 'materialization', source: 'spawn_resume', retryable: false };
+    for (const reconnectCause of ['credential_missing', 'listed_needs_reauth', 'stored_health_rejected']) {
+      expect(ConnectedServiceUxDiagnosticV1Schema.parse({ ...diagnostic,
+        diagnostics: { reconnectCause, reason: 'spawn_preflight' } }).diagnostics)
+        .toEqual({ reconnectCause, reason: 'spawn_preflight' });
+    }
+    expect(ConnectedServiceUxDiagnosticV1Schema.safeParse({ ...diagnostic,
+      diagnostics: { reconnectCause: 'arbitrary-provider-text' } }).success).toBe(false);
+    expect(ConnectedServiceUxDiagnosticV1Schema.parse({ ...diagnostic,
+      diagnostics: { ' reconnectCause ': 'stored_health_rejected', ' reason ': 'spawn_preflight' } }).diagnostics)
+      .toEqual({ reconnectCause: 'stored_health_rejected', reason: 'spawn_preflight' });
+    expect(ConnectedServiceUxDiagnosticV1Schema.safeParse({ ...diagnostic,
+      diagnostics: { ' reconnectCause ': 'arbitrary-provider-text' } }).success).toBe(false);
+    expect(ConnectedServiceUxDiagnosticV1Schema.parse(diagnostic)).not.toHaveProperty('diagnostics');
+  });
+
   it('accepts the shared safe diagnostic shape used by CLI and UI surfaces', () => {
     const diagnostic = ConnectedServiceUxDiagnosticV1Schema.parse({
       code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerAccountAdoptionMismatch,

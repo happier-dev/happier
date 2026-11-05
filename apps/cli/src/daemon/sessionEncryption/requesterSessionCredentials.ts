@@ -25,6 +25,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { ApiClient } from '@/api/api';
 import type { ExecuteSpawnSessionRequestParams } from '../startup/executeSpawnSessionRequest';
+import type { startDaemonConnectedServiceRuntime } from '../startup/startDaemonRuntimeBootstrap';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createRequesterAccountSettingsPublication } from '@/settings/accountSettings/requesterAccountSettingsPublication';
@@ -126,10 +127,11 @@ export type RequesterSessionRuntimeContext = Readonly<{
   providerAccountUsagePersistence: ProviderAccountUsagePersistenceScheduler;
   providerAccountUsageStore: ReturnType<typeof createProviderAccountUsageStore>;
   connectedServiceRuntimeRegistry: ReturnType<ConnectedServiceRuntimeRegistry['scopeToRequester']>;
+  authGroupSwitchCoordinator?: Parameters<typeof startDaemonConnectedServiceRuntime>[0]['connectedServiceAuthGroupPreTurnSwitchCoordinator'] | null;
   dispose(): Promise<void>;
 }> & Pick<ExecuteSpawnSessionRequestParams,
   'connectedServiceRefreshCoordinator' | 'connectedServiceQuotasCoordinator'
-  | 'authGroupSwitchCoordinator' | 'predictiveSwitchGuard' | 'resolveManagedPurposeBindingIntent'
+  | 'predictiveSwitchGuard' | 'resolveManagedPurposeBindingIntent'
   | 'activateSessionPurposeBindings' | 'activatePurposeBindings'>;
 
 export type ResolveRequesterSessionRuntimeContext = (

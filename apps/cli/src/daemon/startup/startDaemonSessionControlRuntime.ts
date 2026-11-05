@@ -1793,7 +1793,9 @@ daemonWorkSignal: AbortSignal;
         activateSessionPurposeBindings: context?.activateSessionPurposeBindings ?? params.activateSessionPurposeBindings,
         connectedServiceRefreshCoordinator: context ? context.connectedServiceRefreshCoordinator : params.getConnectedServiceRefreshCoordinator(),
         providerAccountUsageStore: context?.providerAccountUsageStore ?? providerAccountUsageStore,
-        authGroupSwitchCoordinator: context ? context.authGroupSwitchCoordinator : connectedServiceAuthGroupPreTurnSwitchCoordinator,
+        createConnectedServiceLaunchAuthGroupCoordinator: selection => createSessionQualifiedAuthGroupSwitchCoordinator({
+          ...selection, sessionId, accountContext: context, assertCurrent,
+        }),
         predictiveSwitchGuard: context ? context.predictiveSwitchGuard : connectedServicePredictiveSwitchGuard,
         resolveManagedPurposeBindingIntent: context?.resolveManagedPurposeBindingIntent ?? params.resolveManagedPurposeBindingIntent,
         connectedAccountRequestAuthRegistry,
@@ -4115,6 +4117,7 @@ daemonWorkSignal: AbortSignal;
       managerResume?: Readonly<{ recheck: () => Promise<boolean>; clear: () => Promise<void> }>;
     }>,
   ): Promise<SpawnSessionResult> => {
+    const launchAccountSettingsLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
     const suppliedRequesterRuntime = options.requesterSessionRuntimeContext;
     if (
       suppliedRequesterRuntime &&
@@ -4474,9 +4477,20 @@ daemonWorkSignal: AbortSignal;
                 providerAccountUsageStore:
                   requesterRuntime?.providerAccountUsageStore ??
                   providerAccountUsageStore,
-                authGroupSwitchCoordinator:
-                  requesterRuntime?.authGroupSwitchCoordinator ??
-                  connectedServiceAuthGroupPreTurnSwitchCoordinator,
+                createConnectedServiceLaunchAuthGroupCoordinator: selection =>
+                  createSessionQualifiedAuthGroupSwitchCoordinator({
+                    ...selection, sessionId: existingSessionId, accountContext: requesterRuntime,
+                    // Launch owns an admitted requester, not a tracked runner yet.
+                    assertCurrent: async signal => {
+                      signal?.throwIfAborted();
+                      if (controlRuntimeResourcesDisposed || isRuntimePublicationQuiescing()
+                        || !behavior.isLaunchAdmissionCurrent()
+                        || (requesterRuntime ? !await requesterRuntime.isCurrent(signal)
+                          : launchAccountSettingsLifetime !== getActiveAccountSettingsSnapshotLifetimeToken())) {
+                        throw new Error('requester_session_not_current');
+                      }
+                    },
+                  }),
                 predictiveSwitchGuard:
                   requesterRuntime?.predictiveSwitchGuard ??
                   connectedServicePredictiveSwitchGuard ??
@@ -6373,9 +6387,16 @@ daemonWorkSignal: AbortSignal;
       applyGeneration?: Parameters<
         typeof createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator
       >[0]['applyGeneration'];
+      prepareCandidateForSwitch?: Parameters<
+        typeof createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator
+      >[0]['prepareCandidateForSwitch'];
+      assertCurrent?: (signal?: AbortSignal) => Promise<void>;
     }>,
   ) => {
     const { accountContext } = input;
+    const assertCoordinatorCurrent = input.assertCurrent ?? (async (signal?: AbortSignal) => {
+      await assertSessionAccountCurrent(input.sessionId, accountContext, undefined, signal);
+    });
     if (params.resolveQualifiedConnectedAccountV4Support?.() !== 'advertised') {
       return null;
     }
@@ -6395,7 +6416,7 @@ daemonWorkSignal: AbortSignal;
             }
           : undefined,
       isCurrent: async (signal) => {
-        await assertSessionAccountCurrent(input.sessionId, accountContext, undefined, signal);
+        await assertCoordinatorCurrent(signal);
         return true;
       },
       ...(accountContext
@@ -6406,12 +6427,7 @@ daemonWorkSignal: AbortSignal;
                 typeof qualifiedAuthGroupQuotaDependencies.probeQuotaSnapshotsForGroup
               >[0],
             ) => {
-              await assertSessionAccountCurrent(
-                input.sessionId,
-                accountContext,
-                undefined,
-                request.signal,
-              );
+              await assertCoordinatorCurrent(request.signal);
               return (
                 (await accountContext.connectedServiceQuotasCoordinator?.probeGroupQuotaSnapshots(
                   {
@@ -6433,10 +6449,7 @@ daemonWorkSignal: AbortSignal;
                 typeof qualifiedAuthGroupQuotaDependencies.consumeAvailableRecoveryCreditForProfile
               >[0],
             ) => {
-              await assertSessionAccountCurrent(
-                input.sessionId,
-                accountContext,
-              );
+              await assertCoordinatorCurrent();
               return (
                 (await accountContext.connectedServiceQuotasCoordinator?.consumeAvailableRecoveryCreditForProfile(
                   {
@@ -6461,7 +6474,8 @@ daemonWorkSignal: AbortSignal;
       nowMs: () => Date.now(),
       leases: qualifiedConnectedAccountAuthGroupSwitchLeases,
       prepareCandidateForSwitch: async (candidate) => {
-        await assertSessionAccountCurrent(input.sessionId, accountContext, undefined, candidate.signal);
+        await assertCoordinatorCurrent(candidate.signal);
+        if (input.prepareCandidateForSwitch) return await input.prepareCandidateForSwitch(candidate);
         if (!accountContext)
           return await prepareQualifiedAuthGroupCandidateForSwitch(candidate);
         const serviceId = resolveFirstPartyConnectedAccountServiceId(

@@ -148,8 +148,20 @@ const ConnectedServiceUxDiagnosticScalarV1Schema = lazyZodSchema(() => z.union([
   z.null(),
 ]));
 
-const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = lazyZodSchema(() => z
-  .record(ConnectedServiceUxDiagnosticKeyV1Schema, ConnectedServiceUxDiagnosticScalarV1Schema).check(z.refine((diagnostics) => Object.keys(diagnostics).length <= CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS, `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`)));
+export const ConnectedServiceCredentialReconnectCauseV1Schema = lazyZodSchema(() => z.enum([
+  'credential_missing',
+  'listed_needs_reauth',
+  'stored_health_rejected',
+]));
+export type ConnectedServiceCredentialReconnectCauseV1 = z.infer<typeof ConnectedServiceCredentialReconnectCauseV1Schema>;
+
+const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = lazyZodSchema(() => z.pipe(
+  z.record(ConnectedServiceUxDiagnosticKeyV1Schema, ConnectedServiceUxDiagnosticScalarV1Schema).check(z.refine((diagnostics) => Object.keys(diagnostics).length <= CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS, `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`)),
+  z.catchall(
+    z.object({ reconnectCause: z.optional(ConnectedServiceCredentialReconnectCauseV1Schema) }),
+    ConnectedServiceUxDiagnosticScalarV1Schema,
+  ),
+));
 
 // R.17 classification (2026-07-10): the former `providerId` field carried
 // `ConnectedServiceStateSharingDescriptor.providerId` values, which are typed

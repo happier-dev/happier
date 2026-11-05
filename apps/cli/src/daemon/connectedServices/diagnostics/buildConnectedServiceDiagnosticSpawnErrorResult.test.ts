@@ -99,6 +99,7 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
         refreshCategory: 'invalid_grant',
       },
     });
+    expect(result.errorDetail.uxDiagnostic.diagnostics).not.toHaveProperty('reconnectCause');
     expect(JSON.stringify(result)).not.toContain('must-not-leak');
   });
 
@@ -218,6 +219,7 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
       diagnostics: {
         reason: 'profile_action_required',
         refreshStatus: 'needs_reauth',
+        reconnectCause: 'listed_needs_reauth',
       },
     });
   });
@@ -254,6 +256,7 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
       suggestedActions: ['reconnect_profile', 'open_connected_accounts'],
       diagnostics: {
         reason: 'missing_credential',
+        reconnectCause: 'credential_missing',
       },
     });
   });

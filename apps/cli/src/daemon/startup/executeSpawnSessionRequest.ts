@@ -38,6 +38,7 @@ import {
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
+import type { ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { ensureSessionDirectory } from './ensureSessionDirectory';
@@ -135,7 +136,6 @@ function hasTeamResourceConnectedServiceBinding(connectedServices: unknown): boo
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
 type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['accountUsageStore'];
-type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator'];
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     prepareAgentIsolationMember?: import('../spawn/prepareDaemonConnectedServices').PrepareAgentIsolationMember;
@@ -170,7 +170,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null;
     connectedServiceRuntimeRegistry: Pick<ConnectedServiceRuntimeRegistry, 'registerTarget'>;
     providerAccountUsageStore?: SpawnAccountUsageStore;
-    authGroupSwitchCoordinator?: SpawnAuthGroupSwitchCoordinator | null;
+    createConnectedServiceLaunchAuthGroupCoordinator?: ConnectedServiceLaunchAuthGroupCoordinatorFactory;
     predictiveSwitchGuard?: SpawnPredictiveSwitchGuard;
     repairMissingConnectedServiceMaterializationIdentityForSpawn?: (input: Readonly<{
         sessionId: string;
@@ -248,7 +248,6 @@ export async function executeSpawnSessionRequest(
             connectedServiceQuotasCoordinator: requesterRuntime.connectedServiceQuotasCoordinator,
             connectedServiceRuntimeRegistry: requesterRuntime.connectedServiceRuntimeRegistry,
             providerAccountUsageStore: requesterRuntime.providerAccountUsageStore,
-            authGroupSwitchCoordinator: requesterRuntime.authGroupSwitchCoordinator,
             predictiveSwitchGuard: requesterRuntime.predictiveSwitchGuard,
             resolveManagedPurposeBindingIntent: requesterRuntime.resolveManagedPurposeBindingIntent,
             activateSessionPurposeBindings: requesterRuntime.activateSessionPurposeBindings,
@@ -995,7 +994,7 @@ export async function executeSpawnSessionRequest(
                     ? { providerAccountUsageStore: params.providerAccountUsageStore }
                     : {}),
                 connectedServiceRefreshCoordinator: params.connectedServiceRefreshCoordinator,
-                authGroupSwitchCoordinator: params.authGroupSwitchCoordinator,
+                createConnectedServiceLaunchAuthGroupCoordinator: params.createConnectedServiceLaunchAuthGroupCoordinator,
                 predictiveSwitchGuard: params.predictiveSwitchGuard,
                 processEnv: params.processEnv ?? process.env,
                 connectedServicesMaterializationBaseDir: params.connectedServicesMaterializationBaseDir,

@@ -15,6 +15,7 @@ import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from './qualif
 import { createConnectedAccountPurposeBindingOwner } from './purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { resolveConnectedServiceAuthForSpawn } from './resolveConnectedServiceAuthForSpawn';
+import { buildConnectedServiceCredentialSpawnErrorResult } from './diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { ConnectedServiceRefreshCoordinator, persistConnectedServiceCredentialHealthForMaterializationFailure } from './refresh/ConnectedServiceRefreshCoordinator';
 import { readQualifiedConnectedAccountCredentialV4, acquireQualifiedConnectedAccountRefreshLeaseV4, mutateQualifiedConnectedAccountCredentialV4, mutateQualifiedConnectedAccountCredentialHealthV4, listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol';
@@ -43,6 +44,13 @@ import { scopeConnectedAccountSessionPurposeBindingLease } from './purposeBindin
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { assertOpenCodeManagedPrompt } from './requestAuth/openCodeManagedPrompt.test-support';
 import { logger } from '@/ui/logger';
+import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
+
+// Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
+vi.mock('undici', async importOriginal => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
 const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
@@ -112,6 +120,224 @@ afterAll(async () => {
 });
 
 describe('qualified first-party spawn credential authority', () => {
+  it.each([
+    { agentId: 'claude', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, authenticationModeId: 'oauth' } as const,
+    { agentId: 'codex', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
+  ].flatMap(provider => (['healthy', 'expired', 'rejected', 'stored_rejected', 'stored_rejected_refresh_window'] as const).map(state => ({ ...provider, state }))))('handles $state $agentId credentials through real spawn preflight', async ({ agentId, service, authenticationModeId, state }) => {
+    const account = { service, accountId: `${state}-${agentId}` };
+    const serviceId = `${service.pluginId}/${service.localId}`;
+    const rejected = state === 'rejected' || state === 'stored_rejected' || state === 'stored_rejected_refresh_window';
+    const content = sealQualifiedConnectedAccountContentEnvelope({
+      kind: 'credential', accountMode: 'e2ee', material: credentials.encryption,
+      payload: { v: 1, values: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh',
+        idToken: 'fixture-id', providerAccountId: 'fixture-account',
+        expiresAtMs: String(Date.now() + (state === 'expired' ? -1 : 3_600_000)) } },
+      randomBytes: length => new Uint8Array(length).fill(3),
+    });
+    let snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: account,
+      authenticationModeId, revisionSemantics: 'revisioned', credentialRevision: revision,
+      configurationRevision: null, content, metadata: { scopes: [] },
+      health: { v: 1, status: rejected ? 'needs_reauth' : 'connected', reconnectRequired: rejected } });
+    const listing = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{ ref: account,
+      authenticationModeId, revisionSemantics: 'revisioned', credentialRevision: revision,
+      configurationReady: false, configurationRevision: null, status: state === 'rejected' ? 'needs_reauth' : 'connected',
+      kind: null, expiresAt: state === 'stored_rejected_refresh_window' ? Date.now() + 60_000 : null, scopes: [] }] });
+    // Only the HTTP/storage boundary is replaced. Exercise opaque listings and
+    // the existing refresh window; health, purpose and materialization stay real.
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      expect(new URL(String(url)).pathname).toBe('/v4/connect/qualified/credential');
+      return { status: 200, data: snapshot };
+    });
+    const exchanges: string[] = [];
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (!url.endsWith('/oauth/token')) throw new Error('Unexpected provider request');
+      exchanges.push(url);
+      return new Response(JSON.stringify({ access_token: 'refreshed-access', refresh_token: 'refreshed-refresh',
+        id_token: 'fixture-id', expires_in: 3600, account: { uuid: 'fixture-account' },
+        organization: { uuid: 'fixture-organization' } }), { status: 200 });
+    });
+    const writes = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v4/connect/qualified/credential/refresh-lease') {
+        const request = QualifiedConnectedAccountRefreshLeaseV4Schema.parse(body);
+        return { status: 200, data: { acquired: true, leaseUntil: Date.now() + request.ttlMs,
+          ownerId: request.ownerId, credentialRevision: snapshot.credentialRevision } };
+      }
+      expect(path).toBe('/v4/connect/qualified/credential');
+      const mutation = QualifiedConnectedAccountCredentialMutationV4Schema.parse(body);
+      expect(mutation.authenticationModeId).toBe(authenticationModeId);
+      snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot, content: mutation.content,
+        metadata: mutation.metadata, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' });
+      return { status: 200, data: { success: true, credentialRevision: snapshot.credentialRevision, configurationRevision: null } };
+    });
+    const healthWrites = vi.spyOn(axios, 'patch').mockImplementation(async () => ({
+      status: 200, data: { success: true, credentialRevision: snapshot.credentialRevision, configurationRevision: null },
+    }));
+    const api = { getAccountEncryptionMode: async () => 'e2ee' } as ApiClient;
+    const coordinator = new ConnectedServiceRefreshCoordinator({ credentials, api,
+      machineIdProvider: () => 'test-machine', activeServerDir: directory, baseDir: directory,
+      refreshWindowMs: 300_000, refreshLeaseMs: 60_000, now: Date.now,
+      qualifiedConnectedAccountRuntime: { resolvePeerClass: () => 'advertised_v4',
+        establishedRuntimeOwner: established, readCredential: readQualifiedConnectedAccountCredentialV4,
+        acquireRefreshLease: acquireQualifiedConnectedAccountRefreshLeaseV4,
+        mutateCredential: mutateQualifiedConnectedAccountCredentialV4,
+        mutateCredentialHealth: mutateQualifiedConnectedAccountCredentialHealthV4 },
+    });
+    let result: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
+    try {
+      const admission = resolveConnectedServiceAuthForSpawn({ agentId,
+        connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+          [serviceId]: { source: 'connected', selection: 'profile', profileId: account.accountId } } },
+        materializationKey: account.accountId, activeServerDir: directory, baseDir: directory,
+        processEnv: { HOME: directory }, credentials, api, connectedAccountsOwner: purposeOwner,
+        qualifiedConnectedAccountApi: { listAccounts: async () => listing, readGroup: async () => null },
+        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId, bindings, contributions: lease.registry.contributes }),
+        activateQualifiedPurposeBindings: binding => purposeOwner.activateSessionPurposeBindings({
+          sessionId: account.accountId, purposes: binding.purposes, bindings: binding.bindings }),
+        credentialRefreshService: coordinator,
+      });
+      if (rejected) {
+        await expect(admission.catch(error => buildConnectedServiceCredentialSpawnErrorResult({ agentId, error })))
+          .resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+            errorMessage: 'connected_service_credential_reconnect_required',
+            errorDetail: { uxDiagnostic: { diagnostics: {
+              reconnectCause: state === 'rejected' ? 'listed_needs_reauth' : 'stored_health_rejected',
+            } } } });
+      } else {
+        result = await admission;
+        expect(result?.sessionConnectedAccounts).toBeDefined();
+        expect(JSON.parse(result!.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON!)[0].credentialRevision).toBe(snapshot.credentialRevision);
+      }
+      expect(exchanges).toHaveLength(state === 'expired' ? 1 : 0);
+      if (state !== 'expired') {
+        expect(writes).not.toHaveBeenCalled();
+        expect(healthWrites).not.toHaveBeenCalled();
+      }
+    } finally {
+      await result?.cleanupOnExit?.();
+      await result?.materializationPurposeLease?.dispose();
+      http.mockRestore(); writes.mockRestore(); healthWrites.mockRestore(); provider.mockRestore();
+    }
+  });
+  it('reads prepared pool credentials only at required boundaries', async () => {
+    const account = { service, accountId: 'launch-freshness-primary' };
+    const backup = { service, accountId: 'launch-freshness-backup' };
+    const now = Date.now();
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1, ref: { service, groupId: 'launch-freshness' }, incarnation: 'launch-freshness-1',
+      displayName: 'Launch freshness', policy: { v: 1, autoSwitch: true, preTurnProbeMode: 'when_stale' },
+      activeConnectedAccountId: account.accountId, generation: 1, runtimeStateRevision: 0,
+      state: {}, createdAt: now, updatedAt: now,
+      members: [account, backup].map((ref, index) => ({
+        v: 1, connectedAccountId: ref.accountId, priority: index + 1, enabled: true,
+        state: {}, createdAt: now, updatedAt: now,
+      })),
+    });
+    const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service,
+      accounts: [account, backup].map(ref => ({
+        ref, authenticationModeId: 'oauth', status: 'connected', kind: 'oauth', expiresAt: now + 3_600_000,
+        revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true,
+        configurationRevision: null, scopes: [],
+      })),
+    });
+    const content = sealQualifiedConnectedAccountContentEnvelope({
+      kind: 'credential', accountMode: 'e2ee', material: credentials.encryption,
+      payload: { v: 1, values: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh',
+        idToken: 'fixture-id', providerAccountId: 'fixture-account', expiresAtMs: String(now + 3_600_000) } },
+      randomBytes: length => new Uint8Array(length).fill(3),
+    });
+    const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: revision, configurationRevision: null, content, metadata: { scopes: [] },
+    });
+    // Only Home HTTP is replaced; group selection, purpose
+    // admission, envelope opening and plugin materialization remain real.
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v4/connect/qualified/credential') return { status: 200, data: snapshot };
+      if (path === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+      throw new Error(`Unexpected HTTP read: ${path}`);
+    });
+    groupActiveAccount = account;
+    let rotated: Awaited<ReturnType<typeof prepareDaemonConnectedServices>> | undefined;
+    try {
+      const profiles = { ...accounts, accounts: accounts.accounts.map(profile => ({ ...profile,
+        status: profile.ref.accountId === account.accountId ? 'needs_reauth' as const : 'connected' as const,
+        kind: null, expiresAt: null,
+      })) };
+      let selectedGroup = QualifiedConnectedAccountGroupV4Schema.parse({ ...group,
+        policy: { ...group.policy, preTurnProbeMode: 'never' } });
+      const api = { getAccountEncryptionMode: async () => 'e2ee' } as ApiClient;
+      const refresh = new ConnectedServiceRefreshCoordinator({ credentials, api,
+        machineIdProvider: () => 'test-machine', activeServerDir: directory, baseDir: directory,
+        refreshWindowMs: 300_000, refreshLeaseMs: 60_000, now: Date.now,
+        qualifiedConnectedAccountRuntime: { resolvePeerClass: () => 'advertised_v4',
+          establishedRuntimeOwner: established, readCredential: readQualifiedConnectedAccountCredentialV4,
+          acquireRefreshLease: acquireQualifiedConnectedAccountRefreshLeaseV4,
+          mutateCredential: mutateQualifiedConnectedAccountCredentialV4,
+          mutateCredentialHealth: mutateQualifiedConnectedAccountCredentialHealthV4 },
+      });
+      http.mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v4/connect/qualified/credential') return { status: 200, data: { ...snapshot, ref: backup,
+          health: { v: 1, status: 'connected', reconnectRequired: false } } };
+        if (path === '/v4/connect/qualified/accounts') return { status: 200, data: profiles };
+        throw new Error(`Unexpected HTTP read: ${path}`);
+      });
+      http.mockClear();
+      const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+      const state = async () => ({ ...buildQualifiedConnectedAccountAuthGroupSwitchState({
+        group: selectedGroup, profiles: profiles.accounts }), serviceId: service });
+      try {
+        rotated = await prepareDaemonConnectedServices({
+          options: { directory, connectedServices: { v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: group.ref.groupId },
+          } } }, normalizedExistingSessionId: '', requestedSessionId: 'prepared-pool-member',
+          effectiveResume: '', catalogAgentId: 'codex', credentials, api,
+          qualifiedConnectedAccountApi: { readGroup: async () => selectedGroup, listAccounts: async () => profiles },
+          connectedServiceRefreshCoordinator: refresh, processEnv: { HOME: directory }, activeServerDir: directory,
+          connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
+          pluginRuntimeRegistry: lease.registry, connectedAccountsOwner: purposeOwner,
+          activatePurposeBindings: purposeOwner.activatePurposeBindings,
+          createConnectedServiceLaunchAuthGroupCoordinator: async selection =>
+            new ConnectedServiceAuthGroupSwitchCoordinator<QualifiedConnectedAccountServiceRef>({
+              leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<QualifiedConnectedAccountServiceRef>(),
+              // HEAD's legacy constructor dependency; current group policy owns freshness.
+              ...{ quotaFreshnessMs: 60_000 },
+              nowMs: Date.now, loadState: state, applyGeneration: selection.applyGeneration,
+              // In-memory group CAS is the storage boundary; selection and
+              // candidate health use the real coordinator and established runtime.
+              commitSwitch: async input => {
+                selectedGroup = { ...selectedGroup, activeConnectedAccountId: input.toProfileId,
+                  generation: selectedGroup.generation + 1 };
+                groupActiveAccount = backup;
+                return state();
+              },
+              prepareCandidateForSwitch: selection.prepareCandidateForSwitch ?? (async () => {
+                const result = await refresh.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile: profiles.accounts[1]! });
+                return result.status === 'ready' ? { status: 'ready' } : { status: 'ineligible',
+                  memberState: { credentialHealthStatus: 'needs_reauth' } };
+              }),
+            }),
+        });
+        expect(rotated, rotated.ok ? 'prepared pool member admitted' : rotated.result.errorMessage).toMatchObject({ ok: true });
+        const reads = diagnostics.mock.calls.filter(([message, fields]) => message === '[CONNECTED ACCOUNT] Materialization phase'
+          && fields && typeof fields === 'object' && 'phase' in fields && fields.phase === 'established_credential_read'
+          && 'status' in fields && fields.status === 'started');
+        // Selected member status, material acquisition, final publication fence.
+        expect(reads).toHaveLength(3);
+      } finally { diagnostics.mockRestore(); }
+    } finally {
+      for (const prepared of [rotated]) {
+        if (prepared?.ok) await prepared.auth?.cleanupOnExit?.();
+      }
+      groupActiveAccount = null;
+      http.mockRestore();
+    }
+  });
+
   it.each([
     { provider: 'anthropic' as const, service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, purpose: 'anthropic-model-request' },
     { provider: 'openai' as const, service, purpose: 'openai-codex-model-request' },

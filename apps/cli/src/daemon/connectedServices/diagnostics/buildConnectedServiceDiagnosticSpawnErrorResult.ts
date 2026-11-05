@@ -1,4 +1,4 @@
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceCredentialReconnectCauseV1Schema, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { ConnectedServiceUxDiagnosticV1, SpawnSessionResult } from '@happier-dev/protocol';
 
@@ -18,6 +18,7 @@ type ConnectedServiceCredentialRefreshSpawnError = Readonly<{
   profileId?: unknown;
   diagnostic?: unknown;
   reason?: unknown;
+  reconnectCause?: unknown;
 }>;
 
 type ConnectedServiceCredentialMissingSpawnError = Readonly<{
@@ -105,6 +106,7 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
         retryable: false,
         diagnostics: {
           reason: 'missing_credential',
+          reconnectCause: 'credential_missing',
         },
       }),
     });
@@ -131,6 +133,10 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
   const refreshStatus = status || null;
   const refreshCategory = readStringField(diagnostic, 'category') || null;
   const retryable = readString(error.kind) === 'transient_refresh_failed';
+  const parsedReconnectCause = ConnectedServiceCredentialReconnectCauseV1Schema.safeParse(error.reconnectCause);
+  const reconnectCause = readString(error.kind) === 'profile_action_required' && status === 'needs_reauth'
+    ? 'listed_needs_reauth'
+    : parsedReconnectCause.success ? parsedReconnectCause.data : undefined;
   if (retryable && reason === 'project_requester_home_unavailable') {
     const message = 'Requester Home is temporarily unavailable. Retry when it is available.';
     return {
@@ -164,6 +170,7 @@ export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Re
             reason,
             refreshStatus,
             refreshCategory,
+            ...(reconnectCause ? { reconnectCause } : {}),
           },
     }),
   });

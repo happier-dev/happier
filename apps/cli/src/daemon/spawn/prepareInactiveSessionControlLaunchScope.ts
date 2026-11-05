@@ -33,7 +33,7 @@ export type InactiveSessionControlLaunchAdmission = Pick<ConnectedAdmission,
   'credentials' | 'api' | 'activeServerDir' | 'connectedServicesMaterializationBaseDir'
   | 'connectedServiceRefreshCoordinator' | 'qualifiedConnectedAccountApi'
   | 'activatePurposeBindings' | 'processEnv' | 'serverContract' | 'prepareAgentIsolationMember' | 'readAgentIsolationEnabled'
-  | 'providerAccountUsageStore' | 'authGroupSwitchCoordinator' | 'predictiveSwitchGuard'> & Pick<ProviderAdmission,
+  | 'providerAccountUsageStore' | 'createConnectedServiceLaunchAuthGroupCoordinator' | 'predictiveSwitchGuard'> & Pick<ProviderAdmission,
   'savedSecretOperationContext' | 'providerRuntimeHomeDir' | 'resolveProvidersFeatureEnabled'
   | 'resolveManagedPurposeBindingIntent' | 'readModelProjection'> & Readonly<{
     agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;

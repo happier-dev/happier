@@ -1,6 +1,6 @@
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, type ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { AccountSettings, ConnectedAccountServiceKey, BuiltInLegacyConnectedAccountOperation, ConnectedServiceCredentialHealthV1, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionBoundaryV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/plugin-sdk/connected-accounts';
 import { isPluginError } from '@happier-dev/plugin-sdk';
@@ -254,8 +254,13 @@ export type ConnectedServiceCredentialRefreshResult = Readonly<{
 }>;
 
 export type QualifiedConnectedAccountSpawnPreflightResult = Readonly<{
-  status: 'ready' | 'reconnect_required' | 'refresh_failed';
+  status: 'ready';
+  profile: Extract<QualifiedConnectedAccountProfileV4, { revisionSemantics: 'revisioned' }>;
+  reason?: never;
+}> | Readonly<{
+  status: 'reconnect_required' | 'refresh_failed';
   reason?: QualifiedConnectedAccountRefreshLeaseError['code'] | 'project_requester_home_unavailable';
+  reconnectCause?: ConnectedServiceCredentialReconnectCauseV1;
 }>;
 
 export type ConnectedServiceAuthGroupCandidatePreparationResult =
@@ -633,6 +638,9 @@ export class ConnectedServiceRefreshCoordinator {
             onCredentialUpdated: (account, options) => this.runCurrentAccountOperation(async () => {
               await runtime.onCredentialUpdated!(account, options);
             }),
+          } : {}),
+          ...(runtime.onReauthRequired ? {
+            onReauthRequired: (event) => this.runCurrentAccountOperation(() => runtime.onReauthRequired!(event)),
           } : {}),
         },
       };
@@ -1366,7 +1374,8 @@ export class ConnectedServiceRefreshCoordinator {
       refreshResult: await this.refreshConnectedServiceCredentialForSpawnPreflight({
         serviceId: input.serviceId,
         profileId: input.profileId,
-        force: input.reason === 'auth_expired' || input.reason === 'refresh_failed',
+        // The switch reason belongs to the old active member. Candidate freshness
+        // and health are decided by its own preflight, not another member's failure.
       }),
     });
   }
@@ -1629,8 +1638,9 @@ export class ConnectedServiceRefreshCoordinator {
     allowEarlyRefresh?: boolean;
   }>): Promise<QualifiedConnectedAccountSpawnPreflightResult> {
     const profile = input.profile;
-    if (profile.status === 'needs_reauth') return { status: 'reconnect_required' };
+    if (profile.status === 'needs_reauth') return { status: 'reconnect_required', reconnectCause: 'listed_needs_reauth' };
     if (profile.revisionSemantics !== 'revisioned') return { status: 'refresh_failed' };
+    let readyProfile = profile;
     // Qualified metadata drives the same coordinator-owned refresh window as
     // legacy spawn. Never reverse-project a device/OAuth mode into a V2 record.
     const expiresAt = typeof profile.expiresAt === 'number' && Number.isFinite(profile.expiresAt)
@@ -1645,7 +1655,7 @@ export class ConnectedServiceRefreshCoordinator {
       try {
         if (await observeCurrentConnectedServiceMaterializationPhase('refresh_reconnect_inventory',
           () => this.isQualifiedReconnectRequired(profile.ref, profile.credentialRevision))) {
-          return { status: 'reconnect_required' };
+          return { status: 'reconnect_required', reconnectCause: 'stored_health_rejected' };
         }
         // Native OAuth profiles need not project their expiry into metadata.
         // The established plugin status still observes that exact credential.
@@ -1678,6 +1688,7 @@ export class ConnectedServiceRefreshCoordinator {
         }
         if (health.reconnectRequired) return { status: 'reconnect_required' };
         if (!refreshNeeded && health.status !== 'connected') return { status: 'refresh_failed' };
+        if (!refreshNeeded) readyProfile = { ...readyProfile, status: 'connected' };
       } catch (error) {
         this.armQualifiedConnectedAccountHealthBackoff(profile.ref);
         logger.warn('[DAEMON RUN] Qualified Connected Account spawn status did not settle', {
@@ -1691,15 +1702,19 @@ export class ConnectedServiceRefreshCoordinator {
       }
     }
     if (!refreshNeeded) {
-      return { status: 'ready' };
+      return { status: 'ready', profile: readyProfile };
     }
     const result = await this.refreshQualifiedCredential({
       account: profile.ref,
       expectedCredentialRevision: profile.credentialRevision,
     });
-    return { status: result.status === 'refreshed' || result.status === 'unchanged'
-      ? 'ready' : result.status === 'reconnect_required' ? result.status : 'refresh_failed',
-      ...(result.reason ? { reason: result.reason } : {}),
+    if (result.status === 'refreshed' || result.status === 'unchanged') {
+      return { status: 'ready', profile: { ...profile, ...result.metadata,
+        status: 'connected', credentialRevision: result.credentialRevision } };
+    }
+    return { status: result.status,
+      ...('reason' in result && result.reason ? { reason: result.reason } : {}),
+      ...('reconnectCause' in result && result.reconnectCause ? { reconnectCause: result.reconnectCause } : {}),
     };
   }
 
@@ -1708,8 +1723,13 @@ export class ConnectedServiceRefreshCoordinator {
     signal?: AbortSignal;
     expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }>): Promise<Readonly<{
-    status: 'refreshed' | 'unchanged' | 'reconnect_required' | 'refresh_failed';
+    status: 'refreshed' | 'unchanged';
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+    metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'];
+  }> | Readonly<{
+    status: 'reconnect_required' | 'refresh_failed';
     reason?: QualifiedConnectedAccountRefreshLeaseError['code'];
+    reconnectCause?: ConnectedServiceCredentialReconnectCauseV1;
   }>> {
     const runtime = this.params.qualifiedConnectedAccountRuntime;
     if (
@@ -1741,7 +1761,7 @@ export class ConnectedServiceRefreshCoordinator {
     if (!ownerId) return { status: 'refresh_failed' };
     try {
       if (await this.isQualifiedReconnectRequired(input.account, input.expectedCredentialRevision)) {
-        return { status: 'reconnect_required' };
+        return { status: 'reconnect_required', reconnectCause: 'stored_health_rejected' };
       }
       const settlement = await this.refreshQualifiedAccount({
         account: input.account,
@@ -1760,7 +1780,7 @@ export class ConnectedServiceRefreshCoordinator {
       if (
         settlement.basis.credentialRevision
           !== input.expectedCredentialRevision
-        || !settlement.basis.isCurrent()
+        || (settlement.status !== 'refreshed' && !settlement.basis.isCurrent())
       ) {
         return { status: 'refresh_failed' };
       }
@@ -1788,16 +1808,16 @@ export class ConnectedServiceRefreshCoordinator {
           service: input.account.service,
           error: sanitizeConnectedServiceDiagnosticError(error, { redactedValues: [input.account.accountId] }),
         });
-        if (!settlement.basis.isCurrent()) return { status: 'refresh_failed' };
+        if (settlement.status !== 'refreshed' && !settlement.basis.isCurrent()) return { status: 'refresh_failed' };
       }
       if (settlement.status === 'refreshed') {
         this.resetQualifiedConnectedAccountHealthBackoff(input.account);
         await runtime.onCredentialUpdated?.(input.account);
-        return { status: 'refreshed' };
+        return { status: 'refreshed', credentialRevision: settlement.credentialRevision, metadata: settlement.metadata };
       }
       if (settlement.status === 'unchanged') {
         this.resetQualifiedConnectedAccountHealthBackoff(input.account);
-        return { status: 'unchanged' };
+        return { status: 'unchanged', credentialRevision: input.expectedCredentialRevision, metadata: expectedCredential.metadata };
       }
       this.armQualifiedConnectedAccountHealthBackoff(input.account);
       return { status: health.reconnectRequired ? 'reconnect_required' : 'refresh_failed' };

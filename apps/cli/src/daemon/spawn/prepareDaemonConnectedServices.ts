@@ -33,6 +33,7 @@ import {
     resolveConnectedServiceMaterializationIdentityForSpawn,
 } from '../connectedServices/materialization/identity';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import { resolveConnectedServiceAuthForLaunch, type ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
 import {
     ConnectedServiceQualifiedPurposeAuthorityError,
     ConnectedServiceSpawnResumeUnreachableError,
@@ -58,7 +59,6 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 type SpawnCredentials = NonNullable<Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
 type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['accountUsageStore'];
-type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator'];
 type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 
@@ -142,7 +142,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     api: SpawnApi;
     providerAccountUsageStore?: SpawnAccountUsageStore;
     connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null;
-    authGroupSwitchCoordinator?: SpawnAuthGroupSwitchCoordinator | null;
+    createConnectedServiceLaunchAuthGroupCoordinator?: ConnectedServiceLaunchAuthGroupCoordinatorFactory;
     predictiveSwitchGuard?: SpawnPredictiveSwitchGuard;
     processEnv: NodeJS.ProcessEnv;
     connectedServicesMaterializationBaseDir: string;
@@ -258,7 +258,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
             input.catalogAgentId,
         ).stateMode === 'shared';
         try {
-            auth = await resolveConnectedServiceAuthForSpawn({
+            auth = await resolveConnectedServiceAuthForLaunch({
                 signal: input.signal,
                 ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
                 agentId: input.catalogAgentId,
@@ -280,7 +280,6 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 quotaFreshnessMs: 5 * 60_000,
                 nowMs: () => Date.now(),
                 ...(authSessionId ? { sessionId: authSessionId } : {}),
-                authGroupSwitchCoordinator: input.authGroupSwitchCoordinator ?? null,
                 predictiveSwitchGuard: input.predictiveSwitchGuard ?? null,
                 accountSettings: activeAccountSettings?.settings ?? null,
                 processEnv: input.processEnv,
@@ -327,7 +326,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                         },
                     }
                     : {}),
-            });
+            }, input.createConnectedServiceLaunchAuthGroupCoordinator ?? (async () => null));
         } catch (error) {
             if (error instanceof ConnectedServiceQualifiedPurposeAuthorityError) {
                 return {

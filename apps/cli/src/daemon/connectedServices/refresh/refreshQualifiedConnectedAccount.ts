@@ -59,6 +59,7 @@ export type QualifiedConnectedAccountRefreshSettlement =
   | Readonly<{
       status: 'refreshed';
       credentialRevision: string;
+      metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'];
       result: PluginConnectedAccountHealthResult;
       basis: QualifiedConnectedAccountEstablishedInvocationBasis;
     }>
@@ -355,6 +356,7 @@ export async function refreshQualifiedConnectedAccount(input: Readonly<{
     return Object.freeze({
       status: 'refreshed' as const,
       credentialRevision: settled.credentialRevision,
+      metadata: replacement.metadata,
       result: invocation.result,
       basis: invocation.basis,
     });
