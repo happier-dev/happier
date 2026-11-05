@@ -26,6 +26,34 @@ function current(environment: Record<string, unknown> = {}) {
 }
 
 describe('stored template preparation', () => {
+    it('carries exact public files and merges upgrades without replacing hand edits', () => {
+        const publicFiles = [{ path: 'files/app.conf', content: 'upstream=1' }];
+        const selected = DeploymentTemplateV1Schema.parse({ ...template, compose: { ...template.compose, publicFiles } });
+        expect(prepareDeploymentTemplateInstantiationV1({ template: selected, templateRef, source, bindings: [binding] }).publicFiles).toEqual(publicFiles);
+        const existing = current();
+        existing.content.bindings = [binding];
+        existing.content.template = { templateRef, services: ['db'], definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } };
+        if (existing.content.definition.kind !== 'stored') throw new Error('Expected stored source');
+        existing.content.definition.publicFiles = [{ path: 'files/app.conf', content: 'local=1' }, { path: 'files/local.conf', content: 'keep' }];
+        const nextRef = { ...templateRef, version: '2' };
+        const input = { template: selected, templateRef: nextRef, source, bindings: [], current: { ...existing,
+            source: { ...existing.source, services: { ...existing.source.services, ...source.services }, volumes: source.volumes },
+            baseline: { templateRef, source, publicFiles } } };
+        expect(prepareDeploymentTemplateInstantiationV1(input).publicFiles).toEqual(existing.content.definition.publicFiles);
+        expect(() => prepareDeploymentTemplateInstantiationV1({ ...input, template: { ...selected, compose: { ...selected.compose,
+            publicFiles: [{ path: 'files/app.conf', content: 'upstream=2' }] } } }))
+            .toThrowError(expect.objectContaining({ code: 'template_resource_conflict' }));
+        const specialFile = { path: '__proto__', content: 'a public file' };
+        const addedFile = { path: 'files/new.conf', content: 'upstream addition' };
+        expect(prepareDeploymentTemplateInstantiationV1({ ...input,
+            template: { ...selected, compose: { ...selected.compose, publicFiles: [...publicFiles, specialFile, addedFile] } },
+            current: { ...input.current,
+                content: { ...existing.content, definition: { ...existing.content.definition,
+                    publicFiles: [...existing.content.definition.publicFiles, specialFile] } },
+                baseline: { ...input.current.baseline, publicFiles: [...publicFiles, specialFile] } },
+        }).publicFiles).toEqual([...existing.content.definition.publicFiles.slice(0, 1), specialFile,
+            ...existing.content.definition.publicFiles.slice(1), addedFile]);
+    });
     it('rejects public files that overwrite the Compose source or collide within the contained tree', () => {
         for (const publicFiles of [[{ path: 'compose.yaml', content: 'replace' }], [{ path: 'Compose.yaml', content: 'replace' }],
             [{ path: 'compose.yaml.', content: 'replace' }], [{ path: 'compose.yaml ', content: 'replace' }],

@@ -7,7 +7,7 @@ export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
     /** Parsed by P41's source syntax owner, never a separately interpreted template language. */
     source: Record<string, unknown>;
     current?: Readonly<{ content: DeploymentEnvironmentContentV1; source: Record<string, unknown>;
-        baseline?: Readonly<{ templateRef: TemplateRef; source: Record<string, unknown> }> }>;
+        baseline?: Readonly<{ templateRef: TemplateRef; source: Record<string, unknown> }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'> }>;
     bindings: StoredAppPresetInputV1['bindings']; connectTo?: Readonly<{ service: string }>;
     replace?: readonly string[]; domainBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']>>;
     /** One finite receiver sampler snapshot; absent facts remain unknown. */
@@ -21,7 +21,7 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     capacity: DeploymentTemplateCapacityReviewV1;
     template: Readonly<{ templateRef: TemplateRef; services: string[] }>
         & Pick<DeploymentTemplateV1, 'data' | 'exports' | 'loginFields' | 'firstRunSetup' | 'health'>;
-}>;
+}> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'>;
 export class DeploymentTemplatePreparationErrorV1 extends Error {
     constructor(readonly code: string, readonly details?: Readonly<{ key: string }>) {
         super(details ? `${code}: ${JSON.stringify(details.key)}` : code);
@@ -43,12 +43,10 @@ function mergePinnedSource(baseline: unknown, current: unknown, selected: unknow
     if (baseline && current && selected && typeof baseline === 'object' && typeof current === 'object'
         && typeof selected === 'object' && !Array.isArray(baseline) && !Array.isArray(current) && !Array.isArray(selected)) {
         const before = record(baseline), local = record(current), next = record(selected);
-        const merged: Record<string, unknown> = {};
-        for (const key of new Set([...Object.keys(before), ...Object.keys(local), ...Object.keys(next)])) {
+        return Object.fromEntries([...new Set([...Object.keys(before), ...Object.keys(local), ...Object.keys(next)])].flatMap(key => {
             const value = mergePinnedSource(before[key], local[key], next[key], conflict);
-            if (value !== undefined) merged[key] = value;
-        }
-        return merged;
+            return value === undefined ? [] : [[key, value]];
+        }));
     }
     return refuse(conflict);
 }
@@ -92,6 +90,20 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
     if (upgrading && !baseline) return refuse('template_source_unavailable');
     if (baseline && !equal(baseline.templateRef, recorded)) return refuse('template_changed');
     const document = input.current ? structuredClone(input.current.source) : {};
+    const fileMap = (files: DeploymentTemplateV1['compose']['publicFiles']) => Object.fromEntries((files ?? []).map(file => [file.path, file.content]));
+    const currentFiles = input.current?.content.definition.kind === 'stored' ? input.current.content.definition.publicFiles : undefined;
+    const selectedFiles = fileMap(template.compose.publicFiles);
+    const incumbentFiles = fileMap(currentFiles);
+    let mergedFiles: Record<string, unknown>;
+    if (baseline) mergedFiles = record(mergePinnedSource(fileMap(baseline.publicFiles), incumbentFiles, selectedFiles, 'template_resource_conflict'));
+    else {
+        for (const [path, content] of Object.entries(selectedFiles)) {
+            if (Object.hasOwn(incumbentFiles, path) && incumbentFiles[path] !== content) return refuse('template_resource_conflict');
+        }
+        mergedFiles = { ...incumbentFiles, ...selectedFiles };
+    }
+    const publicFiles = Object.entries(mergedFiles).map(([path, content]) => ({ path,
+        content: typeof content === 'string' ? content : refuse('template_resource_conflict') }));
     for (const key of new Set([...Object.keys(source), ...Object.keys(baseline?.source ?? {})])) {
         const value = source[key];
         if (baseline) {
@@ -204,7 +216,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
             observedAt: observedBytes === null ? null : input.targetResources!.sampledAt,
             state: observedBytes === null ? 'unknown' : observedBytes < minimumBytes ? 'shortfall' : 'meetsMinimum' });
     }
-    return { document: JSON.stringify(document), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
+    return { document: JSON.stringify(document), ...(publicFiles.length ? { publicFiles } : {}), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
         template: { templateRef: input.templateRef, services: selectedServices,
             ...(template.health ? { health: template.health } : {}),
             ...(template.data ? { data: template.data } : {}), ...(template.exports ? { exports: template.exports } : {}),
