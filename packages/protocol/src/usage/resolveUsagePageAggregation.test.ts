@@ -10,13 +10,322 @@ import { USAGE_COACH_DETECTOR_IDS } from './coach/coachDetectorIds.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { readUsageScopeOptions } from './usageFilterOptions.js';
 import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence } from './usageWorkEvidence.js';
+import { RPC_ERROR_CODES } from '../rpc/errors.js';
+import { projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse } from './usageCost.js';
+import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 
 const tokens = { input: 12, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 16 };
 const accounting = UsageAnalyticsQueryResponseSchema.parse({
   v: 1, totals: { eventCount: 1, tokens, cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' } },
 });
 
+it.each([false, true])('uses the selected All calendar bounds in rich and compact snapshots (compact %s)', compact => {
+  const endMs = Date.parse('2026-10-22T12:00:00Z');
+  const observedAtMs = Date.parse('2026-10-21T23:00:00Z');
+  const query = normalizeUsageQuery({ period: { relative: 'all' }, timeZoneOffsetMinutes: 120,
+    includeActivity: true, includeModelTimeline: true, includeWorkEvidence: false, includeSessionEvidence: false });
+  const rich = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+    contributions: [{ id: 'selected', observedAtMs, sessionId: null, turnId: null, agentId: 'codex', modelId: null,
+      machineId: null, projectKey: null, workspaceId: null, source: null, tokens, cost: accounting.totals.cost }],
+    coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+      range: { startMs: 0, endMs, complete: true }, sources: [] } });
+  const value = compact ? projectUsageAnalyticsSummary(rich, usageQueryToAnalyticsRequest(query, endMs)) : rich;
+  const snapshot = projectUsageAccountingSnapshotCalendar({ query, period: { endMs }, value, status: 'available' });
+  expect(snapshot.agentCalendarAccounting!.period).toEqual({ startMs: Date.parse('2026-10-21T22:00:00Z'), endMs });
+  expect(snapshot.agentCalendarAccounting!.projection.days.map(day => day.date)).toEqual(['2026-10-22']);
+  const page = resolveUsagePageAggregation({ queries: [query], accounting: [snapshot], nowMs: endMs });
+  expect(UsageQueryBatchResultSchema.safeParse(page).success).toBe(true);
+  const result = page.results[0]!;
+  expect(result.howYouWork!.agentCalendar!.days.map(day => day.date)).toEqual(['2026-10-22']);
+  expect(result.comparison).toBeUndefined();
+});
+
+it.each([false, true])('keeps earlier private days and weekly accounting when composing an All calendar (compact %s)', compact => {
+  const observedAtMs = Date.parse('1970-01-13T12:00:00Z');
+  const endMs = Date.parse('1970-01-15T12:00:00Z');
+  for (const firstPrivateDay of ['1970-01-08', '1970-01-12']) {
+    const startMs = Date.parse(`${firstPrivateDay}T00:00:00Z`);
+    const query = normalizeUsageQuery({ period: { relative: 'all' }, includeActivity: true,
+      includeModelTimeline: true, includeWorkEvidence: false, includeSessionEvidence: true });
+    const rich = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+      contributions: [{ id: 'selected', observedAtMs, sessionId: 'session', turnId: 'turn', agentId: 'codex', modelId: null,
+        machineId: 'machine', projectKey: null, workspaceId: null, source: 'runtime',
+        sourceContext: { path: 'runtime', execution: 'happier' }, tokens, cost: accounting.totals.cost }],
+      coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+        range: { startMs: 0, endMs, complete: true }, sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine',
+          status: 'available', historyComplete: true, eventCount: 1 }] } });
+    const read = (requested: typeof query) => {
+      const period = resolveUsageQueryPeriod(requested, endMs);
+      const value = compact ? projectUsageAnalyticsSummary(rich, usageQueryToAnalyticsRequest(requested, endMs)) : rich;
+      const page = resolveUsagePageAggregation({ queries: [requested], nowMs: endMs,
+        accounting: [{ query: requested, period, value, status: 'available' }],
+        howYouWork: [{ query: requested, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
+          agentId: 'codex', machineId: null, kind: 'busy', startMs: startMs + 1_000, endMs: startMs + 2_000 }] } }],
+      });
+      expect(UsageQueryBatchResultSchema.safeParse(page).success).toBe(true);
+      return page.results[0]!;
+    };
+    const bounded = read(query);
+    const explicit = read(normalizeUsageQuery({ ...query, period: { startMs: 0, endMs } }));
+    const calendar = bounded.howYouWork!.agentCalendar!;
+    const previous = explicit.howYouWork!.agentCalendar!;
+    expect(calendar.period).toEqual({ startMs, endMs });
+    expect(calendar.days[0]!.date).toBe(firstPrivateDay);
+    expect(calendar.days).toHaveLength(firstPrivateDay === '1970-01-08' ? 8 : 4);
+    expect(calendar.periodSummary.totals.tokens).toBe(tokens.total);
+    expect(calendar.periodSummary.totals.busyMs).toBe(1_000);
+    expect(calendar.days[0]!.totals.busyMs).toBe(1_000);
+    expect(calendar.days.find(day => day.date === '1970-01-13')!.totals.tokens).toBe(tokens.total);
+    expect(calendar.weeks).toHaveLength(firstPrivateDay === '1970-01-08' ? 2 : 1);
+    expect(new Set(calendar.weeks.map(week => week.startMs)).size).toBe(calendar.weeks.length);
+    expect(calendar.weeks[0]!.startMs).toBe(startMs);
+    expect(calendar.weeklyAgentMix.map(week => [week.startMs, week.endMs])).toEqual(calendar.weeks.map(week => [week.startMs, week.endMs]));
+    expect(calendar.weeklyAgentMix.flatMap(week => week.mix)).toEqual(previous.weeklyAgentMix.flatMap(week => week.mix));
+    expect(previous.period).toEqual({ startMs: 0, endMs });
+    expect(previous.days).toHaveLength(15);
+    expect(bounded.howYouWork!.intervals).toEqual(explicit.howYouWork!.intervals);
+    expect(bounded.coach?.period).toEqual(explicit.coach?.period);
+    expect(bounded.planInsights).toEqual(explicit.planInsights);
+  }
+});
+
+it('retains equal public projections when a source wrapper carries a different private projection identity', () => {
+  const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 }, includeComparison: false,
+    includeActivity: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+  let factVisits = 0;
+  const facts = [{ get workId() { factVisits++; return 'work'; }, evidenceId: 'turn', agentId: 'codex',
+    machineId: null, kind: 'busy' as const, startMs: 100, endMs: 200 }];
+  const inputs = { queries: [query], nowMs: 1_000,
+    accounting: [{ query, status: 'available' as const, value: accounting }],
+    howYouWork: [{ query, detail: { status: 'available' as const, facts } }] };
+  const original = resolveUsagePageAggregation(inputs);
+  const source = original.results[0]!;
+  // In-process source wrappers carry the private admission symbol alongside
+  // public facts. Its calculation value can differ from the published identity.
+  const wrapped = { ...original, results: [{ ...source, howYouWork: { ...source.howYouWork! } }] };
+  expect(wrapped.results[0]!.howYouWork).toEqual(source.howYouWork);
+  expect(wrapped.results[0]!.howYouWork).not.toBe(source.howYouWork);
+  const retained = retainUsageQueryResultReferences(original, wrapped);
+  expect(retained, 'equal public facts must retain the already published batch').toBe(wrapped);
+  factVisits = 0;
+  const changed = resolveUsagePageAggregation({ ...inputs, previous: retained,
+    quota: { status: 'pending', asOfMs: 2_000 } });
+  expect(changed.results[0]!.howYouWork).toBe(wrapped.results[0]!.howYouWork);
+  expect(changed.results[0]!.sources).toContainEqual({ source: 'quota', status: 'pending', asOfMs: 2_000 });
+  expect(factVisits, 'independent quota progress must not traverse retained Work facts').toBe(0);
+  const realChange = resolveUsagePageAggregation({ ...inputs, previous: changed,
+    howYouWork: [{ query, detail: { status: 'available', facts: [{ ...facts[0]!, endMs: 300 }] } }] });
+  expect(realChange.results[0]!.howYouWork!.intervals!.agentTimeMs).toBe(200);
+});
+
+it('does not derive Coach facts for accounting-only queries, while evidence queries retain Coach', () => {
+  const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 }, includeContributions: true, includeSessionEvidence: false,
+    includeTranscriptEvidence: false, includeWorkEvidence: false });
+  const detailed = normalizeUsageQuery({ ...query, includeSessionEvidence: true });
+  const value = repriceUsageAnalyticsResponse(UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+    contributions: Array.from({ length: 128 }, (_, index) => ({ id: String(index), observedAtMs: 100,
+      sessionId: 's', turnId: String(index), agentId: null, modelId: 'model', machineId: null, projectKey: null,
+      workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost: accounting.totals.cost })),
+    priceCatalog: { ...bundledUsageModelPriceCatalog, models: { model: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } },
+  }));
+  let lookups = 0;
+  value.priceCatalog!.models = new Proxy(value.priceCatalog!.models, {
+    get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); },
+  });
+  const project = (queries: typeof query[]) => resolveUsagePageAggregation({ queries,
+    accounting: queries.map(query => ({ query, status: 'available' as const, value, asOfMs: 1_000 })) });
+  const compact = project([query]).results[0]!;
+  expect(compact.accounting?.totals.tokens.total).toBe(value.totals.tokens.total);
+  expect(compact.coach).toBeUndefined();
+  expect(lookups).toBe(0);
+  expect(project([detailed]).results[0]!.coach?.evaluations).toHaveLength(USAGE_COACH_DETECTOR_IDS.length);
+});
+
 describe('resolveUsagePageAggregation', () => {
+  it('conserves rounded public fact operands at query admission without rounding selected raw money', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 900 }, includeComparison: false,
+      includeQuotaHistory: false, includeInsights: true, includeActivity: false, includeSeries: false,
+      includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
+      includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: true,
+      workProjection: 'detail', breakdown: ['agent'] });
+    const contributions = [0.10000000000000002, 0.2, 0.3].map((reportedUsd, index) => ({
+      id: `fraction-${index}`, eventCount: 1, observedAtMs: 150, sessionId: null, turnId: null,
+      agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null, source: 'runtime', tokens,
+      cost: { reportedUsd, estimatedUsd: 0, currency: 'USD',
+        costSource: index === 2 ? 'provider_reported_api_equivalent' as const : 'provider_reported' as const },
+    }));
+    const value = repriceUsageAnalyticsResponse({ ...accounting, contributions, totals: { ...accounting.totals, eventCount: 3,
+      tokens: { ...tokens, input: 36, output: 12, total: 48 } } });
+    const batch = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] });
+    for (const candidate of [batch, JSON.parse(JSON.stringify(batch))]) {
+      const admitted = UsageQueryBatchResultSchema.safeParse(candidate);
+      expect(admitted.success, JSON.stringify(admitted.error?.issues.map(issue => ({ code: issue.code, path: issue.path })))).toBe(true);
+    }
+    expect(batch.results[0]!.accounting!.totals.cost.effectiveUsd).toBe(0.6);
+    const serialized = JSON.parse(JSON.stringify(batch));
+    serialized.results[0].costFactTotals[0].amountUsd = 1;
+    expect(UsageQueryBatchResultSchema.safeParse(serialized).success).toBe(false);
+  });
+
+  it('reads only the requested population when no comparison is consumed', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
+    expect(resolveUsagePageAccountingRequests([query], 200)).toHaveLength(2);
+    const currentOnly = normalizeUsageQuery({ ...query, includeComparison: false });
+    expect(resolveUsagePageAccountingRequests([currentOnly], 200)).toEqual([currentOnly]);
+    expect(resolveUsagePageAggregation({ queries: [currentOnly] }).results[0]).not.toHaveProperty('comparison');
+  });
+  it('preserves operation update requirements beside usable accounting in the public Usage result', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
+    const updateRequired = { kind: 'update_required' as const, operation: 'session.detail', component: 'server' as const,
+      reason: 'session_read_batch_unsupported' };
+    const result = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }],
+      work: [{ query, status: 'unsupported', errorCode: 'update_required', updateRequired }],
+      howYouWork: [{ query, errorCode: 'update_required', updateRequired }] });
+    const slice = UsageQueryBatchResultSchema.parse(result).results[0]!;
+    expect(slice.accounting?.totals).toEqual(accounting.totals);
+    for (const source of ['work', 'how_you_work']) expect(slice.sources).toContainEqual(expect.objectContaining({
+      source, errorCode: 'update_required', updateRequired }));
+    const recovered = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], previous: result,
+      accounting: [{ query, status: 'available', value: accounting }], work: [{ query, status: 'available', evidence: [] }],
+      howYouWork: [{ query, detail: { status: 'available', facts: [] } }] })).results[0]!;
+    for (const source of ['work', 'how_you_work']) {
+      expect(recovered.sources.find(row => row.source === source)).not.toHaveProperty('updateRequired');
+      expect(recovered.sources.find(row => row.source === source)).not.toHaveProperty('errorCode');
+    }
+  });
+
+  it.each(['all_personal_history', 'public_eligible_personal'] as const)(
+    'visits no unchanged Work, interval or Coach facts across quota-only progress (%s)', population => {
+    const query = normalizeUsageQuery({ population, period: { startMs: 100, endMs: 1_000 }, includeActivity: true });
+    const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+      contributions: Array.from({ length: 1_000 }, (_, index) => ({ id: `row-${index}`, observedAtMs: 150,
+        sessionId: index === 0 ? null : `session-${index}`, turnId: 'turn', agentId: 'claude', modelId: null,
+        machineId: null, projectKey: null, workspaceId: null, source: 'native:claude',
+        sourceContext: { path: 'native', execution: index === 0 ? 'outside' : 'happier' }, tokens, cost: accounting.totals.cost })),
+      coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+        range: { startMs: 100, endMs: 1_000, complete: true } },
+    });
+    let accountingVisits = 0;
+    let intervalVisits = 0;
+    let workVisits = 0;
+    let coachVisits = 0;
+    const witness: UsageWorkEvidence = { sessionId: 'session-1', turnId: 'turn', repositoryKey: 'repo',
+      checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: {
+        provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+          nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Observed work', url: 'https://github.com/owner/repo/pull/1',
+        baseBranch: 'main', headBranch: 'feature', state: 'merged',
+      } };
+    const evidence = [witness];
+    Object.defineProperty(evidence, 0, { enumerable: true, get: () => { workVisits++; return witness; } });
+    for (const row of value.contributions!) {
+      const sessionId = row.sessionId;
+      Object.defineProperty(row, 'sessionId', { enumerable: true, get: () => { accountingVisits++; return sessionId; } });
+      const observedAtMs = row.observedAtMs;
+      Object.defineProperty(row, 'observedAtMs', { enumerable: true, get: () => { coachVisits++; return observedAtMs; } });
+    }
+    const facts = Array.from({ length: 1_000 }, (_, index) => ({
+      get workId() { intervalVisits++; return `session-${index}`; }, evidenceId: `interval-${index}`,
+      agentId: 'claude', machineId: null, kind: 'busy' as const, startMs: 110, endMs: 160,
+    }));
+    const inputs = { queries: [query], nowMs: 1_000,
+      accounting: [{ query, value, status: 'available' as const, asOfMs: 1_000 }],
+      work: [{ query, status: 'available' as const, evidence }],
+      howYouWork: [{ query, asOfMs: 1_000, detail: { status: 'available' as const, facts } }],
+    };
+    let previous = resolveUsagePageAggregation(inputs);
+    expect(accountingVisits).toBeGreaterThan(0);
+    expect(intervalVisits).toBeGreaterThan(0);
+    expect(workVisits).toBeGreaterThan(0);
+    expect(coachVisits).toBeGreaterThan(0);
+    const original = previous.results[0]!;
+    for (const allocation of [...original.work!.allocations, ...original.work!.branchAllocations]) {
+      const witnesses = allocation.evidence;
+      Object.defineProperty(allocation, 'evidence', { enumerable: true, get: () => { workVisits++; return witnesses; } });
+    }
+    accountingVisits = intervalVisits = workVisits = coachVisits = 0;
+    for (let revision = 0; revision < 10; revision++) previous = resolveUsagePageAggregation({ ...inputs, previous,
+      quota: { status: 'pending', asOfMs: revision },
+      sources: [{ source: 'native:capture', status: revision % 2 ? 'available' : 'pending', asOfMs: revision }],
+    });
+    expect({ accountingVisits, intervalVisits, workVisits, coachVisits })
+      .toEqual({ accountingVisits: 0, intervalVisits: 0, workVisits: 0, coachVisits: 0 });
+    expect(previous.results[0]!.work).toBe(original.work);
+    expect(previous.results[0]!.howYouWork).toBe(original.howYouWork);
+    expect(previous.results[0]!.coach).toBe(original.coach);
+
+    const pending = { ...inputs, work: [{ query, status: 'pending' as const }], howYouWork: undefined,
+      sources: [{ source: 'how_you_work', status: 'pending' as const }] };
+    let retained = resolveUsagePageAggregation({ ...pending, previous });
+    accountingVisits = intervalVisits = workVisits = coachVisits = 0;
+    for (let revision = 0; revision < 10; revision++) retained = resolveUsagePageAggregation({ ...pending, previous: retained,
+      quota: { status: 'pending', asOfMs: revision },
+    });
+    expect({ accountingVisits, intervalVisits, workVisits, coachVisits })
+      .toEqual({ accountingVisits: 0, intervalVisits: 0, workVisits: 0, coachVisits: 0 });
+    expect(retained.results[0]!.howYouWork!.intervals).toEqual(original.howYouWork!.intervals);
+
+    const changed = resolveUsagePageAggregation({ ...inputs, previous,
+      accounting: [{ ...inputs.accounting[0]!, value: { ...value, contributions: value.contributions!.slice(1, 2) } }],
+    });
+    expect(accountingVisits).toBeGreaterThan(0);
+    expect(changed.results[0]!.work!.allocations).toHaveLength(1);
+    expect(changed.results[0]!.coach).not.toBe(original.coach);
+    expect(original.coach!.findings.some(row => row.detectorId === 'outside_usage')).toBe(true);
+    expect(changed.results[0]!.coach!.findings.some(row => row.detectorId === 'outside_usage')).toBe(false);
+    accountingVisits = intervalVisits = workVisits = 0;
+    const configured = resolveUsagePageAggregation({ ...inputs, previous, coachPreferences: {
+      v: 1, suppressions: [], disabledChecks: ['outside_usage'], modelSuggestion: 'suggest_with_estimates',
+    } });
+    expect(configured.results[0]!.coach!.evaluations.find(row => row.detectorId === 'outside_usage')!.status).toBe('disabled');
+    expect(configured.results[0]!.work).toBe(original.work);
+    expect(configured.results[0]!.howYouWork).toBe(original.howYouWork);
+    expect(intervalVisits).toBe(0);
+    expect(workVisits).toBe(0);
+    const changedDetail = resolveUsagePageAggregation({ ...inputs, previous, howYouWork: [{ ...inputs.howYouWork[0]!,
+      detail: { ...inputs.howYouWork[0]!.detail, facts: [{ ...facts[0]!, endMs: 180 }] },
+    }] });
+    expect(changedDetail.results[0]!.howYouWork!.intervals!.agentTimeMs).toBe(70);
+    expect(changedDetail.results[0]!.work).toBe(original.work);
+    expect(changedDetail.results[0]!.coach).toBe(original.coach);
+  });
+
+  it('keeps interval facts admitted across fresh equal evidence while accounting changes', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1_000 }, includeComparison: false,
+      includeActivity: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const facts = Array.from({ length: 1_000 }, (_, index) => ({ workId: `work-${index}`,
+      evidenceId: `turn-${index}`, agentId: null, machineId: null, kind: 'busy' as const,
+      startMs: 100, endMs: 200 }));
+    let intervalPasses = 0;
+    const countPasses = (rows: typeof facts) => new Proxy(rows, {
+      get(target, property, receiver) {
+        if (property === Symbol.iterator) intervalPasses += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const first = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000,
+      accounting: [{ query, status: 'available', value: accounting }],
+      howYouWork: [{ query, detail: { status: 'available', facts, activityAtMs: [150] } }],
+      nightHours: { startHour: 0, endHour: 6 } });
+    const changedAccounting = { ...accounting, totals: { ...accounting.totals, eventCount: 2 } };
+    const second = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000, previous: first,
+      accounting: [{ query, status: 'available', value: changedAccounting }],
+      howYouWork: [{ query, detail: { status: 'available', facts: countPasses(facts.map(fact => ({ ...fact }))),
+        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } });
+    expect(second.results[0]!.accounting?.totals.eventCount).toBe(2);
+    expect(second.results[0]!.howYouWork?.intervals).toBe(first.results[0]!.howYouWork?.intervals);
+    expect(intervalPasses).toBe(0);
+
+    const changedFacts = facts.map((fact, index) => index === 0 ? { ...fact, endMs: 300 } : { ...fact });
+    const third = resolveUsagePageAggregation({ queries: [query], nowMs: 1_000, previous: second,
+      accounting: [{ query, status: 'available', value: changedAccounting }],
+      howYouWork: [{ query, detail: { status: 'available', facts: countPasses(changedFacts),
+        activityAtMs: [150] } }], nightHours: { startHour: 0, endHour: 6 } });
+    expect(third.results[0]!.howYouWork?.intervals?.agentTimeMs).toBe(first.results[0]!.howYouWork!.intervals!.agentTimeMs + 100);
+    expect(intervalPasses).toBe(2);
+  });
+
   it('reads preceding totals without acquiring unused chart or message-count sections and preserves repriced comparisons', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, breakdown: ['agent', 'model'],
       includeSeries: true, includeInsights: true, includeActivity: true, includeLeaders: true,
@@ -346,8 +655,8 @@ describe('resolveUsagePageAggregation', () => {
     expect(after.contributions!.at(-1)!.observedAtMs).toBe(151);
     expect(unchangedReads, 'a changed contribution must not deep-walk unaffected admitted rows').toBe(0);
   });
-  it('admits stable accounting references in the producer snapshot before independent publications', () => {
-    const query = normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence: false,
+  it.each([false, true])('admits stable accounting references in the producer snapshot before independent publications (private evidence %s)', includeSessionEvidence => {
+    const query = normalizeUsageQuery({ period: { relative: 'all' }, includeSessionEvidence,
       includeWorkEvidence: false, includeActivity: false, includeModelTimeline: false });
     const before = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
       priceCatalog: bundledUsageModelPriceCatalog,
@@ -360,16 +669,55 @@ describe('resolveUsagePageAggregation', () => {
     const admitted = projectUsageAccountingSnapshotPrices({ query, value: input, status: 'available' }, undefined, undefined, previous);
     expect(admitted.priceProjection!.value).toBe(previous);
     let reads = 0;
-    for (const row of admitted.priceProjection!.value.contributions!) {
+    expect(admitted.priceProjection!.value.contributions).toBeUndefined();
+    for (const row of admitted.priceProjection!.input.contributions!) {
       const id = row.id;
       Object.defineProperty(row, 'id', { enumerable: true, get() { reads++; return id; } });
     }
     for (let revision = 0; revision < 12; revision++) {
       const next = projectUsageAccountingSnapshotPrices(admitted, undefined, undefined, previous);
       expect(next).toBe(admitted);
-      expect(next.priceProjection!.value.contributions).toBe(previous.contributions);
+      expect(next.priceProjection!.value).toBe(previous);
+      expect(next.priceProjection!.value.contributions).toBeUndefined();
     }
     expect(reads, 'unrelated publications must not inspect already admitted accounting rows').toBe(0);
+  });
+  it('retains unpriced coverage when borrowed demand has no cost facts to reprice', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, breakdown: ['agent'],
+      includeInsights: false, includeMessageStats: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const admitted = usageQueryToAnalyticsRequest(query);
+    const requested = { ...admitted, breakdowns: [] };
+    const supplied = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, coverage: {
+      status: 'partial', reasons: ['unpriced_tokens'],
+      sources: [{ source: 'runtime', path: 'runtime', status: 'available', eventCount: 1, historyComplete: true }],
+      missingDimensions: [], ranked: [{ dimension: 'agent', totalEntries: 1, returnedEntries: 1, complete: true }],
+      range: { complete: true },
+    } });
+
+    expect(supplied.costFacts).toBeUndefined();
+    const projected = projectUsageAnalyticsResponseDemand(supplied, admitted, requested);
+
+    expect(projected).toBeDefined();
+    expect(projected?.coverage).toEqual({ ...supplied.coverage, ranked: [] });
+    expect(projected?.totals).toBe(supplied.totals);
+    expect(projected?.costFacts).toBeUndefined();
+  });
+  it('retains accounting identity when covered demand adds only absent optional members', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeInsights: false,
+      includeMessageStats: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const request = usageQueryToAnalyticsRequest(query);
+    const native = { ...accounting, totals: { ...accounting.totals,
+      cost: { ...accounting.totals.cost, apiEquivalentUsd: undefined } } };
+    const projected = projectUsageAnalyticsResponseDemand(native, request, request)!;
+    expect(JSON.stringify(projected)).toBe(JSON.stringify(accounting));
+    const admitted = projectUsageAccountingSnapshotPrices({ query, value: projected, status: 'available' },
+      undefined, undefined, accounting);
+    expect(admitted.value, 'covered demand does not replace value-equal admitted accounting').toBe(accounting);
+    const changed = { ...projected, totals: { ...projected.totals, eventCount: 2 } };
+    const replacement = projectUsageAccountingSnapshotPrices({ query, value: changed, status: 'available' },
+      undefined, undefined, accounting);
+    expect(replacement.value?.totals.eventCount).toBe(2);
+    expect(replacement.value?.totals.tokens).toBe(accounting.totals.tokens);
   });
   it('reuses snapshot pricing only for the same response, tariffs and cost basis', () => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
@@ -591,10 +939,32 @@ describe('resolveUsagePageAggregation', () => {
     expect(retired.results[0]?.accounting?.coverage?.sources.every(source => !('displayLocation' in source))).toBe(true);
     expect(UsageAnalyticsQueryResponseSchema.safeParse({ ...accounting, coverage: { ...coverage,
       sources: [{ ...coverage.sources[0], displayLocation: '/private/project' }] } }).success).toBe(false);
-    const denied = resolveUsagePageAggregation({ queries: [query], previous: first,
-      accounting: [{ query, status: 'error', errorCode: 'permission_denied' }] });
-    expect(readUsageScopeOptions(denied.results, 'machines', ['selected'])).toEqual(new Map([['selected', 'selected']]));
+    for (const errorCode of ['permission_denied', RPC_ERROR_CODES.FORBIDDEN,
+      RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE]) {
+      const denied = resolveUsagePageAggregation({ queries: [query], previous: first,
+        accounting: [{ query, status: 'error', errorCode }] });
+      expect(readUsageScopeOptions(denied.results, 'machines', ['selected']), errorCode)
+        .toEqual(new Map([['selected', 'selected']]));
+    }
   });
+  it('resolves Account night hours once while honoring explicit snapshot overrides and clearing retained hours', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 } });
+    const source = { query, status: 'available' as const, value: { ...accounting, activity: {
+      weekdayHourBuckets: [{ weekday: 4, hour: 0, eventCount: 7 }, { weekday: 4, hour: 12, eventCount: 3 }],
+    } } };
+    const input = { queries: [query], accounting: [source],
+      accountSettings: { usageNightHoursV1: { startHour: 23, endHour: 7 } } };
+    const preferred = resolveUsagePageAggregation(input);
+    expect(preferred.results[0]?.howYouWork?.nightShift).toEqual({ startHour: 23, endHour: 7,
+      recordedActivityCount: 7, observedBusyMs: null });
+    expect(resolveUsagePageAggregation({ ...input, nightHours: { startHour: 9, endHour: 17 } })
+      .results[0]?.howYouWork?.nightShift).toMatchObject({ startHour: 9, endHour: 17, recordedActivityCount: 3 });
+    expect(resolveUsagePageAggregation({ ...input, previous: preferred, accountSettings: { usageNightHoursV1: null },
+      howYouWork: [{ query, nightHours: { startHour: 23, endHour: 7 }, detail: { status: 'partial', facts: [] } }] })
+      .results[0]?.howYouWork?.nightShift).toBeNull();
+    expect(resolveUsagePageAggregation({ ...input, nightHours: null }).results[0]?.howYouWork?.nightShift).toBeNull();
+  });
+
   it('reprojects chosen night hours while retaining the exact query private interval evidence during a reread', () => {
     const hour = 3_600_000;
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 24 * hour } });
@@ -1089,6 +1459,23 @@ describe('resolveUsagePageAggregation', () => {
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: changedValue, status: 'available' }],
       work: [{ query, status: 'pending' }], previous: result });
     expect(changed.results[0]?.work?.allocations[0]).toMatchObject({ contribution: { tokens: { input: 14, total: 18 } }, reason: 'allocated' });
+    const partialFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }] });
+    const retrying = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'pending' }], previous: partialFailure });
+    expect(retrying.results[0], 'retrying unchanged Work keeps its observed partial facts').toBe(partialFailure.results[0]);
+    const repeatedFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }], previous: retrying });
+    expect(repeatedFailure.results[0], 'the same failed evidence does not republish a slice').toBe(partialFailure.results[0]);
+    const recovered = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'partial', asOfMs: 200, evidence: [] }], previous: repeatedFailure });
+    expect(recovered.results[0]?.work?.outcomes).toEqual([]);
+    expect(recovered.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: 200 });
+    expect(recovered.results[0]).not.toBe(repeatedFailure.results[0]);
+    const completedPartialFailure = resolveUsagePageAggregation({ queries: [query], previous: partialFailure,
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+    expect(completedPartialFailure.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 200,
+      errorCode: 'work_evidence_failed' });
     let failed = result;
     for (let attempt = 0; attempt < 2; attempt++) {
       failed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
@@ -1097,6 +1484,20 @@ describe('resolveUsagePageAggregation', () => {
       expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
       expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
     }
+    const failedSource = failed.results[0]!.sources.find(source => source.source === 'work')!;
+    const independentProgress = resolveUsagePageAggregation({ queries: [query], previous: failed,
+      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+    expect(independentProgress.results[0]!.sources.find(source => source.source === 'work'),
+      'independent accounting progress preserves the incumbent completed Work failure').toBe(failedSource);
+    const updateRequired = { kind: 'update_required' as const, operation: 'session.detail', component: 'server' as const,
+      reason: 'session_read_batch_unsupported' };
+    const changedFailure = resolveUsagePageAggregation({ queries: [query], previous: independentProgress,
+      accounting: [{ query, value, status: 'pending' }],
+      work: [{ query, status: 'error', errorCode: 'work_evidence_failed', updateRequired }] });
+    expect(changedFailure.results[0]!.sources.find(source => source.source === 'work')).toMatchObject({ updateRequired });
+    const clearedRequirement = resolveUsagePageAggregation({ queries: [query], previous: changedFailure,
+      accounting: [{ query, value, status: 'pending' }], work: [{ query, status: 'error', errorCode: 'work_evidence_failed' }] });
+    expect(clearedRequirement.results[0]!.sources.find(source => source.source === 'work')).not.toHaveProperty('updateRequired');
     const recoveredEmpty = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }], previous: failed,
       work: [{ query, status: 'partial', evidence: [] }] });
     expect(recoveredEmpty.results[0]?.work?.outcomes).toEqual([]);
@@ -1104,7 +1505,7 @@ describe('resolveUsagePageAggregation', () => {
       work: [{ query, status: 'error', errorCode: 'work_evidence_failed', evidence: [], branchEvidence: [] }] });
     expect(quarantined.results[0]?.work?.outcomes).toEqual([]);
     const revoked = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
-      work: [{ query, status: 'error', errorCode: 'unauthorized', evidence: [witness] }], previous: result });
+      work: [{ query, status: 'error', errorCode: 'unauthorized', evidence: [witness] }], previous: failed });
     expect(revoked.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'missing_evidence', outcome: null, evidence: [] }]);
     expect(revoked.results[0]?.work?.outcomes).toEqual([]);
     expect(revoked.results[0]?.sources).toContainEqual({ source: 'work', status: 'error', errorCode: 'unauthorized' });
@@ -1112,7 +1513,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0],
       sources: [{ source: 'work', status: 'unsupported' }] }] }).success).toBe(false);
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0], work: {
-      ...result.results[0]!.work, allocations: result.results[0]!.work!.allocations.map(row => ({ ...row, reason: 'missing_evidence' })),
+      ...result.results[0]!.work, allocations: result.results[0]!.work!.allocations.map(row => ({ ...row, reason: 'invented_reason' })),
     } }] }).success).toBe(false);
   });
 
@@ -1204,17 +1605,27 @@ describe('resolveUsagePageAggregation', () => {
   });
 
   it('keeps unchanged slices referentially stable when another source advances', () => {
-    const query = normalizeUsageQuery({ agents: ['a'] });
-    const other = normalizeUsageQuery({ agents: ['b'] });
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents: ['a'] });
+    const other = normalizeUsageQuery({ ...query, agents: ['b'] });
     const first = resolveUsagePageAggregation({ queries: [query, other], accounting: [
       { query, status: 'available', value: accounting },
-    ] });
+    ], sources: [{ source: 'how_you_work', status: 'available' }] });
     const next = resolveUsagePageAggregation({ queries: [query, other], previous: first, accounting: [
       { query, status: 'available', value: accounting }, { query: other, status: 'available', value: accounting },
-    ] });
+    ], sources: [{ source: 'how_you_work', status: 'available' }] });
     expect(next.results[0]).toBe(first.results[0]);
     expect(next.results[1]).not.toBe(first.results[1]);
     expect(next.results[1]?.accounting?.totals.tokens.total).toBe(16);
+    const pending = resolveUsagePageAggregation({ queries: [query, other], previous: next, accounting: [
+      { query, status: 'available', value: accounting }, { query: other, status: 'available', value: accounting },
+    ], sources: [{ source: 'how_you_work', status: 'pending' }] });
+    const refreshed = resolveUsagePageAggregation({ queries: [query, other], previous: pending, accounting: [
+      { query, status: 'available', value: accounting },
+      { query: other, status: 'available', value: { ...accounting, totals: { ...accounting.totals, eventCount: 2 } } },
+    ], sources: [{ source: 'how_you_work', status: 'available' }] });
+    const settled = retainUsageQueryResultReferences(refreshed, pending, next);
+    expect(settled.results[0], 'a changed sibling must not lose the unchanged slice identity after pending detail settles').toBe(next.results[0]);
+    expect(settled.results[1]?.accounting?.totals.eventCount).toBe(2);
   });
 
   it('retains accounting identities while independent source progress replaces their slice', () => {

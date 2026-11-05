@@ -1,4 +1,4 @@
-import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from './usageCalendar.js';
+import { resolveUsageCalendarInstant } from './usageCalendar.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { SessionTurnV1 } from '../sessions/turns/sessionTurnV1.js';
@@ -183,6 +183,14 @@ export interface UsageWorkIntervalsProjection {
     night: { startHour: number; endHour: number; busyMs: number; activityCount: number | null } | null;
 }
 
+type IntervalProjectionCache = {
+    withoutActivity: Map<string, UsageWorkIntervalsProjection>;
+    withActivity: WeakMap<readonly number[], Map<string, UsageWorkIntervalsProjection>>;
+};
+
+// Facts and activity arrays are immutable snapshots. Their identity owns the lifetime of these projections.
+const intervalProjections = new WeakMap<readonly UsageWorkIntervalFact[], IntervalProjectionCache>();
+
 const SpanSchema = lazyZodSchema(() => z.strictObject({ startMs: z.number().check(z.int()), endMs: z.number().check(z.int()) }));
 const DurationSchema = lazyZodSchema(() => z.number().check(z.nonnegative()));
 export const UsageWorkIntervalsProjectionSchema = lazyZodSchema(() => z.strictObject({
@@ -267,6 +275,26 @@ export function projectUsageWorkIntervals(input: UsageWorkIntervalsInput): Usage
         || input.period.endMs < input.period.startMs || !Number.isInteger(input.timeZoneOffsetMinutes)
         || Math.abs(input.timeZoneOffsetMinutes) > 840) throw new RangeError('Invalid usage interval period or offset');
     if (input.nightHours && !UsageNightHoursV1Schema.safeParse(input.nightHours).success) throw new RangeError('Invalid usage night hours');
+    let byFacts = intervalProjections.get(input.facts);
+    if (!byFacts) {
+        byFacts = { withoutActivity: new Map(), withActivity: new WeakMap() };
+        intervalProjections.set(input.facts, byFacts);
+    }
+    let byOptions = input.activityAtMs === undefined ? byFacts.withoutActivity : byFacts.withActivity.get(input.activityAtMs);
+    if (!byOptions) {
+        byOptions = new Map();
+        if (input.activityAtMs !== undefined) byFacts.withActivity.set(input.activityAtMs, byOptions);
+    }
+    const optionsKey = JSON.stringify([input.period.startMs, input.period.endMs, input.timeZoneOffsetMinutes,
+        input.nightHours?.startHour ?? null, input.nightHours?.endHour ?? null]);
+    const cached = byOptions.get(optionsKey);
+    if (cached) return cached;
+    const result = computeUsageWorkIntervals(input);
+    byOptions.set(optionsKey, result);
+    return result;
+}
+
+function computeUsageWorkIntervals(input: UsageWorkIntervalsInput): UsageWorkIntervalsProjection {
     const result: UsageWorkIntervalsProjection = {
         method: 'witnessed_intervals_v1', period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
         coverage: 'complete_for_supplied_facts', unknownEndCount: 0, invalidIntervalCount: 0, agentTimeMs: 0,
@@ -329,11 +357,20 @@ export function projectUsageWorkIntervals(input: UsageWorkIntervalsInput): Usage
     if (result.unknownEndCount || result.invalidIntervalCount) result.coverage = 'partial';
     const days = new Map<string, { date: string; busyMs: number; waitMs: number }>();
     const cells = new Map<string, { weekday: number; hour: number; busyMs: number; waitMs: number }>();
+    const calendarByInstant = new Map<number, ReturnType<typeof resolveUsageCalendarInstant>>();
+    const calendarAt = (instant: number) => {
+        let calendar = calendarByInstant.get(instant);
+        if (!calendar) {
+            calendar = resolveUsageCalendarInstant(instant, input.timeZoneOffsetMinutes);
+            calendarByInstant.set(instant, calendar);
+        }
+        return calendar;
+    };
     const projectCalendar = (segments: readonly UsageWorkIntervalSegment[], metric: 'busyMs' | 'waitMs') => {
         for (const segment of segments) {
             for (let start = segment.startMs; start < segment.endMs;) {
-                const calendar = resolveUsageCalendarInstant(start, input.timeZoneOffsetMinutes);
-                const end = Math.min(segment.endMs, resolveUsageBucketBounds('hour', start, input.timeZoneOffsetMinutes).bucketEndMs);
+                const calendar = calendarAt(start);
+                const end = Math.min(segment.endMs, calendar.bucketStartMs + (calendar.hour + 1) * 3_600_000);
                 const spanMs = end - start;
                 const day = days.get(calendar.date) ?? { date: calendar.date, busyMs: 0, waitMs: 0 };
                 day[metric] += spanMs;
@@ -353,6 +390,6 @@ export function projectUsageWorkIntervals(input: UsageWorkIntervalsInput): Usage
     result.weekdayHourBuckets = [...cells.values()].sort((a, b) => a.weekday - b.weekday || a.hour - b.hour);
     if (result.night && input.activityAtMs !== undefined) result.night.activityCount = input.activityAtMs.filter(instant =>
         Number.isFinite(instant) && instant >= input.period.startMs && instant < input.period.endMs
-        && isUsageNightHour(resolveUsageCalendarInstant(instant, input.timeZoneOffsetMinutes).hour, result.night!)).length;
+        && isUsageNightHour(calendarAt(instant).hour, result.night!)).length;
     return result;
 }

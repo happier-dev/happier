@@ -39,6 +39,45 @@ describe('anonymous run-length observations', () => {
 });
 
 describe('projectUsageWorkIntervals', () => {
+    it('reuses immutable facts across equal option wrappers and alternating period views, then responds to changed facts', () => {
+        let factPasses = 0;
+        const facts = new Proxy([busy('one', '2026-07-02T08:00:00Z', '2026-07-02T10:00:00Z')], {
+            get(target, property, receiver) {
+                if (property === Symbol.iterator) factPasses += 1;
+                return Reflect.get(target, property, receiver);
+            },
+        });
+        const activityAtMs = [at('2026-07-02T08:30:00Z')];
+        const full = () => projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 120,
+            facts, activityAtMs, nightHours: { startHour: 8, endHour: 10 } });
+        const today = () => projectUsageWorkIntervals({ period: { startMs: at('2026-07-02T00:00:00Z'), endMs: period.endMs },
+            timeZoneOffsetMinutes: 120, facts });
+        const firstFull = full();
+        const firstToday = today();
+        expect(factPasses).toBe(2);
+        for (let repeat = 0; repeat < 3; repeat += 1) {
+            expect(full()).toBe(firstFull);
+            expect(today()).toBe(firstToday);
+        }
+        expect(factPasses).toBe(2);
+        const changed = projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 120,
+            facts: [{ ...facts[0]!, endMs: at('2026-07-02T09:00:00Z') }], activityAtMs,
+            nightHours: { startHour: 8, endHour: 10 } });
+        expect(changed.agentTimeMs).toBe(3_600_000);
+        expect(firstFull.agentTimeMs).toBe(7_200_000);
+        expect(full()).toBe(firstFull);
+        expect(factPasses).toBe(2);
+        expect(firstFull.night?.activityCount).toBe(0);
+        expect(projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 120, facts, activityAtMs,
+            nightHours: { startHour: 10, endHour: 12 } }).night?.activityCount).toBe(1);
+        expect(projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 0, facts, activityAtMs,
+            nightHours: { startHour: 8, endHour: 10 } }).night?.activityCount).toBe(1);
+        expect(projectUsageWorkIntervals({ period: { ...period }, timeZoneOffsetMinutes: 120, facts,
+            activityAtMs: [...activityAtMs], nightHours: { startHour: 8, endHour: 10 } })).not.toBe(firstFull);
+        expect(full()).toBe(firstFull);
+        expect(today()).toBe(firstToday);
+    });
+
     it('clips spanning work to the range and distinguishes agent sum from parallel elapsed union', () => {
         const result = projectUsageWorkIntervals({ period, timeZoneOffsetMinutes: 120, facts: [
             busy('one', '2026-07-01T21:00:00Z', '2026-07-02T00:00:00Z'),

@@ -31,6 +31,37 @@ const accounting = (reads: number[]) => {
 };
 
 describe('research-grounded Coach rules', () => {
+    it('does not price accounting when no observed cache cause or request growth consumes money', () => {
+        const value = accounting(Array.from({ length: 128 }, () => 100));
+        let lookups = 0;
+        value.priceCatalog = { ...prices, models: new Proxy(prices.models, {
+            get(target, key, receiver) { lookups++; return Reflect.get(target, key, receiver); },
+        }) };
+        const result = evaluateUsageCoach({ ...base, period: { startMs: 0, endMs: 10_000 }, asOfMs: 10_000, accounting: value });
+        expect(result.evaluations.find(row => row.detectorId === 'context_bloat')?.status).toBe('insufficient_evidence');
+        expect(result.findings.find(row => row.detectorId === 'cache_economics')?.classification).toBe('informational');
+        expect(lookups).toBe(0);
+    });
+    it('joins cache requests once and resolves prices by distinct model rather than by request', () => {
+        for (const count of [1, 128]) {
+            const value = accounting(Array.from({ length: count }, () => 100));
+            let modelLookups = 0;
+            let sessionReads = 0;
+            value.priceCatalog = { ...prices, models: new Proxy(prices.models, {
+                get(target, key, receiver) { modelLookups++; return Reflect.get(target, key, receiver); },
+            }) };
+            value.contributions = value.contributions!.map(row => ({ ...row, get sessionId() { sessionReads++; return 's'; } }));
+            const nativeCache = value.contributions.map((row, index) => ({ ...cache, evidenceId: `cache-${index}`,
+                observedAtMs: row.observedAtMs, inputId: `input-${index}`, sessionId: 's', turnId: row.turnId!, modelId: 'model',
+                ttlMs: 300_000, idleMs: 300_000, rebuildCause: 'unexpected' as const }));
+            const result = evaluateUsageCoach({ ...base, period: { startMs: 0, endMs: 10_000 }, asOfMs: 10_000,
+                accounting: value, detail: { coverage: 'complete', nativeCache } });
+            expect(result.findings.find(row => row.detectorId === 'cache_economics')?.measurements)
+                .toEqual(expect.arrayContaining([expect.objectContaining({ metric: 'cache_replacement_premium' })]));
+            expect(sessionReads).toBeLessThanOrEqual(12 * count);
+            expect(modelLookups).toBe(1);
+        }
+    });
     it('counts the same answered approvals as Human loop, including earlier requests and immediate decisions', () => {
         const permission = { workId: 'w', requestId: 'within', requestedAtMs: 110, decidedAtMs: 140,
             toolId: 'shell', answeringClientCategory: null };
@@ -156,6 +187,10 @@ describe('research-grounded Coach rules', () => {
             .toMatchObject({ status: 'finding', finding: { classification: 'informational', cacheCauses: [] } });
         expect(read({ accounting: accounting([0]) }, 'cache_economics')).toMatchObject({ status: 'finding',
             finding: { classification: 'informational' } });
+        const ambiguous = accounting([0]);
+        ambiguous.contributions!.push({ ...ambiguous.contributions![0]!, id: 'second-observation-same-request' });
+        expect(read({ ...input, accounting: ambiguous }, 'cache_economics')).toMatchObject({ status: 'finding',
+            finding: { classification: 'informational', cacheCauses: [{ cause: 'ttl_expired', premiumUsd: null }] } });
     });
     it('reports observed request context growth and catalog cache-read costs, never aggregate buckets as requests', () => {
         const source = accounting([100, 200]);
@@ -191,7 +226,10 @@ describe('research-grounded Coach rules', () => {
         const row = read({ detail: { coverage: 'partial', permissions: [later, permission, permission,
             { ...permission, requestId: 'unanswered', decidedAtMs: null },
             { ...permission, requestId: 'outside', requestedAtMs: 900, decidedAtMs: 1100 }] } }, 'approval_friction');
-        expect(row).toMatchObject({ status: 'finding', finding: { evidenceSeries: [{ metric: 'permission_wait',
+        expect(row).toMatchObject({ status: 'finding', finding: { evidence: [
+            { kind: 'permission', id: '["w","p"]', observedAtMs: 40 },
+            { kind: 'permission', id: '["w","later"]', observedAtMs: 150 },
+        ], evidenceSeries: [{ metric: 'permission_wait',
             unit: 'milliseconds', points: [
                 { evidenceId: '["w","p"]', observedAtMs: 40, value: 30 },
                 { evidenceId: '["w","later"]', observedAtMs: 150, value: 70 },

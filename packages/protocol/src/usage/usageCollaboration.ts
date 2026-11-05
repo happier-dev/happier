@@ -86,12 +86,57 @@ const targetReadSchema = createStoredReadSchema(BackendTargetRefV2InputSchema);
 const id = (value: unknown) => typeof value === 'string' && value.trim() ? value : null;
 const timestamp = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
+/** The only structured tool payload leaves consumed by Usage collaboration. */
+export const USAGE_COLLABORATION_TOOL_LEAF_KEYS = [
+    'runId', 'sidechainId', 'callId', 'launchOrigin', 'backendTarget', 'intent', 'startedAtMs',
+] as const;
+
+/** Remove bodies without changing input/result precedence or interpreting text blocks. */
+export function projectUsageCollaborationToolPayload(value: unknown): Record<string, unknown> | null {
+    const record = readSubAgentToolResultRecord(value);
+    if (!record) return null;
+    const projected: Record<string, unknown> = {};
+    for (const key of USAGE_COLLABORATION_TOOL_LEAF_KEYS) {
+        const leaf = record[key];
+        if (leaf === undefined) continue;
+        if (leaf === null) { projected[key] = null; continue; }
+        // Nonnull invalid input must still suppress the result fallback. False
+        // preserves that fact without retaining malformed prose or nested bodies.
+        if (key === 'launchOrigin') {
+            const parsed = launchOriginReadSchema.safeParse(leaf);
+            projected[key] = parsed.success && parsed.data.kind === 'session'
+                ? { kind: 'session', sessionId: parsed.data.sessionId } : false;
+        } else if (key === 'backendTarget') {
+            const parsed = targetReadSchema.safeParse(leaf);
+            projected[key] = parsed.success ? parsed.data : false;
+        } else if (key === 'intent') {
+            projected[key] = leaf === 'review' || leaf === 'plan' ? leaf : false;
+        } else if (key === 'startedAtMs') {
+            projected[key] = timestamp(leaf) ?? false;
+        } else {
+            projected[key] = typeof leaf === 'string' ? leaf : false;
+        }
+    }
+    return projected;
+}
+
 /** A unique witnessed Turn can identify the Agent at an event time; overlap supplies no relation itself. */
 function turnAt(session: OpenedUsageSession, instant: number | null) {
     if (instant === null || session.sessionTurns?.sessionId !== session.id) return null;
     const turns = session.sessionTurns.turns.filter(turn => turn.startedAt <= instant
         && (turn.terminalAt !== undefined ? instant < turn.terminalAt : turn.status === 'in_progress'));
     return turns.length === 1 ? turns[0]! : null;
+}
+
+/** The metadata relationship owner also supplies timing-only publication without a Session identity. */
+export function readUsageCollaborationMetadata(metadata: OpenedUsageSession['metadata']): Readonly<{
+    source: string | undefined; replayAt: number | null;
+    handoff: NonNullable<OpenedUsageSession['metadata']>['handoffV1'];
+}> {
+    const fork = metadata?.forkV1;
+    const replay = metadata?.replaySeedV1;
+    return { source: fork?.parentSessionId ?? replay?.sourceSessionId,
+        replayAt: timestamp(fork?.createdAtMs ?? replay?.createdAtMs), handoff: metadata?.handoffV1 };
 }
 
 /** Join only a source Session already admitted by the query owner; this never requests another Session. */
@@ -120,10 +165,7 @@ export function projectSessionUsageCollaboration(input: Readonly<{
             sourceAgentId: sourceSessionId === session.id ? turn?.agentId ?? null : null,
             workId: turn ? JSON.stringify([session.id, turn.turnId]) : null };
     };
-    const fork = session.metadata?.forkV1;
-    const replay = session.metadata?.replaySeedV1;
-    const source = fork?.parentSessionId ?? replay?.sourceSessionId;
-    const replayAt = timestamp(fork?.createdAtMs ?? replay?.createdAtMs);
+    const { source, replayAt, handoff } = readUsageCollaborationMetadata(session.metadata);
     if (!source && (session.origin?.kind === 'session' || session.origin?.kind === 'execution_run')) {
         // The admitted origin projection exposes kind, not the immutable parent Session id.
         // Current manager membership must never substitute that missing birth provenance.
@@ -132,7 +174,6 @@ export function projectSessionUsageCollaboration(input: Readonly<{
     if (session.manager?.sessionId) facts.push(make('report', `session:${session.manager.sessionId}`, null, session.id));
     if (source) facts.push(make('replay', `session:${session.id}`, replayAt, source,
         turnAt(session, replayAt)?.agentId ?? null));
-    const handoff = session.metadata?.handoffV1;
     if (handoff) facts.push({ ...make('handoff', `session:${session.id}`, timestamp(handoff.completedAtMs), session.id,
         handoff.agentId, JSON.stringify([session.id, handoff.sourceMachineId, handoff.targetMachineId, handoff.completedAtMs])),
         sourceAgentId: handoff.agentId });
@@ -149,8 +190,8 @@ export function projectSessionUsageCollaboration(input: Readonly<{
     const native: UsageCollaborationFact[] = [];
     for (const tool of merged.values()) {
         if (tool.name !== 'SubAgentRun' && !isGenericSubAgentToolName(tool.name)) continue;
-        const toolInput = readSubAgentToolResultRecord(tool.input);
-        const toolResult = readSubAgentToolResultRecord(tool.result);
+        const toolInput = projectUsageCollaborationToolPayload(tool.input);
+        const toolResult = projectUsageCollaborationToolPayload(tool.result);
         const structuredTool = { id: tool.id, input: toolInput, result: toolResult };
         const sidechainId = readSubAgentToolSidechainId(structuredTool, tool.name);
         const runId = readSubAgentToolRunId(structuredTool);

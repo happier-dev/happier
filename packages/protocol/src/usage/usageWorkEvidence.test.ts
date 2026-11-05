@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds,
-    usageQueryNeedsSessionCandidates } from './usageWorkEvidence.js';
+    usageQueryNeedsSessionCandidates, type UsageSessionMessageProjection } from './usageWorkEvidence.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { resolveUsageCollaboration } from './usageCollaboration.js';
 import { SessionAwarenessOriginV1Schema } from '../sessions/awareness/projectionV1.js';
-import { UsageAnalyticsContributionSchema } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
+import { UsagePromptCompositionSchema } from './coach/usagePromptComposition.js';
+import { TranscriptRawAgentEventV1Schema } from '../sessions/messages/transcriptRawRecordV1.js';
+import * as workEvidence from './usageWorkEvidence.js';
 
 const turns = { v: 1 as const, sessionId: 'parent', updatedAt: 900, turns: [
     { turnId: 'old', agentId: 'claude', status: 'completed' as const, startedAt: 100, terminalAt: 500, updatedAt: 500 },
@@ -20,7 +23,190 @@ const contribution = (sessionId: string, turnId: string) => UsageAnalyticsContri
     cost: { reportedUsd: 1, estimatedUsd: 2, invoiceUsd: 3, currency: 'USD' },
 });
 
+it('unions compact accounting subjects with current Machine discovery candidates', () => {
+    const query = normalizeUsageQuery({ machines: ['historical-machine'] });
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [{ id: 'current' }, { id: 'shared' }],
+        admittedTurns: [{ sessionId: 'historical', turnId: 'turn' }, { sessionId: 'shared', turnId: 'turn' }],
+    })).toEqual(['current', 'shared', 'historical']);
+});
+
+it('retains compact null-turn Session membership without inventing admitted turns', () => {
+    const query = normalizeUsageQuery({ projects: ['historical-project'] });
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+        totals: { eventCount: 3, tokens: { input: 3, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+        sessionIds: ['legacy-a', 'legacy-b', 'legacy-c'], sessionMembership: { turns: [] },
+    });
+    const wire = JSON.stringify(accounting);
+    const sessionMembership = workEvidence.readUsageAccountingSessionMembership(accounting);
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [], sessionMembership }))
+        .toEqual(['legacy-a', 'legacy-b', 'legacy-c']);
+    expect(sessionMembership?.turns).toEqual([]);
+    expect(JSON.stringify(accounting)).toBe(wire);
+    expect(accounting.sessionMembership).toEqual({ turns: [] });
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query: normalizeUsageQuery({ ...query, session: 'legacy-b' }),
+        sessions: [], sessionMembership })).toEqual(['legacy-b']);
+    expect(projectUsageQueryWorkEvidence({ query: normalizeUsageQuery({ population: 'public_eligible_personal' }),
+        sessions: [{ ...session, id: 'legacy-a' }], sessionMembership })).toEqual({ status: 'unknown' });
+});
+
+it('retains matching legacy null-turn contributions in scoped Session demand', () => {
+    const query = normalizeUsageQuery({ projects: ['historical-project'] });
+    const contributions = [{ ...contribution('legacy', 'unused'), turnId: null, projectKey: 'historical-project' }];
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [], contributions })).toEqual(['legacy']);
+});
+
+it('invalidates retained membership when a null-turn Session leaves the admitted population', () => {
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query: normalizeUsageQuery({}),
+        admittedTurns: [], previousAdmittedTurns: [],
+        sessionMembership: { turns: [], sessionIds: ['legacy-a'] },
+        previousSessionMembership: { turns: [], sessionIds: ['legacy-a', 'legacy-b'] },
+    })).toBe(false);
+});
+
 describe('Usage shared work evidence', () => {
+    it('retains only consumed Session facts without scaling with private document bodies', () => {
+        const makeSession = (body: string) => ({ ...session, createdAt: 90,
+            origin: SessionAwarenessOriginV1Schema.parse({ kind: 'execution_run' }),
+            manager: { sessionId: 'manager', privateBody: body },
+            metadata: { machineId: 'machine', privateBody: body,
+                forkV1: { parentSessionId: 'source', createdAtMs: 110, privateBody: body },
+                replaySeedV1: { sourceSessionId: 'replay', createdAtMs: 120, privateBody: body },
+                handoffV1: { sourceMachineId: 'from', targetMachineId: 'to', agentId: 'codex', completedAtMs: 130, privateBody: body },
+            },
+            agentState: { privateBody: body, completedRequests: {
+                decided: { tool: 'Write', turnId: 'old', createdAt: 150, completedAt: 250,
+                    status: 'approved', answeringClientCategory: 'web', arguments: { body } },
+            } },
+        });
+        const small = makeSession('');
+        const large = makeSession('unconsumed private document '.repeat(20_000));
+        const retained = workEvidence.projectUsageSessionInput(large);
+        expect(projectSessionUsageWorkEvidence(retained)).toEqual(projectSessionUsageWorkEvidence(large));
+        expect(projectSessionUsageWorkEvidence(retained, [tool('call', 'Read', {}, 300)]))
+            .toEqual(projectSessionUsageWorkEvidence(large, [tool('call', 'Read', {}, 300)]));
+        expect(JSON.stringify(retained).length).toBe(JSON.stringify(workEvidence.projectUsageSessionInput(small)).length);
+        expect(retained.agentState).toBeNull();
+        expect(retained.stateEvidence?.permissions).toHaveLength(1);
+        expect(retained.origin).toEqual(large.origin);
+        expect(retained.manager).toEqual({ sessionId: 'manager' });
+    });
+
+    it('preserves unknown, known-empty and already-projected Session state coverage', () => {
+        const unknown = { id: 'unknown', metadata: null, agentState: null };
+        const empty = { ...unknown, agentState: { requests: {} } };
+        const confirmations = { ...unknown, metadata: { actionConfirmationsV1: { v: 1, requests: {}, completedRequests: {} } } };
+        const projected = { ...unknown, stateEvidence: { permissions: [], waits: [] } };
+        for (const input of [unknown, empty, confirmations, projected]) {
+            const retained = workEvidence.projectUsageSessionInput(input);
+            expect(projectSessionUsageWorkEvidence(retained)).toEqual(projectSessionUsageWorkEvidence(input));
+        }
+        expect(workEvidence.projectUsageSessionInput(unknown).stateEvidence).toBeUndefined();
+        expect(workEvidence.projectUsageSessionInput(empty).stateEvidence).toEqual({ permissions: [], waits: [] });
+        expect(workEvidence.projectUsageSessionInput(confirmations).stateEvidence).toEqual({ permissions: [], waits: [] });
+        expect(workEvidence.projectUsageSessionInput(projected).stateEvidence).toBe(projected.stateEvidence);
+    });
+
+    it('retains old open permission and user waits without a supplied SessionTurn', () => {
+        const detail = projectSessionUsageWorkEvidence({ id: 'legacy', metadata: null,
+            agentState: { requests: {
+                permission: { tool: 'Read', turnId: 'missing-turn', createdAt: 100 },
+                user: { tool: 'Confirm', kind: 'user_action', turnId: 'missing-turn', createdAt: 200 },
+            } } });
+        expect(detail.facts).toEqual([
+            { workId: JSON.stringify(['legacy', 'missing-turn']), evidenceId: 'permission', agentId: null,
+                machineId: null, kind: 'permission_wait', startMs: 100, endMs: null },
+            { workId: JSON.stringify(['legacy', 'missing-turn']), evidenceId: 'user', agentId: null,
+                machineId: null, kind: 'user_wait', startMs: 200, endMs: null },
+        ]);
+    });
+
+    it('retains permission decisions and waits from compact state without private arguments', () => {
+        const full = { ...session, agentState: { requests: {
+            open: { tool: 'Read', turnId: 'new', createdAt: 650 },
+        }, completedRequests: {
+            decided: { tool: 'Write', turnId: 'old', createdAt: 150, completedAt: 250, status: 'approved', answeringClientCategory: 'web' },
+            canceled: { tool: 'Confirm', kind: 'user_action', turnId: 'old', createdAt: 160, completedAt: 260, status: 'canceled' },
+            unknown: { tool: '', status: 'approved' },
+        } } };
+        const expected = projectSessionUsageWorkEvidence(full);
+        const stateEvidence = { permissions: expected.permissions ?? [], waits: (expected.facts ?? []).filter(fact => fact.kind !== 'busy') };
+        expect(projectSessionUsageWorkEvidence({ ...session, stateEvidence })).toEqual(expected);
+        expect(workEvidence.projectUsageSessionStateEvidence(full)).toEqual(stateEvidence);
+        expect(stateEvidence.permissions).toHaveLength(4);
+        expect(stateEvidence.waits).toHaveLength(3);
+        expect(stateEvidence.permissions.find(fact => fact.requestId === 'canceled')?.decidedAtMs).toBeNull();
+        expect(stateEvidence.waits.find(fact => fact.evidenceId === 'canceled')?.endMs).toBe(260);
+        expect(projectSessionUsageWorkEvidence({ ...full, stateEvidence: { permissions: [], waits: [] } }).permissions).toEqual([]);
+    });
+
+    it('attributes compact state waits to the opened owner machine while opaque server context stays unknown', () => {
+        const full = { ...session, agentState: { completedRequests: {
+            permission: { tool: 'Write', turnId: 'old', createdAt: 150, completedAt: 250, status: 'approved' },
+            confirmation: { tool: 'Confirm', kind: 'user_action', turnId: 'new', createdAt: 650, completedAt: 750, status: 'approved' },
+        } } };
+        const serverSession = { ...full, metadata: null };
+        const stateEvidence = workEvidence.projectUsageSessionStateEvidence(serverSession);
+        expect(stateEvidence.waits.map(fact => fact.machineId)).toEqual([null, null]);
+        const expected = projectSessionUsageWorkEvidence(full);
+        expect(projectSessionUsageWorkEvidence({ ...session, stateEvidence })).toEqual(expected);
+        expect(projectSessionUsageWorkEvidence({ ...session, stateEvidence: {
+            ...stateEvidence, waits: stateEvidence.waits.map(fact => ({ ...fact, machineId: 'older-owner-machine' })),
+        } })).toEqual(expected);
+        expect(projectSessionUsageWorkEvidence({ ...serverSession, agentState: null, stateEvidence }))
+            .toEqual(projectSessionUsageWorkEvidence(serverSession));
+    });
+
+    it('folds projected message witnesses into the same private facts without transporting prose or ordinary tool output', () => {
+        const composition = UsagePromptCompositionSchema.parse({ v: 1, evidenceId: 'composition', sessionId: 'parent', turnId: 'old', inputId: 'accepted',
+            observedAtMs: 150, boundary: 'host_pre_dispatch', deliveryKind: 'newTurn', coverage: 'host_only', components: [],
+            nativePrefix: null, contextWindowTokens: null, requestIdentity: { scopeKey: 'a'.repeat(64), digest: 'b'.repeat(64),
+                selection: { agentTargetKey: 'agent:happier.agent.codex:codex', providerConnectionId: null, modelId: 'model' } } });
+        const compaction = TranscriptRawAgentEventV1Schema.parse({ type: 'context-compaction', phase: 'completed', source: 'runtime' });
+        const run = { runId: 'projected-run', sidechainId: 'projected-sidechain', intent: 'review', startedAtMs: 200,
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, launchOrigin: { kind: 'session', sessionId: 'parent' } };
+        const acceptedDelivery = { v: 1 as const, acceptedAtMs: 140, delivery: { kind: 'newTurn' as const, turnId: 'old' } };
+        const raw = [tool('call', 'SubAgentRun', { instructions: 'private instructions' }),
+            { id: 'result', createdAt: 210, content: { role: 'agent', content: { type: 'codex', data: {
+                type: 'tool-call-result', callId: 'call', output: JSON.stringify({ ...run, output: 'private tool output' }) } } } },
+            { id: 'input', localId: 'accepted', createdAt: 140, acceptedDelivery, content: { role: 'user', content: { text: 'private user text' } } },
+            { id: 'composition-message', createdAt: 150, content: { role: 'agent', content: { type: 'event', id: 'composition-event', data: { type: 'prompt-composition', composition } } } },
+            { id: 'compaction-message', localId: 'different-local-id', createdAt: 300,
+                content: { role: 'agent', content: { type: 'event', id: 'native-compaction-event', data: compaction } } },
+            tool('read', 'Read', { file_path: '/private/path' }, 220), tool('unnamed', '', {}, 230)];
+        const messageProjections: UsageSessionMessageProjection[] = [
+            { id: 'call', createdAt: 200, nativeAgentId: 'codex', sidechainIds: [], tools: [{ kind: 'call', id: 'call', name: 'SubAgentRun' }] },
+            { id: 'result', createdAt: 210, nativeAgentId: 'codex', sidechainIds: [], tools: [{ kind: 'result', id: 'call', name: '', result: run }] },
+            { id: 'input', localId: 'accepted', createdAt: 140, acceptedDelivery, nativeAgentId: null, sidechainIds: [], tools: [] },
+            { id: 'composition-message', createdAt: 150, nativeAgentId: null, sidechainIds: [], tools: [], event: TranscriptRawAgentEventV1Schema.parse({ type: 'prompt-composition', composition }) },
+            { id: 'compaction-message', localId: 'different-local-id', createdAt: 300, nativeAgentId: null, sidechainIds: [], tools: [], eventId: 'native-compaction-event', event: compaction },
+            { id: 'read', createdAt: 220, nativeAgentId: 'codex', sidechainIds: [], tools: [{ kind: 'call', id: 'read', name: 'Read' }] },
+            { id: 'unnamed', createdAt: 230, nativeAgentId: 'codex', sidechainIds: [], tools: [{ kind: 'call', id: 'unnamed', name: '' }] },
+        ];
+        const expected = projectSessionUsageWorkEvidence(session, raw, { messagesComplete: true });
+        const projected = projectSessionUsageWorkEvidence(session, undefined, { messageProjections, messagesComplete: true });
+        expect(projected).toEqual(expected);
+        expect(projected.collaboration).toEqual([expect.objectContaining({ relation: 'review', targetId: 'run:projected-run', observedAtMs: 200 })]);
+        expect(projected.coach?.detail?.compactions).toEqual([{ evidenceId: '["parent","native-compaction-event"]', observedAtMs: 300, sessionId: 'parent', turnId: null }]);
+        expect(projected.coach?.detail?.modelRequests).toHaveLength(1);
+        expect(projected.phaseEvents?.map(row => row.evidenceId)).toEqual(['call', 'read', 'unnamed']);
+        expect(projectSessionUsageWorkEvidence(session, undefined, { messageProjections, messagesComplete: false }).coach?.detail?.modelRequests).toEqual([]);
+        expect(JSON.stringify(projected)).not.toMatch(/private instructions|private tool output|private user text|private\/path/);
+        const retained = projectSessionUsageWorkEvidence(session, undefined, { messagesComplete: true, messageEvidence: projected });
+        expect(retained).toEqual(projected);
+    });
+
+    it('adapts only valid raw native records and keeps sidechain witnesses while dropping prose', () => {
+        const child = { id: 'child', createdAt: 210, content: { role: 'agent', content: { type: 'output', data: {
+            type: 'assistant', parent_tool_use_id: 'task', message: { role: 'assistant', content: [{ type: 'text', text: 'private child prose' }] },
+        } } } };
+        expect(workEvidence.projectUsageSessionMessageProjection(child)).toMatchObject({ nativeAgentId: 'claude', sidechainIds: ['task'], tools: [] });
+        expect(JSON.stringify(workEvidence.projectUsageSessionMessageProjection(child))).not.toContain('private child prose');
+        const malformed = { id: 'bad', createdAt: 210, content: { role: 'agent', content: { type: 'acp', agentId: 'codex',
+            data: { type: 'tool-call', callId: 'call', name: 'Read', input: {} } } } };
+        expect(workEvidence.projectUsageSessionMessageProjection(malformed)).toMatchObject({ nativeAgentId: null, sidechainIds: [], tools: [] });
+        expect(projectSessionUsageWorkEvidence(session, undefined, { messageProjections: [] })).toEqual(projectSessionUsageWorkEvidence(session, []));
+    });
     it('admits only execution-witnessed turns and never acquires the whole Session population for that selection', () => {
         const query = normalizeUsageQuery({ execution: 'happier' });
         const contributions = [{ ...contribution('parent', 'old'), sourceContext: { path: 'native' as const, execution: 'happier' as const } },
@@ -32,17 +218,20 @@ describe('Usage shared work evidence', () => {
         expect(projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: [contribution('parent', 'new')] }))
             .toEqual({ status: 'unknown' });
     });
-    it('intersects public detail with exact admitted turns rather than the whole mixed Session', () => {
+    it.each(['contributions', 'admitted-turns'] as const)('intersects public detail with exact admitted turns rather than the whole mixed Session (%s)', inputKind => {
         const query = normalizeUsageQuery({ population: 'public_eligible_personal' });
         const contributions = [contribution('parent', 'old')];
+        const accountingMembership = inputKind === 'contributions' ? { contributions } : {
+            admittedTurns: [{ sessionId: 'parent', turnId: 'old' }],
+        };
         const mixed = { ...session, agentState: { completedRequests: {
             eligible: { tool: 'Read', turnId: 'old', createdAt: 200, completedAt: 250, status: 'approved' },
             excluded: { tool: 'Read', turnId: 'new', createdAt: 700, completedAt: 750, status: 'approved' },
         } } };
         const openedMessages = new Map([['parent', [tool('eligible-child', 'SubAgent', { sidechainId: 'eligible' }, 200),
             tool('excluded-child', 'SubAgent', { sidechainId: 'excluded' }, 700)]]]);
-        expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [mixed, { id: 'unrelated' }], contributions })).toEqual(['parent']);
-        const detail = projectUsageQueryWorkEvidence({ query, sessions: [mixed], openedMessages, contributions });
+        expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [mixed, { id: 'unrelated' }], ...accountingMembership })).toEqual(['parent']);
+        const detail = projectUsageQueryWorkEvidence({ query, sessions: [mixed], openedMessages, ...accountingMembership });
         expect(detail.closedTurns?.map(row => row.workId)).toEqual(['["parent","old"]']);
         expect(detail.facts?.map(row => row.workId)).toEqual(['["parent","old"]', '["parent","old"]']);
         expect(detail.permissions?.map(row => row.requestId)).toEqual(['eligible']);

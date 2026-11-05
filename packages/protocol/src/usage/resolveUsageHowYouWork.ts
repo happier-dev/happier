@@ -8,7 +8,7 @@ import { isUsageNightHour, projectUsageWorkIntervals, selectUsageWorkPermissions
     type UsageWorkPermissionFact, type UsageWorkIntervalsInput } from './usageWorkIntervals.js';
 import { projectUsageSteering, UsageSteeringSummarySchema } from './usageSteering.js';
 import { resolveUsageCollaboration, UsageCollaborationSummarySchema, type UsageCollaborationFact } from './usageCollaboration.js';
-import { projectUsageAgentCalendar, UsageAgentCalendarSchema, type UsageAgentAccountingCalendar } from './usageAgentCalendar.js';
+import { projectUsageAgentCalendar, resolveUsageAccountingCalendarPeriod, UsageAgentCalendarSchema, type UsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import type { UsageCostMode } from './usageCostFacts.js';
 import type { UsageCoachReadEvidence } from './coach/coachFinding.js';
 
@@ -98,6 +98,8 @@ export function resolveUsageHowYouWork(input: Readonly<{
     period: UsageWorkIntervalsInput['period']; timeZoneOffsetMinutes: number; nowMs?: number;
     accounting?: UsageAnalyticsQueryResponse; detail?: UsageHowYouWorkDetailInput; nightHours?: UsageWorkIntervalsInput['nightHours'];
     accountingCalendar?: UsageAgentAccountingCalendar;
+    /** Admitted calendar bounds may have an open start independently of private evidence intervals. */
+    calendarPeriod?: Readonly<{ startMs?: number; endMs: number }>;
     /** The query's existing transcript demand; interval-only charts do not shape intervention grids. */
     includeSteering?: boolean;
     /** Existing accounting Activity/timeline demand, not another query or cache. */
@@ -110,7 +112,7 @@ export function resolveUsageHowYouWork(input: Readonly<{
     const detail = input.detail?.status === 'unknown' ? undefined : input.detail;
     const retained = input.detail === undefined ? input.retained : undefined;
     const nightHours = input.nightHours ? UsageNightHoursV1Schema.parse(input.nightHours) : undefined;
-    const intervals = detail?.facts !== undefined
+    let intervals = detail?.facts !== undefined
         ? projectUsageWorkIntervals({ ...input, facts: detail.facts, activityAtMs: detail.activityAtMs })
         : retained?.intervals ? { ...retained.intervals, night: nightHours ? { ...nightHours,
             busyMs: retained.intervals.weekdayHourBuckets.reduce((sum, row) =>
@@ -122,7 +124,9 @@ export function resolveUsageHowYouWork(input: Readonly<{
         recordedActivityCount: input.accounting ? buckets === undefined ? null : buckets.reduce((sum, row) =>
             sum + (isUsageNightHour(row.hour, nightHours) ? row.eventCount : 0), 0) : intervals?.night?.activityCount ?? null,
     } : null;
-    if (intervals?.night && nightShift) intervals.night.activityCount = nightShift.recordedActivityCount;
+    if (intervals?.night && nightShift && intervals.night.activityCount !== nightShift.recordedActivityCount) {
+        intervals = { ...intervals, night: { ...intervals.night, activityCount: nightShift.recordedActivityCount } };
+    }
     const today = input.nowMs === undefined ? null : resolveUsageCalendarInstant(input.nowMs, input.timeZoneOffsetMinutes);
     const todayPeriod = today ? { startMs: Math.max(today.bucketStartMs, input.period.startMs),
         endMs: Math.min(today.bucketEndMs, input.period.endMs) } : null;
@@ -216,7 +220,10 @@ export function resolveUsageHowYouWork(input: Readonly<{
         && (intervals.period.startMs !== input.period.startMs || intervals.period.endMs !== input.period.endMs)
         ? retained.agentCalendar : undefined;
     if (input.includeAgentCalendar !== false) result.agentCalendar = retainedCalendar ?? projectUsageAgentCalendar({
-        period: input.period, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, accounting: input.accounting,
+        period: resolveUsageAccountingCalendarPeriod({ period: input.calendarPeriod ?? input.period,
+            accounting: input.accounting, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes,
+            intervals, steering: result.steering }),
+        timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, accounting: input.accounting,
         accountingCalendar: input.accountingCalendar,
         intervals, detailStatus: result.detailStatus, steering: result.steering, nightHours, costMode: input.costMode,
     });

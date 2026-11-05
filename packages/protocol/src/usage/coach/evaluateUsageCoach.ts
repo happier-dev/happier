@@ -1,6 +1,6 @@
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { selectLatestUsageMcpBindingWindows } from './usageMcpBindingUsage.js';
-import { resolveUsageCostBasis, estimateUsageModelCost } from '../usageCost.js';
+import { resolveUsageCostBasis, createUsageModelCostEstimator } from '../usageCost.js';
 import { bundledUsageModelPriceCatalog, LITELLM_MODEL_PRICE_URL } from '../usageModelPriceCatalog.js';
 import { COACH_VENDOR_FACTS as facts, COACH_RESEARCH_SOURCES as research } from './coachVendorFacts.js';
 import { UsageRequestAttributionSchema } from '../usageAnalyticsContracts.js';
@@ -12,7 +12,7 @@ import { USAGE_COACH_DETECTOR_IDS, USAGE_COACH_REQUIRED_EVIDENCE, type UsageCoac
     type UsageCoachEvaluationInput, type UsageCoachConceptEvaluation, type UsageCoachDetectorId, type UsageCoachFinding,
     type UsageCoachAdmittedRemedy, type UsageCoachNativeCacheFact } from './coachFinding.js';
 
-export function applyUsageCoachPreferences(evaluation: UsageCoachEvaluation, preferences: UsageCoachPreferencesV1,
+export function applyUsageCoachPreferences(evaluation: UsageCoachEvaluation, preferences: Pick<UsageCoachPreferencesV1, 'suppressions'>,
     nowMs: number): UsageCoachEvaluation {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid usage preference observation time');
     const suppressions = new Map(preferences.suppressions.map(row => [row.evidenceKey, row]));
@@ -119,7 +119,9 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
         modelComparison?: UsageCoachFinding['modelComparison'],
         classification: UsageCoachFinding['classification'] = 'informational',
         details: Pick<UsageCoachFinding, 'cacheCauses' | 'evidenceSeries'> = {}): UsageCoachConceptEvaluation => {
-        evidence.sort((a, b) => a.id.localeCompare(b.id) || a.observedAtMs - b.observedAtMs);
+        // Suppression/remedy identity remains independent of presentation chronology.
+        const identityEvidence = [...evidence].sort((a, b) => a.id.localeCompare(b.id) || a.observedAtMs - b.observedAtMs);
+        evidence.sort((a, b) => a.observedAtMs - b.observedAtMs || a.id.localeCompare(b.id));
         const evidenceBasis = basis(detectorId);
         if (measurements.some(row => row.unit === 'currency' && row.costKind === 'api_equivalent')) {
             const catalog = input.accounting?.priceCatalog ?? bundledUsageModelPriceCatalog;
@@ -133,7 +135,7 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
         // Presentation samples reuse this finding's evidence; adding a chart does not retire its dismissal or remedy identity.
         const { evidenceSeries: _evidenceSeries, ...evidenceDetails } = details;
         const evidenceKey = computeCanonicalDomainSeparatedDigest('happier.usage.coach.finding.v1',
-            [detectorId, input.queryKey, summaryCode, JSON.stringify(evidence), JSON.stringify(measurements),
+            [detectorId, input.queryKey, summaryCode, JSON.stringify(identityEvidence), JSON.stringify(measurements),
                 evidenceBasis.method, classification, JSON.stringify(evidenceDetails),
                 ...(modelComparison ? [JSON.stringify(modelComparison)] : [])]);
         const state = input.findingStates?.find(row => row.detectorId === detectorId && row.evidenceKey === evidenceKey)?.state
@@ -207,12 +209,26 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
     const catalog = usesPrices ? input.accounting?.priceCatalog ?? bundledUsageModelPriceCatalog : bundledUsageModelPriceCatalog;
     const accountingRows = usesPrices && input.accounting?.contributions
         ? [...new Map(input.accounting.contributions.filter(row => inPeriod(row.observedAtMs)).map(row => [row.id, row])).values()] : undefined;
-    const pricedRows = accountingRows?.map(row => ({ row, price: row.tokenCategories
-        ? estimateUsageModelCost(row.modelId, row.tokenCategories, catalog, input.pricingOverrides) : null }));
+    const estimateCost = createUsageModelCostEstimator(catalog, input.pricingOverrides);
+    const pricedRows = accountingRows?.map(row => {
+        let price: ReturnType<typeof estimateCost> | undefined;
+        return { row, get price() {
+            if (price === undefined) price = row.tokenCategories ? estimateCost(row.modelId, row.tokenCategories) : null;
+            return price;
+        } };
+    });
+    const pricedRequests = new Map<string, NonNullable<typeof pricedRows>>();
+    const requestKey = (sessionId: string, turnId: string, modelId: string) => JSON.stringify([sessionId, turnId, modelId]);
+    for (const entry of cacheRows.length ? pricedRows ?? [] : []) {
+        const row = entry.row;
+        if (row.eventCount !== 1 || !row.sessionId || !row.turnId || !row.modelId) continue;
+        const key = requestKey(row.sessionId, row.turnId, row.modelId);
+        const matches = pricedRequests.get(key);
+        if (matches) matches.push(entry); else pricedRequests.set(key, [entry]);
+    }
     const cachePremium = (row: UsageCoachNativeCacheFact): number | null => {
         if (!cacheCause(row) || row.rebuildCause !== 'unexpected' || !row.sessionId || !row.turnId || !row.modelId) return null;
-        const matches = pricedRows?.filter(entry => entry.row.sessionId === row.sessionId && entry.row.turnId === row.turnId
-            && entry.row.modelId === row.modelId && entry.row.eventCount === 1) ?? [];
+        const matches = pricedRequests.get(requestKey(row.sessionId, row.turnId, row.modelId)) ?? [];
         if (matches.length !== 1 || !matches[0]!.price || !matches[0]!.row.tokenCategories
             || matches[0]!.row.tokenCategories.cacheWrite !== row.cacheWriteTokens) return null;
         const rates = matches[0]!.price!.price.rates;
@@ -226,7 +242,8 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
         return write === undefined || rates.cacheReadUsdPerMillion === undefined ? null
             : Math.max(0, row.cacheWriteTokens! * (write - rates.cacheReadUsdPerMillion) / 1_000_000);
     };
-    const totalPricedCost = pricedRows?.length && pricedRows.every(entry => entry.price !== null)
+    const hasPricedCacheCause = cacheRows.some(row => cacheCause(row) !== null && row.rebuildCause === 'unexpected');
+    const totalPricedCost = hasPricedCacheCause && pricedRows?.length && pricedRows.every(entry => entry.price !== null)
         ? pricedRows.reduce((sum, entry) => sum + entry.price!.total, 0) : null;
     const causeShare = (rows: readonly UsageCoachNativeCacheFact[]) => {
         const premiums = rows.map(cachePremium);

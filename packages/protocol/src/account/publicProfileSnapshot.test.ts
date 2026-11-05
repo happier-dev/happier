@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { buildPublicProfileSnapshot } from './publicProfileSnapshot.js';
 import { PublicProfilePolicyV1Schema, PUBLIC_PROFILE_FIELDS_V1 } from './publicProfile.js';
 import { PublicProfileRefreshBodyV1Schema } from './publicProfilePublication.js';
-import { normalizeUsageQuery } from '../inputs/usageQuery.js';
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
+import { projectUsageAnalyticsSummary } from '../usage/usageCost.js';
+import { addUsageTokens, createEmptyUsageTokens } from '../usage/usageAggregation.js';
 import { UsageAnalyticsQueryResponseSchema } from '../usage/usageAnalyticsContracts.js';
 import { resolveUsagePageAggregation } from '../usage/resolveUsagePageAggregation.js';
 import { projectUsageQueryWorkEvidence } from '../usage/usageWorkEvidence.js';
@@ -13,22 +15,27 @@ const endMs = startMs + 3 * 86_400_000;
 const query = normalizeUsageQuery({ population: 'public_eligible_personal', period: { startMs, endMs }, includeActivity: true,
   includeQuotaHistory: false, includeTranscriptEvidence: false });
 const policy = PublicProfilePolicyV1Schema.parse({ indexable: false, fields: Object.fromEntries(PUBLIC_PROFILE_FIELDS_V1.map(field => [field, true])) });
-function result(evidence?: readonly UsageWorkEvidence[], complete = false) {
-  const rows = [1, 3, 1].map((eventCount, index) => ({ id: `private-request-${index}`, observedAtMs: startMs + index * 86_400_000 + 100,
-    sessionId: 'private-session', turnId: `private-turn-${index}`, agentId: index === 1 ? 'claude' : 'codex', modelId: 'private-model',
+function result(evidence?: readonly UsageWorkEvidence[], complete = false, agents: readonly [string, string, string] = ['codex', 'claude', 'codex'], rowCount = 3) {
+  const rows = Array.from({ length: rowCount }, (_, index) => {
+    const day = index % 3;
+    const eventCount = [1, 3, 1][day]!;
+    return { id: `private-request-${index}`, observedAtMs: startMs + day * 86_400_000 + 100,
+    sessionId: 'private-session', turnId: `private-turn-${day}`, agentId: agents[day]!, modelId: 'private-model',
     machineId: 'private-machine', projectKey: 'private-repository', workspaceId: null, source: 'private-source', eventCount,
-    sourceContext: { path: 'runtime' as const, execution: index === 0 ? 'happier' as const : index === 1 ? 'outside' as const : 'unknown' as const },
+    sourceContext: { path: 'runtime' as const, execution: day === 0 ? 'happier' as const : day === 1 ? 'outside' as const : 'unknown' as const },
     tokens: { input: eventCount * 8, output: eventCount * 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: eventCount * 10 },
-    cost: { reportedUsd: 87654321, estimatedUsd: 98765432, currency: 'USD' } }));
+    cost: { reportedUsd: 87654321, estimatedUsd: 98765432, currency: 'USD' } }; });
+  const eventCount = rows.reduce((sum, row) => sum + row.eventCount, 0);
   const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, contributions: rows,
-    totals: { eventCount: 5, tokens: { input: 40, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 50 },
-      cost: rows[0]!.cost }, activity: { calendarDays: rows.map((row, index) => ({ date: `2026-10-${18 + index}`, eventCount: row.eventCount })) },
+    totals: { eventCount, tokens: rows.reduce((sum, row) => addUsageTokens(sum, row.tokens), createEmptyUsageTokens()),
+      cost: rows[0]!.cost }, activity: { calendarDays: [0, 1, 2].map(day => ({ date: `2026-10-${18 + day}`,
+        eventCount: rows.filter((_, index) => index % 3 === day).reduce((sum, row) => sum + row.eventCount, 0) })) },
     coverage: { status: complete ? 'complete' : 'partial', reasons: complete ? [] : ['incomplete_history'], missingDimensions: [], ranked: [], range: { startMs, endMs, complete },
-      sources: [{ source: 'private-source', path: 'runtime', status: 'available', machineId: 'private-machine', eventCount: 5, asOfMs: endMs,
+      sources: [{ source: 'private-source', path: 'runtime', status: 'available', machineId: 'private-machine', eventCount, asOfMs: endMs,
         captureKind: 'measured', historyComplete: complete }] },
   });
   const session = { id: 'private-session', metadata: { machineId: 'private-machine' }, agentState: null,
-    sessionTurns: { v: 1 as const, sessionId: 'private-session', updatedAt: endMs, turns: rows.map((row, index) => ({
+    sessionTurns: { v: 1 as const, sessionId: 'private-session', updatedAt: endMs, turns: rows.slice(0, 3).map((row, index) => ({
       turnId: row.turnId, agentId: row.agentId, status: 'completed' as const, startedAt: row.observedAtMs, terminalAt: row.observedAtMs + (index + 1) * 100,
       updatedAt: row.observedAtMs + (index + 1) * 100 })) } };
   const detail = projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: accounting.contributions });
@@ -37,6 +44,88 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false) {
 }
 
 describe('public-profile snapshot computation from canonical Usage', () => {
+  it.each([false, true])('keeps bounded All artifact metadata while rich and compact calendars follow observations (relative %s)', relative => {
+    const original = result();
+    const selected = normalizeUsageQuery({ ...query, period: relative ? { relative: 'all' } : { endMs }, includeActivity: !relative });
+    const accounting = { ...original.accounting!, coverage: { ...original.accounting!.coverage!,
+      range: { startMs: 0, endMs, complete: false } } };
+    const compact = projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(selected, endMs));
+    expect(compact.summary!.publicProfileAccounting!.period).toEqual({ startMs: 0, endMs, timeZoneOffsetMinutes: 0 });
+    expect(compact.summary!.publicProfileAccounting!.total.calendar.days).toHaveLength(3);
+    expect(compact.summary!.publicProfileAccounting!.lenses.every(lens => lens.population.calendar.days.length === 3)).toBe(true);
+    const snapshots = [accounting, compact].map(value => resolveUsagePageAggregation({ queries: [selected],
+      accounting: [{ query: selected, value, status: 'available', asOfMs: endMs }] }).results[0]!);
+    const calendarPolicy = PublicProfilePolicyV1Schema.parse({ ...policy, fields: { ...policy.fields, mergedPrs: false } });
+    const built = snapshots.map(queryResult => buildPublicProfileSnapshot({ queryResult, policy: calendarPolicy, nowMs: endMs }));
+    expect(built[0]).toEqual(built[1]);
+    for (const value of built) {
+      expect(value.kind).toBe('ready');
+      if (value.kind !== 'ready') throw new Error('Expected All profile');
+      expect(value.snapshot.period).toEqual({ startMs: 0, endMs, timeZoneOffsetMinutes: 0 });
+      expect(value.snapshot.facts.calendar).toHaveLength(3);
+      expect(PublicProfileRefreshBodyV1Schema.safeParse({ query: selected, snapshot: value.snapshot }).success).toBe(true);
+    }
+    const explicit = normalizeUsageQuery({ ...selected, period: { startMs: 0, endMs }, includeActivity: true });
+    const explicitValue = projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(explicit, endMs));
+    expect(explicitValue.summary!.accountingCalendar!.value.period.startMs).toBe(0);
+    expect(explicitValue.summary!.accountingCalendar!.value.days.length).toBeGreaterThan(20_000);
+  });
+
+  it('keeps an empty All artifact bounded without projecting empty prehistory', () => {
+    const original = result();
+    const selected = normalizeUsageQuery({ ...query, period: { relative: 'all' } });
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ ...original.accounting, contributions: [], activity: undefined,
+      totals: { eventCount: 0, tokens: createEmptyUsageTokens(), cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+      coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+        range: { startMs: 0, endMs, complete: true } } });
+    const compact = projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(selected, endMs));
+    expect(compact.summary!.publicProfileAccounting!.period).toEqual({ startMs: 0, endMs, timeZoneOffsetMinutes: 0 });
+    for (const value of [accounting, compact]) {
+      const shown = resolveUsagePageAggregation({ queries: [selected], accounting: [{ query: selected, value,
+        status: 'available', asOfMs: endMs }] }).results[0]!;
+      const built = buildPublicProfileSnapshot({ queryResult: shown, policy, nowMs: endMs });
+      expect(built.kind).toBe('ready');
+      if (built.kind !== 'ready') throw new Error('Expected known-empty All profile');
+      expect(built.snapshot.period).toEqual({ startMs: 0, endMs, timeZoneOffsetMinutes: 0 });
+      expect(built.snapshot.facts).toMatchObject({ activeDays: 0, currentStreakDays: 0, bestStreakDays: 0 });
+      expect(built.snapshot.facts.calendar).toEqual([]);
+      expect(built.snapshot.fieldCoverage?.calendar).toMatchObject({ status: 'complete_for_supplied_facts' });
+      expect(built.snapshot.lenses?.every(lens => (lens.facts.calendar?.length ?? 0) === 0)).toBe(true);
+    }
+  });
+  it('retains the same public snapshot from compact accounting at 32,975 events and three real turns', () => {
+    const rich = result(undefined, false, ['codex', 'claude', 'codex'], 32_975);
+    const compactAccounting = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(
+      projectUsageAnalyticsSummary(rich.accounting!, usageQueryToAnalyticsRequest(query)))));
+    expect(compactAccounting.contributions).toBeUndefined();
+    expect(compactAccounting.summary?.publicProfileAccounting?.total.contributionCount).toBe(32_975);
+    expect(compactAccounting.summary?.publicProfileAccounting?.membership.turns).toEqual([
+      { sessionId: 'private-session', turnId: 'private-turn-0', executions: ['happier'] },
+      { sessionId: 'private-session', turnId: 'private-turn-1', executions: ['outside'] },
+      { sessionId: 'private-session', turnId: 'private-turn-2', executions: ['unknown'] },
+    ]);
+    expect(JSON.stringify(compactAccounting)).not.toContain('private-request-');
+    const expected = buildPublicProfileSnapshot({ queryResult: rich, policy, nowMs: endMs });
+    const actual = buildPublicProfileSnapshot({ queryResult: { ...rich, accounting: compactAccounting }, policy, nowMs: endMs });
+    expect(expected.kind).toBe('ready');
+    expect(actual).toEqual(expected);
+    expect(JSON.stringify(actual)).not.toMatch(/private-|87654321|98765432|reportedUsd|estimatedUsd|workId|turnId|sessionId/);
+  }, 30_000);
+
+  it('keeps unattributed Usage in totals while omitting its Agent rows from the reviewed public snapshot', () => {
+    const built = buildPublicProfileSnapshot({ queryResult: result(undefined, false, ['codex', 'unknown', 'legacy']), policy, nowMs: endMs });
+    if (built.kind !== 'ready') throw new Error('Expected admitted public snapshot');
+    expect(built.snapshot.facts.tokens).toBe(50);
+    expect(built.snapshot.facts.agentMix).toEqual([{ agentId: 'codex', share: .2, tokens: 10,
+      coverage: { status: 'partial', method: 'runtime' } }]);
+    expect(built.snapshot.facts.agentActiveDays?.map(row => row.agentId)).toEqual(['codex']);
+    expect(built.snapshot.facts.sessionDurations).toEqual([{ agentId: 'codex', durationMs: 100 }]);
+    expect(built.snapshot.facts.weeklyAgentMix?.flatMap(week => week.mix.map(row => row.agentId))).toEqual(['codex']);
+    for (const lens of built.snapshot.lenses ?? []) {
+      expect(lens.facts.agentMix?.some(row => row.agentId === 'unknown' || row.agentId === 'legacy')).toBe(false);
+    }
+    expect(PublicProfileRefreshBodyV1Schema.safeParse({ query, snapshot: built.snapshot }).success).toBe(true);
+  });
   it('projects actual day, source, interval and anonymous duration facts into the strict server body without private DTOs', () => {
     const computedAtMs = endMs + 12_345;
     const built = buildPublicProfileSnapshot({ queryResult: result(), policy, nowMs: computedAtMs });

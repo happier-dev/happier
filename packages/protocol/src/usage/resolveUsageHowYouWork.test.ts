@@ -71,13 +71,19 @@ describe('How-you-work admitted projection', () => {
             nightShift: { ...result.nightShift, observedBusyMs: 1 } }).success).toBe(false);
     });
     it('uses admitted recorded activity rather than turn starts as the native night activity basis', () => {
+        const facts = [fact('night', day, day + hour)];
+        const activityAtMs = [day];
         const result = resolveUsageHowYouWork({ period: { startMs: day, endMs: day + hour }, timeZoneOffsetMinutes: 0,
             nightHours: { startHour: 22, endHour: 6 }, accounting: { v: 1, totals: { eventCount: 7,
                 tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
                 cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
                 activity: { weekdayHourBuckets: [{ weekday: 5, hour: 0, eventCount: 7 }] } },
-            detail: { status: 'partial', facts: [fact('night', day, day + hour)], permissions: [], acceptedInputs: [], activityAtMs: [day] } });
+            detail: { status: 'partial', facts, permissions: [], acceptedInputs: [], activityAtMs } });
         expect(result.intervals?.night).toMatchObject({ busyMs: hour, activityCount: 7 });
+        const privateOnly = resolveUsageHowYouWork({ period: { startMs: day, endMs: day + hour }, timeZoneOffsetMinutes: 0,
+            nightHours: { startHour: 22, endHour: 6 }, detail: { status: 'partial', facts, activityAtMs } });
+        expect(privateOnly.intervals?.night?.activityCount).toBe(1);
+        expect(result.intervals?.night?.activityCount).toBe(7);
         const withoutActivity = resolveUsageHowYouWork({ period: { startMs: day, endMs: day + hour }, timeZoneOffsetMinutes: 0,
             nightHours: { startHour: 22, endHour: 6 }, accounting: { v: 1, totals: { eventCount: 7,
                 tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },

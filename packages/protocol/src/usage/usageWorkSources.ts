@@ -1,7 +1,8 @@
 import { RPC_METHODS } from '../rpc/methods.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmBranchListResponseSchema, type ScmBranchListRequest, type ScmBranchWorkEvidence, ScmPullRequestListResponseSchema, type ScmPullRequestListRequest } from '../scm/index.js';
-import type { UsageWorkEvidence } from './usageOutcomeAllocation.js';
+import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
+import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
 export type SessionWorkSourceResult = Readonly<
@@ -19,8 +20,14 @@ export async function collectUsageWorkSources(input: Readonly<{
     const { queries, accounting } = input;
     const sessionReads = input.sessionReads ?? new Map<string, Promise<SessionWorkSourceResult>>();
     const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
-    const sessionIds = new Set(queries.flatMap(query => (byQuery.get(getUsageQueryKey(query))?.contributions ?? [])
-        .flatMap(row => row.sessionId && row.turnId ? [row.sessionId] : [])));
+    const turnsByQuery = new Map(queries.map(query => {
+        const key = getUsageQueryKey(query);
+        return [key, readUsageAccountingSessionMembership(byQuery.get(key))?.turns ?? byQuery.get(key)?.contributions
+            ?.flatMap(row => row.sessionId && row.turnId ? [{ sessionId: row.sessionId, turnId: row.turnId }] : [])] as const;
+    }));
+    const sessionIds = new Set([...turnsByQuery.values()].flatMap(turns => turns?.map(turn => turn.sessionId) ?? []));
+    // Sessions outside a repository have no SCM evidence; the read did not fail.
+    const unsupportedReadFailureCodes = ['FEATURE_UNSUPPORTED', 'NOT_REPOSITORY'];
     // Generic transport refusals quarantine every private sibling read. Only
     // explicit native failures may retain other independently witnessed graphs.
     const nativeReadFailureCodes = ['COMMAND_FAILED', 'COMMAND_TIMEOUT', 'COMMAND_OUTPUT_LIMIT_EXCEEDED',
@@ -28,8 +35,9 @@ export async function collectUsageWorkSources(input: Readonly<{
     const loadSession = async (sessionId: string): Promise<SessionWorkSourceResult> => {
         const read = await input.readSession(sessionId);
         if (!read) return { status: 'unknown' };
-        const states = await Promise.all((['branch', 'open', 'closed', 'merged'] as const).map(async (state): Promise<Readonly<{
-            status: 'partial' | 'unsupported' | 'error'; evidence?: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[]; quarantine?: boolean;
+        const readState = async (state: 'branch' | 'open' | 'closed' | 'merged'): Promise<Readonly<{
+            status: 'partial' | 'unsupported' | 'error'; evidence?: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[];
+            quarantine?: boolean; notRepository?: boolean;
         }>> => {
           try {
             await input.assertCurrent();
@@ -38,7 +46,8 @@ export async function collectUsageWorkSources(input: Readonly<{
                 await input.assertCurrent();
                 if (!response.success) return { status: 'error', quarantine: true };
                 if (!response.data.success) {
-                    if (response.data.errorCode === 'FEATURE_UNSUPPORTED') return { status: 'unsupported' };
+                    if (unsupportedReadFailureCodes.includes(response.data.errorCode ?? '')) return { status: 'unsupported',
+                        notRepository: response.data.errorCode === 'NOT_REPOSITORY' };
                     const nativeFailure = nativeReadFailureCodes.includes(response.data.errorCode ?? '');
                     return { status: 'error', quarantine: !nativeFailure };
                 }
@@ -50,7 +59,7 @@ export async function collectUsageWorkSources(input: Readonly<{
             await input.assertCurrent();
             if (!response.success) return { status: 'error', quarantine: true };
             if (!response.data.success) {
-                if (response.data.errorCode === 'FEATURE_UNSUPPORTED') return { status: 'unsupported' };
+                if (unsupportedReadFailureCodes.includes(response.data.errorCode ?? '')) return { status: 'unsupported' };
                 // The incumbent transport maps generic refusals to BACKEND_UNAVAILABLE.
                 // Only explicit native-read failures can retain a sibling state's facts.
                 const nativeFailure = nativeReadFailureCodes.includes(response.data.errorCode ?? '');
@@ -68,7 +77,12 @@ export async function collectUsageWorkSources(input: Readonly<{
             await input.assertCurrent();
             return { status: 'error', quarantine: true };
           }
-        }));
+        };
+        // Branch discovery establishes whether this admitted workspace is a
+        // repository before acquiring remote PR evidence that it cannot have.
+        const branch = await readState('branch');
+        if (branch.notRepository) return { status: 'unsupported', evidence: [], branchEvidence: [] };
+        const states = [branch, ...await Promise.all((['open', 'closed', 'merged'] as const).map(readState))];
         // An explicit empty quarantine is an admission withdrawal. A failed
         // replacement supplies no evidence at all, allowing the page's single
         // retention owner to distinguish it from a refusal or real empty read.
@@ -84,18 +98,22 @@ export async function collectUsageWorkSources(input: Readonly<{
         return [sessionId, await read] as const;
     })));
     return queries.map((query): UsageWorkSourceSnapshot => {
-        const contributions = byQuery.get(getUsageQueryKey(query))?.contributions;
-        if (!contributions) return { query, status: 'unknown' };
-        const turns = new Set(contributions.filter(row => row.sessionId && row.turnId).map(row => JSON.stringify([row.sessionId, row.turnId])));
-        const selected = [...new Set(contributions.flatMap(row => row.sessionId && row.turnId ? [row.sessionId] : []))]
+        const admittedTurns = turnsByQuery.get(getUsageQueryKey(query));
+        if (!admittedTurns) return { query, status: 'unknown' };
+        const turns = new Set(admittedTurns.map(turn => JSON.stringify([turn.sessionId, turn.turnId])));
+        const selected = [...new Set(admittedTurns.map(turn => turn.sessionId))]
             .map(sessionId => sessions.get(sessionId)!);
         const evidence = selected.flatMap(source => 'evidence' in source ? source.evidence : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const branchEvidence = selected.flatMap(source => 'branchEvidence' in source ? source.branchEvidence ?? [] : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
-        return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status: selected.some(source => source.status === 'partial') ? 'partial'
-            : selected.some(source => source.status === 'error') ? 'error' : selected.some(source => source.status === 'unsupported') ? 'unsupported' : 'unknown',
+        const status = selected.some(source => source.status === 'partial') ? 'partial' as const
+            : selected.some(source => source.status === 'error') ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
+        const summary = status === 'partial' && (query.workProjection === 'summary' || query.population === 'public_eligible_personal')
+            ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence }).outcomes) : undefined;
+        return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
+            ...(summary ? { summary } : {}),
             ...(selected.some(source => source.status === 'error') ? { errorCode: 'work_evidence_failed' } : {}) };
     });
 }
