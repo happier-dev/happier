@@ -199,6 +199,8 @@ function ReadmeBody(props: Props): React.ReactElement {
  * machines — each with its machine and what is happening there. The status is the Projects tree's
  * own summary (`projectsTreeCheckoutFacts`), so the tree and the widget never disagree.
  */
+const CHECKOUTS_GLANCE_OTHERS = 2;
+
 function CheckoutsBody(props: Props): React.ReactElement {
     const scope = useScope(props.workspace);
     const { snapshot } = useWorkspaceScmSnapshotController(scope);
@@ -244,16 +246,26 @@ function CheckoutsBody(props: Props): React.ReactElement {
         .filter(worktree => normalizeWorkspaceRootPath(worktree.path) !== normalizeWorkspaceRootPath(scope.rootPath));
     const listed = new Set([here, ...worktrees.map(worktree => refAt(scope.machineId, worktree.path))]);
     const others = projectRefs.filter(ref => !listed.has(ref));
+    const [showAll, setShowAll] = React.useState(false);
+    const needsYou = (ref: WorkspaceRefV1 | null) => status(ref)?.attention === 'needs-you' ? 0 : 1;
+    // Beside the page's main column this is a glance: this checkout, then the two that matter most (who needs
+    // the person first), and the rest one press away. Array.sort is stable, so ties keep their listed order.
+    const rows = [
+        ...worktrees.map(worktree => ({ rank: needsYou(refAt(scope.machineId, worktree.path)), row: <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"
+            title={worktree.branch ?? worktree.path} {...fact(scope.machineId, refAt(scope.machineId, worktree.path))}
+            onPress={() => navigation.router.push(navigation.href('overview', undefined, worktree.path, worktree.id) as Parameters<typeof navigation.router.push>[0])} /> })),
+        ...others.map(ref => ({ rank: needsYou(ref), row: <WidgetGlanceRow key={`${ref.serverId}:${ref.machineId}:${ref.id}:${ref.rootPath}`} testID={`${props.testID}.checkout:${ref.id}`} mark="desktop"
+            title={status(ref)?.branch ?? resolveWorkspaceRefDisplayName(ref)} {...fact(ref.machineId, ref)}
+            onPress={() => fireAndForget(openProject(ref.id, { serverId: ref.serverId }), { tag: 'ProjectWidget.openCheckout' })} /> })),
+    ].sort((left, right) => left.rank - right.rank);
+    const hidden = showAll ? 0 : Math.max(0, rows.length - CHECKOUTS_GLANCE_OTHERS);
     return <View testID={props.testID}>
         <WidgetGlanceRow testID={`${props.testID}.here`} mark="desktop" {...(isOffline(scope.machineId) ? {} : { tag: t('projects.checkouts.here') })}
             title={snapshot?.branch.head ?? status(here)?.branch ?? resolveWorkspaceRefDisplayName(checkout)}
             {...fact(scope.machineId, here)} />
-        {worktrees.map(worktree => <WidgetGlanceRow key={worktree.path} testID={`${props.testID}.worktree:${worktree.id ?? worktree.path}`} mark="desktop"
-            title={worktree.branch ?? worktree.path} {...fact(scope.machineId, refAt(scope.machineId, worktree.path))}
-            onPress={() => navigation.router.push(navigation.href('overview', undefined, worktree.path, worktree.id) as Parameters<typeof navigation.router.push>[0])} />)}
-        {others.map(ref => <WidgetGlanceRow key={`${ref.serverId}:${ref.machineId}:${ref.id}:${ref.rootPath}`} testID={`${props.testID}.checkout:${ref.id}`} mark="desktop"
-            title={status(ref)?.branch ?? resolveWorkspaceRefDisplayName(ref)} {...fact(ref.machineId, ref)}
-            onPress={() => fireAndForget(openProject(ref.id, { serverId: ref.serverId }), { tag: 'ProjectWidget.openCheckout' })} />)}
+        {(hidden > 0 ? rows.slice(0, CHECKOUTS_GLANCE_OTHERS) : rows).map(entry => entry.row)}
+        {hidden > 0 ? <WidgetGlanceRow testID={`${props.testID}.more`} variant="fact" mark="caret-down"
+            title={t('projects.checkouts.more', { count: hidden })} onPress={() => setShowAll(true)} /> : null}
         <WidgetGlanceRow testID={`${props.testID}.open-elsewhere`} variant="fact" mark="plus" title={t('projects.checkouts.openElsewhere')}
             onPress={() => navigateToOpen(buildProjectCheckoutOpenRoute(props.workspace, snapshot?.branch.head))} />
     </View>;

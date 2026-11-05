@@ -10,8 +10,9 @@ export type ProjectOverviewWidgetAreas = Readonly<{
 }>;
 
 /**
- * The render-only defaults of a missing Overview (plan 12 §2): main Code and README; aside About,
- * Local changes, Checkouts, Scripts and Sessions. Drawn, never written: the first explicit edit writes
+ * The render-only defaults of a missing Overview (plan 12 §2, lab `p-overview` R1105B): main Code and README;
+ * aside Sessions, Local changes, Scripts, Checkouts and About, work first because the header already says which
+ * project this is. Drawn, never written: the first explicit edit writes
  * the document through the canonical layout owner.
  */
 const DEFAULTS = projectOverviewDefaultPlacementsV1();
@@ -45,13 +46,13 @@ export function projectOverviewWidgetAreas(
 
 /** The phone reading order's semantic priority (lab `p-overview` HOMEp); anything else is "custom". */
 const PHONE_PRIORITY: Readonly<Record<string, number>> = {
-  project_about: 0,
+  project_sessions: 0,
   project_changes: 1,
   project_scripts: 2,
   project_code: 4,
   project_readme: 5,
   project_checkouts: 6,
-  project_sessions: 7,
+  project_about: 7,
 };
 const CUSTOM_PRIORITY = 3;
 
@@ -70,12 +71,7 @@ function phonePriority(placement: Placement): number {
 export function mergeProjectOverviewWidgetHeads(
   areas: ProjectOverviewWidgetAreas,
 ): readonly Placement[] {
-  const { main, aside: savedAside } = projectOverviewWidgetAreas(areas);
-  // The unpersisted phone default hierarchy differs from the desktop's aside; a saved area's
-  // sequence, including empty, must never be sorted by semantic priority.
-  const aside = areas.aside === null
-    ? [savedAside[0]!, savedAside[1]!, savedAside[3]!, savedAside[2]!, savedAside[4]!]
-    : savedAside;
+  const { main, aside } = projectOverviewWidgetAreas(areas);
   const merged: Placement[] = [];
   let m = 0;
   let a = 0;

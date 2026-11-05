@@ -353,6 +353,8 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
     return (
       <View style={styles.header}>
         <WidgetAreaLayoutBar
+          // The Project's tab already names the page: a dashboard's name is one section of it, never a second page title.
+          heading="section"
           layouts={options}
           labels={DASHBOARD_LABELS}
           selectedId={props.attachedDashboard?.artifactId ?? selected?.artifactId ?? unavailableId ?? 'default'}

@@ -81,7 +81,7 @@ export type BuiltinUsagePublicPresentationV1 = z.infer<typeof BuiltinUsagePublic
 export function projectOverviewDefaultPlacementsV1(): WidgetLayoutWidgetV1[] {
     return [
         ...(['code', 'readme'] as const).map(id => ({ id, area: 'main' as const })),
-        ...(['about', 'changes', 'checkouts', 'scripts', 'sessions'] as const).map(id => ({ id, area: 'aside' as const })),
+        ...(['sessions', 'changes', 'scripts', 'checkouts', 'about'] as const).map(id => ({ id, area: 'aside' as const })),
     ].map(({ id, area }) => ({ kind: 'widget' as const, area, instance: {
         v: 1, id, definition: { kind: 'builtin', id: `project_${id}` }, bindings: { checkout: { kind: 'context', slot: 'checkout' } },
     } }));

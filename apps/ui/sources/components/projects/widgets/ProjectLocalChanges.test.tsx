@@ -437,6 +437,20 @@ describe('Project Local Changes', () => {
         expect(url.searchParams.get('initialFile')).toBe(relation === 'same-project' ? 'src/current.ts' : null);
         expect(url.searchParams.get('comparisonId')).toBe(relation === 'same-project' ? 'saved-comparison' : null);
     });
+    it('keeps Checkouts to three rows, the ones that need the person first, until the person asks for the rest', async () => {
+        const worktrees = ['one', 'two', 'three', 'four', 'five'].map(name => ({ id: name, path: `/repo/${name}`, branch: name, isCurrent: false }));
+        currentSnapshot = ScmWorkingSnapshotSchema.parse({ ...snapshot([]), repo: { ...snapshot([]).repo, worktrees } });
+        const screen = await mount('/repo', 'project_checkouts');
+        const rows = () => screen.root.findAll(node => typeof node.type === 'string'
+            && typeof node.props.testID === 'string' && node.props.testID.startsWith('local-changes.worktree:'))
+            .map(node => node.props.testID.slice('local-changes.worktree:'.length));
+        expect(screen.findHostByTestId('local-changes.here')).not.toBeNull();
+        expect(rows()).toEqual(['five', 'four']);
+        await screen.pressByTestIdAsync('local-changes.more');
+        expect(rows()).toEqual(['five', 'four', 'one', 'three', 'two']);
+        expect(screen.findHostByTestId('local-changes.more')).toBeNull();
+        expect(screen.findHostByTestId('local-changes.open-elsewhere')).not.toBeNull();
+    });
     it('names a checkout on a machine the Home does not list as unlisted, never by its raw machine id', async () => {
         const accountScope = storage.getState().profileScope;
         if (!accountScope) throw new Error('Connected fixture has no Account scope');

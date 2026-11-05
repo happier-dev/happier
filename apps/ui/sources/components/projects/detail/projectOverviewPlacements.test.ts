@@ -12,10 +12,10 @@ describe('Project Overview responsive projection', () => {
         const areas = projectOverviewWidgetAreas({ main: null, aside: null });
         expect(areas.main.map(row => row.instance.definition)).toEqual([{ kind: 'builtin', id: 'project_code' }, { kind: 'builtin', id: 'project_readme' }]);
         expect(areas.aside.map(row => row.instance.definition)).toEqual(
-            ['about', 'changes', 'checkouts', 'scripts', 'sessions'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
+            ['sessions', 'changes', 'scripts', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
         );
         expect(mergeProjectOverviewWidgetHeads({ main: null, aside: null }).map(row => row.instance.definition)).toEqual(
-            ['about', 'changes', 'scripts', 'code', 'readme', 'checkouts', 'sessions'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
+            ['sessions', 'changes', 'scripts', 'code', 'readme', 'checkouts', 'about'].map(name => ({ kind: 'builtin', id: `project_${name}` })),
         );
     });
 
@@ -25,10 +25,10 @@ describe('Project Overview responsive projection', () => {
         const areas = projectOverviewWidgetAreas({ main, aside });
         expect(areas.main).toBe(main);
         expect(areas.aside).toBe(aside);
-        expect(ids(mergeProjectOverviewWidgetHeads(areas))).toEqual(['about', 'metric', 'code', 'readme', 'checkouts', 'scripts', 'sessions']);
+        expect(ids(mergeProjectOverviewWidgetHeads(areas))).toEqual(['metric', 'code', 'readme', 'about', 'checkouts', 'scripts', 'sessions']);
         const moved = projectOverviewWidgetAreas({ main: [metric, builtin('code'), builtin('scripts'), builtin('readme')],
             aside: [builtin('about'), builtin('checkouts'), builtin('sessions')] });
-        expect(ids(mergeProjectOverviewWidgetHeads(moved))).toEqual(['about', 'metric', 'code', 'scripts', 'readme', 'checkouts', 'sessions']);
+        expect(ids(mergeProjectOverviewWidgetHeads(moved))).toEqual(['metric', 'code', 'scripts', 'readme', 'about', 'checkouts', 'sessions']);
         expect(ids(main)).toEqual(['metric', 'code', 'readme']);
     });
 
@@ -37,7 +37,7 @@ describe('Project Overview responsive projection', () => {
         expect(projectOverviewWidgetAreas({ main: empty, aside: empty })).toEqual({ main: empty, aside: empty });
         expect(mergeProjectOverviewWidgetHeads({ main: empty, aside: empty })).toEqual([]);
         const areas = { main: [builtin('sessions'), builtin('about')], aside: [metric] };
-        expect(ids(mergeProjectOverviewWidgetHeads(areas))).toEqual(['metric', 'sessions', 'about']);
+        expect(ids(mergeProjectOverviewWidgetHeads(areas))).toEqual(['sessions', 'metric', 'about']);
     });
 
     it('projects both areas from the same document without confusing present-empty with missing', () => {
