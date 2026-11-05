@@ -1,5 +1,5 @@
 import { ExternalActionRequestEnvelopeSchema, isExternalActionRequestVersionAllowedForAccountModeV1,
-  type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
+  type ExternalActionManagedAdmissionV1, type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
 import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
 import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
@@ -550,8 +550,10 @@ function openInstalledRequest(input: Readonly<{
   } catch { return null; }
 }
 
-export function isManagedControllerCodecActionV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
-  'actionId' | 'managedAdmission'>): boolean {
+export function isManagedControllerCodecActionV1(binding: Readonly<{
+  actionId: string;
+  managedAdmission?: Pick<ExternalActionManagedAdmissionV1, 'actionId'>;
+}>): boolean {
   return binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry';
 }
