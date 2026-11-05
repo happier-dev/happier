@@ -33,6 +33,7 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
     /** The destination's open details, or `null` while none is open. */
     destinationDetails?: AppPaneDestinationDetails | null;
     mainMinWidthPx?: number;
+    detailsPreferredWidthPx?: number;
     onMainColumnControlsChange?: React.ComponentProps<typeof AppPaneScopeHost>['onMainColumnControlsChange'];
 }>) {
     const tabs = useAppRightSidebarTabs();
@@ -48,6 +49,7 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
             onMainColumnControlsChange={props.onMainColumnControlsChange}
             destinationDetails={props.destinationDetails ?? null}
             mainMinWidthPx={props.mainMinWidthPx}
+            detailsPreferredWidthPx={props.detailsPreferredWidthPx}
         />
     );
 });

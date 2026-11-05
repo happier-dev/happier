@@ -43,6 +43,21 @@ export const PANE_SIZING_DEFAULTS = {
     },
 } as const;
 
+/**
+ * The details column's width. A person's dragged width always wins. Until they drag, a destination whose detail is the
+ * reading surface (an item opened beside its list) asks for its own width, within what keeps main at its minimum; a
+ * stored width that is already over that budget keeps the existing overlay decision.
+ */
+export function resolveDetailsDockPreferredPx(input: Readonly<{
+    storedPx: number;
+    storedDefaultPx: number;
+    destinationPreferredPx: number | undefined;
+    budgetMaxPx: number;
+}>): number {
+    if (input.destinationPreferredPx === undefined || input.storedPx !== input.storedDefaultPx) return input.storedPx;
+    return Math.max(input.storedPx, Math.min(input.destinationPreferredPx, input.budgetMaxPx));
+}
+
 function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
 }

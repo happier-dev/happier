@@ -123,7 +123,8 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
         return (
             <Text
                 key={index}
-                numberOfLines={1}
+                // A large header's fact wraps inside its two lines; the band's stays on its one.
+                numberOfLines={large ? LARGE_FACTS_LINES : 1}
                 style={[styles.subtitle, large ? styles.largeSubtitle : null, index === 0 ? null : styles.followingFact]}
             >
                 {separator}

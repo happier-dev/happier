@@ -85,6 +85,7 @@ export type AppPaneScopeHostProps = Readonly<{
     onMainColumnControlsChange?: (controls: PaneMainColumnState | null) => void;
     /** The main content's own minimum width before a pane becomes an overlay. */
     mainMinWidthPx?: number;
+    detailsPreferredWidthPx?: number;
     /**
      * Installs one scope-local context boundary around main and every pane after
      * measured layout is available. It owns no pane state and must return the
@@ -798,6 +799,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             main={props.main}
             mainAccessibilityLabel={props.mainColumn?.showLabel}
             mainMinWidthPx={props.mainMinWidthPx}
+            detailsPreferredWidthPx={props.detailsPreferredWidthPx}
             rightPane={presentedRightOpen ? rightPane : null}
             rightSurfaces={rightSurfaces}
             onCloseMainSurface={typeof rightPresentation === 'string' ? undefined : rightPresentation.onCloseMainSurface}

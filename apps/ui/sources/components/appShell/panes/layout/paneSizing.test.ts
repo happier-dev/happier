@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { PANE_SIZING_DEFAULTS, resolveDockedPaneSizing } from './paneSizing';
+import { PANE_SIZING_DEFAULTS, resolveDetailsDockPreferredPx, resolveDockedPaneSizing } from './paneSizing';
+
+describe('resolveDetailsDockPreferredPx', () => {
+    const base = { storedDefaultPx: 600, destinationPreferredPx: 750 };
+    it('gives an undragged detail its destination width while main keeps its minimum', () => {
+        expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 600, budgetMaxPx: 956 })).toBe(750);
+        expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 600, budgetMaxPx: 680 })).toBe(680);
+    });
+    it('keeps a dragged width, a destination with no preference, and the overlay decision of a narrow window', () => {
+        expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 520, budgetMaxPx: 956 })).toBe(520);
+        expect(resolveDetailsDockPreferredPx({ storedDefaultPx: 600, destinationPreferredPx: undefined, storedPx: 600, budgetMaxPx: 956 })).toBe(600);
+        expect(resolveDetailsDockPreferredPx({ ...base, storedPx: 600, budgetMaxPx: 500 })).toBe(600);
+    });
+});
 
 describe('resolveDockedPaneSizing', () => {
     it('clamps the side pane before shrinking the stored session preference', () => {

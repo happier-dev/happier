@@ -18,6 +18,7 @@ import { applyMainHiddenLayoutOverride } from './layout/applyMainHiddenLayoutOve
 import {
     PANE_SIZING_DEFAULTS,
     resolveDockedPaneSizing,
+    resolveDetailsDockPreferredPx,
 } from './layout/paneSizing';
 import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType';
 import { useReportSessionCockpitActionRailRect } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -78,6 +79,11 @@ export type PaneColumnsHostProps = Readonly<{
      * main minimum.
      */
     mainMinWidthPx?: number;
+    /**
+     * The details column's width in this destination until the person drags it (an item opened beside its list reads
+     * in the larger share). Without it the column opens at the app-wide stored width.
+     */
+    detailsPreferredWidthPx?: number;
     onCloseRight?: () => void;
     onCloseDetails?: () => void;
     onCloseBottom?: () => void;
@@ -204,7 +210,12 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const details = PANE_SIZING_DEFAULTS.details;
 
     const storedEffectiveRightDockWidthPx = Math.max(right.minPx, rightPaneWidthPx ?? right.defaultPx);
-    const storedEffectiveDetailsDockWidthPx = Math.max(details.minPx, detailsPaneWidthPx ?? details.minPx);
+    const storedEffectiveDetailsDockWidthPx = Math.max(details.minPx, resolveDetailsDockPreferredPx({
+        storedPx: detailsPaneWidthPx ?? details.minPx,
+        storedDefaultPx: localSettingsDefaults.detailsPaneWidthPx,
+        destinationPreferredPx: props.detailsPreferredWidthPx,
+        budgetMaxPx: panelContainerWidthPx - mainMinPx,
+    }));
     const effectiveRightDockWidthPx = rightDragWidthPx ?? storedEffectiveRightDockWidthPx;
     const effectiveDetailsDockWidthPx = detailsDragWidthPx ?? storedEffectiveDetailsDockWidthPx;
     const rightPreferredPxForLayout = effectiveRightDockWidthPx;

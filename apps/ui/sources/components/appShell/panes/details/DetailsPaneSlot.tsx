@@ -145,6 +145,8 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                     // A detail is about one thing, so it opens on that thing's name at page-title size over its
                     // facts line (lab c7 detail), the same title its pushed form shows on a phone.
                     size="large"
+                    // The name wraps rather than cuts off the words that tell two entries apart (lab c7).
+                    titleNumberOfLines={2}
                     title={props.frame.title}
                     {...(body?.subtitleLeading === undefined
                         ? { subtitle: props.frame.subtitle }
@@ -161,6 +163,9 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
         </View>
     );
 });
+
+/** An item opened beside its list reads in the larger share until the person drags it (lab c7: 750 px at 1440). */
+const ITEM_DETAILS_PREFERRED_WIDTH_PX = 750;
 
 /**
  * A page whose content (a plugin page) may open an item beside it: the page's app details pane — the one
@@ -188,6 +193,7 @@ export const DetailsPaneSlotHost = React.memo(function DetailsPaneSlotHost(props
             mainColumn={props.mainColumn}
             details={details}
             onCloseDetails={store.close}
+            detailsPreferredWidthPx={ITEM_DETAILS_PREFERRED_WIDTH_PX}
             testID={frame?.testID ?? props.testID}
         />
     );

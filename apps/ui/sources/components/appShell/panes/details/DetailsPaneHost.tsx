@@ -27,6 +27,7 @@ export type DetailsPaneHostProps = Readonly<{
      * narrower turns the pane into an overlay. Defaults to the canonical main minimum.
      */
     mainMinWidthPx?: number;
+    detailsPreferredWidthPx?: number;
     testID?: string;
 }>;
 
@@ -80,6 +81,7 @@ export const DetailsPaneHost = React.memo(function DetailsPaneHost(props: Detail
             mainColumn={props.mainColumn}
             destinationDetails={destinationDetails}
             mainMinWidthPx={props.mainMinWidthPx}
+            detailsPreferredWidthPx={props.detailsPreferredWidthPx}
         />
     );
 });
