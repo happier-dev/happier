@@ -4421,7 +4421,6 @@ export function useSessionComposerController({
                                 : null
                             : selectedRef ?? null}
                         selectedTeamCredentialModel={selectedTeamCredentialModel}
-                        effectiveLabel={selectedProviderRow?.descriptor.name ?? nativeLabel}
                         reportedModel={existingSessionReportedModel}
                         canEnterCustomNativeValue={canEnterCustomModel}
                         // Model options (Thinking, effort) are Session settings, not the model grant.

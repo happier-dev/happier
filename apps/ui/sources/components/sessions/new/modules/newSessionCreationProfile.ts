@@ -44,8 +44,8 @@ export function useNewSessionPanelPropsForCreationProfile(
         modelSelection: selected ? { v: 1, updatedAt: 0, ref: selected } : null,
     }, profile ? { ...profile, agentTargetKey } : undefined);
     const effectiveSelection = effective.modelSelection?.ref ?? null;
-    const modelPickerProps = React.useMemo(() => {
-        if (!profile || !picker) return picker;
+    const narrowedPicker = React.useMemo(() => {
+        if (!profile || !picker) return null;
         const narrowed = narrowSessionModelPickerToAllowedModels({
             allowedModels: profile.allowedModels,
             agentTargetKey: picker.agentTargetKey,
@@ -58,16 +58,16 @@ export function useNewSessionPanelPropsForCreationProfile(
             ? providerGroups.flatMap((group) => group.rows).find((row) => (
                 toModelVisibilityKey(row.ref) === toModelVisibilityKey(effectiveSelection)
             )) : null;
-        const effectiveLabel = providerRow?.descriptor.name
+        // The fixed agent's chip names the model the profile resolves to.
+        const modelLabel = providerRow?.descriptor.name
             ?? picker.nativeModels.find((model) => model.value === effectiveSelection?.modelId)?.label
-            ?? effectiveSelection?.modelId ?? picker.effectiveLabel;
+            ?? effectiveSelection?.modelId ?? effective.modelMode;
         return {
-            ...picker,
-            ...narrowed,
-            selected: effectiveSelection,
-            effectiveLabel,
+            props: { ...picker, ...narrowed, selected: effectiveSelection },
+            modelLabel,
         };
-    }, [effectiveSelection, picker, profile]);
+    }, [effective.modelMode, effectiveSelection, picker, profile]);
+    const modelPickerProps = narrowedPicker?.props ?? picker;
     const modelContentOverride = React.useMemo(() => modelPickerProps && profile
         ? React.createElement(SessionModelPicker, modelPickerProps)
         : props.modelContentOverride, [modelPickerProps, profile, props.modelContentOverride]);
@@ -93,10 +93,10 @@ export function useNewSessionPanelPropsForCreationProfile(
             modelContentOverride,
             modelMode: effective.modelMode,
             permissionMode: effective.permissionMode,
-            ...(fixedAgent && modelPickerProps ? { agentLabel: modelPickerProps.effectiveLabel } : {}),
+            ...(fixedAgent && narrowedPicker ? { agentLabel: narrowedPicker.modelLabel } : {}),
             allowedPermissionModes: permissionModes,
             // One allowed mode is a fact, not a choice.
             ...(permissionModes && permissionModes.length < 2 ? { handlePermissionModeChange: undefined } : {}),
         };
-    }, [effective.modelMode, effective.permissionMode, modelContentOverride, modelPickerProps, permissionModes, profile, props]);
+    }, [effective.modelMode, effective.permissionMode, modelContentOverride, modelPickerProps, narrowedPicker, permissionModes, profile, props]);
 }

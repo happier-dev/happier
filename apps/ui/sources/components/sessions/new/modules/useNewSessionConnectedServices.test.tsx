@@ -1320,7 +1320,6 @@ describe('useNewSessionConnectedServices', () => {
             providerGroups={[]}
             providerProjectionAuthoritative={false}
             selected={null}
-            effectiveLabel="Default"
             nativeSourceLabel={hook.getCurrent().nativeSourceLabel}
             onSelect={() => {}}
         />);

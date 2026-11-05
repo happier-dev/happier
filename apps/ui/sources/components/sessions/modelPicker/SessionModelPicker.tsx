@@ -168,7 +168,6 @@ export type SessionModelPickerProps = Readonly<{
     /** Default `true`; `false` drops the automatic option (a model-restricted embed). */
     allowAutomatic?: boolean;
     selected: SessionModelPickerValue;
-    effectiveLabel: string;
     reportedModel?: Readonly<{
         ref: NonNullable<SessionModelPickerOptionValue>;
         label?: string;
@@ -294,7 +293,6 @@ function SessionModelSourceBrowse(props: Readonly<{
             allowAutomatic={false}
             canEnterCustomValue={false}
             selected={picker.selected}
-            effectiveLabel={picker.effectiveLabel}
             reportedModel={picker.reportedModel}
             favoriteKeys={picker.favoriteKeys}
             onToggleFavorite={picker.onToggleFavorite}
@@ -606,7 +604,6 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             favoriteActionVisibility={props.favoriteActionVisibility}
             multiColumn={props.multiColumn}
             title={t('agentInput.model.title')}
-            effectiveLabel={props.effectiveLabel}
             notes={notes}
             options={[]}
             sections={labeledSections}

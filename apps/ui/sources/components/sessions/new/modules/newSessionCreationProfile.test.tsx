@@ -74,7 +74,7 @@ describe('new-session creation-profile choices', () => {
                 modelPickerProps: {
                     agentTargetKey, nativeModels, providerGroups: [work, personal, denied],
                     hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
-                    selected, effectiveLabel: selected?.modelId ?? 'Automatic', onSelect,
+                    selected, onSelect,
                 },
             }), profile) as ProfilePanel;
             return { panel, selected };

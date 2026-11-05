@@ -139,7 +139,6 @@ describe('SessionModelPicker source browsing', () => {
           })]}
           providerProjectionAuthoritative
           selected={{ agentTargetKey: AGENT, providerConnectionId: GATEWAY, modelId: 'fable-5.1' }}
-          effectiveLabel="Fable 5.1"
           sourceBrowse={providerBrowsing ? { machineId: 'machine-a', serverId } : undefined}
           favoriteEntries={[{ ref: { agentTargetKey: AGENT, providerConnectionId: GATEWAY, modelId: 'fable-5.1' }, label: 'Fable 5.1' }]}
           onSelect={onSelect}
@@ -190,7 +189,6 @@ describe('SessionModelPicker source browsing', () => {
         providerGroups={[]}
         providerProjectionAuthoritative
         selected={selected}
-        effectiveLabel="GPT-6.1 Sol"
         hiddenSources={[
           {
             connectionId: GATEWAY,
@@ -293,7 +291,6 @@ describe('SessionModelPicker source browsing', () => {
         providerGroups={[]}
         providerProjectionAuthoritative
         selected={null}
-        effectiveLabel="GPT-6.1 Sol"
         hiddenSources={[
           {
             connectionId: GATEWAY,
@@ -318,7 +315,7 @@ describe('SessionModelPicker source browsing', () => {
       <SessionModelPicker agentTargetKey={agentTargetKey}
         nativeModels={[{ value: 'native-model', label: 'Native model' }]}
         providerGroups={[]} providerProjectionAuthoritative selected={null}
-        effectiveLabel="Native model" onSelect={() => {}} />
+        onSelect={() => {}} />
     </SessionModelSourceBrowseHandoffContext.Provider>;
     const screen = await renderScreen(picker(AGENT));
     expect(screen.findByTestId('model-picker-source-scope')).not.toBeNull();
@@ -355,7 +352,6 @@ describe('SessionModelPicker source browsing', () => {
           providerGroups={[]}
           providerProjectionAuthoritative
           selected={null}
-          effectiveLabel="GPT-6.1 Sol"
           sourceBrowse={{ machineId: 'machine-a', serverId }}
           onSelect={onSelect}
         />

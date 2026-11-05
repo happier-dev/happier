@@ -365,7 +365,7 @@ describe('useTeamsDirectory', () => {
             return React.createElement(SessionModelPicker, {
                 agentTargetKey, declarationContext: source === 'installed' ? { kind: 'machine', projection: declarationProjection } : { kind: 'account' },
                 nativeModels: [], providerGroups: [], providerProjectionAuthoritative: true,
-                selected: null, effectiveLabel: 'Choose', onSelect, onSelectTeamCredentialModel: onSelect,
+                selected: null, onSelect, onSelectTeamCredentialModel: onSelect,
                 teamCredentialResources: current.selected.resources,
                 currentTeamCredentialResourceKeys: current.selected.currentResourceKeys,
             });

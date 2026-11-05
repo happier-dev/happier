@@ -266,7 +266,6 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             currentSelectionRecovery={props.currentSelectionRecovery}
             hiddenNativeModelKeys={props.hiddenNativeModelKeys}
             selected={selected}
-            effectiveLabel=""
             favoriteEntries={favoriteEntries}
             favoriteKeys={favoriteKeys}
             onToggleFavorite={favoritesEnabled ? toggleFavorite : undefined}

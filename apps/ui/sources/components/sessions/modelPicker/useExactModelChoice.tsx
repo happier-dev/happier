@@ -71,7 +71,6 @@ function ExactModelChoiceModal(
       currentSelectionRecovery={props.currentSelectionRecovery}
       hiddenNativeModelKeys={props.hiddenNativeModelKeys}
       selected={props.selected}
-      effectiveLabel={props.effectiveLabel}
       experimentalConfirmation={props.experimentalConfirmation}
       teamCredentialResources={props.teamCredentialResources}
       teamNameById={props.teamNameById}

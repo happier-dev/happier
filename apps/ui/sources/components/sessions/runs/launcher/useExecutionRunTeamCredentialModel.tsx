@@ -174,7 +174,6 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
             {...pickerProps}
             providerProjectionAuthoritative
             selected={null}
-            effectiveLabel=""
             showTitle={false}
             onSelect={onSelectNonTeamModel}
         />

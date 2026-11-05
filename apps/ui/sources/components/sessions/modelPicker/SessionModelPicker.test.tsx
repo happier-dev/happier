@@ -111,7 +111,7 @@ describe('SessionModelPicker', () => {
                 teamCredentialResources={[resource]} currentTeamCredentialResourceKeys={new Set(['team:resource'])}
                 selected={selection} selectedTeamCredentialModel={disposition.selectedTeamCredentialModel}
                 reportedModel={{ ref: disposition.reportedTeamCredentialModel ?? selection, status: 'last_used' }}
-                effectiveLabel="Luna" onSelect={() => {}} />);
+                onSelect={() => {}} />);
             const list = screen.findByType(SelectionList);
             expect(list.props.selectedOptionId).toBe(sessionModelSelectionKey(active.teamCredentialModel));
             expect(list.props.selectedOptionId).not.toBe(sessionModelSelectionKey(selection));
@@ -139,7 +139,6 @@ describe('SessionModelPicker', () => {
             providerGroups={[group]}
             providerProjectionAuthoritative
             selected={selected}
-            effectiveLabel={selected.modelId}
             onSelect={onSelect}
         />;
         const screen = await renderScreen(picker({ kind: 'machine', projection: null }));
@@ -194,7 +193,6 @@ describe('SessionModelPicker', () => {
             favoriteEntries={favorite ? [{ ref: selected }] : undefined}
             probe={{ phase: 'idle', failed: false }}
             selected={null}
-            effectiveLabel="Automatic"
             onSelect={onSelect}
         />);
         const optionId = `model-picker-overlay-option:${JSON.stringify([agentTargetKey, null, modelId])}`;
@@ -223,7 +221,6 @@ describe('SessionModelPicker', () => {
                 projectionError={error}
                 selected={scenario === 'selection' ? { agentTargetKey,
                     providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'work/model' } : null}
-                effectiveLabel="Automatic"
                 onSelect={vi.fn()}
             />);
             expect(screen.findByTestId('provider-error:provider_catalog_unavailable')).toBeTruthy();
@@ -262,7 +259,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={selected}
-                effectiveLabel="5.6 Sol"
                 favoriteEntries={favoriteEntries}
                 onSelect={() => {}}
             />,
@@ -304,7 +300,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={requested}
-                effectiveLabel="5.6 Sol"
                 reportedModel={{ ref: reported, status: 'last_used' }}
                 onSelect={() => {}}
             />,
@@ -367,7 +362,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={providerGroups}
                 providerProjectionAuthoritative
                 selected={null}
-                effectiveLabel="Automatic"
                 experimentalConfirmation={{
                     confirm,
                     pending: false,
@@ -407,7 +401,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={providerGroups}
                 providerProjectionAuthoritative
                 selected={null}
-                effectiveLabel="Automatic"
                 experimentalConfirmation={{
                     confirm,
                     pending: true,
@@ -447,7 +440,6 @@ describe('SessionModelPicker', () => {
                 probe={{ phase: 'idle', failed: true }}
                 notes={[t('agentInput.model.unavailable')]}
                 selected={null}
-                effectiveLabel="Automatic"
                 onSelect={vi.fn()}
             />,
         );
@@ -467,7 +459,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={null}
-                effectiveLabel="Automatic"
                 canEnterCustomNativeValue
                 experimentalConfirmation={{
                     confirm: vi.fn(async () => false),
@@ -525,7 +516,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={null}
-                effectiveLabel="Automatic"
                 canEnterCustomNativeValue
                 nativeSourceLabel={nativeSourceLabel}
                 onSelect={() => {}}
@@ -558,7 +548,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[group]}
                 providerProjectionAuthoritative
                 selected={selected}
-                effectiveLabel="Listed"
                 onSelect={onSelect}
             />,
         );
@@ -585,7 +574,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[group]}
                 providerProjectionAuthoritative
                 selected={selected}
-                effectiveLabel="Listed"
                 onSelect={() => {}}
             />,
         );
@@ -609,7 +597,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[group]}
                 providerProjectionAuthoritative
                 selected={selected}
-                effectiveLabel="Listed"
                 onSelect={() => {}}
             />,
         );
@@ -633,7 +620,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[makeGroup('pc_work'), makeGroup('pc_personal')]}
                 providerProjectionAuthoritative
                 selected={null}
-                effectiveLabel="Automatic"
                 onSelect={() => {}}
             />,
         );
@@ -660,7 +646,6 @@ describe('SessionModelPicker', () => {
                 projectionError={error}
                 retryProjection={retryProjection}
                 selected={selected}
-                effectiveLabel="provider-only-model"
                 onSelect={() => {}}
             />,
         );
@@ -697,7 +682,6 @@ describe('SessionModelPicker', () => {
                 projectionFailures={failures}
                 retryProjection={retryProjection}
                 selected={null}
-                effectiveLabel="Automatic"
                 onSelect={() => {}}
             />,
         );
@@ -722,7 +706,6 @@ describe('SessionModelPicker', () => {
                 }]}
                 retryProjection={vi.fn(async () => {})}
                 selected={null}
-                effectiveLabel="Automatic"
                 onSelect={() => {}}
             />,
         );
@@ -742,7 +725,6 @@ describe('SessionModelPicker', () => {
                 retryProjection={vi.fn(async () => {})}
                 probe={{ phase: 'idle', onRefresh: headerRefresh }}
                 selected={null}
-                effectiveLabel="Automatic"
                 onSelect={() => {}}
             />,
         );
@@ -772,7 +754,6 @@ describe('SessionModelPicker', () => {
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={available}
-                effectiveLabel="Available model"
                 favoriteEntries={[
                     { ref: available, label: 'Stored available' },
                     { ref: unavailable, label: 'Stored unavailable' },
@@ -822,7 +803,6 @@ describe('SessionModelPicker', () => {
                     providerGroups={providerGroups}
                     providerProjectionAuthoritative
                     selected={null}
-                    effectiveLabel={pending ? 'Checking confirmation' : 'Automatic'}
                     experimentalConfirmation={{
                         confirm,
                         pending,
@@ -855,7 +835,6 @@ describe('SessionModelPicker', () => {
                     providerGroups={[]}
                     providerProjectionAuthoritative
                     selected={reported}
-                    effectiveLabel="5.6 Sol"
                     reportedModel={{ ref: reported, status: 'running' }}
                     onSelect={() => {}}
                 />

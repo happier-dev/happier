@@ -135,7 +135,6 @@ describe('SessionModelPicker — the popup pattern survives every selection, sin
             selected={source === 'account' ? providerSelection : { ...providerSelection, providerConnectionId: null }}
             selectedTeamCredentialModel={source === 'team' ? resource.providerModels[0]!.selection : null}
             teamCredentialResources={[resource]}
-            effectiveLabel="Listed"
             selectedOptionControls={optionControls}
             modelOptionOverrides={overrides}
             onSelectOptionControlValue={onChange}
@@ -157,7 +156,7 @@ describe('SessionModelPicker — the popup pattern survives every selection, sin
     it('keeps the selected model controls inside its own row and withdraws them for provider models', async () => {
         const element = (selected: typeof nativeSelection | typeof providerSelection) => <SessionModelPicker
             agentTargetKey="agent:happier.agent.codex/codex" nativeModels={[{ value: 'gpt-5.6-sol', label: '5.6 Sol' }]}
-            providerGroups={providerGroups} providerProjectionAuthoritative selected={selected} effectiveLabel="5.6 Sol"
+            providerGroups={providerGroups} providerProjectionAuthoritative selected={selected}
             selectedOptionControls={optionControls}
             onSelectOptionControlValue={() => {}} onSelect={() => {}} />;
         const screen = await renderScreen(element(nativeSelection));
@@ -193,7 +192,6 @@ describe('SessionModelPicker — the popup pattern survives every selection, sin
                 providerGroups={providerGroups}
                 providerProjectionAuthoritative
                 selected={selected}
-                effectiveLabel="5.6 Sol"
                 selectedOptionControls={controls}
                 onSelectOptionControlValue={onSelectOptionControlValue}
                 onSelect={() => {}}
@@ -232,7 +230,6 @@ describe('SessionModelPicker — the popup pattern survives every selection, sin
                 providerGroups={[]}
                 providerProjectionAuthoritative
                 selected={nativeSelection}
-                effectiveLabel="5.6 Sol"
                 onSelect={() => {}}
             />,
         );

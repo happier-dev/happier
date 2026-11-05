@@ -448,11 +448,6 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             hiddenSources={providersFeatureEnabled ? providerProjection.data?.hiddenSources : undefined}
             sourceBrowse={providersFeatureEnabled ? providerSourceBrowse : undefined}
             selected={canonicalSelectedRef}
-            effectiveLabel={selectedModelSelection?.ref.providerConnectionId
-                ? providerGroups.flatMap((group) => group.rows)
-                    .find((row) => sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(selectedModelSelection.ref))
-                    ?.descriptor.name ?? selectedModelSelection.ref.modelId
-                : effectiveModelLabel}
             canEnterCustomNativeValue={canEnterCustomModel}
             notes={modelNotes}
             probe={unifiedProbe}
