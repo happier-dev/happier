@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
@@ -6,6 +8,7 @@ import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { agentColumnFacts } from './agentColumnAdapter';
 
 import {
     buildAgentCollection,
@@ -50,6 +53,22 @@ function agent(agentId: string, state: MachineAgent['state'], overrides: Partial
 }
 
 describe('buildAgentCollection', () => {
+    it('supplies held Machine counts and versions to the shared column context without inventing unknown facts', () => {
+        const row = buildAgentCollection({ entries: [entry('claude')], agents: [], query: '' }).onMachine[0]!;
+        const input = { context: null, machineId: 'active', heldSummary: {
+            machineCount: 4, versions: ['2.1.4'], unknownVersionCount: 0, complete: true,
+        } };
+        expect(agentColumnFacts(row, input).context).toBe('projects.identity.machineCount(count=4) · 2.1.4');
+        expect(agentColumnFacts(row, { ...input, heldSummary: { ...input.heldSummary, unknownVersionCount: 1 } }).context)
+            .toBe('projects.identity.machineCount(count=4)');
+        expect(agentColumnFacts(row, { ...input, context: 'fallback', heldSummary: { ...input.heldSummary, complete: false } }).context)
+            .toBe('settingsAgents.collection.machineCountAtLeast(count=4)');
+        expect(agentColumnFacts(row, { ...input, context: 'fallback', heldSummary: { ...input.heldSummary, machineCount: 0, complete: false } }).context)
+            .toBe('fallback');
+        expect(agentColumnFacts(row, { ...input, heldSummary: { ...input.heldSummary, versions: ['2.1.4', '2.2.0'] } }).context)
+            .toBe('projects.identity.machineCount(count=4) · 2.1.4, 2.2.0');
+    });
+
     it('groups agents by what the selected machine reports: detected CLIs on the machine, missing ones available to install', () => {
         const collection = buildAgentCollection({
             entries: [entry('claude'), entry('cursor'), entry('codex'), entry('helper', { cli: null })],

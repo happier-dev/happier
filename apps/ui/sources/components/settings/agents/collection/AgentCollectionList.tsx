@@ -22,12 +22,19 @@ import { useMachineAgent, useMachineAgents } from '@/agents/machineAgents/useMac
 import { useMachineAgentRowActions } from '@/components/machines/agents/useMachineAgentRowActions';
 import { formatMachineAgentAction } from '@/components/machines/agents/machineAgentCopy';
 import { resolveMachineAgentRowAction } from '@/components/machines/agents/machineAgentPresentation';
+import { useHeldMachineAgentSummary } from '@/agents/machineAgents/useHeldMachineAgentSummary';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { MachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
+import { resolveAgentColumnContext } from './agentColumnAdapter';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { resolveConfiguredAcpAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { openAgentAddModal } from '../add/agentAddModalConfig';
 import { buildAgentCollection, isCommandAgentDefinition, resolveSelectedAgentCollectionId, type AgentCollectionRow } from './agentCollectionModel';
 import { recordAgentCollectionVisit } from './agentCollectionVisit';
@@ -212,6 +219,27 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
     const { executionTarget, projectionCurrent, agentEntries, machineOnline, machineLabel } = props.catalog;
     const machine = executionTarget?.machine ?? null;
     const serverId = executionTarget?.serverId ?? null;
+    const activeAccountScope = useActiveServerAccountScope();
+    const summaryServerId = props.catalog.projectionScope?.serverId
+        ?? props.catalog.targetSelection.selectedTarget?.serverIdentityId
+        ?? activeAccountScope?.serverId ?? null;
+    const { binding: summaryBinding } = useServerCredentialAccountScopeBinding(summaryServerId);
+    const summaryScope = summaryBinding?.isCurrent() ? summaryBinding.scope : null;
+    const summaryMachineIds = React.useMemo(() => props.catalog.targetSelection.pickerRows
+        .filter(candidate => summaryScope && areServerProfileIdentifiersEquivalent(candidate.serverId, summaryScope.serverId)
+            && (candidate.candidate.availability === 'online' || candidate.candidate.availability === 'offline'
+                || candidate.candidate.availability === 'unknown'))
+        .map(candidate => candidate.machine.id), [props.catalog.targetSelection.pickerRows, summaryScope?.serverId]);
+    const previousPublishedInventories = React.useRef<ReadonlyMap<string, MachinePublishedMetadataV1['agentInventory']>>(new Map());
+    const summaryPublishedInventories = React.useMemo(() => {
+        const next = new Map(props.catalog.targetSelection.pickerRows
+            .filter(candidate => summaryScope && areServerProfileIdentifiersEquivalent(candidate.serverId, summaryScope.serverId))
+            .map(candidate => [candidate.machine.id, candidate.machine.metadata?.agentInventory] as const));
+        const previous = previousPublishedInventories.current;
+        if (previous.size === next.size && [...next].every(([id, inventory]) => previous.has(id) && previous.get(id) === inventory)) return previous;
+        previousPublishedInventories.current = next;
+        return next;
+    }, [props.catalog.targetSelection.pickerRows, summaryScope?.serverId]);
     const { backends: customBackends } = useAcpCatalogBackends();
 
     const [query, setQuery] = React.useState('');
@@ -246,63 +274,72 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
     const renderRow = (row: AgentCollectionRow) => {
         const dimmed = row.status === 'notInstalled' || row.status === 'installsOnFirstUse';
         const statusLabel = resolveRowStatusLabel(row);
-        const definition = row.definition;
-        if (definition) {
-            const selectedDefinition = customAcpRoute?.kind === 'saved' && customAcpRoute.backendId === definition.id;
+        const renderItem = (context: string | undefined) => {
+            const definition = row.definition;
+            if (definition) {
+                const selectedDefinition = customAcpRoute?.kind === 'saved' && customAcpRoute.backendId === definition.id;
+                return (
+                    <Item
+                        key={row.key}
+                        testID={`settings-agents-collection.definition.${definition.id}`}
+                        title={row.entry.title}
+                        subtitle={context}
+                        subtitleLeading={row.trouble ? <View style={collectionListStyles.troubleDot} /> : undefined}
+                        icon={<CustomAcpAgentMark iconUrl={definition.origin?.kind === 'registry' ? definition.origin.iconUrl ?? null : null} dimmed={dimmed} />}
+                        titleStyle={dimmed ? collectionListStyles.dimmedTitle : undefined}
+                        selected={rail ? selectedDefinition : undefined}
+                        density={rail ? 'compact' : undefined}
+                        showChevron={!rail}
+                        pressableStyle={rail ? collectionListStyles.row : undefined}
+                        onPress={() => openCustomAcpEditor(router, definition.id, rail && onDetailRoute)}
+                    />
+                );
+            }
             return (
                 <Item
                     key={row.key}
-                    testID={`settings-agents-collection.definition.${definition.id}`}
+                    testID={`settings-agents-collection.row.${row.entry.agentId}`}
                     title={row.entry.title}
-                    subtitle={statusLabel}
-                    subtitleLeading={row.trouble ? <View style={collectionListStyles.troubleDot} /> : undefined}
-                    icon={<CustomAcpAgentMark iconUrl={definition.origin?.kind === 'registry' ? definition.origin.iconUrl ?? null : null} dimmed={dimmed} />}
+                    subtitle={context}
+                    subtitleLeading={row.trouble ? (
+                        <View testID={`settings-agents-collection.trouble.${row.entry.agentId}`} style={collectionListStyles.troubleDot} />
+                    ) : undefined}
+                    icon={(
+                        <HappierCollectionListMark dimmed={dimmed}>
+                            <AgentCatalogIdentityIcon
+                                entry={row.entry}
+                                machineId={machine?.id ?? null}
+                                serverId={serverId}
+                                current={projectionCurrent}
+                                color={theme.colors.text.secondary}
+                                size={20}
+                            />
+                        </HappierCollectionListMark>
+                    )}
                     titleStyle={dimmed ? collectionListStyles.dimmedTitle : undefined}
-                    selected={rail ? selectedDefinition : undefined}
+                    selected={rail ? row.entry.agentId === selectedAgentId : undefined}
                     density={rail ? 'compact' : undefined}
-                    showChevron={!rail}
+                    showChevron={!rail && row.status !== 'notInstalled'}
+                    rightElement={row.status === 'notInstalled' && row.entry.cli ? (
+                        <AgentRowInstallAction
+                            entry={row.entry}
+                            machineId={machineOnline ? machine?.id ?? null : null}
+                            serverId={serverId}
+                            machineName={machineLabel ?? ''}
+                            onOpen={() => openAgent(row.entry)}
+                        />
+                    ) : undefined}
                     pressableStyle={rail ? collectionListStyles.row : undefined}
-                    onPress={() => openCustomAcpEditor(router, definition.id, rail && onDetailRoute)}
+                    onPress={() => openAgent(row.entry)}
                 />
             );
-        }
+        };
         return (
-            <Item
-                key={row.key}
-                testID={`settings-agents-collection.row.${row.entry.agentId}`}
-                title={row.entry.title}
-                subtitle={statusLabel}
-                subtitleLeading={row.trouble ? (
-                    <View testID={`settings-agents-collection.trouble.${row.entry.agentId}`} style={collectionListStyles.troubleDot} />
-                ) : undefined}
-                icon={(
-                    <HappierCollectionListMark dimmed={dimmed}>
-                        <AgentCatalogIdentityIcon
-                            entry={row.entry}
-                            machineId={machine?.id ?? null}
-                            serverId={serverId}
-                            current={projectionCurrent}
-                            color={theme.colors.text.secondary}
-                            size={20}
-                        />
-                    </HappierCollectionListMark>
-                )}
-                titleStyle={dimmed ? collectionListStyles.dimmedTitle : undefined}
-                selected={rail ? row.entry.agentId === selectedAgentId : undefined}
-                density={rail ? 'compact' : undefined}
-                showChevron={!rail && row.status !== 'notInstalled'}
-                rightElement={row.status === 'notInstalled' && row.entry.cli ? (
-                    <AgentRowInstallAction
-                        entry={row.entry}
-                        machineId={machineOnline ? machine?.id ?? null : null}
-                        serverId={serverId}
-                        machineName={machineLabel ?? ''}
-                        onOpen={() => openAgent(row.entry)}
-                    />
-                ) : undefined}
-                pressableStyle={rail ? collectionListStyles.row : undefined}
-                onPress={() => openAgent(row.entry)}
-            />
+            <AgentHeldInventoryContext key={row.key} scope={summaryScope} machineIds={summaryMachineIds}
+                publishedByMachineId={summaryPublishedInventories} agentId={row.entry.agentId}
+                definitionId={row.definition?.id} fallback={statusLabel}>
+                {renderItem}
+            </AgentHeldInventoryContext>
         );
     };
     const renderCustomRow = (backend: (typeof customBackends)[number]) => (
@@ -392,6 +429,12 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                 placeholder: t('settingsAgents.collection.searchPlaceholder'),
             } : null}
         >
+                <CollectionIndexRow testID="settings-agents-collection.all"
+                    selected={!onDetailRoute}
+                    onPress={() => {
+                        const result = runGuardedNavigation(() => router.replace('/(app)/settings/agents' as never));
+                        if (result !== true) fireAndForget(result, { tag: 'AgentCollectionList.openHome' });
+                    }} />
             {customAcpRoute?.kind === 'draft' ? <CustomAcpDraftRow /> : null}
             {emptyRow}
             {groups.map((group) => group.rows.length > 0 ? (
@@ -410,6 +453,20 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
             {visibleCustomBackends.map(renderCustomRow)}
         </CollectionList>
     );
+});
+
+/** The row reads only installation/version facts already held for this Home and Account. */
+const AgentHeldInventoryContext = React.memo(function AgentHeldInventoryContext(props: Readonly<{
+    scope: ServerAccountScope | null;
+    machineIds: readonly string[];
+    agentId: string;
+    definitionId?: string;
+    publishedByMachineId: ReadonlyMap<string, MachinePublishedMetadataV1['agentInventory']>;
+    fallback?: string;
+    children: (context: string | undefined) => React.ReactElement;
+}>) {
+    const summary = useHeldMachineAgentSummary(props);
+    return props.children(resolveAgentColumnContext(summary, props.fallback ?? null) ?? undefined);
 });
 
 /** The new ACP agent being written in the detail pane, titled as it is typed. */
