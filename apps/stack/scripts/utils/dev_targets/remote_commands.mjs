@@ -1,26 +1,29 @@
-import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { resolveDependencyRefreshLockPath } from '../proc/dependency_refresh.mjs';
 
 import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { decodeJwtPayloadUnsafe } from '../auth/decode_jwt_payload_unsafe.mjs';
 import { REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN } from '../managed_lima/guest_toolchain.mjs';
-import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
+import { DEFAULT_LOAD_PROBE_TTL_MS } from './config.mjs';
 import { resolveRemoteStackStorageDir } from './stack_paths.mjs';
 import { collectWorkspacePackageJsonPaths } from '../proc/workspace_package_manifests.mjs';
-import { readNativeTestSourceInputs } from '../fs/workspaceBuildInputs.mjs';
+import { resolveDependencyRefreshLockPath } from '../proc/dependency_refresh.mjs';
+import { readNativeTestPreparationDemand } from '../fs/nativeTestInputs.mjs';
 import { resolveWorkspaceTypeScriptCompilerArgs } from '../../../../../packages/cli-common/workspaceChildBuildEnv.mjs';
 import { resolveCliPublicationBuildSteps } from '../../../../cli/scripts/buildPublication.mjs';
-import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
-import { resolveExpoExportWorkers } from '../expo/exportWorkers.mjs';
-
 import { isCliTestBuildSkipped } from '../../../../cli/scripts/vitestPreparation.mjs';
 import { readVitestSourcePreparation } from './vitest_config_preparation.mjs';
-import { COMPILER_TEST_SUITES, readVitestFileFilters, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
+import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
+import { resolveExpoExportWorkers } from '../expo/exportWorkers.mjs';
+import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
+import { resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
+import { resolveRemoteValidationPlacementClass } from './validation_preparation_policy.mjs';
+import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
+import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
+import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, readVitestFileFilters, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
 import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
 
@@ -30,7 +33,7 @@ export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } fr
 // Only result-affecting inherited inputs participate; per-caller/session ids do
 // not travel to the worker and must not split an otherwise identical command.
 const COMMAND_ENVIRONMENT = Object.freeze({
-  preparation: ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS'],
+  preparation: ['HAPPIER_STACK_SKIP_REFRESH_DEPS', 'HAPPIER_STACK_DISABLE_REFRESH_DEPS', 'HAPPIER_CLI_TEST_SKIP_BUILD'],
   payload: ['HAPPIER_TYPESCRIPT_COMPILER', 'GOMAXPROCS'],
   vitest: ['HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
     'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS'],
@@ -46,9 +49,90 @@ const COMMAND_ENVIRONMENT = Object.freeze({
 
 export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   packageManagerCommands: Object.freeze(['npm', 'npx', 'pnpm', 'yarn']),
-  sourceTestComponents: Object.freeze(['apps/cli', 'apps/ui', 'apps/server', 'packages/cli-common', 'packages/sdk', 'packages/plugin-ui', 'packages/plugins/triage', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector', 'packages/plugins/linear', 'packages/plugins/jira', 'packages/plugins/sentry', 'packages/plugins/posthog', 'packages/plugins/claude']),
+  // Verified default configs resolve their workspace imports from source.
+  // Merely importing the resolver is insufficient: it maps only the declared
+  // packages, so partial configs keep emitted preparation (for example the
+  // machine-docker-sandboxes and Pi defaults).
+  sourceTestComponents: Object.freeze([
+    'apps/bootstrap', 'apps/server', 'apps/ui',
+    'packages/agents', 'packages/channels-protocol', 'packages/cli-common',
+    'packages/deployment-protocol', 'packages/deployments', 'packages/email-transports-protocol', 'packages/embed',
+    'packages/forge-ci', 'packages/plugin-ui', 'packages/sdk', 'packages/session-core',
+    'packages/support', 'packages/sync-client', 'packages/triage-sources',
+    ...['app-context', 'auggie', 'backup-destinations', 'channel-discord', 'channel-email',
+      'channel-slack', 'channel-telegram', 'channels', 'claude', 'cloudflare-ai-gateway',
+      'cursor', 'deepseek', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon',
+      'deployment-supabase', 'deployment-templates', 'devcontainer', 'elevenlabs', 'grok',
+      'inspector', 'jira', 'kimi', 'kiro', 'linear', 'machine-boat', 'machine-crabbox',
+      'machine-cua', 'machine-digitalocean', 'machine-fly', 'machine-hetzner', 'machine-lima',
+      'machine-lume', 'machine-modal', 'machine-vercel', 'ohmypi', 'onepassword', 'openai', 'openrouter',
+      'posthog', 'scm-azure-devops', 'scm-bitbucket', 'scm-git', 'scm-github', 'scm-gitlab',
+      'sentry', 'triage', 'vercel-ai-gateway', 'xai'].map(name => `packages/plugins/${name}`),
+  ]),
   sourceTestConfigs: Object.freeze(['vitest.config.ts']),
+  compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
   compilerTestSuites: COMPILER_TEST_SUITES,
+  sourceConditionNativeTestPaths: Object.freeze([
+    // Patch recovery exercises a scratch pnpm installation through source owners.
+    'apps/stack/scripts/utils/proc/dependency_refresh.patch_relock.test.mjs',
+    'apps/stack/scripts/utils/proc/dependency_refresh.remote.test.mjs',
+    'apps/stack/scripts/utils/proc/dependency_refresh.test.mjs',
+    'apps/stack/scripts/utils/proc/dependency_refresh.writer.test.mjs',
+    'apps/stack/scripts/utils/proc/workspace_package_manifests.test.mjs',
+    // Relay fixtures replace the native Tailscale/relay boundaries and load
+    // workspace sources; they do not consume Stack's published closure.
+    'apps/stack/scripts/iroh_relay.integration.test.mjs',
+    'apps/stack/scripts/utils/server/infra/iroh/listener.test.mjs',
+    // Compiler/publication tests use scratch outputs and source-owned helpers.
+    'scripts/workspaces/runTypeScriptCli.test.mjs',
+    'scripts/workspaces/deriveTypecheckProjects.test.mjs',
+    'scripts/workspaces/typecheckDiagnostics.test.mjs',
+    'scripts/workspaces/workspaceOutputScriptArgs.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
+    'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs',
+    // Real Metro HTTP negotiation loads installed dependencies and a local helper.
+    'apps/ui/scripts/metroNativeBundleResponse.test.mjs',
+    'apps/stack/scripts/utils/fs/workspaceBuildInputs.test.mjs',
+    // These exercise scratch publishers and the SDK's read-only source
+    // projection; package resolution still needs explicit source intent.
+    'packages/plugin-sdk/scripts/apiSurfaceCli.test.mjs',
+    'packages/plugin-sdk/scripts/apiSurface.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/worker_disk_budget.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/sync_service.test.mjs',
+    'apps/stack/scripts/utils/dev/expo_dev_crash_supervision.test.mjs',
+    'apps/stack/scripts/preferred_execution_launcher.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/service_placement.test.mjs',
+    'apps/stack/scripts/dev_targets_cmd.test.mjs',
+    'apps/stack/scripts/daemon_start_verification.integration.test.mjs',
+    'apps/stack/scripts/stack/stack_daemon_command.test.mjs',
+    'apps/stack/scripts/stack/stack_happier_passthrough_command.test.mjs',
+    'apps/stack/scripts/stack/retained_auth_scope.integration.test.mjs',
+    'apps/stack/scripts/stack_guided_login_inner_invocation.test.mjs',
+    'apps/stack/scripts/auth_login_guided_server_no_expo.test.mjs',
+    'apps/stack/scripts/stack/stack_daemon_runtime_provenance.test.mjs',
+    'apps/stack/scripts/stack_daemon_cmd.integration.test.mjs',
+    'apps/stack/scripts/utils/stack/daemonControlClient.test.mjs',
+    'apps/stack/scripts/run_script_with_stack_env.restart_port_reuse.test.mjs',
+    'apps/stack/scripts/utils/stack/runtime_state.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/supervisor.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/runtime_observer.test.mjs',
+    'apps/stack/scripts/utils/dev/daemon_watch_resilience.test.mjs',
+    'apps/stack/scripts/stack_info_runtime_snapshot.test.mjs',
+  ]),
+  // Keep eligibility paired with the verified resolver, not a plugin-wide
+  // config glob. SDK/Codex defaults register workspace sources directly; these
+  // specialized lanes retain the CLI in-memory source resolver unchanged.
+  // Unknown configs may consume emitted packages and retain preparation.
+  pluginSourceTestConfigs: Object.freeze({
+    'packages/plugin-sdk': Object.freeze(['vitest.config.ts', 'vitest.source.config.ts']),
+    'packages/triage-protocol': Object.freeze(['vitest.source.config.ts']),
+    'packages/voice-modelpacks': Object.freeze(['vitest.direct-source.config.ts']),
+    'packages/plugins/claude': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/codex': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/kilo': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/opencode': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
+    'packages/plugins/pi': Object.freeze(['vitest.mcpApproval.config.ts', 'vitest.realOwners.config.ts', 'vitest.spawnedRealOwners.config.ts']),
+  }),
   // Server Vitest lanes share the workspace-source resolver. Derive their
   // configs from the package so specialized lanes also skip dist publication.
   serverSourceTestConfigs: Object.freeze(readdirSync(new URL('../../../../../apps/server/', import.meta.url))
@@ -62,6 +146,34 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'vitest.perf-newchat-baseline.config.ts', 'vitest.r9-tail.config.ts',
   ]),
   sourceTestScripts: Object.freeze(['vitest', 'vitest:local']),
+  formatterCheckFlags: Object.freeze(['--check', '--list-different', '--help', '-h', '--version', '-V']),
+  // These owners publish tracked files. Worker mirrors are one-way replicas;
+  // place the whole writer (including preparation) on the source authority.
+  trackedSourceWriteEntries: Object.freeze([
+    'scripts/api-governance/cli.mjs',
+    'packages/plugin-sdk/scripts/apiSurfaceCli.mjs',
+    'packages/plugin-sdk/scripts/generatePublicToolchainCompatibility.mjs',
+    'packages/sdk/scripts/generateActions.ts',
+    'packages/embed/scripts/generateThemeTokenIds.mjs',
+  ]),
+  trackedSourceDefaultWriteEntries: Object.freeze([
+    'apps/docs/scripts/generateReference.mjs',
+    'apps/website/scripts/optimize-images.mjs',
+    'packages/plugin-sdk/scripts/buildHostedHtmlGuestBootstrap.mjs',
+    'packages/plugin-sdk/scripts/generateActionTypeMap.mjs',
+    'apps/server/scripts/schemaSync.ts',
+  ]),
+  // These CLIs do not implement --check: passing it still writes files.
+  trackedSourceUnconditionalWriteEntries: Object.freeze([
+    'scripts/generateSupportedAgentsStrip.mjs',
+    'apps/ui/sources/theme.gen.ts',
+    'apps/ui/tools/i18n/newLocale.ts',
+    'apps/website/scripts/generate-plugin-manifest-schema.mjs',
+    'apps/website/scripts/i18n-slice-overlays.mjs',
+    'apps/website/scripts/optimize-feature-images.mjs',
+    'packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/scripts/write-manifest.mjs',
+    'packages/tests/fixtures/plugin-platform/out-of-tree-triage-source/scripts/write-manifest.mjs',
+  ]),
 });
 const DEFAULT_COMMAND_POLICY = Object.freeze({
   placement: 'worker-eligible', commandClass: 'unclassified', bootstrap: '0',
@@ -70,23 +182,24 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   generator: '0', generatorCheck: '0', componentFromNative: '0',
   localCompile: '0', requiredTools: '', selfPublisher: '0', compilerLeaf: '0', workspaceLock: '',
   preparationBuildMode: 'strict',
+  workspaceSync: '1',
   compilerSuite: '0',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
 // The native selection and admission paths consume this generated policy too.
 // 2026-10-05 Linux measurements: cli-common dist 1,853,332 KiB; Protocol
-// dist 4,682,608 KiB. Both fit beneath the existing 6 GiB compiler/suite
+// dist 4,682,608 KiB. Both fit beneath the existing 6 GiB package-dist
 // envelope.
 // The successful full daemon worker request peaked at 16,442,992 KiB of
-// aggregate process-tree RSS on Linux x64 (2026-10-05). Preserve at least
-// Round 1's measured package headroom (6,291,456 - 4,682,608 = 1,608,848 KiB):
+// aggregate process-tree RSS on Linux x64 (2026-10-05). The retained legacy
+// package margin is unmeasured (6,291,456 - 4,682,608 = 1,608,848 KiB):
 // peak + headroom = 18,051,840 KiB, rounded up to 18 GiB. This does not
 // justify admitting a worker with only 15 GiB available.
 // 2026-10-09 Round 2: two sequential public TS7 typecheck runs per app on
 // Linux ARM64, sampling descendant RSS/VmHWM and /usr/bin/time -v. Largest
 // observed metrics: UI 18,909,772, CLI 13,688,852, server 14,179,616 KiB.
-// Add the same 1,608,848 KiB measured headroom and round up to whole GiB:
+// The legacy envelopes add that unmeasured margin and round up to whole GiB:
 // UI 20, CLI 15, server 16. Round 3 owner decision applies these despite
 // incomplete import graphs; general/root/mixed compilation uses UI's 20 GiB.
 // Re-derive these envelopes if a clean graph measures higher. Admission
@@ -97,7 +210,7 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 // public author emission and the shared single-checker compiler owner.
 // Protocol alone peaked at 6,533,716 KiB on nl1. The earlier parallel
 // declaration pass was OOM-killed on linux2 at 12,356,912 KiB anonymous RSS.
-// The larger current tree plus the existing 1,608,848 KiB measured headroom
+// The larger recorded tree plus the legacy 1,608,848 KiB unmeasured margin
 // is 10,269,176 KiB, rounded up to 10 GiB.
 // These historical source/runtime/compilation classes and package-dist are not Q1-complete:
 // removing their legacy margin still needs successful class calibration.
@@ -145,13 +258,7 @@ function largestHeavyweightClass(...classes) {
 }
 
 const COMMAND_RULES = [
-  // Serial entry graphs have their own measured envelope. SDK preparation
-  // still retains the controller compilation guard. They prove modules load, so
-  // like test consumers they need runtime outputs, not a strict type verdict.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
-    entryRepositoryPath: ['apps/stack/scripts/perf/entry-load.mjs'] },
-    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads', preparationBuildMode: 'qa-runtime' } },
-
+  { when: { command: ['bun'], entry: ['build'], compile: ['1'] }, set: { requiredTools: 'bun' } },
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
   { when: { command: ['find', 'grep', 'rg'] }, set: { commandClass: 'source-search' } },
@@ -164,7 +271,7 @@ const COMMAND_RULES = [
   { when: { command: ['tsc'] }, set: { kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { family: ['tsc', 'typecheck'] }, set: { kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { command: ['node', 'nodejs'], entry: ['runTypeScriptCli.mjs'] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native' } },
-  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['packages/tests/scripts/run-extended-db-docker.mjs'] }, set: { requiredTools: 'docker' } },
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['packages/tests/scripts/run-extended-db-docker.mjs'] }, set: { ...validation, requiredTools: 'docker' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs', 'build.mjs'] }, set: { ...validation, heavyClass: 'compilation' } },
   { when: { command: ['node', 'nodejs'], entryPath: ['packages/cli-common/scripts/build.mjs'] }, set: { componentOverride: 'packages/cli-common' } },
   // These finite owners acquire their declared dist leases jointly with native
@@ -175,9 +282,8 @@ const COMMAND_RULES = [
     'packages/cli-common/scripts/build.mjs',
     'apps/cli/scripts/build.mjs',
   ] }, set: { selfPublisher: '1' } },
-  // These compilers validate/reuse native admission at their leaf. A mixed
-  // manifest can defer to that leaf after its finite publishers; direct and
-  // pure compiler payloads retain outer admission and certified-busy fallback.
+  // Source typecheck runners admit their compiler leaves directly. They do not
+  // publish first-party dependency outputs or acquire publication custody.
   { when: { command: ['node', 'nodejs'], entryRepositoryPath: [
     'scripts/workspaces/runTypeScriptCli.mjs',
     'apps/server/scripts/runTypeScriptCli.mjs',
@@ -202,8 +308,18 @@ const COMMAND_RULES = [
   // Unknown native suites may consume emitted workspace packages. Only proven
   // source-resolving suites skip publication; all runners admit dependencies.
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'] }, set: { ...validation, componentFromNative: '1' } },
-  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: ['packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs'] }, set: { kind: 'source-test' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: [
+    'packages/plugin-sdk/scripts/actionFamilyPublication.test.mjs',
+    'packages/plugin-sdk/scripts/buildExampleProjects.test.mjs',
+    'packages/plugin-sdk/scripts/buildHostedHtmlGuestBootstrap.test.mjs',
+    'packages/plugin-sdk/scripts/capabilityMatrixMetadata.test.mjs',
+    'packages/plugin-sdk/scripts/externalSessionUserProjectionContract.test.mjs',
+    'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs',
+    'packages/plugin-sdk/scripts/projectCatalogMetadata.test.mjs',
+    'packages/plugin-sdk/scripts/publicDeclarationReport.test.mjs',
+  ] }, set: { kind: 'source-test' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], stackScope: ['1'] }, set: { kind: 'runtime', componentOverride: 'apps/stack' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: ['apps/stack/scripts/dev_target_control.real.integration.test.mjs'] }, set: { requiredTools: 'mutagen' } },
   // These tool owner suites import repository source and construct isolated
   // dependency fixtures, not emitted workspace runtime closures.
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: [
@@ -211,11 +327,14 @@ const COMMAND_RULES = [
     'apps/ui/scripts/activitySurfacesValidationContract.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_validation_preparation.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/mutagen_project.test.mjs',
     'apps/stack/scripts/utils/dev_targets/qa_browser.test.mjs',
     'apps/stack/scripts/utils/stack/stop_remote.test.mjs',
     'apps/stack/scripts/utils/proc/ownership_killProcessGroupOwnedByStack.test.mjs',
     'apps/stack/scripts/utils/proc/native_process_identity.test.mjs',
     'apps/stack/scripts/utils/proc/workspace_build_admission.test.mjs',
+    'apps/stack/scripts/utils/proc/admission_broker.test.mjs',
+    'apps/stack/scripts/utils/proc/admission_client.test.mjs',
     'apps/stack/scripts/utils/test/test_process.test.mjs',
     'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
     'apps/stack/scripts/build/build_source_runtime.test.mjs',
@@ -224,18 +343,7 @@ const COMMAND_RULES = [
   ] }, set: { kind: 'source-test' } },
   // These lifecycle/transport fixtures use authored exports only when the
   // caller explicitly selects the existing Happier source runtime contract.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], sourceCondition: ['1'], nativeTestPath: [
-    'apps/ui/scripts/metroNativeBundleResponse.test.mjs',
-    'apps/stack/scripts/utils/dev/expo_dev_crash_supervision.test.mjs',
-    'apps/stack/scripts/preferred_execution_launcher.test.mjs',
-    'apps/stack/scripts/utils/dev_targets/service_placement.test.mjs',
-    'apps/stack/scripts/dev_targets_cmd.test.mjs',
-    'apps/stack/scripts/daemon_start_verification.integration.test.mjs',
-    'apps/stack/scripts/stack/stack_daemon_command.test.mjs',
-    'apps/stack/scripts/stack/stack_daemon_runtime_provenance.test.mjs',
-    'apps/stack/scripts/stack_daemon_cmd.integration.test.mjs',
-    'apps/stack/scripts/utils/stack/daemonControlClient.test.mjs',
-  ] }, set: { kind: 'source-test' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], sourceCondition: ['1'], sourceConditionNativeTests: ['1'] }, set: { kind: 'source-test' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { ...validation, kind: 'source-test' } },
   // Both finite web entry points consume authored inputs and admit the same
@@ -243,28 +351,57 @@ const COMMAND_RULES = [
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: [
     'apps/stack/scripts/build/build_source_web_ui.mjs', 'apps/stack/scripts/build/build_web_artifact.mjs',
   ] }, set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', heavyClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS } },
+  // Serial entry graphs have their own measured envelope. SDK preparation
+  // still retains the controller compilation guard. They prove modules load, so
+  // like test consumers they need runtime outputs, not a strict type verdict.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'],
+    entryRepositoryPath: ['apps/stack/scripts/perf/entry-load.mjs'] },
+    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', localCompile: '1', heavyClass: 'entry-loads', preparationBuildMode: 'qa-runtime' } },
   // Reload coordinates completed lookup, finite production and activation.
   // Its producers jointly admit their own leases; charging the coordinator
   // first makes ordinary foreign-lease contention an admission-order refusal.
+  // The worker's static imports consume emitted workspace packages before
+  // those producers run, so prepare that closure through the runtime owner.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs'] },
-    set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack', heavyClass: 'source-bundle', selfPublisher: '1' } },
+    set: { ...validation, kind: 'runtime', componentOverride: 'apps/stack', heavyClass: 'source-bundle', selfPublisher: '1' } },
+  // Explicit source workers preload the canonical resolver before linking
+  // their static graph. They must not prepare/read a shared emitted closure.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], sourceCondition: ['1'],
+    entryRepositoryPath: ['apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs'] },
+    set: { kind: 'source-test' } },
   // Content checking prepares Protocol's reference renderer through the
   // finite workspace publisher. Fit that producer's existing envelope for
   // placement, but leave its capacity/lease admission to the publisher.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['apps/docs/scripts/checkContent.mjs'] },
     set: { ...validation, componentOverride: 'apps/docs', heavyClass: 'runtime-build', selfPublisher: '1' } },
-  // Unit coordination publishes dependencies first, then the managed native
+  // Suite coordination publishes dependencies first, then the managed native
   // runner acquires its finite test envelope. Never reserve that envelope
   // across the coordinator's foreign-publication wait.
   // The suite executes real server and daemon Bun builds on its selected host.
-  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['apps/stack/scripts/test_ci.mjs'] },
-    set: { ...validation, componentOverride: 'apps/stack', selfPublisher: '1', requiredTools: 'bun' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['apps/stack/scripts/test_ci.mjs', 'apps/stack/scripts/test_integration.mjs'] },
+    set: { ...validation, componentOverride: 'apps/stack', heavyClass: 'source-bundle', selfPublisher: '1', requiredTools: 'bun' } },
   { when: { command: ['node'], stripTypes: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'] }, set: { generator: '1', workerTool: 'bundled-plugin-generator', heavyClass: 'validation', placement: 'primary-only' } },
   { when: { command: ['node'], stripTypes: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'], mode: ['check'] }, set: { ...validation, placement: 'worker-eligible', generatorCheck: '1', componentOverride: 'apps/cli' } },
   { when: { command: ['node'], stripTypes: ['1'], sourceCondition: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'], mode: ['check'] }, set: { kind: 'source-test' } },
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  { when: { command: ['oxfmt'], formatterCheck: ['0'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['go'], entryRepositoryPath: ['packages/plugins/cliproxyapi/managed-runtime/tools/catalog'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs', 'tsx'], entryRepositoryPath: REMOTE_COMMAND_CLASSIFICATION.trackedSourceWriteEntries, write: ['1'], readOnly: ['0'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs', 'tsx'], entryRepositoryPath: REMOTE_COMMAND_CLASSIFICATION.trackedSourceDefaultWriteEntries, readOnly: ['0'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs', 'tsx'], entryRepositoryPath: REMOTE_COMMAND_CLASSIFICATION.trackedSourceUnconditionalWriteEntries },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'], mode: ['write'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['apps/website/scripts/i18n-extract.mjs'], readOnly: ['0'], report: ['0'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
+  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['apps/stack/scripts/utils/dev_targets/native_execution_projection.mjs'], write: ['1'] },
+    set: { placement: 'primary-only', commandClass: 'tracked-source-writer', generator: '1' } },
   { when: { command: ['node', 'nodejs'], entryPath: ['scripts/runVitestShards.mjs'], component: ['apps/ui', 'apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { managerNode: ['1'], entryPath: ['scripts/runVitestShards.mjs'], component: ['apps/ui', 'apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   // These public package scripts expand to the authored source shard runners.
@@ -322,9 +459,12 @@ const FINAL_COMMAND_RULES = [
   // CLI unit aliases use the same source resolver as direct Vitest. Runtime
   // preparation would build the emitted closure and escalate their parent
   // validation reservation for the rest of the test run.
-  { when: { kind: ['runtime'], component: ['apps/cli'], script: ['test', 'test:local', 'test:unit', 'test:unit:local', 'test:unit:vitest', 'test:unit:vitest:local'], config: ['vitest.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  { when: { kind: ['runtime'], component: ['apps/cli'], script: ['test', 'test:local', 'test:unit', 'test:unit:local', 'test:unit:vitest', 'test:unit:vitest:local'], config: ['vitest.config.ts'], resolverOverride: ['0'] }, set: { runnerKnown: '1' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
-  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/cli'], config: ['vitest.source.integration.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  ...Object.entries(REMOTE_COMMAND_CLASSIFICATION.pluginSourceTestConfigs).map(([component, configs]) => ({
+    when: { kind: ['runtime'], runnerKnown: ['1'], component: [component], config: configs, resolverOverride: ['0'] },
+    set: { kind: 'source-test' },
+  })),
   // Native source prerequisites are staged under their own admitted producer
   // lease before the payload. Retaining it through tests prevents a nested
   // compiler from waiting for its legitimate larger resource envelope.
@@ -340,8 +480,27 @@ const FINAL_COMMAND_RULES = [
     when: { workerTool: ['vitest'], generatorCheck: ['0'], admissionWrapper: ['0'], resolverOverride: ['0'], heavyClass: ['validation'], component: [suite.component], config: suite.configs },
     set: { heavyClass: 'compilation', compilerSuite: '1' },
   })),
+  { when: { nativeTest: ['1'], admissionWrapper: ['0'], heavyClass: ['validation'], nativeCompilerSuite: ['1'] }, set: { heavyClass: 'compilation' } },
   { when: { component: ['.'], script: ['test:tooling:self'], admissionWrapper: ['0'], heavyClass: ['validation'] }, set: { heavyClass: 'compilation' } },
   { when: { heavyClass: HEAVYWEIGHT_COMPILE_CLASSES }, set: { localCompile: '1' } },
+  // Private-index trees belong to this source checkout. Admit its complete
+  // compiler workload locally without the general controller compile refusal.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], entryRepositoryPath: ['scripts/workspaces/checkCommitTypeCoherence.mjs'] },
+    set: { ...validation, kind: 'typecheck', placement: 'primary-only',
+      commandClass: 'full-validation', heavyClass: 'compilation', localCompile: '0' } },
+  { when: { placement: ['primary-only'], generator: ['1'] }, set: { commandClass: 'tracked-source-writer' } },
+  // Input writers must repair inconsistent lockfiles before frozen preparation
+  // can succeed. Keep their writes on the source authority and serialize them
+  // with refresh through the existing dependency writer resource.
+  { when: { dependencyInputWriter: ['1'] }, set: {
+    placement: 'primary-only', commandClass: 'dependency-input-writer', bootstrap: '0',
+    heavyClass: 'dependency-install', generator: '1',
+  } },
+  // Exact host observations read only kernel/admission state. They neither
+  // prepare checkout dependencies nor wait for capacity or source freshness.
+  { when: { hostObservation: ['1'], admissionWrapper: ['0'] }, set: {
+    commandClass: 'host-observation', bootstrap: '0', validation: '0', heavyClass: '', workspaceSync: '0',
+  } },
   // Only the controller expands configured targets. Its finite worker request
   // retains the ordinary host-local publisher policy and resource admission.
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['0'],
@@ -383,27 +542,48 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
   if (args[0] === '--') args = args.slice(1);
   if (args[0]?.startsWith('--script=')) args = ['pnpm', 'run', '--silent', args[0].slice(9), ...args.slice(1)];
   const command = commandBasename(args[0]);
-  if (command === 'hstack-exec' && args[1] === '--heavyweight-admission') {
-    let admissionClass = 'validation';
-    for (let index = 2; index < args.length; index += 1) {
+  if (command === 'env') {
+    let index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(args[index] ?? '')) index++;
+    if (args[index] && !args[index].startsWith('-')) {
+      return normalizeCommandArguments(args.slice(index), cwd, repoRoot);
+    }
+  }
+  if (command === 'hstack-exec') {
+    const admission = args[1] === '--heavyweight-admission';
+    let admissionClass = admission ? 'validation' : null;
+    let declaredTools = [];
+    let payloadCwd = cwd;
+    for (let index = admission ? 2 : 1; index < args.length; index += 1) {
       const argument = args[index];
-      if (argument === '--') {
-        if (index + 1 < args.length) {
-          const payload = normalizeCommandArguments(args.slice(index + 1), cwd, repoRoot);
+      if (argument === '--' || (!admission && argument.startsWith('--script='))) {
+        const payloadArgs = args.slice(argument === '--' ? index + 1 : index);
+        if (payloadArgs.length) {
+          const payload = normalizeCommandArguments(payloadArgs, payloadCwd, repoRoot);
           // Admission owns resources, not the payload's preparation contract.
-          // Only commands the existing policy admits dependencies for are transparent.
-          if (resolveRemoteCommandPolicy(args.slice(index + 1), { cwd, repoRoot }).bootstrap === '1') {
-            return { ...payload, admissionWrapper: '1', admissionClass };
-          }
+          // Resource wrappers cannot relocate a primary-only payload, even
+          // when that payload needs no dependency preparation.
+          return { ...payload,
+            ...(admission ? { admissionWrapper: '1', admissionClass } : {}),
+            declaredRequiredTools: [...new Set([...(payload.declaredRequiredTools ?? []), ...declaredTools])],
+            executorContext: { args: payloadArgs, cwd: payloadCwd, admissionClass },
+          };
         }
         break;
       }
-      if (argument.startsWith('--class=')) admissionClass = argument.slice(8);
-      else if (!/^(?:--(?:admission-root|machine|failure-id)=|--(?:no-wait|exec-admitted)$)/u.test(argument)) break;
+      if (admission && argument.startsWith('--class=')) admissionClass = argument.slice(8);
+      else if (admission && argument.startsWith('--required-tools=')) {
+        declaredTools = parseRequiredToolsDeclaration(argument.slice('--required-tools='.length));
+      } else if (!admission && (argument === '--cwd' || argument.startsWith('--cwd='))) {
+        const directory = argument === '--cwd' ? args[++index] : argument.slice('--cwd='.length);
+        if (!directory) break;
+        const pathApi = /^[a-z]:[\\/]/iu.test(repoRoot) ? win32 : posix;
+        payloadCwd = pathApi.resolve(repoRoot, directory.replaceAll('\\', '/'));
+      } else if (!admission || !/^(?:--(?:admission-root|machine|failure-id|workspace-locks)=|--(?:no-wait|exec-admitted|require-inherited)$)/u.test(argument)) break;
     }
   }
   const managerIndex = command === 'corepack' ? 1 : 0;
-  const manager = commandBasename(args[managerIndex]);
+  const manager = commandBasename(args[managerIndex]).replace(/^pnpm\.(?:cmd|exe)$/iu, 'pnpm');
   let script = '', scriptArguments = [], entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '', managerEntryIndex = 1;
   let managerRun = false;
   if (REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(manager)) {
@@ -445,6 +625,8 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
       if (argument === '--experimental-strip-types') { stripTypes = '1'; entryIndex += 1; }
       else if (argument === '--import') entryIndex += 2;
       else if (argument.startsWith('--import=')) entryIndex += 1;
+      else if (/^--(?:max-old-space-size|max_old_space_size)=/u.test(argument)) entryIndex += 1;
+      else if (argument === '--max-old-space-size' || argument === '--max_old_space_size') entryIndex += 2;
       else if (argument === '--conditions' || argument === '-C') {
         if (args[entryIndex + 1] === 'happier-source') sourceCondition = '1';
         entryIndex += 2;
@@ -457,7 +639,18 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     }
     entry = commandBasename(args[entryIndex]);
   } else if (stripTypes === '1') entry = commandBasename(args[2]);
-  const rawEntryPath = String(args[entryIndex] ?? '').replaceAll('\\', '/');
+  let rawEntryPath = String(args[entryIndex] ?? '').replaceAll('\\', '/');
+  if (command === 'go' && args.includes('run')) {
+    const directoryIndex = args.indexOf('-C');
+    const pathApi = /^[a-z]:[\\/]/iu.test(repoRoot) ? win32 : posix;
+    rawEntryPath = pathApi.resolve(repoRoot, String(cwd), directoryIndex < 0 ? '.' : args[directoryIndex + 1], args[args.indexOf('run') + 1] ?? '.').replaceAll('\\', '/');
+    entry = commandBasename(rawEntryPath);
+  }
+  // The server's canonical TS runner forwards tsx argv unchanged.
+  if (entry === 'runTsx.mjs' && /(?:^|\/)scripts\/runTsx\.mjs$/u.test(rawEntryPath)) {
+    const payload = args.slice(entryIndex + 1).find(arg => /\.(?:ts|tsx)$/u.test(arg));
+    if (payload) { rawEntryPath = payload.replaceAll('\\', '/'); entry = commandBasename(payload); }
+  }
   const normalizedRepoRoot = normalizeCommandPath(repoRoot);
   const entryPath = posix.normalize(rawEntryPath.startsWith(normalizedRepoRoot + '/') ? rawEntryPath.slice(normalizedRepoRoot.length + 1) : rawEntryPath);
   let config = 'vitest.config.ts', resolverOverride = '0', project = '', mode = 'write', noCheck = '0';
@@ -509,10 +702,25 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
       if (argument.startsWith('--class=')) admissionClass = argument.slice('--class='.length);
     }
   }
+  let lockfileOnly = '0';
+  for (const argument of args.slice(managerIndex + 1)) {
+    if (argument === '--') break;
+    if (argument === '--lockfile-only' || argument === '--lockfile-only=true') lockfileOnly = '1';
+    else if (argument === '--no-lockfile-only' || argument === '--lockfile-only=false') lockfileOnly = '0';
+  }
   return {
-    command, manager, script, scriptArguments, vitestArguments, family: script.split(':', 1)[0], entry, entryPath, entryRepositoryPath, managerNode, admissionClass, workspace,
+    command, manager, script, scriptArguments, vitestArguments, family: script.split(':', 1)[0], entry, entryPath, entryRepositoryPath, entryArguments: args.slice(entryIndex + 1), managerNode, admissionClass, workspace,
+    dependencyInputWriter: manager === 'pnpm' && !managerRun && ['install', 'i'].includes(script) ? lockfileOnly : '0',
+    write: args.some(arg => arg === '--write' || arg === '--write-command-policy' || arg === '--write-sync-policy') ? '1' : '0',
+    readOnly: args.includes('--check') ? '1' : '0',
+    report: args.includes('--report') ? '1' : '0',
+    formatterCheck: args.some(arg => REMOTE_COMMAND_CLASSIFICATION.formatterCheckFlags.includes(arg)) ? '1' : '0',
     admissionWrapper: command === 'hstack-exec' && args[1] === '--heavyweight-admission' ? '1' : '0',
+    hostObservation: (command === 'hstack-exec' && args.length === 2 && args[1] === '--heavyweight-memory-sample')
+      || (['node', 'nodejs'].includes(command) && args.length === 3 && args[1] === '-e'
+        && Object.values(HOST_OBSERVATION_PROGRAMS).includes(args[2])) ? '1' : '0',
     noCheck,
+    compile: args.slice(1, args.indexOf('--') < 0 ? args.length : args.indexOf('--')).includes('--compile') ? '1' : '0',
     declarations: args.includes('--declarations') ? '1' : '0',
     runScript: args.some(arg => arg.startsWith('--run-script=') && arg.length > '--run-script='.length) ? '1' : '0',
     hasScript: script ? '1' : '0', nativeTest: args.includes('--test') ? '1' : '0',
@@ -521,11 +729,22 @@ function normalizeCommandArguments(commandArgs, cwd, repoRoot = COMMAND_REPO_ROO
     workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
     component: normalizeCommandPath(slashCwd), managerCwd, project, mixedProjects: projectScopes.size > 1 ? '1' : '0',
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
-    testFileSelected: args.some(arg => !arg.startsWith('-') && /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(arg)) ? '1' : '0',
+    sourceConditionNativeTests: testPaths.length > 0 && testPaths.every(path => REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.includes(path)) ? '1' : '0',
+    nativeCompilerSuite: testPaths.some(path => REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.includes(path)) ? '1' : '0',
     nativeComponent: testComponents.length && testComponents.every(component => component === testComponents[0]) ? testComponents[0] : '',
     stackScope: /^apps\/stack(?:\/|$)/u.test(posix.normalize(slashCwd))
       || args.some(arg => /(?:^|\/)apps\/stack\//u.test(arg.replaceAll('\\', '/'))) ? '1' : '0',
   };
+}
+
+function parseRequiredToolsDeclaration(value) {
+  const tools = value.split(',');
+  if (tools.some(tool => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(tool))) {
+    const error = new Error('[command-policy] HSTACK_COMMAND_REQUIREMENTS_INVALID: --required-tools must list executable names separated by commas (for example --required-tools=docker,go)');
+    error.code = 'HSTACK_COMMAND_REQUIREMENTS_INVALID';
+    throw error;
+  }
+  return [...new Set(tools)];
 }
 
 function readCommandPackageJson(packageDir) {
@@ -570,13 +789,15 @@ async function resolveCommandPackageDirectory({ cwd, managerCwd = '', workspace 
   }
 }
 
-async function resolvePackageCommandManifest(commandArgs, { repoRoot = COMMAND_REPO_ROOT, cwd = process.cwd() } = {}) {
+async function resolvePackageCommandManifest(commandArgs, { repoRoot = COMMAND_REPO_ROOT, cwd = process.cwd(), manifestContext } = {}) {
   const facts = normalizeCommandArguments(commandArgs, cwd, repoRoot);
-  if (facts.binaryContext || !facts.script || facts.manager === 'npx' || !['corepack', ...REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands].includes(facts.command)) return null;
+  if (facts.binaryContext || facts.dependencyInputWriter === '1' || !facts.script || facts.manager === 'npx' || !['corepack', ...REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands].includes(facts.command)) return null;
   const packageDir = await resolveCommandPackageDirectory({ ...facts, cwd }, repoRoot);
   if (!packageDir) return null;
   try {
-    return { packageDir, packageJson: readCommandPackageJson(packageDir), scriptName: facts.script, scriptArguments: facts.scriptArguments };
+    const packageJson = manifestContext?.packageDir === packageDir
+      ? manifestContext.packageJson : readCommandPackageJson(packageDir);
+    return { packageDir, packageJson, scriptName: facts.script, scriptArguments: facts.scriptArguments };
   } catch (error) {
     if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
     throw error;
@@ -641,6 +862,19 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
       skipCompilerSetup = preparation.buildsDist && skipBuild;
     }
   }
+  if (facts.executorContext && !policy.heavyClass) {
+    policy.validation = '1';
+    policy.heavyClass = 'validation';
+    policy.commandClass = facts.component === '.' ? 'full-validation' : 'targeted-validation';
+  }
+  if (facts.executorContext && policy.workerTool === 'rg') {
+    // Placement needs the payload tool, but its argv governor belongs at
+    // the executable leaf rather than the enclosing executor's options.
+    policy.requiredTools = [...policy.requiredTools.split(/\s+/u).filter(Boolean), 'rg'].join(' ');
+    policy.workerTool = '';
+  }
+  policy.requiredTools = [...new Set([...policy.requiredTools.split(/\s+/u).filter(Boolean),
+    ...(facts.declaredRequiredTools ?? [])])].join(' ');
   if ((policy.kind === 'source-test' || facts.component === 'apps/cli') && policy.workerTool === 'vitest' && policy.generatorCheck === '0') {
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
   }
@@ -654,9 +888,13 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
     }
   }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1'
-    && facts.nativeTestPath && facts.nativeLoader === '0' && !env.NODE_OPTIONS
-    && readNativeTestSourceInputs(repoRoot, facts.nativeTestPath) !== null) {
-    Object.assign(policy, { kind: 'source-test', bootstrap: '0', heavyClass: 'native-source-test' });
+    && facts.nativeTestPath && facts.nativeLoader === '0' && !env.NODE_OPTIONS) {
+    const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPath);
+    if (demand) Object.assign(policy, { kind: 'source-test',
+      bootstrap: demand.requiresDependencyBootstrap ? '1' : '0',
+      heavyClass: policy.heavyClass === 'validation'
+        ? demand.requiresDependencyBootstrap || demand.hasProcessBoundary ? 'validation' : 'native-source-test'
+        : policy.heavyClass });
   }
   if (facts.entryRepositoryPath === 'apps/cli/scripts/buildPublication.mjs' && policy.selfPublisher === '1') {
     // The publication owner defines its ordered strict producers. Metadata
@@ -670,39 +908,35 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.', repoRoot = 
   return { ...policy, component: normalizeCommandPath(facts.component) };
 }
 
-/** Finite validation retains installed-tree custody through its last read.
- * Producers finish before joint resource/capacity admission; they never inherit
- * a reader that they would have to upgrade to a dependency writer.
- */
-export function resolveCommandWorkspaceLocks(policy, repoRoot) {
+/** Finite work owns publication resources, not installed-tree consumption.
+ * Actual imports use explicit scopes; dependency-input writers retain exclusion. */
+export function resolveCommandWorkspaceLocks(policy, repoRoot, env = process.env) {
   return [
-    ...(policy.validation === '1' && policy.bootstrap === '1' && policy.selfPublisher !== '1'
-      ? [{ kind: 'dependency', installDir: repoRoot, path: resolveDependencyRefreshLockPath(repoRoot) }] : []),
     ...(policy.workspaceLock ? [{ path: resolve(repoRoot, policy.workspaceLock) }] : []),
+    ...(['dependency-input-writer', 'dependency-install'].includes(policy.commandClass) ? [{
+      kind: 'dependency-input-writer', installDir: repoRoot,
+      path: resolveDependencyRefreshLockPath(repoRoot, env),
+    }] : []),
   ];
 }
 
-// Workspace manifests use direct argv commands, sequential &&/; commands and
-// repository package script references. Unsupported shell syntax must not produce a
-// smaller reservation. This is intentionally not a general shell interpreter.
-function workspaceBuildCommands(script) {
-  if (/[$`\\\r\n]/u.test(script)) return null;
-  const commands = [[]];
-  const tokens = /"[^"\r\n]*"|'[^'\r\n]*'|&&|;|[^\s;&|<>`$"']+/gu;
-  let end = 0;
-  for (const match of script.matchAll(tokens)) {
-    if (script.slice(end, match.index).trim()) return null;
-    const token = match[0];
-    end = match.index + token.length;
-    if (token === '&&' || token === ';') {
-      if (!commands.at(-1).length) return null;
-      commands.push([]);
-    } else {
-      commands.at(-1).push(token.startsWith('"') || token.startsWith("'") ? token.slice(1, -1) : token);
-    }
+// A batch may have an opaque payload after a statically known publisher. Its
+// prefix still constrains placement, without granting admission ownership or
+// rewriting shell state. Stop before anything that could change that state.
+async function resolveShellPrefixPlacementClass(commandArgs, options) {
+  if (!['sh', 'bash'].includes(commandBasename(commandArgs[0] ?? ''))) return '';
+  const commands = await readShellCommandPrefix(commandArgs, {
+    repoRoot: resolve(options.repoRoot ?? COMMAND_REPO_ROOT), cwd: options.cwd ?? process.cwd(),
+  });
+  let placementHeavyClass = '';
+  for (const args of commands) {
+    if (!['node', 'nodejs', 'corepack', 'hstack-exec',
+      ...REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands].includes(commandBasename(args[0]))) break;
+    const child = await resolvePackageCommandPolicy(args, options);
+    if (!child.heavyClass && !child.placementHeavyClass) break;
+    placementHeavyClass = largestHeavyweightClass(placementHeavyClass, child.placementHeavyClass, child.heavyClass);
   }
-  if (script.slice(end).trim() || !commands.at(-1).length) return null;
-  return commands;
+  return placementHeavyClass;
 }
 
 /** Declare the full local package build before its publisher acquires leases.
@@ -711,9 +945,11 @@ function workspaceBuildCommands(script) {
  * Light generators retain their command policy. A new compiler entry point
  * must be classified there, rather than hidden behind a light generator.
  */
-async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build', scriptArguments = [] } = {}) {
+async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.cwd(), env = process.env, repoRoot = COMMAND_REPO_ROOT, scriptName = 'build', scriptArguments = [], visitingScripts } = {}) {
   let admissionClass = '';
   let knownAdmissionClass = '';
+  let placementHeavyClass = '';
+  let placement = 'worker-eligible', commandClass = '';
   let sawPublisher = false;
   let selfPublisher = true;
   const requiredTools = new Set();
@@ -727,12 +963,17 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
       admissionClass = candidate;
     }
   };
-  const visiting = new Set();
-  const visit = async (name, packageDir, metadata, forwardedArguments = []) => {
+  const visiting = visitingScripts ?? new Set();
+  const visit = async (name, packageDir, metadata, forwardedArguments = [], preparingValidation = false) => {
     const scripts = metadata?.scripts ?? {};
     const identity = `${packageDir}\0${name}`;
     if (visiting.has(identity) || typeof scripts[name] !== 'string') { include('compilation', false); selfPublisher = false; return; }
     visiting.add(identity);
+    // A validation/build may regenerate source as ephemeral compile input.
+    // Only an explicit publication delivers tracked files to the checkout.
+    const preparationOnly = preparingValidation || resolveRemoteCommandPolicy(['pnpm', 'run', name], {
+      cwd: packageDir, repoRoot, env,
+    }).validation === '1';
     for (const hook of [`pre${name}`, name, `post${name}`]) {
       if (hook !== name && !(hook in scripts)) continue;
       const commands = typeof scripts[hook] === 'string' ? workspaceBuildCommands(scripts[hook]) : null;
@@ -740,41 +981,48 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
       for (const [index, command] of commands.entries()) {
         const args = hook === name && index === commands.length - 1 ? [...command, ...forwardedArguments] : command;
         const facts = normalizeCommandArguments(args, packageDir, repoRoot);
-        const policy = await resolveComposedTypecheckPolicy(args, { cwd: packageDir, repoRoot, env });
+        const policy = await resolveComposedCommandPolicy(args, { cwd: packageDir, repoRoot, env, visitingScripts: visiting,
+          manifestContext: { packageDir, packageJson: metadata } });
+        if (policy.placement === 'primary-only' && !(preparationOnly && policy.generator === '1')) {
+          placement = policy.placement; commandClass = policy.commandClass;
+        }
         for (const tool of policy.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
-        const dispatchedScript = facts.command === 'hstack-exec'
+        // Executor composition already resolved its payload's cwd and graph.
+        // Do not visit the same script again under the caller's metadata.
+        const dispatchedScript = !facts.executorContext && facts.command === 'hstack-exec'
           ? args.find(arg => arg.startsWith('--script='))?.slice('--script='.length) : '';
         if (dispatchedScript) {
           const forwarded = args.slice(args.findIndex(arg => arg.startsWith('--script=')) + 1);
           if (forwarded[0] === '--') forwarded.shift();
-          await visit(dispatchedScript, packageDir, metadata, forwarded);
+          await visit(dispatchedScript, packageDir, metadata, forwarded, preparationOnly);
           continue;
         }
-        if (facts.script && REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(facts.manager)) {
+        if (!facts.executorContext && facts.script && REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(facts.manager)) {
           if (facts.manager === 'npx') { include('compilation', false); selfPublisher = false; }
           else if (facts.managerCwd || facts.workspace) {
             const referenced = await resolvePackageCommandManifest(args, { repoRoot, cwd: packageDir });
-            if (referenced) await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson, referenced.scriptArguments);
+            if (referenced) await visit(referenced.scriptName, referenced.packageDir, referenced.packageJson, referenced.scriptArguments, preparationOnly);
             else { include('compilation', false); selfPublisher = false; }
-          } else await visit(facts.script, packageDir, metadata, facts.scriptArguments);
+          } else await visit(facts.script, packageDir, metadata, facts.scriptArguments, preparationOnly);
           continue;
         }
-        const wrapperScript = facts.entry === 'bundleWorkspaceDeps.mjs'
+        const wrapperScript = !facts.executorContext && facts.entry === 'bundleWorkspaceDeps.mjs'
           ? args.find(arg => arg.startsWith('--run-script='))?.slice('--run-script='.length) : '';
         if (wrapperScript) {
           if (policy.selfPublisher === '1') sawPublisher = true;
           else selfPublisher = false;
-          await visit(wrapperScript, packageDir, metadata, forwardedArguments);
+          await visit(wrapperScript, packageDir, metadata, [], preparationOnly);
           continue;
         }
         // Unclassified Node entries are the manifest's light generators.
         // Unknown shell/executable commands can change cwd or launch work we
         // cannot expand, so they retain the existing general compile floor.
         if (!policy.heavyClass && !['node', 'nodejs'].includes(facts.command)) {
-          include('compilation');
+          include('compilation', false);
           selfPublisher = false;
         }
         include(policy.heavyClass);
+        placementHeavyClass = largestHeavyweightClass(placementHeavyClass, policy.placementHeavyClass);
         if (policy.selfPublisher === '1') sawPublisher = true;
         else if (policy.localCompile === '1' && policy.compilerLeaf !== '1') selfPublisher = false;
       }
@@ -782,12 +1030,14 @@ async function resolveWorkspacePackageScriptPolicy({ packageJson, cwd = process.
     visiting.delete(identity);
   };
   await visit(scriptName, resolve(cwd), packageJson, scriptArguments);
-  return { admissionClass: admissionClass || 'compilation', knownAdmissionClass, selfPublisher: selfPublisher && sawPublisher,
+  return { placement, commandClass, admissionClass, knownAdmissionClass, placementHeavyClass, selfPublisher: selfPublisher && sawPublisher,
     requiredTools: [...requiredTools].join(' ') };
 }
 
 export async function resolveWorkspacePackageBuildAdmissionClass(options = {}) {
-  return (await resolveWorkspacePackageScriptPolicy(options)).admissionClass;
+  // Finite publication still fails closed for an unresolved/light-only build;
+  // ordinary manifest aliases carry only demand actually found in their graph.
+  return (await resolveWorkspacePackageScriptPolicy(options)).admissionClass || 'compilation';
 }
 
 /** Unlike target dispatch, finite publication owns only the payload envelope.
@@ -800,8 +1050,12 @@ export async function isSelfPublishingPackageCommand(commandArgs, options = {}) 
   return (await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir })).selfPublisher;
 }
 
-async function resolveComposedTypecheckPolicy(commandArgs, options) {
+async function resolveComposedCommandPolicy(commandArgs, options) {
   const facts = normalizeCommandArguments(commandArgs, options.cwd ?? process.cwd(), options.repoRoot);
+  if (facts.executorContext || (['node', 'nodejs'].includes(facts.command)
+    && facts.entryRepositoryPath === 'packages/tests/scripts/run-extended-db-docker.mjs')) {
+    return resolvePackageCommandPolicy(commandArgs, options);
+  }
   if (facts.binaryContext) {
     const context = facts.binaryContext;
     const cwd = await resolveCommandPackageDirectory(context, options.repoRoot ?? COMMAND_REPO_ROOT);
@@ -832,12 +1086,129 @@ async function resolveComposedTypecheckPolicy(commandArgs, options) {
 /** Package manifests own workspace aliases and lifecycle expansion. Resolve
  * the selected package before deriving preparation and payload admission. */
 export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
+  const facts = normalizeCommandArguments(commandArgs, options.cwd ?? process.cwd(), options.repoRoot);
+  if (facts.executorContext) {
+    const { args, cwd, admissionClass } = facts.executorContext;
+    const outer = resolveRemoteCommandPolicy(commandArgs, options);
+    const child = await resolvePackageCommandPolicy(args, { ...options, cwd, packageDir: undefined });
+    return { ...child,
+      workerTool: outer.workerTool,
+      workerArguments: outer.workerArguments,
+      heavyClass: admissionClass === null ? child.heavyClass || outer.heavyClass : outer.heavyClass,
+      ...(child.placementHeavyClass ? { placementHeavyClass: largestHeavyweightClass(child.placementHeavyClass, outer.heavyClass) } : {}),
+      validation: outer.validation === '1' ? '1' : child.validation,
+      workspaceSync: outer.workspaceSync,
+      commandClass: child.commandClass === 'unclassified' ? outer.commandClass : child.commandClass,
+      requiredTools: [...new Set([...outer.requiredTools.split(/\s+/u), ...child.requiredTools.split(/\s+/u)].filter(Boolean))].join(' '),
+    };
+  }
+  if (['node', 'nodejs'].includes(facts.command)
+    && facts.entryRepositoryPath === 'packages/tests/scripts/run-extended-db-docker.mjs') {
+    const policy = resolveRemoteCommandPolicy(commandArgs, options);
+    const { parseArgs } = await import('../../../../../packages/tests/scripts/run-extended-db-docker.mjs');
+    const { buildExtendedDbCommandPlan } = await import('../../../../../packages/tests/scripts/extended-db-docker.plan.mjs');
+    let steps;
+    try {
+      const parsed = parseArgs(['node', facts.entry, ...facts.entryArguments]);
+      if (!parsed.help) steps = buildExtendedDbCommandPlan({ db: parsed.db, mode: parsed.mode,
+        contractFile: parsed['contract-file'], databaseUrl: 'classification-only' });
+    } catch {
+      // The harness owns invalid arguments and help, neither of which starts work.
+    }
+    if (!steps) return { ...policy, validation: '0', bootstrap: '0', heavyClass: '' };
+    const repoRoot = options.repoRoot ?? COMMAND_REPO_ROOT;
+    const requiredTools = new Set(policy.requiredTools.split(/\s+/u).filter(Boolean));
+    // This synchronous coordinator starts Docker before dispatching its children.
+    // Reserve their existing graph's full peak once, with dependency consumption
+    // but no publication leases; nested public commands reuse the actual owner.
+    for (const step of steps) {
+      const child = await resolvePackageCommandPolicy([step.command, ...step.args], {
+        ...options, repoRoot, cwd: repoRoot, packageDir: undefined, env: { ...(options.env ?? process.env), ...step.env },
+      });
+      policy.heavyClass = largestHeavyweightClass(policy.heavyClass, child.heavyClass, child.placementHeavyClass);
+      for (const tool of child.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
+      if (child.placement === 'primary-only') {
+        policy.placement = child.placement;
+        policy.commandClass = child.commandClass;
+      }
+    }
+    return { ...policy, kind: 'source-test', selfPublisher: '0',
+      localCompile: HEAVYWEIGHT_COMPILE_CLASSES.includes(policy.heavyClass) ? '1' : '0',
+      requiredTools: [...requiredTools].join(' ') };
+  }
+  // Reuse manifest sequence parsing for direct shell chains. Cwd-changing
+  // shell state is unsupported. Public phases retain their own admission;
+  // placement must not reserve memory across preparation and foreign leases.
+  if (['sh', 'bash'].includes(commandBasename(commandArgs[0] ?? ''))
+    && commandArgs.length === 3 && /^-[a-z]*c[a-z]*$/u.test(commandArgs[1])) {
+    const sequence = workspaceBuildSequence(commandArgs[2]);
+    const commands = sequence?.commands;
+    const supported = commands?.every(args => ['node', 'nodejs', 'corepack', 'hstack-exec',
+      ...REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands].includes(commandBasename(args[0])));
+    if (supported) {
+      const policy = resolveRemoteCommandPolicy(commandArgs, options);
+      const requiredTools = new Set(policy.requiredTools.split(/\s+/u).filter(Boolean));
+      let phasesOwnAdmission = true;
+      let hasPublisher = false;
+      let placementHeavyClass = '';
+      const phases = [];
+      const childPolicies = [];
+      for (const args of commands) {
+        const child = await resolvePackageCommandPolicy(args, options);
+        childPolicies.push(child);
+        placementHeavyClass = largestHeavyweightClass(placementHeavyClass, child.placementHeavyClass, child.heavyClass);
+        for (const tool of child.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
+        const needsAdmission = child.heavyClass && child.selfPublisher !== '1' && child.compilerLeaf !== '1'
+          && !(child.kind === 'typecheck' && await resolvePackageCommandManifest(args, options));
+        if (needsAdmission) phasesOwnAdmission = false;
+        if (child.selfPublisher === '1') hasPublisher = true;
+        phases.push(needsAdmission);
+        if (child.heavyClass && (!policy.heavyClass
+          || resolveHeavyweightMemoryFloorKiB(child.heavyClass) > resolveHeavyweightMemoryFloorKiB(policy.heavyClass))) {
+          policy.heavyClass = child.heavyClass;
+        }
+        if (child.placement === 'primary-only') {
+          policy.placement = child.placement;
+          policy.commandClass = child.commandClass;
+          policy.generator = child.generator;
+        }
+      }
+      const coordinatesWorkspaceBuild = childPolicies.some(child => child.commandClass === 'workspace-build-coordinator');
+      if ((hasPublisher && !phasesOwnAdmission) || coordinatesWorkspaceBuild) {
+        // A producer cannot inherit the later consumer's reservation. Keep
+        // the shell's ordered phases, but admit each unowned heavy payload
+        // at its actual execution point using the existing same-worker
+        // execution owner, including its preparation and workspace locks.
+        // Relative paths survive dispatch to a different worker repo root.
+        const repoRoot = options.repoRoot ?? COMMAND_REPO_ROOT;
+        const launcher = './' + posix.join(relative(resolve(options.cwd ?? process.cwd()), repoRoot).replaceAll('\\', '/'),
+          'apps/stack/bin/hstack-exec');
+        policy.admissionScript = phases.map((needsAdmission, index) => {
+          // A workspace coordinator must remain on the controller, while
+          // independent finite consumers retain their normal AUTO placement.
+          const dispatchReader = coordinatesWorkspaceBuild && childPolicies[index].placement !== 'primary-only'
+            && Boolean(childPolicies[index].heavyClass || childPolicies[index].placementHeavyClass);
+          const prefix = dispatchReader
+            ? ['/bin/sh', launcher, '--'].map(posixQuote).join(' ') + ' '
+            : needsAdmission ? ['/bin/sh', launcher, '--local', '--'].map(posixQuote).join(' ') + ' ' : '';
+          // Preserve the caller's shell quoting and native argument expansion.
+          return (index ? ` ${sequence.operators[index - 1]} ` : '') + prefix + sequence.sources[index];
+        }).join('');
+        phasesOwnAdmission = true;
+      }
+      if (policy.heavyClass) policy.selfPublisher = phasesOwnAdmission ? '1' : '0';
+      if (placementHeavyClass && placementHeavyClass !== policy.heavyClass) policy.placementHeavyClass = placementHeavyClass;
+      policy.requiredTools = [...requiredTools].join(' ');
+      return policy;
+    }
+  }
   const manifest = await resolvePackageCommandManifest(commandArgs, options);
-  const policy = await resolveComposedTypecheckPolicy(commandArgs, { ...options,
+  const policy = await resolveComposedCommandPolicy(commandArgs, { ...options,
     ...(manifest ? { packageDir: manifest.packageDir } : {}) });
   const requiredTools = new Set(policy.requiredTools.split(/\s+/u).filter(Boolean));
   let selfPublisher = policy.selfPublisher;
   let heavyClass = policy.heavyClass;
+  let placementHeavyClass = policy.placementHeavyClass;
   if (manifest) {
     const resolved = await resolveWorkspacePackageScriptPolicy({ ...options, ...manifest, cwd: manifest.packageDir });
     if (resolved.placement === 'primary-only') {
@@ -851,6 +1222,7 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     }
     for (const tool of resolved.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
     if (resolved.selfPublisher) selfPublisher = '1';
+    placementHeavyClass = largestHeavyweightClass(placementHeavyClass, resolved.placementHeavyClass);
     const requiredClass = resolved.selfPublisher || policy.kind === 'typecheck' ? resolved.admissionClass : resolved.knownAdmissionClass;
     if (resolved.selfPublisher || (requiredClass && (!heavyClass
       || (heavyClass === 'validation' && requiredClass === 'focused-validation')
@@ -863,11 +1235,23 @@ export async function resolvePackageCommandPolicy(commandArgs, options = {}) {
     const packageJson = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
     const scriptName = commandArgs.find(arg => arg.startsWith('--run-script='))?.slice('--run-script='.length);
     const resolved = await resolveWorkspacePackageScriptPolicy({ ...options, cwd, packageJson, scriptName });
+    if (resolved.placement === 'primary-only') {
+      policy.placement = resolved.placement;
+      policy.commandClass = resolved.commandClass;
+      if (resolved.commandClass === 'tracked-source-writer') policy.generator = '1';
+    }
     for (const tool of resolved.requiredTools.split(/\s+/u).filter(Boolean)) requiredTools.add(tool);
     selfPublisher = '1';
-    heavyClass = resolved.admissionClass;
+    placementHeavyClass = largestHeavyweightClass(placementHeavyClass, resolved.placementHeavyClass);
+    heavyClass = resolved.admissionClass || 'compilation';
   }
-  return { ...policy, selfPublisher, heavyClass, requiredTools: [...requiredTools].join(' ') };
+  const result = { ...policy, selfPublisher, heavyClass, requiredTools: [...requiredTools].join(' ') };
+  placementHeavyClass = largestHeavyweightClass(placementHeavyClass,
+    await resolveShellPrefixPlacementClass(commandArgs, options), await resolveRemoteValidationPlacementClass(result, {
+    repoRoot: options.repoRoot ?? COMMAND_REPO_ROOT, env: options.env,
+  }), heavyClass);
+  if (placementHeavyClass && placementHeavyClass !== heavyClass) result.placementHeavyClass = placementHeavyClass;
+  return result;
 }
 
 export async function resolveCommandPublisherPolicy(commandArgs, options = {}) {
@@ -907,6 +1291,11 @@ export function renderNativeCommandPolicy() {
     `payload_ssh_server_alive_interval=${PAYLOAD_SSH_SERVER_ALIVE_INTERVAL}`,
     ...Object.entries(COMMAND_ENVIRONMENT).map(([kind, names]) => `command_${kind}_environment_names=${posixQuote(names.join(' '))}`),
     `controller_coalescing_environment_names=${posixQuote([...new Set(Object.values(COMMAND_ENVIRONMENT).flat())].sort().join(' '))}`,
+    // Placement can skip a worker, unlike authoritative dispatch. Divide the
+    // existing 15-second burst window across the two read-only SSH connection
+    // attempts, using OpenSSH's integral-second unit. This is independent of
+    // configured cache reuse; it must not shorten exact or payload connections.
+    `placement_probe_connect_timeout_seconds() { printf '%s' '${Math.max(1, Math.floor(DEFAULT_LOAD_PROBE_TTL_MS / 2 / 1000))}'; }`,
     'heavyweight_memory_floor_kib() {',
     '  case "$1" in',
     ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') heavyweight_policy_floor=' + posixQuote(String(value)) + ' ;;'),
@@ -965,6 +1354,8 @@ native_node_entry() {
       --experimental-strip-types) policy_stripTypes=1; shift ;;
       --import) shift; [ "$#" -eq 0 ] || shift ;;
       --import=*) shift ;;
+      --max-old-space-size=*|--max_old_space_size=*) shift ;;
+      --max-old-space-size|--max_old_space_size) shift; [ "$#" -eq 0 ] || shift ;;
       --conditions|-C) shift; if [ "$#" -gt 0 ]; then [ "$1" != happier-source ] || policy_sourceCondition=1; shift; fi ;;
       --conditions=happier-source) policy_sourceCondition=1; shift ;;
       --conditions=*) shift ;;
@@ -995,7 +1386,7 @@ $native_project_path"
   elif [ "$native_project_scope" != "$native_scope" ]; then policy_mixedProjects=1; fi
 }
 native_resolve_admission_payload() {
-  shift
+  shift 2
   resolve_native_command_policy "$@"
 }
 native_resolve_binary_payload() {
@@ -1003,22 +1394,41 @@ native_resolve_binary_payload() {
   resolve_native_command_policy "$@"
 }
 native_try_admission_payload() {
-  shift 2
-  native_wrapper_class=validation
+  shift
+  native_wrapper_class=
+  native_wrapper_tools=
+  if [ "\${1-}" = --heavyweight-admission ]; then native_wrapper_class=validation; shift; fi
+  case "\${1-}" in --script=*) set -- -- "$@" ;; esac
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --class=*) native_wrapper_class=\${1#--class=} ;;
-      --admission-root=*|--machine=*|--failure-id=*|--no-wait|--exec-admitted) ;;
+      --class=*) [ -n "$native_wrapper_class" ] || return 1; native_wrapper_class=\${1#--class=} ;;
+      --required-tools=*)
+        [ -n "$native_wrapper_class" ] || return 1
+        native_wrapper_tools=\${1#--required-tools=}
+        [ -n "$native_wrapper_tools" ] || { native_required_tools_error; return 64; }
+        ;;
+      --admission-root=*|--machine=*|--failure-id=*|--workspace-locks=*|--no-wait|--exec-admitted|--require-inherited)
+        [ -n "$native_wrapper_class" ] || return 1 ;;
       --)
         shift
         [ "$#" -gt 0 ] || return 1
-        # Positional custody preserves this wrapper's class through recursion.
-        set -- "$native_wrapper_class" "$@"
-        native_resolve_admission_payload "$@" || return 2
-        [ "$policy_bootstrap" = 1 ] || return 1
-        policy_admissionWrapper=1
-        policy_admissionClass=$1
-        native_command_policy_finish || return 2
+        # Positional custody preserves declarations through nested expansion.
+        set -- "$native_wrapper_class" "$native_wrapper_tools" "$@"
+        native_resolve_admission_payload "$@" || return $?
+        if [ -n "$1" ] || [ -z "$policy_heavyClass" ]; then
+          policy_admissionWrapper=1
+          policy_admissionClass=\${1:-validation}
+          policy_validation=1
+          policy_workspaceSync=1
+          policy_localCompile=0
+          policy_compilerSuite=0
+          native_command_policy_finish || return 2
+        fi
+        if [ -n "$2" ]; then native_add_required_tools "$2" || return $?; fi
+        if [ "$policy_workerTool" = rg ]; then
+          native_add_required_tools rg || return $?
+          policy_workerTool=
+        fi
         return 0
         ;;
       *) return 1 ;;
@@ -1026,6 +1436,18 @@ native_try_admission_payload() {
     shift
   done
   return 1
+}
+native_required_tools_error() {
+  printf '%s\\n' '[command-policy] HSTACK_COMMAND_REQUIREMENTS_INVALID: --required-tools must list executable names separated by commas (for example --required-tools=docker,go)' >&2
+}
+native_add_required_tools() {
+  native_declared_remaining=$1
+  while :; do
+    native_declared_tool=\${native_declared_remaining%%,*}
+    case "$native_declared_tool" in ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) native_required_tools_error; return 64 ;; esac
+    case " $policy_requiredTools " in *" $native_declared_tool "*) ;; *) policy_requiredTools="\${policy_requiredTools:+$policy_requiredTools }$native_declared_tool" ;; esac
+    case "$native_declared_remaining" in *,*) native_declared_remaining=\${native_declared_remaining#*,} ;; *) break ;; esac
+  done
 }
 resolve_native_command_policy() {
   native_test_policy_resolved=0
@@ -1050,7 +1472,22 @@ native_resolve_command_policy_arguments() {
   [ "\${1-}" = -- ] && shift
   case "\${1-}" in --script=*) native_script=\${1#--script=}; shift; [ "\${1-}" = -- ] && shift; set -- pnpm run --silent "$native_script" "$@" ;; esac
   native_command_basename "\${1-}"; policy_command=$native_basename
-  if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
+  if [ "$policy_command" = env ]; then
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        *=*)
+          native_environment_name=\${1%%=*}
+          case "$native_environment_name" in ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) break ;; esac
+          shift ;;
+        *) break ;;
+      esac
+    done
+    case "\${1-}" in ''|-*) ;; *) native_resolve_command_policy_arguments "$@"; return $? ;; esac
+    # Unsupported env options retain conservative classification.
+    set -- env "$@"
+  fi
+  if [ "$policy_command" = hstack-exec ]; then
     if native_try_admission_payload "$@"; then return
     else
       native_wrapper_status=$?
@@ -1064,12 +1501,20 @@ native_resolve_command_policy_arguments() {
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
   policy_nativeLoader=0
-  policy_testFileSelected=0
   policy_project=; policy_projectPaths=; policy_workerRequest=0
   policy_noCheck=0
+  policy_compile=0; native_compile_options=1
+  policy_write=0; policy_readOnly=0; policy_report=0; policy_formatterCheck=0
   policy_declarations=0; policy_runScript=0
+  policy_dependencyInputWriter=0; native_lockfile_only=0; native_lockfile_options=1
   policy_admissionClass=
   policy_admissionWrapper=0
+  policy_hostObservation=0
+  if [ "$policy_command" = hstack-exec ] && [ "$#" -eq 2 ] && [ "\${2-}" = --heavyweight-memory-sample ]; then
+    policy_hostObservation=1
+  elif { [ "$policy_command" = node ] || [ "$policy_command" = nodejs ]; } && [ "$#" -eq 3 ] && [ "\${2-}" = -e ]; then
+    case "\${3-}" in ${Object.values(HOST_OBSERVATION_PROGRAMS).map(posixQuote).join('|')}) policy_hostObservation=1 ;; esac
+  fi
   if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
     policy_admissionWrapper=1
     policy_admissionClass=validation
@@ -1089,6 +1534,24 @@ native_resolve_command_policy_arguments() {
     node|nodejs) native_node_entry "$@" ;;
     *) if [ "\${2-}" = --experimental-strip-types ]; then policy_stripTypes=1; native_entry_path=\${3-}; native_command_basename "$native_entry_path"; policy_entry=$native_basename; fi ;;
   esac
+  if [ "$policy_entry" = runTsx.mjs ]; then
+    for native_arg in "$@"; do
+      case "$native_arg" in *.ts|*.tsx) native_entry_path=$native_arg; native_command_basename "$native_entry_path"; policy_entry=$native_basename; break ;; esac
+    done
+  fi
+  if [ "$policy_command" = go ]; then
+    native_go_directory=.; native_go_pending=
+    for native_arg in "$@"; do
+      case "$native_go_pending" in
+        directory) native_go_directory=$native_arg; native_go_pending=; continue ;;
+        entry)
+          case "$native_go_directory" in /*) native_go_base=$native_go_directory ;; *) native_go_base="$repo_root/$policy_component/$native_go_directory" ;; esac
+          case "$native_arg" in /*) native_entry_path=$native_arg ;; *) native_entry_path="$native_go_base/$native_arg" ;; esac
+          native_command_basename "$native_entry_path"; policy_entry=$native_basename; break ;;
+      esac
+      case "$native_arg" in -C) native_go_pending=directory ;; run) native_go_pending=entry ;; esac
+    done
+  fi
   native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
   case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=\${policy_entryPath#"$repo_root"/} ;; esac
   native_normalize_path "$native_entry_path"; policy_entryRepositoryPath=$native_result
@@ -1096,6 +1559,17 @@ native_resolve_command_policy_arguments() {
   case "$policy_entryRepositoryPath" in "$repo_root"/*) policy_entryRepositoryPath=\${policy_entryRepositoryPath#"$repo_root"/} ;; esac
   native_pending=; native_project_scope=; policy_mixedProjects=0
   for native_arg in "$@"; do
+    if [ "$native_compile_options" = 1 ]; then
+      case "$native_arg" in --) native_compile_options=0 ;; --compile) policy_compile=1 ;; esac
+    fi
+    if [ "$native_lockfile_options" = 1 ]; then
+      case "$native_arg" in
+        --) native_lockfile_options=0 ;;
+        --lockfile-only|--lockfile-only=true) native_lockfile_only=1 ;;
+        --no-lockfile-only|--lockfile-only=false) native_lockfile_only=0 ;;
+      esac
+    fi
+    case "$native_arg" in ${REMOTE_COMMAND_CLASSIFICATION.formatterCheckFlags.join('|')}) policy_formatterCheck=1 ;; esac
     case "$native_pending" in
       config) policy_config=$native_arg; native_pending=; continue ;;
       project) native_project=$native_arg; native_record_project_scope; native_pending=; continue ;;
@@ -1106,8 +1580,12 @@ native_resolve_command_policy_arguments() {
         ;;
     esac
     case "$native_arg" in
+      --write|--write-command-policy|--write-sync-policy) policy_write=1 ;;
+      --check) policy_readOnly=1 ;;
+      --report) policy_report=1 ;;
       --test) policy_nativeTest=1 ;;
-      --import|--import=*|--require|--require=*|--loader|--loader=*|--experimental-loader|--experimental-loader=*|-r*) policy_nativeLoader=1 ;;
+      --import|--import=*|--require|--require=*|--loader|--loader=*|--experimental-loader|--experimental-loader=*) policy_nativeLoader=1 ;;
+      -r*) policy_nativeLoader=1; policy_resolverOverride=1 ;;
       --declarations) policy_declarations=1 ;;
       --run-script=?*) policy_runScript=1 ;;
       --noCheck) policy_noCheck=1; native_pending=noCheck ;;
@@ -1120,19 +1598,16 @@ native_resolve_command_policy_arguments() {
       --project|-p) native_pending=project; [ "$native_arg" = --project ] && policy_resolverOverride=1 ;;
       --project=*) native_project=\${native_arg#--project=}; native_record_project_scope; policy_resolverOverride=1 ;;
       -p?*) native_project=\${native_arg#-p}; native_record_project_scope ;;
-      --root|--root=*|--workspace|--workspace=*|-r*) policy_resolverOverride=1 ;;
+      --root|--root=*|--workspace|--workspace=*) policy_resolverOverride=1 ;;
       --mode) native_pending=mode ;;
       --mode=*) policy_mode=\${native_arg#--mode=} ;;
     esac
     case "$native_arg" in apps/stack/*|./apps/stack/*|*/apps/stack/*) policy_stackScope=1 ;; esac
-    case "$native_arg" in
-      -*) ;;
-      *.test.js|*.test.ts|*.test.mjs|*.test.mts|*.test.cjs|*.test.cts|*.test.jsx|*.test.tsx|*.spec.js|*.spec.ts|*.spec.mjs|*.spec.mts|*.spec.cjs|*.spec.cts|*.spec.jsx|*.spec.tsx) policy_testFileSelected=1 ;;
-    esac
   done
   native_normalize_path "$policy_config"; policy_config=$native_result
   policy_project=$native_project
-  policy_nativeTestPath=; native_test_count=0; native_test_component=; native_test_component_mixed=0
+  policy_nativeTestPath=; policy_nativeCompilerSuite=0; policy_sourceConditionNativeTests=1
+  native_test_count=0; native_test_component=; native_test_component_mixed=0
   native_test_argument_index=0
   for native_arg in "$@"; do
     native_test_argument_index=$((native_test_argument_index + 1))
@@ -1142,8 +1617,10 @@ native_resolve_command_policy_arguments() {
     case "$native_test_path" in "$repo_root"/*) native_test_path=\${native_test_path#"$repo_root"/} ;; *) native_normalize_path "$policy_component/$native_test_path"; native_test_path=$native_result ;; esac
     native_test_count=$((native_test_count + 1))
     policy_nativeTestPath=$native_test_path
+    case "$native_test_path" in ${REMOTE_COMMAND_CLASSIFICATION.sourceConditionNativeTestPaths.map(posixQuote).join('|')}) ;; *) policy_sourceConditionNativeTests=0 ;; esac
     native_parent=\${native_test_path%/*}
     [ "$native_parent" != "$native_test_path" ] || native_parent=.
+    case "$native_test_path" in ${REMOTE_COMMAND_CLASSIFICATION.compilerNativeTestFiles.map(posixQuote).join('|')}) policy_nativeCompilerSuite=1 ;; esac
     native_component=
     case "$native_parent" in /*|..|../*) native_parent=. ;; esac
     while [ "$native_parent" != . ]; do
@@ -1154,9 +1631,11 @@ native_resolve_command_policy_arguments() {
     elif [ "$native_test_component" != "$native_component" ]; then native_test_component_mixed=1; fi
   done
   [ "$native_test_count" -eq 1 ] || policy_nativeTestPath=
+  [ "$native_test_count" -gt 0 ] || policy_sourceConditionNativeTests=0
   [ "$native_test_component_mixed" -eq 0 ] || native_test_component=
   native_command_basename "\${1-}"; native_manager=$native_basename
   if [ "$native_manager" = corepack ]; then shift; native_command_basename "\${1-}"; native_manager=$native_basename; fi
+  case "$native_manager" in pnpm.cmd|pnpm.exe) native_manager=pnpm ;; esac
   if native_package_manager "$native_manager"; then
     [ "$#" -gt 0 ] && shift
     native_manager_binary=0; native_manager_run=0
@@ -1202,6 +1681,9 @@ native_resolve_command_policy_arguments() {
     fi
   fi
   [ -n "$policy_script" ] && policy_hasScript=1
+  if [ "$native_manager" = pnpm ] && [ "$native_manager_run" = 0 ] && [ "$native_lockfile_only" = 1 ]; then
+    case "$policy_script" in install|i) policy_dependencyInputWriter=1 ;; esac
+  fi
   policy_family=\${policy_script%%:*}
   native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
   case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=\${policy_entryPath#"$repo_root"/} ;; esac
@@ -1226,9 +1708,12 @@ native_resolve_command_policy_arguments() {
           eval "\${explicit_remote_environment-}"
           node "\${projection_command_policy:-$repo_root/apps/stack/scripts/utils/dev_targets/remote_commands.mjs}" --native-source-test "$repo_root" "$policy_nativeTestPath"
         ) || return $?
-        if [ "$native_source_only" = 1 ]; then
-          policy_kind=source-test; policy_bootstrap=0; policy_heavyClass=native-source-test
-        fi
+        case "$native_source_only" in
+          1) policy_kind=source-test; policy_bootstrap=0
+             [ "$policy_heavyClass" != validation ] || policy_heavyClass=native-source-test ;;
+          2) policy_kind=source-test; policy_bootstrap=1 ;;
+          3) policy_kind=source-test; policy_bootstrap=0 ;;
+        esac
       fi
       ;;
   esac
@@ -2403,11 +2888,12 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
     return 0;
   }
   if (args[0] === '--workspace-locks') {
-    process.stdout.write(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4] }, args[1])));
+    process.stdout.write(JSON.stringify(resolveCommandWorkspaceLocks({ workspaceLock: args[2], bootstrap: args[3], validation: args[4], commandClass: args[5] }, args[1])));
     return 0;
   }
   if (args[0] === '--native-source-test') {
-    process.stdout.write(!process.env.NODE_OPTIONS && readNativeTestSourceInputs(args[1], args[2]) !== null ? '1\n' : '0\n');
+    const demand = !process.env.NODE_OPTIONS && readNativeTestPreparationDemand(args[1], args[2]);
+    process.stdout.write(demand ? demand.requiresDependencyBootstrap ? '2\n' : demand.hasProcessBoundary ? '3\n' : '1\n' : '0\n');
     return 0;
   }
   const sourceTestTools = args[0] === '--source-test-tools';

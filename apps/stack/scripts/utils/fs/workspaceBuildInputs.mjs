@@ -1,6 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
-import { isBuiltin } from 'node:module';
 import cliDistBuildManifest from '../../../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-owned/bundledPluginMembership.ts';
@@ -10,43 +9,7 @@ import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGr
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
 
-/** A native source-only test needs neither installed dependencies nor emitted
- * workspace outputs. Unknown imports and subprocess/module loaders retain the
- * normal component preparation; they can consume inputs outside this graph. */
-export function readNativeTestSourceInputs(repoDir, entryPath) {
-  let root;
-  try { root = realpathSync(repoDir); }
-  catch { return null; }
-  const pending = [resolve(root, entryPath)];
-  const files = new Set();
-  while (pending.length) {
-    let path = pending.pop();
-    try {
-      if (lstatSync(path).isSymbolicLink()) return null;
-      path = realpathSync(path);
-    } catch { return null; }
-    if (files.has(path)) continue;
-    const local = relative(root, path);
-    if (local === '..' || local.startsWith(`..${sep}`) || isAbsolute(local)
-      || !/\.mjs$/.test(path)) return null;
-    let source;
-    try { source = readFileSync(path, 'utf8'); }
-    catch { return null; }
-    files.add(path);
-    // Nonliteral loads cannot prove a complete closure. Conservative matches
-    // in fixture text only retain preparation; they never suppress it.
-    if (/\b(?:import|require)\s*\(\s*[^'"\s]/.test(source)
-      || /\b(?:eval|Function)\s*\(/.test(source)) return null;
-    for (const specifier of cliDistBuildManifest.extractModuleSpecifiers(source)) {
-      if (isBuiltin(specifier)) {
-        if (['child_process', 'module', 'vm', 'worker_threads', 'cluster'].includes(specifier.replace(/^node:/, ''))) return null;
-      } else if (specifier.startsWith('./') || specifier.startsWith('../')) {
-        pending.push(resolve(dirname(path), specifier));
-      } else return null;
-    }
-  }
-  return [...files].map(path => relative(root, path).split(sep).join('/')).sort();
-}
+export { readNativeTestSourceInputs, readNativeTestPreparationDemand } from './nativeTestInputs.mjs';
 
 // Retained source daemon emission and its preparation watcher consume the same
 // compiler/inventory inputs; neither borrows the app's unrelated source tree.

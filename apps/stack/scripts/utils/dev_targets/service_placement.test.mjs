@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import * as placement from './service_placement.mjs';
 import { writeJsonAtomic } from '../fs/json.mjs';
 import { loadDevTargetsConfig } from './config.mjs';
+import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
 
 import {
   resolveDevTargetServicePlans,
@@ -119,9 +120,11 @@ test('local QA daemon browser selects the most unreserved QA pool host without w
       } });
       const before = await readFile(path);
       const probes = [];
+      const policies = [];
       const result = await placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo',
         env: explicitDaemon ? { ...env, HAPPIER_STACK_QA_DAEMON_TARGETS: 'linux3,linux2,linux1' } : env }, {
         runCaptureResult: async (_command, args) => {
+          policies.push(resolveRemoteCommandPolicy(args.slice(args.indexOf('--') + 1)));
           const target = args.find(arg => arg.startsWith('--target='));
           probes.push(target);
           const memory = target === '--target=linux1' ? [24900000, 3500000]
@@ -131,6 +134,12 @@ test('local QA daemon browser selects the most unreserved QA pool host without w
         }, logger: { warn() {} },
       });
       assert.equal(result?.target?.name, 'linux2', 'browser must rank native unreserved memory, not raw free memory or the first host');
+      for (const policy of policies) {
+        assert.equal(policy.commandClass, 'host-observation');
+        assert.equal(policy.heavyClass, '', 'host observations must not reserve heavyweight capacity');
+        assert.equal(policy.bootstrap, '0', 'host observations need no dependencies');
+        assert.equal(policy.workspaceSync, '0', 'host observations need no fresh checkout bytes');
+      }
       assert.deepEqual(probes, [...(!explicitDaemon ? ['--target=nl1', '--target=nl2'] : []), '--target=linux3', '--target=linux2', '--target=linux1']);
       assert.deepEqual(await readFile(path), before, 'browser selection cannot move or initialize a daemon pin');
     }

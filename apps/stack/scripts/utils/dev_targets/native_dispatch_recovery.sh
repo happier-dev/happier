@@ -22,7 +22,32 @@ record_selected_unavailable() {
   export HSTACK_EXEC_PRE_DISPATCH_REFUSALS
 }
 
+dependency_refusal_recorded() {
+  case " ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} " in
+    *'=dependencies '*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 report_dispatch_refusals() {
   [ -n "${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}" ] || return 1
-  printf '[preferred-execution] HSTACK_EXEC_DISPATCH_REFUSED:%s; no eligible target accepted this command before payload start\n' "$HSTACK_EXEC_PRE_DISPATCH_REFUSALS" >&2
+  if dependency_refusal_recorded; then
+    printf '%s\n' '[preferred-execution] HAPPIER_DEPENDENCIES_NEED_REFRESH: stale-or-unadmitted worker dependencies with refresh disabled. Retry through the owning dependency preparation entry point.' >&2
+  fi
+  printf '[preferred-execution] HSTACK_EXEC_DISPATCH_REFUSED:%s; no eligible target accepted this command before payload start\n' \
+    "$HSTACK_EXEC_PRE_DISPATCH_REFUSALS" >&2
+}
+
+handle_selected_dependency_refusal() {
+  release_reservation
+  release_custody_pipe
+  [ -z "$authoritative_ssh_error_log" ] || rm -f -- "$authoritative_ssh_error_log"
+  # Invocation-scoped exclusion only: the canonical writer may finish at any
+  # time, so do not poison the shared availability cache with a dependency fact.
+  HSTACK_EXEC_PRE_DISPATCH_REFUSALS="${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-} $selected_name=dependencies"
+  export HSTACK_EXEC_PRE_DISPATCH_REFUSALS
+  printf '[preferred-execution] %s dependencies require preparation before payload start\n' "$selected_name" >&2
+  retry_other_target_before_dispatch "$@"
+  report_dispatch_refusals
+  exit 1
 }

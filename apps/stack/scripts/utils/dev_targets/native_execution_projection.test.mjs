@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,8 +11,62 @@ import { resolveRepoStackIdentity } from '../stack/repo_stack_identity.mjs';
 
 import { prepareCommandRepository, renderNativeExecutionProjection, resolveCommandRepositoryConfig } from './native_execution_projection.mjs';
 import { DEV_TARGET_MUTAGEN_IGNORE_PATHS, renderMutagenProject } from './mutagen_project.mjs';
-import { renderNativeCommandPolicy, resolvePackageCommandPolicy, resolveRemoteCommandPolicy, resolveHeavyweightMemoryFloorKiB } from './remote_commands.mjs';
+import { buildRemoteEnsureDirectoriesCommand, renderNativeCommandPolicy, resolvePackageCommandPolicy, resolveRemoteCommandPolicy, resolveHeavyweightMemoryFloorKiB } from './remote_commands.mjs';
 import { classifyCleanMutagenReadiness, renderNativeSyncReadinessPolicy } from './mutagen_runtime.mjs';
+import { admitWorkerDiskBudget } from './worker_disk_budget.mjs';
+
+test('worker maintenance retains sibling mirrors without controller sync inactivity proof', { skip: process.platform !== 'linux' }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-command-retention-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cliHomeDir = join(root, 'worker');
+  const repoDir = join(root, 'hstack-command-repo-primary');
+  const scratch = join(cliHomeDir, 'tmp');
+  const proc = join(root, 'proc');
+  await mkdir(scratch, { recursive: true });
+  await mkdir(join(scratch, 'hstack-current'));
+  await mkdir(repoDir);
+  await mkdir(join(proc, '42/fd'), { recursive: true });
+  await writeFile(join(proc, '42/status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  await writeFile(join(proc, '42/environ'), '');
+  await writeFile(join(proc, '42/maps'), '');
+  const config = { version: 3, targets: [{ name: 'worker', platform: 'posix', ssh: 'worker', repoDir, cliHomeDir }] };
+  const commandTargets = ['expired', 'held', 'fresh', 'invalid-owner'].map(name => resolveCommandRepositoryConfig(config, {
+    repoRoot: `/source/${name}`, executorRepoRoot: '/source/primary',
+  }).targets[0]);
+  const mirrors = commandTargets.map(target => target.repoDir);
+  const old = new Date(Date.now() - 48 * 3600000);
+  await utimes(repoDir, old, old);
+  const age = async path => {
+    try { await utimes(path, old, old); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  };
+  for (const [index, mirror] of mirrors.entries()) {
+    // The actual replica producer creates retention ownership at the OS boundary.
+    const prepared = spawnSync('/bin/sh', ['-c', buildRemoteEnsureDirectoriesCommand(commandTargets[index], { commandReplica: true })], { encoding: 'utf8' });
+    assert.equal(prepared.status, 0, prepared.stderr);
+    // The WSL readiness probe ensures directories without changing their role.
+    const probed = spawnSync('/bin/sh', ['-c', buildRemoteEnsureDirectoriesCommand(commandTargets[index])], { encoding: 'utf8' });
+    assert.equal(probed.status, 0, probed.stderr);
+    await writeFile(join(mirror, 'source'), 'regenerable source');
+    for (const path of [join(mirror, 'source'), join(mirror, '.happier/command-replica.json'), join(mirror, '.happier'), mirror]) await age(path);
+  }
+  await mkdir(join(mirrors[3], '.happier'), { recursive: true });
+  await writeFile(join(mirrors[3], '.happier/command-replica.json'), '{invalid owner');
+  for (const path of [join(mirrors[3], '.happier/command-replica.json'), join(mirrors[3], '.happier'), mirrors[3]]) await age(path);
+  const unrelated = join(root, 'unrelated');
+  await mkdir(unrelated);
+  await age(unrelated);
+  await writeFile(join(mirrors[2], 'recent-build'), 'new output');
+  await symlink(mirrors[1], join(proc, '42/cwd'));
+  const result = await admitWorkerDiskBudget({ repoDir, cacheBaseDir: join(cliHomeDir, 'cache'),
+    scratchRoot: join(scratch, 'hstack-current'), procRoot: proc, maintenance: true,
+    observeFilesystem: () => ({ device: 'fixture', totalBytes: 1e9, availableBytes: 1e8 }) });
+  // mac2-disk-r3-1029 owner brief:12 requires ownership and terminality proof
+  // before retirement. Worker process absence cannot prove controller sync inactivity.
+  assert.equal(result.reclamation.reduce((sum, step) => sum + step.reclaimedRoots, 0), 0);
+  for (const kept of [...mirrors, repoDir, unrelated]) await access(kept);
+  assert.equal(resolveCommandRepositoryConfig(config, { repoRoot: '/source/primary', executorRepoRoot: '/source/primary' }).targets[0].repoDir, repoDir);
+});
 
 test('sibling routing does not recreate withdrawn mac-host command mirrors', () => {
   const config = { version: 3, targets: ['mac-host', 'mac2-linux'].map(name => ({ name,
@@ -37,7 +91,7 @@ test('dependency-backed commands without another class still enter dependency-in
   assert.equal(policy.heavyClass, 'dependency-install');
 });
 
-test('CLI unit script dispatch admits its compiler cases while focused readers retain validation', () => {
+test('CLI unit script dispatch reserves compiler demand without charging plain focused readers', () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   for (const [args, expectedClass] of [
     [['--script=test:unit:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'focused-validation'],
@@ -329,6 +383,9 @@ test('native command decision artifact is current and executes the canonical cla
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
   const cases = [
     { args: ['corepack', 'yarn', '-s', 'custom-command'], expectedHeavyClass: 'dependency-install' },
+    { args: ['node', 'scripts/workspaces/checkCommitTypeCoherence.mjs', '--base=HEAD^', '--tree=HEAD'], expectedHeavyClass: 'compilation' },
+    { args: ['node', '--test', 'scripts/workspaces/checkCommitTypeCoherence.test.mjs'], expectedHeavyClass: 'validation' },
+    { args: ['node', '--test', 'scripts/workspaces/checkCommitTypeCoherence.test.mjs', 'scripts/workspaces/resolveTypeScriptCliInvocation.test.mjs'], expectedHeavyClass: 'compilation' },
     { args: ['node', '--test', 'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs'] },
     { args: ['node', '--test', 'scripts/generateActionTypeMap.test.mjs'], cwd: 'packages/plugin-sdk' },
     { args: ['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },

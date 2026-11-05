@@ -8,6 +8,7 @@ import { getRootDir, getRepoDir } from '../paths/paths.mjs';
 import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build_authority.mjs';
 import { getServerLightDataDirFromEnvOrDefault } from '../stack/dirs.mjs';
 import { hasRetainedServerData } from './retained_server_data.mjs';
+import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 
 export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['nl1', 'nl2', 'linux3', 'linux2', 'linux1']);
 
@@ -154,9 +155,7 @@ async function probeControlledPlacement({ config, sourceDir, env, targetName, ob
     await writeJsonAtomic(path, parseDevTargetsConfig({ ...config, commandExecution }));
     return await runCaptureResultImpl(join(sourceDir, 'apps/stack/bin/hstack-exec'), [
       ...(targetName ? [`--target=${targetName}`] : []), '--', 'node', '-e',
-      'const cp=require("node:child_process");const memory=' + (observeMemory
-        ? '(()=>{const result=cp.spawnSync("./apps/stack/bin/hstack-exec",["--heavyweight-memory-sample"],{encoding:"utf8"});if(result.status!==0)throw new Error("Host memory observation unavailable: "+result.stderr);return JSON.parse(result.stdout)})()' : '{}')
-        + ';process.stdout.write("HSTACK_QA_HOST="+JSON.stringify({platform:process.platform,arch:process.arch,remote:process.env.HAPPIER_DEV_TARGET_EXECUTION==="1",...memory})+"\\n")',
+      HOST_OBSERVATION_PROGRAMS[observeMemory ? 'memory' : 'identity'],
     ], { cwd: sourceDir, env: { ...env, HAPPIER_EXEC_CONFIG_PATH: path, HAPPIER_DEV_TARGET_EXECUTION: '' } });
   } finally {
     await rm(directory, { recursive: true, force: true });

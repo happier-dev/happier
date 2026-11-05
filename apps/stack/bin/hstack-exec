@@ -73,6 +73,9 @@ fi
 . "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
 native_policy_loaded=1
 
+# These metadata operations import authored MJS and built-ins only. Remove
+# only the source bootstrap's own inherited preload; payloads and unrelated
+# Node options/preloads retain their normal behavior and import custody.
 run_dependency_free_node() (
   source_bootstrap_option="--import=\"$repo_root/apps/stack/bin/localSourceRuntimeBootstrap.mjs\""
   case "${NODE_OPTIONS-}" in
@@ -112,19 +115,20 @@ run_remote_ssh_probe() {
   # Read-only observations may retry a failed multiplex channel once without
   # changing or stopping its configured master.
   probe_command=$1
+  shift
   if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+    ssh -T -F "$ssh_config" -o BatchMode=yes "$@" "$ssh_target" "$probe_command"
     probe_status=$?
     if [ "$probe_status" -eq 255 ]; then
-      ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+      ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$@" "$ssh_target" "$probe_command"
       return $?
     fi
     return "$probe_status"
   fi
-  ssh -T -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+  ssh -T -o BatchMode=yes "$@" "$ssh_target" "$probe_command"
   probe_status=$?
   if [ "$probe_status" -eq 255 ]; then
-    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$@" "$ssh_target" "$probe_command"
     return $?
   fi
   return "$probe_status"
@@ -159,6 +163,8 @@ score_load_sample() {
 
 
 resolve_command_policy() {
+  policy_admissionScript=
+  policy_placementHeavyClass=
   if [ "${native_policy_loaded-0}" != 1 ]; then
     . "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
     native_policy_loaded=1
@@ -167,10 +173,13 @@ resolve_command_policy() {
 }
 
 resolve_self_publisher_policy() {
-  if [ "${policy_selfPublisher-0}" != 1 ]; then
+  if [ "${policy_selfPublisher-0}" != 1 ] \
+    && ! { [ "$policy_commandClass" = targeted-validation ] && [ "$policy_kind" = runtime ]; }; then
     case "$policy_command" in
-      corepack|yarn|npm|npx|pnpm) ;;
-      node|nodejs) [ "${explicit_relative_cwd_set-0}" = 1 ] || [ "$policy_kind" = typecheck ] || return 0 ;;
+      corepack|yarn|npm|npx|pnpm|hstack-exec) ;;
+      sh|bash) ;;
+      node|nodejs) [ "${explicit_relative_cwd_set-0}" = 1 ] || [ "$policy_kind" = typecheck ] \
+        || [ "$policy_entryRepositoryPath" = packages/tests/scripts/run-extended-db-docker.mjs ] || return 0 ;;
       *) return 0 ;;
     esac
   fi
@@ -185,7 +194,7 @@ resolve_self_publisher_policy() {
     # Reuse the validated, shell-quoted payload environment transport only in
     # this metadata child. It must not alter the controller's environment.
     eval "${explicit_remote_environment-}"
-    node "$projection_command_policy" --package-policy "$self_publisher_repo" "$self_publisher_cwd" "$@"
+    run_dependency_free_node "$projection_command_policy" --package-policy "$self_publisher_repo" "$self_publisher_cwd" "$@"
   ) || exit $?
   # The same manifest owner resolves aliases, preparation and admission. Its
   # shell-quoted assignments preserve package paths and tool unions verbatim.
@@ -209,12 +218,19 @@ heavyweight_command_class() {
 }
 
 try_run_self_dispatching_package_command() {
-  [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ] || return 1
-  [ "${HAPPIER_HSTACK_EXECUTION-}" != 1 ] || return 1
+  if [ "${1-}" = -- ]; then shift; fi
+  case "${1-}" in
+    --script=*)
+      local_script=${1#--script=}
+      shift
+      [ "${1-}" = -- ] && shift
+      set -- pnpm run --silent "$local_script" "$@"
+      ;;
+  esac
   resolve_command_policy "$@"
   [ "$policy_hasScript" = 1 ] || return 1
   case "$policy_command" in corepack|yarn|npm|npx|pnpm) ;; *) return 1 ;; esac
-  node "$projection_command_policy" "${command_repo_root:-$repo_root}" "$invoked_cwd" "$@" || return 1
+  run_dependency_free_node "$projection_command_policy" "${command_repo_root:-$repo_root}" "$invoked_cwd" "$@" || return 1
   # The script's own launcher selects the host and owns admission. This outer
   # package-manager process does neither, including for isolation admission
   # wrappers. Preserve the original argv and the script's terminal result.
@@ -237,6 +253,7 @@ if [ "${1-}" = --heavyweight-memory-sample ]; then
 fi
 
 if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-check ]; then
+  heavyweight_declared_tools=
   heavyweight_check_only=0
   [ "$1" != --heavyweight-admission-check ] || heavyweight_check_only=1
   shift
@@ -255,6 +272,13 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       --machine=*) heavyweight_admission_machine=${1#--machine=} ;;
       --failure-id=*) heavyweight_failure_id=${1#--failure-id=} ;;
       --workspace-locks=*) heavyweight_workspace_locks=${1#--workspace-locks=} ;;
+      --required-tools=*)
+        # The generated policy owns declaration validation and stable unions;
+        # ordinary admission invocations do no additional classification.
+        policy_requiredTools=$heavyweight_declared_tools
+        native_add_required_tools "${1#--required-tools=}" || exit $?
+        heavyweight_declared_tools=$policy_requiredTools
+        ;;
       --no-wait) heavyweight_no_wait=1 ;;
       --exec-admitted) heavyweight_exec_admitted=1 ;;
       --require-inherited) heavyweight_require_inherited=1 ;;
@@ -270,6 +294,12 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
     shift
   done
   case "$heavyweight_failure_id" in *[!A-Za-z0-9_-]*) exit 1 ;; esac
+  for heavyweight_declared_tool in $heavyweight_declared_tools; do
+    command -v "$heavyweight_declared_tool" >/dev/null 2>&1 || {
+      printf '[command-policy] HSTACK_COMMAND_REQUIREMENTS_MISSING: required executable %s is unavailable; select a target with the declared tools installed\n' "$heavyweight_declared_tool" >&2
+      exit 64
+    }
+  done
   # Only the admission owner can certify failure before bootstrap/payload.
   # A payload's exit code (including 75) is never a retry instruction.
   heavyweight_payload_started=0
@@ -319,6 +349,10 @@ run_local() {
     cd -- "${command_repo_root:-$repo_root}/$explicit_relative_cwd" || exit 1
     invoked_cwd=$(pwd -P) || exit 1
   fi
+  # Exact package dispatchers only launch their script's executor. Delegate
+  # before acquiring local consumption custody, including on placed workers;
+  # the script's finite local payload owns its actual installed-tree span.
+  try_run_self_dispatching_package_command "$@"
   # Explicit local compilation keeps admission even in CI. Finite producers
   # and compiler leaves inherit this fact without reserving their parent.
   if [ "${explicit_local_compilation_override-0}" = 1 ]; then
@@ -363,6 +397,12 @@ run_local() {
     exit 1
   fi
   if [ "$local_script_policy_resolved" != 1 ]; then resolve_self_publisher_policy "$@"; fi
+  if [ -n "${policy_admissionScript-}" ]; then
+    case "$1" in
+      sh|bash|*/sh|*/bash)
+        if [ "$#" -eq 3 ]; then set -- "$1" "$2" "$policy_admissionScript"; fi ;;
+    esac
+  fi
   # Preparation and the admitted consumer must agree on whether emitted
   # prerequisites need strict checking. Otherwise test global setup starts a
   # second strict producer beneath its already-admitted publication lease.
@@ -381,6 +421,9 @@ run_local() {
     local_preparation_component=$policy_component
     [ "$local_preparation_component" != . ] || local_preparation_component=
     local_preparation_repo=${command_repo_root:-$repo_root}
+    if [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = targeted-validation ]; then
+      printf '[preferred-execution] waiting for local validation preparation (kind=%s, component=%s); payload admission follows preparation\n' "$policy_kind" "${local_preparation_component:-.}" >&2
+    fi
     # Prefer checkout-owned preparation and its package tools. Older --repo
     # checkouts may lack either entrypoint; the executor still supports them.
     if [ "$policy_bootstrap" = 1 ]; then
@@ -397,6 +440,9 @@ run_local() {
         "--validation-kind=$policy_kind" "--component-relative-dir=$local_preparation_component" \
         "--required-tools=$policy_requiredTools" \
         "--repo-dir=$local_preparation_repo" || exit $?
+    fi
+    if [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = targeted-validation ]; then
+      printf '[preferred-execution] local validation preparation ready (kind=%s, component=%s)\n' "$policy_kind" "${local_preparation_component:-.}" >&2
     fi
   fi
   # CI owns its local executor's capacity. Only automatic local CI execution
@@ -420,23 +466,19 @@ run_local() {
     # The admission entrypoint canonicalizes identity itself. Forward logical
     # local placement even when a local parent's token has a host identity.
     if [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then heavyweight_local_machine=local; fi
-    if [ -n "${policy_workspaceLock-}" ]; then
-      local_workspace_locks=$(node "$projection_command_policy" --workspace-locks "${command_repo_root:-$repo_root}" "$policy_workspaceLock") || exit $?
+    if [ -n "${policy_workspaceLock-}" ] || [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = dependency-input-writer ]; then
+      local_workspace_locks=$(run_dependency_free_node "$projection_command_policy" --workspace-locks "${command_repo_root:-$repo_root}" "$policy_workspaceLock" "$policy_bootstrap" "$policy_validation" "$policy_commandClass") || exit $?
       exec "$launcher_path" --heavyweight-admission "--admission-root=$heavyweight_local_root" \
         "--class=$heavyweight_local_class" "--machine=$heavyweight_local_machine" "--workspace-locks=$local_workspace_locks" -- "$@"
     fi
     exec "$launcher_path" --heavyweight-admission "--admission-root=$heavyweight_local_root" \
       "--class=$heavyweight_local_class" "--machine=$heavyweight_local_machine" -- "$@"
   fi
-  if [ "$protected_dispatch_local_payload" = 1 ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
-    if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
-      && systemctl --user show-environment >/dev/null 2>&1 \
-      && [ "$(systemctl --user show happier-jobs.slice --property=LoadState --value 2>/dev/null || true)" = loaded ]; then
-      exec_in_jobs_slice "$@"
-    fi
-    if command -v nice >/dev/null 2>&1; then
-      exec nice -n 10 "$@"
-    fi
+  case "$policy_commandClass" in
+    source-search|targeted-validation|full-validation|validation) protected_dispatch_local_payload=1 ;;
+  esac
+  if [ "$protected_dispatch_local_payload" = 1 ]; then
+    exec_in_jobs_slice "$@"
   fi
   exec "$@"
 }
@@ -546,12 +588,8 @@ run_controller_coalesced() {
   for coalesced_argument in "$@"; do
     coalesced_command="$coalesced_command $(quote_remote "$coalesced_argument")"
   done
-  coalesced_typecheck=0
-  if [ "$policy_kind" = typecheck ] && { [ "$policy_hasScript" = 1 ] || [ -n "$policy_projectPaths" ]; }; then
-    coalesced_typecheck=1
-  fi
   exec node "$script_dir/../scripts/utils/dev_targets/controller_coalescing.mjs" \
-    "$repo_root" "$invoked_cwd" "$coalesced_typecheck" \
+    "$repo_root" "$invoked_cwd" 1 \
     "$controller_coalescing_environment_names" "$coalesced_command"
 }
 
@@ -579,7 +617,9 @@ restart_launcher() {
   exec "$launcher_path" "$@"
 }
 
-restart_launcher_in_control_scope() {
+ensure_launcher_control_scope() {
+  [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-}" != 1 ] || return 0
+  [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
   export HAPPIER_HSTACK_DISPATCH_CONTROL=1
   restart_in_control_scope=1
   restart_launcher "$@"
@@ -712,6 +752,16 @@ if [ "$explicit_relative_cwd_set" = 1 ]; then
   invoked_cwd=${command_repo_root:-$repo_root}/$explicit_relative_cwd
 fi
 
+validate_launcher_payload() {
+  case "${1-}" in
+    --|--script=*) ;;
+    --*)
+      printf '[preferred-execution] unknown executor option: %s; command arguments belong after --\n' "$1" >&2
+      exit 64
+      ;;
+  esac
+}
+
 if [ "${1-}" = --local ]; then
   if [ -n "$explicit_target" ]; then
     printf '%s\n' '[preferred-execution] --target and --local cannot be combined' >&2
@@ -723,19 +773,26 @@ if [ "${1-}" = --local ]; then
     explicit_local_compilation_override=1
     shift
   fi
+  validate_launcher_payload "$@"
+  # Launcher syntax must be removed before policy and executable rewriting.
+  if [ "${1-}" = -- ]; then shift; fi
   resolve_command_policy "$@"
   if [ "$policy_localCompile" = 1 ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ] \
     && [ "$(uname -s 2>/dev/null || true)" = Linux ] \
     && [ "$explicit_local_compilation_override" != 1 ]; then
-    printf '%s\n' '[preferred-execution] controller --local heavyweight compilation is refused; use AUTO (omit --local), or explicitly authorize --local --allow-local-compilation. The override retains class admission and the local memory floor.' >&2
-    exit 1
+    resolve_self_publisher_policy "$@"
+    if [ "$policy_generator" != 1 ]; then
+      printf '%s\n' '[preferred-execution] controller --local heavyweight compilation is refused; use AUTO (omit --local), or explicitly authorize --local --allow-local-compilation. The override retains class admission and the local memory floor.' >&2
+      exit 1
+    fi
   fi
-  if [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-0}" != 1 ]; then
+  if [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-0}" != 1 ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then
     printf '%s\n' \
       '[preferred-execution] explicit --local bypasses automatic load distribution; use it only when the command must run on the authoritative machine' >&2
   fi
   run_selected_local "$@"
 fi
+validate_launcher_payload "$@"
 
 # An already-placed child or explicitly local publisher may operate on a
 # temporary repository. Only outbound routing needs a synchronized cwd.
@@ -750,17 +807,15 @@ fi
 # default discovery can choose another Stack. Even a warm projection cannot
 # certify malformed/unloadable current explicit input.
 if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
-  HAPPIER_EXEC_CONFIG_PATH=$(node "$projection_generator" --validate-execution-config) || exit $?
+  HAPPIER_EXEC_CONFIG_PATH=$(run_dependency_free_node "$projection_generator" --validate-execution-config) || exit $?
   export HAPPIER_EXEC_CONFIG_PATH
 fi
 
 # Public package scripts that already dispatch must reach that owner before
 # this wrapper makes a second placement decision or reserves local capacity.
 # Explicit target/local requests retain their established placement semantics.
+if [ "${1-}" = -- ]; then shift; fi
 if [ -z "$explicit_target" ] && [ "$explicit_relative_cwd_set" != 1 ]; then
-  if [ "${1-}" = -- ]; then
-    shift
-  fi
   try_run_self_dispatching_package_command "$@"
 fi
 command_cwd_root=${command_repo_root:-$repo_root}
@@ -851,55 +906,47 @@ projection_uses_config() {
     [ "$projection_config_path" = "$1" ] || [ "$projection_config_path" -ef "$1" ]
   }
 }
+load_current_execution_projection() {
+  [ -r "$candidate_projection" ] \
+    && [ ! "$candidate_config" -nt "$candidate_projection" ] \
+    && [ ! "$projection_generator" -nt "$candidate_projection" ] \
+    && [ ! "$projection_command_policy" -nt "$candidate_projection" ] || return 1
+  unset projection_config_path configured_target_names
+  . "$candidate_projection" || {
+    if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
+      printf '%s\n' '[preferred-execution] explicit execution projection could not be loaded' >&2
+      exit 1
+    fi
+    run_local_without_target_config "$@"
+  }
+  [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 2 ] \
+    && [ "${projection_repo_root-}" = "$repo_root" ] || return 1
+  if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] || [ -n "${projection_config_path-}" ]; then
+    if ! projection_uses_config "$candidate_config"; then
+      run_dependency_free_node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+      restart_launcher "$@"
+    fi
+  fi
+  config_path=$candidate_config
+  projection_path=$candidate_projection
+}
 if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
   candidate_config=$HAPPIER_EXEC_CONFIG_PATH
   candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-  if [ -f "$candidate_config" ] && [ -r "$candidate_projection" ] \
-    && [ ! "$candidate_config" -nt "$candidate_projection" ] \
-    && [ ! "$projection_generator" -nt "$candidate_projection" ] \
-    && [ ! "$projection_command_policy" -nt "$candidate_projection" ]; then
-    unset projection_config_path configured_target_names
-    . "$candidate_projection" || {
-      printf '%s\n' '[preferred-execution] explicit execution projection could not be loaded' >&2
-      exit 1
-    }
-    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ] || [ "${projection_repo_root-}" != "$repo_root" ] \
-      || ! projection_uses_config "$candidate_config"; then
-      node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-      restart_launcher "$@"
-    fi
-    config_path=$candidate_config
-    projection_path=$candidate_projection
-  elif [ -f "$candidate_config" ]; then
-    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-    restart_launcher "$@"
-  else
+  if [ ! -f "$candidate_config" ]; then
     printf '%s\n' '[preferred-execution] explicit execution config is unavailable' >&2
     exit 1
+  fi
+  if ! load_current_execution_projection "$@"; then
+    run_dependency_free_node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    restart_launcher "$@"
   fi
 fi
 for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
   [ -z "$projection_path" ] || break
   [ -f "$candidate_config" ] || continue
   candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-  if [ -r "$candidate_projection" ] \
-    && [ ! "$candidate_config" -nt "$candidate_projection" ] \
-    && [ ! "$projection_generator" -nt "$candidate_projection" ] \
-    && [ ! "$projection_command_policy" -nt "$candidate_projection" ]; then
-    # The projection is generated from the validated canonical config and is
-    # private to the stack directory. It is data for this native dispatcher.
-    unset projection_config_path configured_target_names
-    . "$candidate_projection" || run_local_without_target_config "$@"
-    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 2 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
-      if [ -n "${projection_config_path-}" ] && ! projection_uses_config "$candidate_config"; then
-        node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-        restart_launcher "$@"
-      fi
-      config_path=$candidate_config
-      projection_path=$candidate_projection
-      break
-    fi
-  fi
+  load_current_execution_projection "$@" && break
 done
 
 # Execution-host workspaces can use stable operator-facing names such as
@@ -916,21 +963,10 @@ if [ -z "$projection_path" ]; then
       unset projection_repo_root configured_target_names
       . "$candidate_projection" && [ "${projection_repo_root-}" = "$repo_root" ]
     ); then
-      if [ "$candidate_config" -nt "$candidate_projection" ] \
-        || [ "$projection_generator" -nt "$candidate_projection" ] \
-        || [ "$projection_command_policy" -nt "$candidate_projection" ]; then
-        node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+      if ! load_current_execution_projection "$@"; then
+        run_dependency_free_node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
         restart_launcher "$@"
       fi
-      unset projection_config_path configured_target_names
-      . "$candidate_projection" || run_local_without_target_config "$@"
-      if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ] \
-        || { [ -n "${projection_config_path-}" ] && ! projection_uses_config "$candidate_config"; }; then
-        node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
-        restart_launcher "$@"
-      fi
-      config_path=$candidate_config
-      projection_path=$candidate_projection
       break
     fi
   done
@@ -941,51 +977,33 @@ fi
 if [ -z "$projection_path" ]; then
   if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ] && [ -f "$HAPPIER_EXEC_CONFIG_PATH" ]; then
     candidate_projection=$(dirname -- "$HAPPIER_EXEC_CONFIG_PATH")/dev-target-exec-v1.sh
-    node "$projection_generator" "$HAPPIER_EXEC_CONFIG_PATH" "$candidate_projection" "$repo_root" || exit $?
+    run_dependency_free_node "$projection_generator" "$HAPPIER_EXEC_CONFIG_PATH" "$candidate_projection" "$repo_root" || exit $?
     restart_launcher "$@"
   fi
   for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; do
     [ -f "$candidate_config" ] || continue
     candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
-    node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+    run_dependency_free_node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
     restart_launcher "$@"
   done
   run_local_without_target_config "$@"
 fi
 
 if [ -n "$command_repo_root" ]; then
-  node "$projection_generator" --prepare-command-repository "$config_path" "$executor_repo_root" "$command_repo_root" || exit $?
+  # Re-entry must precede replica preparation, so it does not bootstrap twice.
+  ensure_launcher_control_scope "$@"
+  command_executor_config_path=$config_path
+  node --input-type=module -e '
+    const { pathToFileURL } = await import("node:url");
+    const { prepareCommandRepository } = await import(pathToFileURL(process.argv[4]).href);
+    await prepareCommandRepository({ configPath: process.argv[1], executorRepoRoot: process.argv[2],
+      repoRoot: process.argv[3], synchronize: false });
+  ' "$config_path" "$executor_repo_root" "$command_repo_root" "$projection_generator" || exit $?
   config_path="$(dirname -- "$config_path")/commands-${command_repo_root##*/}/dev-targets.json"
   projection_path="$(dirname -- "$config_path")/dev-target-exec-v1.sh"
   repo_root=$command_repo_root
   unset configured_target_names
   . "$projection_path" || exit 1
-fi
-
-runtime_skip_targets=
-if [ -n "${HSTACK_EXEC_RUNTIME_SKIP_TARGETS-}" ]; then
-  # Validate exclusions against the full inventory only when it is consumed.
-  # Older version-2 projections regenerate through their existing producer,
-  # including future-dated files; ordinary dispatch keeps its native hot path.
-  if [ "${configured_target_names+x}" != x ]; then
-    node "$projection_generator" "$config_path" "$projection_path" "$repo_root" || exit $?
-    restart_launcher "$@"
-  fi
-  runtime_skip_targets=$(printf '%s' "$HSTACK_EXEC_RUNTIME_SKIP_TARGETS" | LC_ALL=C tr ',[:space:]' ' ')
-  (
-    # Target names are data. Disable pathname expansion only while splitting the
-    # normalized list, preserving the launcher's caller-visible shell options.
-    set -f
-    for runtime_skip_target in $runtime_skip_targets; do
-      case " $configured_target_names " in
-        *" $runtime_skip_target "*) ;;
-        *)
-          printf '[preferred-execution] unknown target in HSTACK_EXEC_RUNTIME_SKIP_TARGETS: %s\n' "$runtime_skip_target" >&2
-          exit 64
-          ;;
-      esac
-    done
-  ) || exit $?
 fi
 
 if { [ -n "${CI-}" ] || [ "${command_mode-}" = local ]; } && [ -z "$explicit_target" ]; then
@@ -1026,9 +1044,7 @@ fi
 # protected control owner before probing a target. run_local removes the marker
 # and explicitly demotes any selected/fallback local payload into the jobs
 # policy; remote payloads receive their target-side policy below.
-if [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-}" != 1 ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
-  restart_launcher_in_control_scope "$@"
-fi
+ensure_launcher_control_scope "$@"
 
 case "${1-}" in
   --script=*)
@@ -1051,8 +1067,10 @@ if [ -n "$runtime_build_target" ] && [ "$policy_heavyClass" != runtime-build ]; 
 fi
 if [ "$policy_placement" = primary-only ]; then
   if [ -n "$explicit_target" ]; then
-    if [ "$policy_generator" = 1 ]; then
+    if [ "$policy_workerTool" = bundled-plugin-generator ]; then
       printf '%s\n' '[preferred-execution] bundled-plugin projection writer must execute on the authoritative primary checkout' >&2
+    elif [ "$policy_generator" = 1 ]; then
+      printf '%s\n' '[preferred-execution] tracked-source writer must execute on the authoritative primary checkout' >&2
     else
       printf '%s\n' '[preferred-execution] Git/index/worktree commands must execute on the authoritative primary checkout' >&2
     fi
@@ -1060,14 +1078,16 @@ if [ "$policy_placement" = primary-only ]; then
   fi
   run_local -- "$@"
 fi
-if [ "${policy_workspaceSync-1}" != 0 ] && ! command -v mutagen >/dev/null 2>&1; then
-  printf '%s\n' '[preferred-execution] controller synchronization requires mutagen on PATH; install Mutagen or restore the controller PATH before remote execution' >&2
-  exit 127
-fi
+# One connection represents one caller. The shared job re-enters once and
+# owns selection, synchronization and admission; other lifetimes stay native.
 if [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
     && [ "$explicit_tty" != 1 ] && [ "$control_stdin" != 1 ] \
     && [ -z "$runtime_build_target" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
   run_controller_coalesced "$@"
+fi
+if [ "${policy_workspaceSync-1}" != 0 ] && ! command -v mutagen >/dev/null 2>&1; then
+  printf '%s\n' '[preferred-execution] controller synchronization requires mutagen on PATH; install Mutagen or restore the controller PATH before remote execution' >&2
+  exit 127
 fi
 requires_remote_dependencies=$policy_bootstrap
 requires_remote_workspace_preparation=0
@@ -1101,15 +1121,15 @@ heavyweight_admission_required=0
 [ -n "$policy_heavyClass" ] && heavyweight_admission_required=1
 heavyweight_placement_class=${policy_placementHeavyClass:-$policy_heavyClass}
 minimum_memory_capacity_kib=0
-if [ -n "$policy_heavyClass" ]; then
-  if [ "$policy_heavyClass" = source-web-export ]; then
-    heavyweight_admission_class=$policy_heavyClass
+if [ -n "$heavyweight_placement_class" ]; then
+  if [ "$heavyweight_placement_class" = source-web-export ]; then
+    heavyweight_admission_class=$heavyweight_placement_class
     heavyweight_prepare_export_request "$@"
     heavyweight_placement_workers=1
     if [ "$heavyweight_export_worker_mode" = explicit ]; then heavyweight_placement_workers=$heavyweight_export_requested_workers; fi
-    minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$policy_heavyClass" worker "$heavyweight_placement_workers")
+    minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class" worker "$heavyweight_placement_workers")
   else
-    minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$policy_heavyClass")
+    minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class")
   fi
 fi
 heavyweight_remote_class=$policy_heavyClass
@@ -1181,6 +1201,9 @@ configure_mutagen_environment() {
 }
 
 sync_is_available() {
+  [ "${policy_workspaceSync-1}" != 0 ] || return 0
+  # Sibling replicas cross root admission and initial seeding after selection.
+  [ -z "$command_repo_root" ] || return 0
   target_name=$1
   target_number=$2
   sync_name=$(sync_name_for_target "$target_name" "$target_number") || return 1
@@ -1203,6 +1226,10 @@ EOF
 }
 
 flush_selected_sync() {
+  if [ -n "$command_repo_root" ]; then
+    node "$projection_generator" --prepare-command-repository "$command_executor_config_path" \
+      "$executor_repo_root" "$command_repo_root" "$selected_name" >&2 || return $?
+  fi
   # Publish authored inputs on the controller before synchronizing the worker.
   # Captured builds and remote preparation only verify this projection.
   if [ "$requires_remote_dependencies" -eq 1 ] || [ "$requires_remote_workspace_preparation" -eq 1 ]; then
@@ -1302,7 +1329,11 @@ dependency_busy=\$(node --input-type=module -e $(quote_remote "$dependency_probe
   probe="$probe
 printf '%s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\""
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability && { ${capability_setup}bash -lc $(quote_remote "$probe") && printf '%s\\n' \"\$runtime_worker_target\"; }"
-  remote_sample=$(run_remote_ssh_probe "$remote_command")
+  set --
+  # Only AUTO candidate placement may abandon a slow connect and choose another
+  # worker. Exact observations and every authoritative channel inherit SSH config.
+  [ -n "$explicit_target_number" ] || set -- -o "ConnectTimeout=$(placement_probe_connect_timeout_seconds)"
+  remote_sample=$(run_remote_ssh_probe "$remote_command" "$@")
   remote_sample_status=$?
   [ "$remote_sample_status" -eq 0 ] || return "$remote_sample_status"
   printf '%s\n' "$remote_sample" | awk 'NR == 1 {sample=$0} NR == 2 {sample=sample " " $0} NR == 3 {worker=$0} END {print sample; print (worker==""?"-":worker)}'
@@ -1366,23 +1397,20 @@ read_fresh_cache() {
   printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $21}')"
 }
 
-report_insufficient_memory_capacity() {
-  printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB total)\n' \
-    "$1" "$policy_heavyClass" "$minimum_memory_capacity_kib" >&2
-}
-
 report_placement_exclusion() {
   printf 'HSTACK_PLACEMENT_EXCLUDED target=%s reason=%s class=%s\n' \
     "$1" "$2" "${heavyweight_placement_class:-$command_class}" >&2
+}
+
+report_insufficient_memory_capacity() {
+  printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB total)\n' \
+    "$1" "$heavyweight_placement_class" "$minimum_memory_capacity_kib" >&2
 }
 
 probe_target() {
   number=$1
   name=$(value_for_target name "$number")
   probe_available=1
-  case " $runtime_skip_targets " in
-    *" $name "*) printf '%s %s 0 - 1 admission-busy\n' "$number" "$name"; return ;;
-  esac
   case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
     *" $name "*)
       case " ${HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS-} " in
@@ -1393,14 +1421,10 @@ probe_target() {
       esac
       case " ${HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS-} " in
         *" $name "*)
-          if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
-            excluded_reason=admission-busy
-          else
-            # Keep healthy capacity-refused workers as secondary candidates.
-            # Untried workers finish the sweep first; then the same ranking
-            # chooses one existing native queue without another pool sweep.
-            probe_available=busy
-          fi
+          # Keep healthy capacity-refused workers as secondary candidates.
+          # Untried workers finish the sweep first; then the same ranking
+          # chooses one existing native queue without another pool sweep.
+          probe_available=busy
           ;;
         *)
           excluded_reason=unreachable
@@ -1439,7 +1463,7 @@ EOF
       printf '%s %s %s %s %s cached %s\n' "$number" "$name" "$probe_available" "$cached_score" "$cached_capacity" "$runtime_native_preference"
       return
     elif [ "$cached_available" = 2 ]; then
-      report_insufficient_memory_capacity "$name"
+      report_insufficient_memory_capacity "$name" "$(sed -n '1p' "$cache_dir/$name.telemetry")"
       printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
       return
     elif [ "$cached_available" = 0 ] && [ -z "$explicit_target_number" ]; then
@@ -1513,7 +1537,7 @@ EOF
     if [ -n "$score" ]; then
       printf '%s %s %s %s %s fresh %s\n' "$number" "$name" "$probe_available" "$score" "$capacity" "$runtime_native_preference"
     else
-      report_insufficient_memory_capacity "$name"
+      report_insufficient_memory_capacity "$name" "$sample"
       printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
     fi
   else
@@ -1574,6 +1598,8 @@ while [ "$number" -le "$target_count" ]; do
     probe_pid=$!
     probe_birth=$(heavyweight_process_token "$probe_pid")
     probe_children="$probe_children $probe_pid:$probe_birth"
+  elif [ -z "$explicit_target_number" ]; then
+    report_placement_exclusion "$(value_for_target name "$number")" not-in-command-pool
   fi
   number=$((number + 1))
 done
@@ -1601,16 +1627,19 @@ if [ "${include_local-0}" = 1 ] && [ -z "$explicit_target" ] \
 $local_memory
 EOF
   local_candidate_cpu=$cpu
-  local_candidate_load=$load_value
   local_native_preference=0
   case ",$runtime_build_components," in
     *,daemon,*)
       local_runtime_target=$(node -p 'process.platform + "-" + process.arch')
       [ "$local_runtime_target" = "$runtime_build_target" ] || local_native_preference=1 ;;
   esac
-  local_disk_free=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {print $4}')
   local_unreserved_memory=
   local_budget_available=1
+  if ! node "$script_dir/../scripts/utils/dev_targets/worker_disk_budget.mjs" --check \
+      "--class=${heavyweight_placement_class:-source-replica}" "--repo=$repo_root" \
+      "--cache=${HAPPIER_STACK_PM_CACHE_BASE_DIR:-$stack_dir/cli/cache}" >/dev/null; then
+    local_budget_available=0
+  fi
   if [ "$heavyweight_admission_required" -eq 1 ] && [ "$(uname -s)" = Linux ]; then
     local_unreserved_memory=$(read_native_admission_fact --unreserved-memory) || local_budget_available=0
   fi
@@ -1621,7 +1650,7 @@ EOF
     local_probe_reason=go-toolchain
   fi
   if [ "$local_budget_available" = 1 ]; then
-    local_score=$(score_load_sample "$cpu $load_value $free ${local_disk_free:-0} 0 0 ${local_mem_available:-0} ${local_mem_total:-0} 0 0 0 0 0 0 0 linux $local_unreserved_memory" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
+    local_score=$(score_load_sample "$cpu $load_value $free 0 0 0 ${local_mem_available:-0} ${local_mem_total:-0} 0 0 0 0 0 0 0 linux $local_unreserved_memory" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
   fi
   if [ -z "$local_score" ]; then
     printf '0 local 0 - %s %s\n' "$cpu" "$local_probe_reason" > "$probe_tmp/local"
@@ -1686,21 +1715,17 @@ acquire_placement_decision "$cache_dir" || {
   exit 1
 }
 : > "$candidates"
-typecheck_warm_target=
 typecheck_running_target=
-if [ -n "$typecheck_affinity_key" ] && [ -z "$explicit_target_number" ]; then
-  typecheck_warm_target=$(sed -n '1p' "$cache_dir/typecheck-$typecheck_affinity_key.warm" 2>/dev/null || true)
-  if [ "$policy_kind" = typecheck ]; then
-    for typecheck_active in "$cache_dir"/*.active.*; do
-      [ -f "$typecheck_active" ] || continue
-      read_dispatch_reservation "$typecheck_active"
-      [ "$dispatch_metadata_affinity" = "$typecheck_affinity_key" ] || continue
-      dispatch_reservation_is_active "$typecheck_active" || continue
-      typecheck_running_target=${typecheck_active##*/}
-      typecheck_running_target=${typecheck_running_target%%.active.*}
-      break
-    done
-  fi
+if [ -n "$typecheck_affinity_key" ] && [ -z "$explicit_target_number" ] && [ "$policy_kind" = typecheck ]; then
+  for typecheck_active in "$cache_dir"/*.active.*; do
+    [ -f "$typecheck_active" ] || continue
+    read_dispatch_reservation "$typecheck_active"
+    [ "$dispatch_metadata_affinity" = "$typecheck_affinity_key" ] || continue
+    dispatch_reservation_is_active "$typecheck_active" || continue
+    typecheck_running_target=${typecheck_active##*/}
+    typecheck_running_target=${typecheck_running_target%%.active.*}
+    break
+  done
 fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
@@ -1732,31 +1757,33 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     report_placement_exclusion "$candidate_name" "$candidate_cache"
   fi
   if [ "$candidate_available" = 1 ] || [ "$candidate_available" = busy ]; then
+    if [ "$policy_bootstrap" = 1 ] && [ -z "$explicit_target_number" ] \
+      && [ "$(awk '{print $18}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null)" = 1 ]; then
+      # Preparation runs before capacity admission. Observe its canonical
+      # writer too, otherwise an idle worker can block before --no-wait runs.
+      candidate_available=busy
+      printf '[preferred-execution] %s dependency refresh active; considering other workers before waiting\n' "$candidate_name" >&2
+    fi
     active_counts=$(count_active_dispatches "$candidate_name")
     candidate_active=${active_counts%% *}
     remaining_active_counts=${active_counts#* }
     candidate_class_active=${remaining_active_counts%% *}
     candidate_heavyweight_active=${remaining_active_counts#* }
     candidate_queued=0
+    candidate_queued_memory=0
     if [ "$candidate_name" = local ]; then
       candidate_queued=$(read_native_admission_fact --waiting-count) || candidate_queued=0
     fi
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v queued="$candidate_queued" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + ((active + queued) / capacity)}')
-    if [ "$heavyweight_admission_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_warm_target" ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
+    if [ "$heavyweight_admission_required" -eq 1 ] || [ "$candidate_name" = "$typecheck_running_target" ]; then
       candidate_memory=$(awk '{print ($17 != "" ? $17 : $7)}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
+      candidate_queued_memory=$(awk '{print $20+0}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || printf 0)
       if [ "$candidate_name" = local ]; then candidate_memory=${local_unreserved_memory:-$local_mem_available}; fi
       case "$candidate_memory" in ''|*[!0-9]*) candidate_memory=0 ;; esac
     fi
-    if [ "$candidate_name" = "$typecheck_warm_target" ]; then
-      # Only prefer a currently admissible sample. Actual admission still uses
-      # --no-wait and reselects normally if this observation races another job.
-      if [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ]; then
-        candidate_native_preference=-1
-      fi
-    fi
     # A same-project follower performs its own flush on the leader's worker;
     # source/compiler equality is established there before heavy admission.
-    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ]; then candidate_native_preference=-2; fi
+    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ]; then candidate_native_preference=-2; fi
     if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ]; then
       # Fitting workers precede busy workers using the existing preference
       # order (native=0, cross-target=1). Keep load ordering when all are busy.
@@ -1805,18 +1832,21 @@ selected=$(awk '
 ' "$candidates")
 if [ -z "$selected" ]; then
   release_placement_decision
-  if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
-    cleanup_probe_tmp
-    exit 75
-  fi
   for refusal in ${HSTACK_EXEC_PRE_DISPATCH_REFUSALS-}; do
     case "$refusal" in
       *=ssh) ;;
       *) report_dispatch_refusals; exit 1 ;;
     esac
   done
-  if [ "${fallback_mode-local}" = error ] || [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ]; then
+  if [ "${fallback_mode-local}" = error ] || [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ] \
+    || dependency_refusal_recorded; then
     if report_dispatch_refusals; then exit 1; fi
+  fi
+  if awk '$3 == 0 && $5 == "memory-capacity" {found=1} END {exit !found}' "$candidates"; then
+    # Reuse the worker admission refusal type before any target is prepared.
+    heavyweight_failure_id=placement
+    heavyweight_declined_capacity=1
+    heavyweight_report_pre_dispatch_failure 75
   fi
   if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ] || awk -v runtime="$runtime_build_target" '$1 != 0 && $3 != 1 && $5 != "unreachable" && !(runtime != "" && ($5 == "capability" || $5 == "memory-capacity")) { found=1 } END { exit !found }' "$candidates"; then
     printf '%s\n' '[preferred-execution] reachable remote targets cannot run this command safely; check synchronization, target tools, repository cwd and disk space with hstack dev-targets status. Local fallback is only for unreachable targets.' >&2
@@ -1842,7 +1872,6 @@ if [ "$_selected_available" = busy ]; then
   HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS=$remaining_busy_targets
   export HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS
 fi
-if [ -n "$runtime_build_target" ]; then printf 'HSTACK_RUNTIME_SELECTED:%s\n' "$selected_name" >&2; fi
 if [ "$selected_number" = 0 ]; then
   release_placement_decision
   run_selected_local "$@"
@@ -1887,6 +1916,13 @@ release_reservation() {
     reservation_lock_held=0
   fi
 }
+record_remote_command_completion() {
+  completed_at_seconds=$(date +%s)
+  completed_at=$((completed_at_seconds * 1000))
+  duration_ms=$((completed_at - admitted_at))
+  printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
+    "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
+}
 sync_status=unknown
 sync_successful_cycles=0
 if [ -r "$cache_dir/$selected_name.sync.cache" ]; then
@@ -1923,9 +1959,8 @@ fi
 # Linux and Darwin inherit niceness through the launched process tree, so this
 # gives Stack/daemon control work its normal scheduler share without holding a
 # job back while the guest is otherwise idle. The worker allowance deliberately
-# derives from current guest capacity, the in-flight dispatcher reservations,
-# and observed runnable/PSI pressure where available. It is a per-command hint, not a queue or
-# a session limit: a lone quiet job receives the guest's full CPU capacity.
+# derives from existing admitted owners on the executing Linux host. Darwin
+# retains its dispatch-reservation share. This is a tool hint, not admission.
 resource_governor_priority=control
 resource_governor_workers=
 if [ "$telemetry_platform" = linux ] || [ "$telemetry_platform" = darwin ]; then
@@ -2014,8 +2049,12 @@ remote_setup_script=
 # File existence is evaluated on the worker after synchronizing that checkout.
 if [ "$requires_remote_dependencies" -eq 1 ]; then
   remote_script="$remote_script export npm_config_prefix=$(quote_remote "$remote_home/cache/pnpm-toolchain");"
+  remote_setup_script="$remote_setup_script node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs") --admit --cold-dependencies --class=dependency-install $(quote_remote "--repo=$remote_repo") $(quote_remote "--cache=$remote_home/cache") >/dev/null;"
   remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node \"\$(if [ -f $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs") ]; then printf '%s' $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs"); else printf '%s' $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs"); fi)\" --execution-placement=remote $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
   if [ -n "$command_repo_root" ]; then remote_setup_script="${remote_setup_script%;} --tools-only;"; fi
+  if [ "$explicit_tty" != 1 ]; then
+    remote_setup_script="${remote_setup_script%;} $(quote_remote "--pre-dispatch-failure-id=$execution_id");"
+  fi
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
   remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node \"\$(if [ -f $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") ]; then printf '%s' $(quote_remote "$remote_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); else printf '%s' $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs"); fi)\" $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--required-tools=$policy_requiredTools") $(quote_remote "--repo-dir=$remote_repo") $(quote_remote "--default-build-mode=$remote_preparation_build_mode");"
@@ -2051,6 +2090,12 @@ fi
 # Explicit per-invocation environment wins over inherited caller budgets.
 remote_command_environment="$remote_command_environment$explicit_remote_environment"
 remote_command_arguments=
+if [ -n "${policy_admissionScript-}" ]; then
+  case "$1" in
+    sh|bash|*/sh|*/bash)
+      if [ "$#" -eq 3 ]; then set -- "$1" "$2" "$policy_admissionScript"; fi ;;
+  esac
+fi
 append_remote_command_argument() {
   remote_command_arguments="$remote_command_arguments $(quote_remote "$1")"
 }
@@ -2064,7 +2109,34 @@ for argument in "$@"; do
     fi
   fi
 done
+if [ "$telemetry_platform" = linux ] && [ "$resource_governor_priority" = background ]; then
+  case "$nested_worker_tool" in
+    vitest|rg|typescript-native)
+      # Resolve the actual host's admitted share at the existing worker
+      # adapter. Dispatcher reservations include jobs still awaiting RAM.
+      remote_command_arguments=" $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --local --$remote_command_arguments"
+      ;;
+  esac
+fi
+if [ "${policy_workspaceSync-1}" = 0 ]; then
+  # Exact observations use the same finite transport as AUTO candidate probes.
+  # They need neither command custody nor its process/cleanup lifecycle.
+  observation_script="$remote_script cd -- $(quote_remote "$remote_cwd");$remote_command_environment exec$remote_command_arguments"
+  cleanup_probe_tmp
+  trap release_reservation EXIT
+  run_remote_ssh_probe "exec bash -lc $(quote_remote "$observation_script")"
+  status=$?
+  record_remote_command_completion
+  exit "$status"
+fi
 heavyweight_admission_prefix=
+remote_workspace_lock_argument=
+if [ "${policy_selfPublisher-0}" != 1 ] && { [ -n "${policy_workspaceLock-}" ] || [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = dependency-input-writer ]; }; then
+  # Physical dependency lock identity belongs to the worker filesystem/env,
+  # not the controller's spelling of that remote repository path.
+  remote_setup_script="$remote_setup_script remote_workspace_locks=\$(node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_commands.mjs") --workspace-locks $(quote_remote "$remote_repo") $(quote_remote "$policy_workspaceLock") $(quote_remote "$policy_bootstrap") $(quote_remote "$policy_validation") $(quote_remote "$policy_commandClass"));"
+  remote_workspace_lock_argument=' "--workspace-locks=$remote_workspace_locks"'
+fi
 admission_failure_id=$execution_id
 if [ "$policy_kind" = typecheck ] && [ -n "$typecheck_affinity_key" ]; then admission_failure_id="typecheck-$typecheck_affinity_key"; fi
 if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" != 1 ]; then
@@ -2072,22 +2144,25 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
   heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$admission_failure_id") --"
-  if [ -n "${policy_workspaceLock-}" ]; then
-    remote_workspace_locks=$(node "$projection_command_policy" --workspace-locks "$remote_repo" "$policy_workspaceLock") || exit $?
-    heavyweight_admission_prefix="${heavyweight_admission_prefix% --} $(quote_remote "--workspace-locks=$remote_workspace_locks") --"
+  if [ -n "$remote_workspace_lock_argument" ]; then
+    heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi
-  if [ -z "$explicit_target_number" ] && [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" != wait ]; then
+  if [ -z "$explicit_target_number" ] && [ -z "$runtime_build_target" ]; then
     if [ "$_selected_available" != busy ]; then
       heavyweight_admission_prefix="${heavyweight_admission_prefix% --} --no-wait --"
     fi
   fi
+elif [ -n "$remote_workspace_lock_argument" ]; then
+  # Darwin has no Linux memory reservation, but finite readers still retain
+  # the same installed-tree/publication resources through their payload.
+  heavyweight_admission_prefix=" node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/proc/workspace_build_admission.mjs") --standalone \"\$remote_workspace_locks\" $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") $(quote_remote "${heavyweight_remote_class:-validation}") --"
 fi
 if [ -n "$heavyweight_admission_prefix" ]; then
   # Preparation may wait on a dependency/build lock whose holder still needs
   # admission. Finish it before reserving the payload's compilation envelope;
   # Dist producers own joint lease readiness and canonical admission.
   heavyweight_command_body="set -euo pipefail; printf '%s\n' $(quote_remote "[preferred-execution] admitted on $selected_name") >&2; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
-  if [ "$resource_governor_priority" = background ]; then
+  if [ "$resource_governor_priority" = background ] && [ "$telemetry_platform" != linux ]; then
     # Keep niceness on the actual child process while the admission wrapper
     # owns its slot. A guest without `nice` still waits and runs normally.
     heavyweight_command_body="$heavyweight_command_body if type nice >/dev/null 2>&1; then nice -n 10$remote_command_arguments; else$remote_command_arguments; fi;"
@@ -2095,6 +2170,8 @@ if [ -n "$heavyweight_admission_prefix" ]; then
     heavyweight_command_body="$heavyweight_command_body$remote_command_arguments;"
   fi
   remote_script="$remote_script$remote_setup_script$heavyweight_admission_prefix bash -c $(quote_remote "$heavyweight_command_body");"
+elif [ "$resource_governor_priority" = background ] && [ "$telemetry_platform" = linux ]; then
+  remote_script="$remote_script$remote_setup_script$remote_command_environment $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admitted-exec --$remote_command_arguments;"
 elif [ "$resource_governor_priority" = background ]; then
   # `nice` is available on supported Linux and Darwin targets. Keep the fallback in the
   # remote shell so an unusual minimal guest still executes the command rather
@@ -2245,7 +2322,7 @@ run_selected_ssh_with_custody() {
   # Retain every execution-qualified result for routing and show its native
   # reason, including refusals that AUTO can recover by choosing another worker.
   # SSH -E contains only SSH errors.
-  if [ "$heavyweight_admission_required" -eq 1 ] && [ "$explicit_tty" != 1 ]; then
+  if { [ "$heavyweight_admission_required" -eq 1 ] || [ "$requires_remote_dependencies" -eq 1 ]; } && [ "$explicit_tty" != 1 ]; then
     exec 9>&-
     tee "$admission_error_log" < "$admission_error_pipe" >&2 &
     admission_error_reader=$!
@@ -2258,7 +2335,7 @@ run_selected_ssh_with_custody() {
 }
 admission_error_log=
 admission_error_pipe=
-if [ "$heavyweight_admission_required" -eq 1 ] && [ "$explicit_tty" != 1 ]; then
+if { [ "$heavyweight_admission_required" -eq 1 ] || [ "$requires_remote_dependencies" -eq 1 ]; } && [ "$explicit_tty" != 1 ]; then
   admission_error_log=$(create_cache_temporary "$cache_dir/admission-error" 2>/dev/null || true)
   [ -n "$admission_error_log" ] || { release_reservation; exit 1; }
   admission_error_pipe="$admission_error_log.pipe"
@@ -2348,6 +2425,10 @@ if [ "$status" -eq 137 ]; then
     "$selected_name" "$telemetry_mem_available_kib" "$telemetry_mem_total_kib" >&2
 fi
 admission_result=
+if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ] \
+  && grep -Fxq "HSTACK_DEPENDENCIES_NEED_REFRESH:$execution_id" "$admission_error_log"; then
+  handle_selected_dependency_refusal "$@"
+fi
 if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
   admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" -e "HSTACK_ADMISSION_CAPACITY:$admission_failure_id" "$admission_error_log" | head -n 1)
 fi
@@ -2397,24 +2478,6 @@ fi
 [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
 release_reservation
 [ "$status" = 255 ] || release_orphan_reservations
-completed_at_seconds=$(date +%s)
-completed_at=$((completed_at_seconds * 1000))
-duration_ms=$((completed_at - admitted_at))
-if [ -n "$typecheck_affinity_key" ]; then
-  case "$status" in
-    0|1|2)
-      # Erroring compiler checks also retain useful incremental state. Failed
-      # admission/transport/cancellation must never create a warm preference.
-      warm_path="$cache_dir/typecheck-$typecheck_affinity_key.warm"
-      warm_temporary=$(create_cache_temporary "$warm_path" 2>/dev/null || true)
-      if [ -n "$warm_temporary" ]; then
-        printf '%s\n' "$selected_name" > "$warm_temporary" && mv -f -- "$warm_temporary" "$warm_path"
-        rm -f -- "$warm_temporary" 2>/dev/null || true
-      fi
-      ;;
-  esac
-fi
-printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
-  "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
+record_remote_command_completion
 exit "$status"
 }

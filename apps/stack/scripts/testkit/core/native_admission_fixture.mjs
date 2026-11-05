@@ -147,6 +147,7 @@ esac
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_dispatch_recovery.sh'), join(targets, 'native_dispatch_recovery.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_placement.sh'), join(targets, 'native_placement.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh'), join(targets, 'native_execution_signals.sh')),
+    copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_go_toolchain.sh'), join(targets, 'native_go_toolchain.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/controller_coalescing.mjs'), join(targets, 'controller_coalescing.mjs')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_sync_readiness.sh'), join(targets, 'native_sync_readiness.sh')),
     copyFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh'), join(targets, 'remote_execution_custody.sh')),

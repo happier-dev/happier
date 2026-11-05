@@ -247,12 +247,25 @@ if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
       cwd: repoDir, env: resolveInitialInstallEnv(process.env), stdio: 'inherit',
     });
   }
-  await bootstrapRemoteDependencies({
-    ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
-    toolsOnly: process.argv.includes('--tools-only'),
-    validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
-    componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
-    executionPlacement: placement?.slice('--execution-placement='.length) ?? 'local',
-    ...(buildMode ? { defaultBuildMode: buildMode.slice('--default-build-mode='.length) } : {}),
-  });
+  try {
+    await bootstrapRemoteDependencies({
+      ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
+      toolsOnly: process.argv.includes('--tools-only'),
+      validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
+      componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
+      executionPlacement: placement?.slice('--execution-placement='.length) ?? 'local',
+      ...(buildMode ? { defaultBuildMode: buildMode.slice('--default-build-mode='.length) } : {}),
+    });
+  } catch (error) {
+    const failureId = process.argv.slice(2).find(value => value.startsWith('--pre-dispatch-failure-id='))
+      ?.slice('--pre-dispatch-failure-id='.length);
+    // Only this pre-payload owner may certify a retry. A payload's exit status
+    // or similarly worded stderr must never authorize replay elsewhere.
+    if (failureId && /^[A-Za-z0-9._-]+$/u.test(failureId) && isDependencyRefreshDisabled()
+      && error?.code === 'HAPPIER_DEPENDENCIES_NEED_REFRESH' && error.reason === 'stale-or-unadmitted') {
+      console.error(`HSTACK_DEPENDENCIES_NEED_REFRESH:${failureId}`);
+      process.exit(75);
+    }
+    throw error;
+  }
 }

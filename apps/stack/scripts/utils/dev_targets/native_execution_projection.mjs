@@ -128,7 +128,7 @@ async function prepareCommandRepositorySource(repository) {
   }
 }
 
-export async function prepareCommandRepository({ configPath, repoRoot, executorRepoRoot, synchronize = true, env = process.env }) {
+export async function prepareCommandRepository({ configPath, repoRoot, executorRepoRoot, targetName = '', synchronize = true, env = process.env }) {
   const repository = resolve(repoRoot);
   // Source identity must be checked before creating a replica or state directory.
   const manifest = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8'));
@@ -162,15 +162,21 @@ export async function prepareCommandRepository({ configPath, repoRoot, executorR
   await prepareCommandRepositorySource(repository);
   // Removed sibling worktrees are retired off this dispatch's path.
   if (synchronize) startRemovedCommandRepositoryRetirement({ stackDir: dirname(configPath), executorRepoRoot, env });
-  const syncTargets = resolveDevTargetServicePlans({ targets: config.targets,
+  const syncTargets = targetName ? config.targets.filter(target => target.name === targetName && target.platform === 'posix')
+    : resolveDevTargetServicePlans({ targets: config.targets,
     policy: resolveDevTargetExecutionPolicy(config), requested: { server: true, expo: true, daemon: true },
   }).targets.map(plan => plan.target);
+  if (targetName && syncTargets.length === 0) throw new Error(`[dev-targets] unknown POSIX execution target: ${targetName}`);
+  let excludedTargets = [];
   if (synchronize && syncTargets.length > 0) {
     const targets = syncTargets;
     const { prepareDevTargetCommandSync } = await import('./sync_service.mjs');
-    await prepareDevTargetCommandSync({ stackBaseDir: directory, sourceDir: repository, targets, env });
+    ({ excludedTargets } = await prepareDevTargetCommandSync({
+      stackBaseDir: directory, sourceDir: repository, targets, env,
+      executorSourceDir: resolve(executorRepoRoot), executorStackBaseDir: dirname(configPath),
+    }));
   }
-  return { path, outputPath, config };
+  return { path, outputPath, config, excludedTargets };
 }
 
 export async function writeNativeExecutionProjection({ configPath, outputPath, repoRoot = '', skipUnchanged = false, env = process.env }) {
@@ -216,8 +222,9 @@ async function main() {
     return;
   }
   if (process.argv[2] === '--prepare-command-repository') {
-    const [configPath, executorRepoRoot, repoRoot] = process.argv.slice(3);
-    await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot });
+    const [configPath, executorRepoRoot, repoRoot, targetName = ''] = process.argv.slice(3);
+    const { excludedTargets } = await prepareCommandRepository({ configPath, executorRepoRoot, repoRoot, targetName });
+    process.stdout.write(`${excludedTargets.join(' ')}\n`);
     return;
   }
   if (process.argv[2] === '--write-command-policy') {
