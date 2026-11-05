@@ -126,7 +126,7 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home' } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home', foreignInCurrentDocument = false } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -167,7 +167,7 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
           }
           for (const [requestId, url, frame, loader] of [
             ['previous', canonicalServerUrl, 'main', 'previous'],
-            ['foreign', 'https://other-home.invalid', 'main', 'previous'],
+            ['foreign', 'https://other-home.invalid', 'main', foreignInCurrentDocument ? loaderId : 'previous'],
             ['iframe', canonicalServerUrl, 'child', loaderId],
             ['profile', profileOrigin, 'main', loaderId],
           ]) {
@@ -204,6 +204,12 @@ test('reports a declined migration with both safe Home origins and descriptor re
   assert.deepEqual(await profileSignin({ restoreOutcome: 'home_migration_declined' }), {
     ok: false, reason: 'home_migration_declined', expectedOrigin: canonicalServerUrl, actualOrigin: aliasUrl,
     expectedRevision: 27, actualRevision: 62,
+  });
+});
+
+test('refuses an ambiguous current-document profile from another Home even if a canonical response follows', async () => {
+  assert.deepEqual(await profileSignin({ foreignInCurrentDocument: true }), {
+    ok: false, reason: 'home_origin_mismatch', expectedOrigin: canonicalServerUrl, actualOrigin: 'https://other-home.invalid',
   });
 });
 

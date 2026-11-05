@@ -1475,7 +1475,7 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
               requestId: 'foreign', request: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href },
             } });
             this.message({ method: 'Network.responseReceived', params: {
-              requestId: 'foreign', frameId: 'main', loaderId: `document-${this.navigations}`,
+              requestId: 'foreign', frameId: 'child', loaderId: `document-${this.navigations}`,
               response: { url: new URL('/v1/account/profile', 'https:' + '//other.invalid').href, status: 200 },
             } });
             this.message({ method: 'Network.loadingFinished', params: { requestId: 'foreign' } });
@@ -1500,7 +1500,7 @@ for (const outcome of ['home', 'restore_failed', 'restore_entry_unavailable', 'd
         { type: 'page', url: 'about:blank', webSocketDebuggerUrl: 'ws:' + '//127.0.0.1:9999/devtools/page/fixture' },
       ] }),
     });
-    assert.deepEqual(result, outcome === 'home' ? { ok: true, accountIdPrefix: 'account-' }
+    assert.deepEqual(result, outcome === 'home' ? { ok: true, accountIdPrefix: 'account-', homeOrigin: new URL(canonicalHomeUrl).origin }
       : { ok: false, reason: outcome === 'disconnect' ? 'browser_unavailable' : outcome });
     assert.equal(JSON.stringify(result).includes(input), false);
     assert.equal(socketClosed, true);
