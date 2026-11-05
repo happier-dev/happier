@@ -62,5 +62,7 @@ describe('hosted workflow Run body', () => {
         </>);
         expect(screen.findAllHostsByTestId('workflow-run-unavailable')).toHaveLength(1);
         expect(screen.findAllHostsByTestId('workflow-run-loading')).toHaveLength(1);
+        // A cold Run reserves its page with in-place rows, not a page-sized spinner (FIN-DESIGN-REVIEW M9, lab nav-N5).
+        expect(screen.findAllHostsByTestId('workflow-run-loading-rows')).toHaveLength(1);
     });
 });
