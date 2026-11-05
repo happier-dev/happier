@@ -6,6 +6,8 @@ import { SessionTurnsProjectionV1Schema, type SessionTurnsProjectionV1 } from '@
 import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { V2SessionByIdResponse } from '@happier-dev/protocol/sessions/control/contract';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import type { SessionReadObservation } from './snapshotMembership';
 import type {
   SessionMetadataTupleMutationSnapshotV1,
 } from '@happier-dev/cli-common/sessionMetadata';
@@ -63,7 +65,7 @@ import {
   fetchAccountEncryptionCurrentness,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { SESSION_LIST_DOCUMENT_ADMISSION, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { SESSION_LIST_DOCUMENT_ADMISSION, buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildRenderableFromRowAndCache, createSessionListDocumentAdmission } from './sessionSnapshot';
 import { admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState, mergeSessionListDocumentObservations,
   areSessionListDocumentAdmissionsEqual, type SessionListDocumentAdmission } from '@/sync/domains/session/sessionDocumentAdmission';
@@ -94,7 +96,7 @@ export type SessionByIdEncryption = {
   removeSessionEncryption?: (sessionId: string) => EncryptionGenerationScope | null | void;
 } & Partial<EncryptionGenerationScopeAuthority>;
 
-export type SessionByIdContentDemand = 'session' | 'encryption-context' | 'list-projection';
+export type SessionByIdContentDemand = 'session' | 'encryption-context' | 'list-projection' | 'list-display';
 
 type SessionDataKeyEnvelopeCache = Map<string, string>;
 
@@ -152,12 +154,18 @@ async function applySessionPublications(batch: readonly PendingSessionPublicatio
 }
 
 /** One slot is registered during physical delivery, before any asynchronous opening. */
-function createSessionPublication(destination: object, signal?: AbortSignal) {
+function createSessionPublication(destination: object, signal?: AbortSignal, listDisplay?: Readonly<{
+  serverId: string;
+  applyRows: ApplySessionListRows;
+  getCurrentRow?: (sessionId: string) => SessionListRenderableSession | null | undefined;
+}>) {
   let finish: ((entry: PendingSessionPublication | null) => void) | undefined;
   let publication: Promise<void> | undefined;
+  let publishedListRow: SessionListRenderableSession | undefined;
   const cancel = () => finish?.(null);
   signal?.addEventListener('abort', cancel, { once: true });
   return {
+    readListRow: () => publishedListRow,
     bind(chunk: ScopedBatchResolutionContext) {
       const prepared = new Promise<PendingSessionPublication | null>(resolve => { finish = resolve; });
       publication = chunk.publish(destination, prepared, applySessionPublications);
@@ -166,6 +174,18 @@ function createSessionPublication(destination: object, signal?: AbortSignal) {
     },
     async apply(entry: PendingSessionPublication): Promise<void> {
       if (signal?.aborted) { entry.resolve(false); return; }
+      // Display demand uses the same admitted key/document opener, but the
+      // existing row publication owns its output. It creates no Session carrier
+      // or full-publication receipt and emits no full-Session transition effects.
+      if (listDisplay && entry.kind === 'session') {
+        const session = entry.session;
+        publishedListRow = buildSessionListRenderableFromSession({ ...session,
+          presence: session.presence ?? (session.active ? 'online' : session.activeAt),
+        }, listDisplay.getCurrentRow?.(session.id) ?? undefined);
+        entry = { kind: 'list', projection: { serverId: listDisplay.serverId, row: publishedListRow },
+          applyRows: listDisplay.applyRows, isCurrent: entry.isCurrent, ensureCurrent: entry.ensureCurrent,
+          resolve: entry.resolve, reject: entry.reject };
+      }
       if (publication) { finish!(entry); await publication; }
       else await applySessionPublications([entry]);
     },
@@ -428,6 +448,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   includeMetadataTupleMutationSnapshot?: boolean;
   /** Capturing a maintenance tuple must not bypass shared ordinary reads. */
   fresh?: boolean;
+  onSessionObservation?: (observation: SessionReadObservation) => void;
   isCurrent?: () => boolean;
   accessProjectionVersion?: 1;
   clientEncryptionRequirement?: ClientEncryptionRequirement;
@@ -447,8 +468,17 @@ export async function fetchAndApplySessionById(params: Readonly<{
 }> {
   const sessionId = String(params.sessionId ?? '').trim();
   if (!sessionId) return { ok: false, session: null, errorCode: 'invalid_session_id' };
-  const publication = createSessionPublication(params.applySessionListRows ?? params.applySessions, params.signal);
-  try { return await hydrate(); }
+  const listDisplay = params.contentDemand === 'list-display';
+  if (listDisplay && (!params.applySessionListRows || !params.serverId?.trim())) {
+    return { ok: false, session: null, errorCode: 'stale_response' };
+  }
+  const publication = createSessionPublication(params.applySessionListRows ?? params.applySessions, params.signal,
+    listDisplay ? { serverId: params.serverId!.trim(), applyRows: params.applySessionListRows!,
+      getCurrentRow: params.getCurrentSessionListRenderable } : undefined);
+  try {
+    const result = await hydrate();
+    return listDisplay ? { ...result, session: null, sessionListRenderable: publication.readListRow() } : result;
+  }
   finally { publication.close(); }
 
   async function hydrate(): Promise<Awaited<ReturnType<typeof fetchAndApplySessionById>>> {
@@ -570,6 +600,13 @@ export async function fetchAndApplySessionById(params: Readonly<{
   if (String(row.id ?? '').trim() !== sessionId) {
     return { ok: false, session: null, errorCode: 'invalid_response' };
   }
+
+  const observation = V2SessionByIdResponseSchema.shape.observationCursor.safeParse(
+    isUnknownRecord(body) ? body.observationCursor : undefined,
+  );
+  if (!observation.success) return { ok: false, session: null, errorCode: 'invalid_response' };
+  params.onSessionObservation?.({ session: row, observationCursor: observation.data });
+  if (!isCurrent()) return staleResult();
 
   const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
   if (!isSessionEncryptionModeAllowedByClientRequirement(

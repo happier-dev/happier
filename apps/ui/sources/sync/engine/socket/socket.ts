@@ -140,6 +140,8 @@ import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automatio
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { notifySessionPublicLinkInvalidated } from '@/sync/domains/social/sessionPublicLinkInvalidation';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
+import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/listing/sessionListRenderable';
+import { compareSessionMetadataRevisions } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { publishSessionMessageReplyInvalidation } from '@/sync/runtime/sessionMessageReplyInvalidation';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ExternalSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
@@ -1665,6 +1667,22 @@ export async function handleUpdateContainer(params: {
     } else if (updateData.body.t === 'update-session') {
         const state = storage.getState();
         const session = getSocketSessionApplyBase(updateData.body.id);
+        const metadataOmitted = updateData.body.metadataDocument === 'omitted';
+        const projectionAddress = getProjectionAddress(updateData.body.id);
+        const projection = session ?? (projectionAddress ? readSessionListRenderable(projectionAddress) : undefined);
+        const observed = projection?.[SESSION_LIST_DOCUMENT_ADMISSION];
+        const metadataObservationAdvances = metadataOmitted && compareSessionMetadataRevisions({
+            incomingLayoutVersion: updateData.body.metadataLayoutVersion,
+            incomingMetadataVersion: updateData.body.metadataVersion,
+            storedLayoutVersion: observed?.observedMetadataLayoutVersion ?? projection?.metadataLayoutVersion,
+            storedMetadataVersion: observed?.observedMetadataVersion ?? projection?.metadataVersion,
+        }) > 0;
+        if (metadataObservationAdvances) {
+            markSessionStateHydrationDeferred?.(updateData.body.id);
+            if (projection && isCacheOnlySessionHydrationAnchorActive(updateData.body.id, sourceServerId)) {
+                hydrateSessionById?.(updateData.body.id, 'socket-update-owner-metadata');
+            }
+        }
         const runtimeActivitySessionId = typeof updateData.body.id === 'string' ? updateData.body.id : null;
         const onRuntimeActivityResyncRequired: SessionRuntimeActivityResyncHandler = () => {
             if (!shouldContinue()) return;

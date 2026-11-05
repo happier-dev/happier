@@ -294,6 +294,8 @@ import {
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { parseToken } from '@/utils/auth/parseToken';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { hydrateSessionMetadataForHome } from './engine/sessions/sessionRealtimeMetadataHydration';
+import { refreshSessionListProjection, type SessionReadInFlightEntry } from '@/sync/engine/sessions/listProjectionRead';
 import { RevenueCat } from './domains/purchases';
 import {
     trackPaywallPresented,
@@ -1381,15 +1383,7 @@ class Sync {
     private bootstrapForegroundReady: Promise<void> | null = null;
     private managedTargetBackfillLifetime: ServerAccountScopeLifetime | null = null;
     private consumeBootstrapAutomationPage: NonNullable<Parameters<typeof fetchAndApplyAutomations>[0]['onDefinitionsRead']> | null = null;
-      private sessionByIdHydrationInFlight = new Map<string, Readonly<{
-          sessionId: string;
-          serverId: string | undefined;
-          encryption: Encryption | null;
-          isCurrent(): boolean;
-          promise: Promise<EnsureSessionVisibleForRouteResult>;
-          readSessionEncryption: () => ReturnType<Encryption['getSessionEncryption']>;
-          invalidate(): void;
-      }>>();
+      private sessionByIdHydrationInFlight = new Map<string, SessionReadInFlightEntry>();
       private readonly hostedSystemSessionEnsurer = createHostedSystemSessionEnsurer({
           fetchAccountEncryptionCurrentness: (credentials, request) =>
               fetchAccountEncryptionCurrentness(credentials, { request }),
@@ -4156,7 +4150,8 @@ class Sync {
                 }
                 return result;
             };
-            const existing = this.sessionByIdHydrationInFlight.get(inFlightKey);
+            const existingRead = this.sessionByIdHydrationInFlight.get(inFlightKey);
+            const existing = existingRead?.kind === 'full' ? existingRead : undefined;
             if (existing && options?.fresh === true) {
                 const scopeIsCurrent = this.createServerScopeGuard();
                 await existing.promise;
@@ -4305,6 +4300,8 @@ class Sync {
             })();
 
             const inFlightEntry = Object.freeze({
+                kind: 'full' as const,
+                get accountId() { return reader.accountId; },
                 sessionId: normalized,
                 serverId: preferredServerId,
                 get encryption() { return reader.encryption; },
@@ -4378,51 +4375,24 @@ class Sync {
         if (!target || !credentials || !areServerProfileIdentifiersEquivalent(serverId, target.serverId)) {
             throw new Error('Session projection AccountChange scope is unavailable');
         }
-        const retirementFence = captureSessionListRetirementFence();
-        const request = this.createAppliedTransportRequest(target);
-        const accountCurrentnessSource = suppliedCurrentnessSource
-            ?? createOperationAccountCurrentnessSource({ credentials, request, serverId });
-        const isCurrent = () => this.serverScopeGeneration === generation
-            && this.isAppliedTransportTargetCurrent(target)
-            && this.credentials === credentials
-            && this.encryption === encryption
-            && accountCurrentnessSource.isCurrent()
-            && !wasSessionRetiredSinceFence(retirementFence, serverId, sessionId);
-        const readExistingSession = (id: string): Session | null => {
-            const session = storage.getState().sessions[id];
-            return session && areServerProfileIdentifiersEquivalent(session.serverId, serverId) ? session : null;
-        };
-        try {
-            const result = await fetchSessionByIdWithServerScope({
-                sessionId,
-                serverId,
-                contentDemand: 'list-projection',
+        await refreshSessionListProjection({
+            serverId, sessionId, accountId: this.serverID,
+            read: {
                 activeCredentials: credentials,
                 activeEncryption: encryption,
                 sessionDataKeys: this.sessionDataKeys,
                 sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
-                activeRequest: request,
-                accountCurrentnessSource,
+                activeRequest: this.createAppliedTransportRequest(target),
                 activeReadTransport: this.createAppliedReadTransport(target),
-                applySessions: (sessions) => { if (isCurrent()) this.applySessions(sessions); },
-                applySessionListRows: this.applySessionListRowProjections,
-                getExistingSession: readExistingSession,
-                getCurrentSessionListRenderable: (id) => readSessionListRowForServerId(storage.getState().sessionListRowsByServerId, serverId, id),
-                includeTurnsProjection: false,
-                isCurrent,
-                log,
-            });
-            if (!isCurrent()) throw new Error('Session projection AccountChange scope changed during refresh');
-            if (!result.ok) {
-                if (result.errorCode === 'not_found') {
-                    this.retireLocalSession(sessionId, serverId);
-                    return;
-                }
-                throw new Error(`Session projection refresh failed: ${result.errorCode ?? 'unknown'}`);
-            }
-            if (!result.sessionListRenderable) throw new Error('Session projection refresh returned no row');
-            if (readExistingSession(sessionId)) this.markSessionStateHydrationDeferred(sessionId);
-        } finally { if (!suppliedCurrentnessSource) accountCurrentnessSource.dispose(); }
+                applySessions: this.applySessions,
+            },
+            pendingReads: this.sessionByIdHydrationInFlight,
+            currentnessSource: suppliedCurrentnessSource,
+            isScopeCurrent: () => this.serverScopeGeneration === generation && this.isAppliedTransportTargetCurrent(target)
+                && this.credentials === credentials && this.encryption === encryption,
+            retireSession: () => this.retireLocalSession(sessionId, serverId),
+            deferHydration: () => this.markSessionStateHydrationDeferred(sessionId),
+        });
     };
 
     /**
@@ -10347,7 +10317,7 @@ class Sync {
         if (session.encryptionMode !== 'plain' && !read.encryption?.getSessionEncryption(sessionId)) {
             const sessionServerId = session.serverId;
             const hydration = Array.from(this.sessionByIdHydrationInFlight.values()).find((entry) => (
-                entry.sessionId === sessionId
+                entry.kind === 'full' && entry.sessionId === sessionId
                 && entry.encryption === read.encryption
                 && areServerProfileIdentifiersEquivalent(entry.serverId, sessionServerId)
                 && entry.isCurrent()
@@ -13329,6 +13299,12 @@ class Sync {
 	                  fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions', logError: false });
 	              },
 	              hydrateSessionById: (sessionId, reason) => {
+                      if (reason === 'socket-update-owner-metadata' && context.credentials) {
+                          fireAndForget(this.hydrateSessionMetadataUpdateForHome({ sessionId, serverId: sourceServerId,
+                              encryption: context.encryption, credentials: context.credentials, isCurrent: shouldContinue }),
+                              { tag: 'Sync.handleUpdate.hydrateSessionMetadata' });
+                          return;
+                      }
                       if (context.sessionId) return;
 	                  const hydrationReason = this.resolveSocketHydrationReasonForUpdate(update, reason);
 	                  fireAndForget(
@@ -13374,14 +13350,24 @@ class Sync {
     async consumeSessionRealtimeUpdateForHome(input: SessionRealtimeHomeScope & Readonly<{ update: ApiUpdateContainer }>): Promise<void> {
         if (!input.isCurrent() || this.embedSessionScope) return;
         const body = input.update.body;
-        if (body.t !== 'new-message' && body.t !== 'message-updated') return;
-        const sessionId = body.sid;
+        if (body.t === 'update-session' && (body.metadata != null || body.ownerMetadata != null || body.metadataDocument === 'omitted')) {
+            const sessionId = body.id;
+            if (body.metadataDocument === 'omitted') await this.applySocketUpdateForScope(input.update, {
+                serverId: input.serverId, encryption: input.encryption, credentials: input.credentials,
+                sessionId, parsedUpdate: input.update, shouldContinue: input.isCurrent,
+            });
+            if (body.metadataDocument === 'omitted') return;
+            await this.hydrateSessionMetadataUpdateForHome({ ...input, sessionId });
+            return;
+        }
+        if (body.t !== 'new-message' && body.t !== 'message-updated' && body.t !== 'update-session') return;
+        const sessionId = body.t === 'update-session' ? body.id : body.sid;
         const live = resolveSessionLiveConsumption(sessionId, input.serverId).isFullContentConsumer;
         const hasExactCarrier = () => areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, input.serverId);
         // A retained exact-Home transcript still needs the canonical stale and
         // deferred markers, even when it no longer consumes full content.
         if (!live && !hasExactCarrier()
-            && (body.delivery === 'hint' || !resolveSessionScmMutationSignal(sessionId, input.serverId))) return;
+            && (body.t === 'update-session' || body.delivery === 'hint' || !resolveSessionScmMutationSignal(sessionId, input.serverId))) return;
         // Opening/ACK owns missing shells. A later body never replaces another Home's carrier.
         if (live && !hasExactCarrier()) return;
         await this.applySocketUpdateForScope(input.update, { serverId: input.serverId,
@@ -13389,6 +13375,25 @@ class Sync {
             shouldContinue: () => input.isCurrent() && (!live || hasExactCarrier()),
         });
     }
+
+    private hydrateSessionMetadataUpdateForHome = async (input: SessionRealtimeHomeScope & Readonly<{ sessionId: string }>): Promise<void> => {
+        const { sessionId, serverId } = input;
+        await hydrateSessionMetadataForHome({ sessionId, serverId,
+            credentials: input.credentials, isCurrent: input.isCurrent,
+            activeRequest: this.requestViaConfiguredSocket,
+            hydrate: (authority, currentDemand, contentDemand) => contentDemand === 'session'
+                ? this.ensureSessionVisibleForMessageRoute(sessionId, { serverId, forceRefresh: true,
+                    hydrateMessages: false, includeTurnsProjection: false, authority, scopeCurrentness: currentDemand })
+                : refreshSessionListProjection({ serverId, sessionId, accountId: authority.scope.accountId,
+                    contentDemand: 'list-display',
+                    read: { authority, activeCredentials: input.credentials, activeEncryption: input.encryption,
+                        activeRequest: authority.request, sessionDataKeys: this.sessionDataKeys,
+                        sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes, applySessions: this.applySessions },
+                    pendingReads: this.sessionByIdHydrationInFlight, isScopeCurrent: currentDemand,
+                    retireSession: () => this.retireLocalSession(sessionId, serverId),
+                    deferHydration: () => this.markSessionStateHydrationDeferred(sessionId) }),
+        });
+    };
 
     async consumeSessionRealtimeEphemeralForHome(input: SessionRealtimeHomeScope & Readonly<{
         update: Parameters<typeof handleTranscriptStreamSegmentSocketUpdate>[0]['update'];

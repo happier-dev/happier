@@ -6,6 +6,7 @@ import 'fake-indexeddb/auto';
 import type { Socket } from 'socket.io-client';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -1601,6 +1602,106 @@ describe('sync AccountChange catch-up projection', () => {
         harness.disconnectServer();
     });
 
+    it.each([{ mode: 'plain', retained: false }, { mode: 'plain', retained: true }, { mode: 'e2ee', retained: true }] as const)(
+        'refreshes a visible Home title from an omitted metadata push ($mode, retained Session: $retained)', async ({ mode, retained }) => {
+        const sessionId = 'renamed-home-row';
+        const { Encryption } = await import('./encryption/encryption');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { sealSessionOwnerMetadataEnvelopeV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+        const { createSessionDisplayCrypto } = await import('./encryption/sessionDisplayCrypto');
+        const secret = new Uint8Array(32).fill(61);
+        const key = new Uint8Array(32).fill(71);
+        const credentials = mode === 'e2ee' ? { token: ACCOUNT_TOKEN, secret: encodeBase64(secret) } : { token: ACCOUNT_TOKEN };
+        const currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret });
+        const author = await Encryption.create(secret);
+        await author.initializeSessions(new Map([[sessionId, key]]));
+        const cipher = author.getSessionEncryption(sessionId)!;
+        const dataEncryptionKey = encodeBase64(await author.encryptEncryptionKey(key));
+        const displayCrypto = createSessionDisplayCrypto({ sessionMode: mode, accountMode: mode, credentials, sessionEncryption: cipher });
+        const buildRow = async (version: number, title: string) => {
+            const plain = createPlainSessionWithDisplayRecordFixture({ id: sessionId, metadataVersion: version,
+                metadata: { path: '/rename', host: 'home', summary: { text: title, updatedAt: version } } });
+            if (mode === 'plain') return plain;
+            if (plain.ownerMetadata?.t !== 'plain' || plain.displayProjectionV1?.shared.t !== 'plain'
+                || plain.displayProjectionV1.owner?.t !== 'plain') throw new Error('Expected plain fixture envelopes');
+            return SessionCurrentProjectionRecordV1Schema.parse({ ...plain, encryptionMode: mode,
+                metadata: await cipher.encryptRaw(JSON.parse(plain.metadata!)),
+                agentState: plain.agentState ? await cipher.encryptRaw(JSON.parse(plain.agentState)) : null,
+                ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
+                    ownerMetadata: plain.ownerMetadata.v, randomBytes: length => new Uint8Array(length).fill(73) }),
+                dataEncryptionKey,
+                displayProjectionV1: { ...plain.displayProjectionV1,
+                    shared: await displayCrypto.encodeSharedDisplay(plain.displayProjectionV1.shared.v.display),
+                    owner: displayCrypto.encodeOwnerDisplay(plain.displayProjectionV1.owner.v.display) },
+            });
+        };
+        let row = await buildRow(1, 'Before rename');
+        const requests: string[] = [];
+        domainHttp.mockImplementation(async ({ url }) => new URL(url).pathname === `/v2/sessions/${sessionId}`
+            ? jsonResponse({ session: row, observationCursor: row.metadataVersion === 1 ? 0 : 9 }) : Response.json({}, { status: 404 }));
+        await restoreTestAccount({ credentials, accountMode: mode, physicalRequest: (url) => {
+            const path = new URL(url).pathname;
+            requests.push(path);
+            return mode === 'e2ee' && path === '/v1/account/encryption/currentness' ? Promise.resolve(jsonResponse(currentness)) : undefined;
+        } });
+        const runtime = syncRuntime;
+        if (!runtime || !account) throw new Error('Expected restored Account');
+        const { storage } = await import('./domains/state/storage');
+        const { retainVisibleSessionListSurfaces } = await import('./domains/session/sessionSurfaceVisibility');
+        const { getSessionName } = await import('@/utils/sessions/sessionUtils');
+        const serverId = account.serverId;
+        await (runtime as unknown as {
+            refreshSessionListRowProjection(serverId: string, sessionId: string): Promise<void>;
+        }).refreshSessionListRowProjection(serverId, sessionId);
+        const homeRow = () => storage.getState().sessionListRowsByServerId[serverId]![sessionId]!;
+        expect(storage.getState().sessions[sessionId]).toBeUndefined();
+        if (retained) {
+            const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+            const releaseViewer = registerSessionRealtimeTranscriptConsumer(sessionId, serverId);
+            try {
+                await runtime.ensureSessionVisibleForMessageRoute(sessionId, { serverId,
+                    hydrateMessages: false, includeTurnsProjection: false });
+                expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(1);
+            } finally { releaseViewer(); }
+        }
+        expect(getSessionName(homeRow())).toBe('Before rename');
+        const release = retainVisibleSessionListSurfaces([{ serverId, sessionId }]);
+        const { useSessionListRowRenderablesForItems } = await import('./store/hooks');
+        const items = [{ type: 'session' as const, serverId, sessionId }];
+        const hook = await renderHook(() => useSessionListRowRenderablesForItems(items));
+        const renderedRow = () => [...hook.getCurrent().values()][0]!;
+        expect(getSessionName(renderedRow())).toBe('Before rename');
+        const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');
+        const { sessionRuntimeObservations } = await import('./domains/session/sessionRuntimeObservation');
+        const wakes: unknown[] = [];
+        const unsubscribe = subscribeHomeAccountChange(event => wakes.push(event));
+        const wakeRuntime = runtime as unknown as SyncAccountChangeWakeSchedulingHarness;
+        const durableCursor = wakeRuntime.changesCursor;
+        try {
+            requests.length = 0;
+            row = await buildRow(2, 'After rename');
+            const socket = sockets.findLast(candidate => candidate.listenersAny().length > 0)!;
+            await act(async () => {
+                for (const listener of socket.listenersAny()) listener('update', { id: 'rename-hint', seq: 9, createdAt: 9,
+                    body: { t: 'update-session', id: sessionId, metadataLayoutVersion: 1,
+                        metadataDocument: 'omitted', metadataVersion: 2 } });
+                await waitForHomeGovernance(() => expect(sessionRuntimeObservations.read({ serverId, sessionId })?.serverObservationCursor).toBe(9));
+                await wakeRuntime.handleUpdate({ ...accountChangeWake('covered-rename'), body: { t: 'account-change',
+                    changeKinds: ['session'], entityIds: [sessionId], sessionSystemRecords: [] } });
+                await waitForHomeGovernance(() => expect(getSessionName(homeRow())).toBe('After rename'));
+            });
+            expect(wakes).toEqual([]);
+            expect(wakeRuntime.changesCursor).toBe(durableCursor);
+            await waitForHomeGovernance(() => expect(getSessionName(renderedRow())).toBe('After rename'));
+            expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(retained ? 1 : undefined);
+            expect(requests.filter(path => path === '/v2/sessions/read-batch')).toHaveLength(1);
+            expect(requests).not.toContain('/v2/changes');
+            expect(requests).not.toContain('/v2/sessions');
+        } finally { unsubscribe(); release(); await hook.unmount(); }
+    });
+
     it('keeps a covered Session wake quiet without advancing the durable feed and repairs the next uncovered cursor', async () => {
         const runtime = await prepareAccountChangeWakeSchedulingHarness();
         const { storage } = await import('./domains/state/storage');
@@ -1611,21 +1712,28 @@ describe('sync AccountChange catch-up projection', () => {
         const persistedCursorBefore = loadChangesCursor(scope);
         storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: scope.serverScope,
             encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
-        await runtime.handleUpdate({ id: 'covered-current-view', seq: 9, createdAt: 9, body: {
-            t: 'update-session', id: sessionId, agentState: { version: 2, value: JSON.stringify({ controlledByUser: true }) },
-        } });
-        const wake = { ...accountChangeWake('covered-wake'), body: { t: 'account-change',
-            changeKinds: ['session'], entityIds: [sessionId], sessionSystemRecords: [] } };
-        await runtime.handleUpdate(wake);
-        expect(changesResponse).not.toHaveBeenCalled();
-        expect(runtime.changesCursor).toBe('0');
-        expect(loadChangesCursor(runtime.getChangesCursorScope())).toBe(persistedCursorBefore);
-        await runtime.handleUpdate({ ...wake, id: 'next-uncovered-wake', seq: 10 });
-        await waitForHomeGovernance(() => expect(changesResponse).toHaveBeenCalledOnce());
-        await waitForHomeGovernance(() => expect(runtime.resumeInFlight).toBeNull());
-        expect(new URL(changesResponse.mock.calls[0]![0].url).searchParams.get('after')).toBe('0');
+        const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+        const releaseViewer = registerSessionRealtimeTranscriptConsumer(sessionId, scope.serverScope);
+        try {
+            await runtime.handleUpdate({ id: 'covered-current-view', seq: 9, createdAt: 9, body: {
+                t: 'update-session', id: sessionId, agentState: { version: 2, value: JSON.stringify({ controlledByUser: true }) },
+                metadata: { version: 2, value: JSON.stringify({ path: '/rename', host: 'home',
+                    summary: { text: 'Covered rename', updatedAt: 2 } }) },
+            } });
+            const wake = { ...accountChangeWake('covered-wake'), body: { t: 'account-change',
+                changeKinds: ['session'], entityIds: [sessionId], sessionSystemRecords: [] } };
+            await runtime.handleUpdate(wake);
+            const { getSessionName } = await import('@/utils/sessions/sessionUtils');
+            await waitForHomeGovernance(() => expect(getSessionName(storage.getState().sessionListRowsByServerId[scope.serverScope]![sessionId]!)).toBe('Covered rename'));
+            expect(changesResponse).not.toHaveBeenCalled();
+            expect(runtime.changesCursor).toBe('0');
+            expect(loadChangesCursor(runtime.getChangesCursorScope())).toBe(persistedCursorBefore);
+            await runtime.handleUpdate({ ...wake, id: 'next-uncovered-wake', seq: 10 });
+            await waitForHomeGovernance(() => expect(changesResponse).toHaveBeenCalledOnce());
+            await waitForHomeGovernance(() => expect(runtime.resumeInFlight).toBeNull());
+            expect(new URL(changesResponse.mock.calls[0]![0].url).searchParams.get('after')).toBe('0');
+        } finally { releaseViewer(); }
     });
-
 
     it('coalesces wakes received after a changes response into one trailing canonical catch-up', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
