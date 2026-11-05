@@ -4,7 +4,7 @@ import { ArtifactCreateIdV1Schema } from '../../artifacts/artifactIdV1.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactRevisionV1.js';
 import { PrincipalRefV1Schema } from '../../teams/principal.js';
 import { BOT_TEMPLATE_ACTION_IDS_V1 } from './botTemplateActionIdsV1.js';
-import { BotTemplateCandidatesV1Schema, BotTemplateContentV1Schema, BotTemplateReleaseV1Schema,
+import { BotTemplateCandidatesV1Schema, BotTemplateContentV1Schema, BotTemplateContentV1AuthoringSchema, BotTemplateReleaseV1Schema,
   BotTemplateReleaseSourceV1Schema, BotTemplateSourceSessionRefV1Schema, BotTemplateVersionV1Schema,
   BotTemplatePreviewResultV1Schema } from './botTemplateV1.js';
 export { BotTemplateArtifactPresentationV1Schema, type BotTemplateArtifactPresentationV1,
@@ -12,7 +12,7 @@ export { BotTemplateArtifactPresentationV1Schema, type BotTemplateArtifactPresen
 import { SessionSpawnNewActionInputV2Schema, SessionServerStartSpawnDraftV1Schema,
   admitSessionSpawnNewActionInputV2, type SessionServerStartSpawnDraftV1 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
-import { SessionBotFaceV1Schema } from '../../sessions/identity/sessionBotFaceV1.js';
+import { SessionBotFaceV1AuthoringSchema } from '../../sessions/identity/sessionBotFaceV1.js';
 import { BotTemplateSetupSelectionsV1Schema } from './templateSetupSelectionsV1.js';
 export { BotTemplateSetupSelectionsV1Schema, projectBotTemplateSetupSelectionsForReviewV1,
   type BotTemplateSetupSelectionsV1 } from './templateSetupSelectionsV1.js';
@@ -30,7 +30,7 @@ export const BotTemplateDraftInputV1Schema = lazyZodSchema(() => z.strictObject(
   draftArtifactId: z.optional(ArtifactCreateIdV1Schema),
   /** An editor's observed snapshot; agent and MCP caller schemas omit it. */
   expectedRevision: z.optional(ArtifactRevisionV1Schema),
-  content: BotTemplateContentV1Schema, candidates: z.optional(BotTemplateCandidatesV1Schema),
+  content: BotTemplateContentV1AuthoringSchema, candidates: z.optional(BotTemplateCandidatesV1Schema),
 }));
 export const BotTemplateReleaseInputV1Schema = lazyZodSchema(() => z.strictObject({
   draftArtifactId: ArtifactCreateIdV1Schema, expectedRevision: ArtifactRevisionV1Schema,
@@ -55,7 +55,7 @@ export type BotTemplateExportFileResultV1 = z.infer<typeof BotTemplateExportFile
 export const BotTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.strictObject({
   source: BotTemplateReleaseSourceV1Schema, expectedVersion: BotTemplateVersionV1Schema,
   expectedRevision: z.optional(ArtifactRevisionV1Schema), creation: SessionSpawnNewActionInputV2Schema,
-  name: z.optional(z.string().check(z.trim(), z.minLength(1))), face: z.optional(SessionBotFaceV1Schema),
+  name: z.optional(z.string().check(z.trim(), z.minLength(1))), face: z.optional(SessionBotFaceV1AuthoringSchema),
   setup: z.optional(BotTemplateSetupSelectionsV1Schema),
 }));
 export type BotTemplateInstantiateInputV1 = z.infer<typeof BotTemplateInstantiateInputV1Schema>;

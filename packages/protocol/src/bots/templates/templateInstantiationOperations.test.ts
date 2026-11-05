@@ -196,6 +196,29 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
 }
 
 describe('template instantiation through ordinary creation', () => {
+  it.each([true, false])('rejects invalid %s override/released art before the ordinary birth', async override => {
+    const f = fixture();
+    const face = { shape: { v: 1, fill: ['M0 0 H90 V90 Z'], mouth: [45, 46, 0.8] } };
+    if (override) Object.assign(f.input, { face });
+    else {
+      const row = f.boundary.rows.get(releaseId)!;
+      const artifact = { v: 1 as const, state: 'released' as const, release: { ...release, content: {
+        ...release.content, identity: { ...release.content.identity, face },
+      } } };
+      f.boundary.rows.set(releaseId, { ...row, header: row.header, body: JSON.stringify(artifact) });
+    }
+    expect(await f.run()).toMatchObject({ ok: false });
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+  });
+
+  it('normalizes an explicit copy face at admission before ordinary birth', async () => {
+    const f = fixture();
+    Object.assign(f.input, { face: { shape: { v: 1, fill: ['M20 0 L100 0 L100 80 L20 80 Z'], mouth: [60, 46, 0.8] } } });
+    expect(await f.run()).toMatchObject({ ok: true });
+    expect(f.metadata().botFace).toMatchObject({ shape: { mouth: [45, 46, 0.8] } });
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+  });
+
   it('carries a generated outline from the released template into the independent Bot birth', async () => {
     const f = fixture();
     const face = { body: 'tall', shape: { v: 1, fill: ['M 5 15 L 85 15 L 85 85 L 5 85 Z'],

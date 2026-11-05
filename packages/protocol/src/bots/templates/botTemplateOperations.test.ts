@@ -42,6 +42,22 @@ function fixture(options?: { grant?: () => Promise<void>; signedInLink?: BotTemp
 }
 
 describe('template Actions through the executor', () => {
+  it('rejects malformed draft art and carries normalized art through release and recipient preview', async () => {
+    const f = fixture();
+    const shape = { v: 1, fill: ['M20 0 L100 0 L100 80 L20 80 Z'], mouth: [60, 46, 0.8] };
+    const authored = { ...content, identity: { ...content.identity, face: { shape } } };
+    expect(await f.run('template.draft', { sourceSessionRef, content: { ...authored,
+      identity: { ...authored.identity, face: { shape: { ...shape, fill: ['M0 0 H90 V90 Z'] } } },
+    } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(f.boundary.rows.size).toBe(0);
+    expect(await f.run('template.draft', { sourceSessionRef, content: authored }))
+      .toMatchObject({ ok: true, result: { summary: { identity: { face: { shape: { mouth: [45, 46, 0.8] } } } } } });
+    expect(await f.run('template.release', { draftArtifactId: draftId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      version: '1.0.0', changelog: '' })).toMatchObject({ ok: true });
+    expect(await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } }))
+      .toMatchObject({ ok: true, result: { release: { content: { identity: { face: { shape: { mouth: [45, 46, 0.8] } } } } } } });
+  });
+
   it('retains explicit UI snapshot CAS and refuses a different draft for the same Bot', async () => {
     const f = fixture();
     await f.run('template.draft', { sourceSessionRef, content });
