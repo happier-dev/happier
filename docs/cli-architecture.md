@@ -2502,6 +2502,13 @@ waiter lifecycle, while state-only requests use the same durable request store.
 Automatic history can replay only while its request remains absent, including on
 the first write after a version conflict.
 
+In development source, journal and dead-letter reads treat only a missing file
+(`ENOENT`) as absent. Other filesystem failures reject journal startup and admission
+without replacing unread data. Startup failures include the filesystem error code
+in the normal file log. Once filesystem access is restored, reconstructing the
+runtime retries the original journal. Readable malformed queue data still follows
+the existing quarantine path.
+
 This is runtime-owned recovery: reconstructing an ApiSessionClient for the same
 session resumes admitted settlements after a process restart. Closing drains local
 admission attempts before closing the journal; a failed attempt still rejects to

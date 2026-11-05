@@ -56,7 +56,7 @@ function waitFor(child: ChildProcess, type: string): Promise<Record<string, unkn
     });
 }
 
-function spawnWorker(role: 'runtime' | 'daemon', sessionId: string, paths: SessionMutationJournalPaths): ChildProcess {
+function spawnWorker(role: 'runtime' | 'daemon', sessionId: string, paths: SessionMutationJournalPaths, failFirstRead = false): ChildProcess {
     const worker = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'sessionMutationCustodyProcessWorker.ts');
     const child = fork(worker, [], { execArgv: ['--import', 'tsx'], stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     children.add(child);
@@ -65,7 +65,7 @@ function spawnWorker(role: 'runtime' | 'daemon', sessionId: string, paths: Sessi
     child.on('message', (message: Record<string, unknown>) => {
         if (message.type === 'socket-call') calls.push(message);
     });
-    child.send({ type: 'init', role, sessionId, paths });
+    child.send({ type: 'init', role, sessionId, paths, failFirstRead });
     return child;
 }
 
@@ -222,6 +222,26 @@ afterEach(async () => {
 });
 
 describe('session mutation custody across processes', () => {
+    it('preserves queued mutations across a process startup read failure and a fresh process restart', async () => {
+        tempDir = await mkdtemp(join(tmpdir(), 'happier-session-startup-read-'));
+        const context = createSessionMutationPersistenceContext({
+            activeServerDir: tempDir, custody: 'runtime', sessionId: 'read-failure',
+            parseQueuedMutation: parseQueuedSessionMutation,
+        });
+        const queued = ['one', 'two', 'three'].map((id) => queuedTranscript(context.sessionId, id, 0));
+        await saveSessionMutationOutbox(context, queued);
+        const originalBytes = await readFile(context.paths.queuePath, 'utf8');
+        const failed = spawnWorker('runtime', context.sessionId, context.paths, true);
+        const result = await waitFor(failed, 'startup-read-result');
+        await waitForCleanExit(failed);
+        expect(result.code).toBe('EBUSY');
+        await expect(readFile(context.paths.queuePath, 'utf8')).resolves.toBe(originalBytes);
+        await expect(readFile(context.paths.deadLetterPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(inspectFresh(context.sessionId, 'runtime', context.paths)).resolves.toEqual(
+            queued.map((mutation) => mutation.mutationId),
+        );
+    });
+
     it('characterizes stale-ACK resurrection when both producers share the legacy path', async () => {
         const { runtimeIds, daemonIds } = await runResurrectionSchedule('legacy-shared');
         expect(runtimeIds).toContain('transcript:process-custody-s1:acked-mutation');

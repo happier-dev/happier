@@ -706,7 +706,7 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
             await recoverDeadLetteredAuthoritativeMutations();
         })
         .catch((error) => {
-            logger.debug('[API] Failed to load durable session mutation outbox', {
+            logger.infoFile('[API] Failed to load durable session mutation outbox', {
                 sessionId: params.sessionId,
                 error: serializeAxiosErrorForLog(error),
             });

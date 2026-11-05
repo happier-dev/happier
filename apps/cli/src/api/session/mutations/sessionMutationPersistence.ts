@@ -509,66 +509,75 @@ export function parseDaemonTerminalQueuedSessionMutation(
     return broad;
 }
 
+async function readSessionMutationFile(filePath: string): Promise<string | null> {
+    try {
+        return await readFile(filePath, 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw error;
+    }
+}
+
 export async function loadSessionMutationOutbox(
     context: SessionMutationPersistenceContext,
     onQuarantined?: (count: number) => void,
 ): Promise<QueuedSessionMutation[]> {
     const { sessionId } = context;
     const filePath = context.paths.queuePath;
-    let fileContents: string | undefined;
+    const fileContents = await readSessionMutationFile(filePath);
+    if (fileContents === null) return [];
+    let parsed: unknown;
     try {
-        fileContents = await readFile(filePath, 'utf8');
-        const parsed = JSON.parse(fileContents) as unknown;
-        if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
-            await appendSessionMutationQuarantine(context, [
-                createDeadLetterEntry({
-                    sessionId,
-                    kind: 'outbox_file',
-                    reason: 'invalid_outbox_file',
-                    payload: parsed,
-                }),
-            ]);
-            onQuarantined?.(1);
-            return [];
-        }
-        const mutations: QueuedSessionMutation[] = [];
-        const deadLetters: SessionMutationDeadLetterEntry[] = [];
-        for (const rawMutation of parsed.mutations) {
-            const parsedMutation = context.parseQueuedMutation(rawMutation, sessionId);
-            if (parsedMutation.ok) {
-                mutations.push(parsedMutation.mutation);
-            } else {
-                deadLetters.push(parsedMutation.deadLetter);
-            }
-        }
-        if (deadLetters.length > 0) {
-            await appendSessionMutationQuarantine(context, deadLetters);
-            onQuarantined?.(deadLetters.length);
-        }
-        return mutations;
+        parsed = JSON.parse(fileContents) as unknown;
     } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err?.code !== 'ENOENT') {
-            await appendSessionMutationQuarantine(context, [
-                createDeadLetterEntry({
-                    sessionId,
-                    kind: 'outbox_file',
-                    reason: 'invalid_outbox_json',
-                    diagnostic: {
-                        errorName: error instanceof Error ? error.name : 'unknown',
-                    },
-                    payload: fileContents,
-                }),
-            ]);
-            onQuarantined?.(1);
-        }
+        await appendSessionMutationQuarantine(context, [
+            createDeadLetterEntry({
+                sessionId,
+                kind: 'outbox_file',
+                reason: 'invalid_outbox_json',
+                diagnostic: {
+                    errorName: error instanceof Error ? error.name : 'unknown',
+                },
+                payload: fileContents,
+            }),
+        ]);
+        onQuarantined?.(1);
         return [];
     }
+    if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
+        await appendSessionMutationQuarantine(context, [
+            createDeadLetterEntry({
+                sessionId,
+                kind: 'outbox_file',
+                reason: 'invalid_outbox_file',
+                payload: parsed,
+            }),
+        ]);
+        onQuarantined?.(1);
+        return [];
+    }
+    const mutations: QueuedSessionMutation[] = [];
+    const deadLetters: SessionMutationDeadLetterEntry[] = [];
+    for (const rawMutation of parsed.mutations) {
+        const parsedMutation = context.parseQueuedMutation(rawMutation, sessionId);
+        if (parsedMutation.ok) {
+            mutations.push(parsedMutation.mutation);
+        } else {
+            deadLetters.push(parsedMutation.deadLetter);
+        }
+    }
+    if (deadLetters.length > 0) {
+        await appendSessionMutationQuarantine(context, deadLetters);
+        onQuarantined?.(deadLetters.length);
+    }
+    return mutations;
 }
 
 async function loadDeadLetterFile(filePath: string): Promise<SessionMutationDeadLetterEntry[]> {
+    const fileContents = await readSessionMutationFile(filePath);
+    if (fileContents === null) return [];
     try {
-        const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+        const parsed = JSON.parse(fileContents) as unknown;
         if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.entries)) return [];
         return parsed.entries.filter((entry): entry is SessionMutationDeadLetterEntry => isRecord(entry) && entry.v === 1);
     } catch {

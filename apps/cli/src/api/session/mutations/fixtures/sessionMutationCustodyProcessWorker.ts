@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+
 import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
@@ -20,6 +23,7 @@ type Init = Readonly<{
     role: 'runtime' | 'daemon';
     sessionId: string;
     paths: SessionMutationJournalPaths;
+    failFirstRead?: boolean;
 }>;
 
 type Inspect = Readonly<{
@@ -81,6 +85,15 @@ process.once('message', (raw: Init | Inspect | Recover) => {
         return;
     }
     let transportMode: 'retry' | 'success' | 'hold' = 'retry';
+    if (raw.failFirstRead) {
+        const originalReadFile = fs.readFile;
+        fs.readFile = async () => {
+            fs.readFile = originalReadFile;
+            syncBuiltinESMExports();
+            throw Object.assign(new Error('injected journal read failure'), { code: 'EBUSY' });
+        };
+        syncBuiltinESMExports();
+    }
     const outbox = createSessionMutationJournal({
         custody: raw.role === 'runtime' ? 'runtime' : 'daemon-terminal',
         sessionId: raw.sessionId,
@@ -114,6 +127,21 @@ process.once('message', (raw: Init | Inspect | Recover) => {
         }),
         requestReconnect: () => {},
     });
+
+    if (raw.failFirstRead) {
+        void (async () => {
+            let code: unknown;
+            try {
+                await outbox.awaitReady();
+            } catch (error) {
+                code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+            }
+            await outbox.close().catch(() => {});
+            send({ type: 'startup-read-result', code });
+            setImmediate(() => process.exit(0));
+        })();
+        return;
+    }
 
     void outbox.enqueueTranscriptMessage(createTranscriptMessageAppendMutation({
         sessionId: raw.sessionId,
