@@ -5,7 +5,7 @@ import { WorkflowsColumn } from '@/components/workflows/column/WorkflowsColumn';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 
-import { WorkflowsLibraryHome } from './WorkflowsLibraryHome';
+import { WorkflowsLibraryHome, WorkflowsLibraryIdle } from './WorkflowsLibraryHome';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -51,7 +51,7 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
     const content = !columnVisible && (access.kind === 'workflows' || access.kind === 'triggersOnly')
         ? <WorkflowsColumn surface="page" {...(access.kind === 'workflows'
             ? { definitionsContent: <WorkflowsLibraryHome /> } : {})} />
-        : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
+        : <WorkflowsGate surface="destination"><WorkflowsLibraryIdle /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}
         <View ref={eventAnchor} style={{ flex: 1 }} collapsable={false}>{content}</View>

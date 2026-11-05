@@ -15232,6 +15232,8 @@ const ja: WorkflowsDestinationTranslations = {
     },
     runSettings: '実行の設定',
     libraryEmpty: '保存したワークフローがここに表示されます。',
+    idleTitle: 'ワークフローを開く',
+    idleBody: 'リストから選ぶか、新しく作成します。',
     waitingForYou: ({ age }) => `あなたの対応待ち · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

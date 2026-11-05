@@ -15268,6 +15268,8 @@ const ca: WorkflowsDestinationTranslations = {
     },
     runSettings: 'Configuració d’execució',
     libraryEmpty: 'Els fluxos de treball que desis apareixen aquí.',
+    idleTitle: 'Obre un flux de treball',
+    idleBody: 'Tria’n un de la llista o comença’n un de nou.',
     waitingForYou: ({ age }) => `T’espera · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

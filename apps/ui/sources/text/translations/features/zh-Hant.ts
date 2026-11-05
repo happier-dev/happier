@@ -15228,6 +15228,8 @@ const zhHant: WorkflowsDestinationTranslations = {
     },
     runSettings: '執行設定',
     libraryEmpty: '你儲存的工作流程會顯示在這裡。',
+    idleTitle: '開啟一個工作流程',
+    idleBody: '從清單中選擇一個，或新建一個。',
     waitingForYou: ({ age }) => `等你處理 · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

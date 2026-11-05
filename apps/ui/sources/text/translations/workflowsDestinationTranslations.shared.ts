@@ -33,6 +33,8 @@ export const en = {
     },
     runSettings: 'Run settings',
     libraryEmpty: 'Workflows you save appear here.',
+    idleTitle: 'Open a workflow',
+    idleBody: 'Pick one from the list, or start a new one.',
     waitingForYou: ({ age }: { age: string }) => `Waiting for you · ${age}`,
     stateAge: ({ state, age }: { state: string; age: string }) => `${state} · ${age}`,
     triggerRow: ({ when, then }: { when: string; then: string }) => `${when} · ${then}`,

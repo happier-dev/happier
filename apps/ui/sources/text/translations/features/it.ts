@@ -15245,6 +15245,8 @@ const it: WorkflowsDestinationTranslations = {
     },
     runSettings: 'Impostazioni di esecuzione',
     libraryEmpty: 'I flussi di lavoro che salvi compaiono qui.',
+    idleTitle: 'Apri un flusso di lavoro',
+    idleBody: 'Scegline uno dall’elenco o iniziane uno nuovo.',
     waitingForYou: ({ age }) => `Ti aspetta · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

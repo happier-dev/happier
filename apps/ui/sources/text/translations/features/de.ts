@@ -14738,6 +14738,8 @@ const de: WorkflowsDestinationTranslations = {
     },
     runSettings: 'Lauf-Einstellungen',
     libraryEmpty: 'Gespeicherte Workflows erscheinen hier.',
+    idleTitle: 'Workflow öffnen',
+    idleBody: 'Wähle einen aus der Liste oder beginne einen neuen.',
     waitingForYou: ({ age }) => `Wartet auf dich · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

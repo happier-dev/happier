@@ -591,10 +591,53 @@ async function exportDefinition(definitionId: string): Promise<void> {
 }
 
 /**
+ * `/workflows` beside the Workflows column (R8-7, the Discussions pattern of lab `clfamily`): the column is
+ * the one list and the one space header, so main never draws a second copy of either. It asks which
+ * workflow to open, with one primary **New workflow**, and keeps what the column lacks: starting from an
+ * example (lab `nav-N1`'s secondary row). An empty library keeps the first-visit invitation.
+ */
+export function WorkflowsLibraryIdle(): React.ReactElement | null {
+    const router = useRouter();
+    const openAgent = useWorkflowAgentAuthoring();
+    const focused = useIsFocused();
+    const { library, libraryIsEmpty } = useWorkflowLibraryView(focused);
+    // A deletion receipt belongs to the home that lists the rows; beside the column it would linger with no row to explain.
+    React.useEffect(() => {
+        const definitionId = library.deletedDefinitionId;
+        if (!focused || definitionId === null) return;
+        dismissWorkflowLibraryDeletionReceipt(definitionId);
+    }, [focused, library.deletedDefinitionId]);
+    const history = useWorkflowRunWindow('all', { enabled: libraryIsEmpty });
+    const newWorkflow = () => router.push(WORKFLOWS_NEW_ROUTE as never);
+    const createWithAgent = () => openAgent(buildWorkflowAgentAuthoringSeed({ kind: 'create' }));
+    if (libraryIsEmpty && history.status === 'loaded' && history.rows.length === 0) {
+        return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onCreateWithAgent={createWithAgent}
+            onImport={() => router.pushRetainingCurrent(WORKFLOWS_IMPORT_ROUTE as never)} withBuiltins={false} />;
+    }
+    return (
+        <ItemList pageColumn="wide" containerStyle={styles.idlePage}>
+            <PageContentColumn style={styles.idleColumn}>
+                <EmptyState
+                    testID="workflows-home:idle"
+                    layout="centered"
+                    scene="noWorkflows"
+                    title={t('workflows.destination.idleTitle')}
+                    subtitle={t('workflows.destination.idleBody')}
+                    primaryAction={{ label: t('workflows.newWorkflow'), onPress: newWorkflow, testID: 'workflows-home:idle:new' }}
+                    secondaryAction={{ label: t('workflows.authoring.create'), onPress: createWithAgent, testID: 'workflows-home:idle:agent' }}
+                />
+                <WorkflowExamplesSection presentation="strip" />
+            </PageContentColumn>
+        </ItemList>
+    );
+}
+
+/**
  * First visit (lab `nav-N3`): show, guide, confirm. One primary, and a quiet way in for a file. The
  * examples use the same catalog as the returning home and column picker (08 §6).
  */
-function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void }>) {
+function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void;
+    withBuiltins?: boolean }>) {
     return (
         <ItemList pageColumn="wide">
             <PageContentColumn>
@@ -607,7 +650,8 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
-                <WorkflowBuiltinsSection />
+                {/* Beside the column, the built-ins are already its rows. */}
+                {props.withBuiltins === false ? null : <WorkflowBuiltinsSection />}
                 <WorkflowExamplesSection />
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
@@ -625,6 +669,15 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
 }
 
 const styles = StyleSheet.create((theme) => ({
+    // The idle page centres its question in the pane, as Discussions' does, with the examples beneath it.
+    idlePage: {
+        flexGrow: 1,
+        justifyContent: 'center',
+    },
+    idleColumn: {
+        gap: theme.space.s32,
+        paddingVertical: theme.space.s32,
+    },
     controlLine: {
         flexDirection: 'row',
         flexWrap: 'wrap',

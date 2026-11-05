@@ -15276,6 +15276,8 @@ const ru: WorkflowsDestinationTranslations = {
     },
     runSettings: 'Настройки запусков',
     libraryEmpty: 'Сохранённые рабочие процессы появятся здесь.',
+    idleTitle: 'Откройте рабочий процесс',
+    idleBody: 'Выберите его в списке или создайте новый.',
     waitingForYou: ({ age }) => `Ждёт вас · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

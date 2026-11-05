@@ -15293,6 +15293,8 @@ const fr: WorkflowsDestinationTranslations = {
     },
     runSettings: 'Réglages d’exécution',
     libraryEmpty: 'Les flux de travail que tu enregistres apparaissent ici.',
+    idleTitle: 'Ouvre un flux de travail',
+    idleBody: 'Choisis-en un dans la liste, ou commences-en un nouveau.',
     waitingForYou: ({ age }) => `T’attend · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

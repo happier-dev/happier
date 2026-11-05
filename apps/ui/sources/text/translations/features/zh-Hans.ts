@@ -15228,6 +15228,8 @@ const zhHans: WorkflowsDestinationTranslations = {
     },
     runSettings: '运行设置',
     libraryEmpty: '你保存的工作流会显示在这里。',
+    idleTitle: '打开一个工作流',
+    idleBody: '从列表中选择一个，或新建一个。',
     waitingForYou: ({ age }) => `等你处理 · ${age}`,
     stateAge: ({ state, age }) => `${state} · ${age}`,
     triggerRow: ({ when, then }) => `${when} · ${then}`,

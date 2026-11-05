@@ -296,6 +296,33 @@ describe('workflow library page anatomy', () => {
         expect(screen.findHostByTestId('workflows-home:deleted')).not.toBeNull();
         expect(screen.findHostByTestId('workflows-home:new')).not.toBeNull();
     });
+    it('beside the Workflows column asks which to open and never repeats the column list or its space header (R8-7)', async () => {
+        windowSize.width = 1440;
+        const definitionId = '10000000-0000-4000-8000-000000000071';
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Saved workflow' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            if (actionId === 'workflow.trigger.list') return { ok: true, result: { sets: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsDestinationIndex />
+        </AppShellColumnContext.Provider>, { wrapper: Wrapper });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:idle')).not.toBeNull());
+        // The column beside this page is the one list and the one space header; main never draws a second copy.
+        expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).toBeNull();
+        expect(screen.findHostByTestId('workflows-home:search')).toBeNull();
+        expect(screen.findAllHostsByTestId('workflows-home-space-title-swipe')).toHaveLength(0);
+        // One primary: New workflow opens the blank draft.
+        await screen.pressByTestIdAsync('workflows-home:idle:new');
+        expect(routerPush).toHaveBeenCalledWith('/workflows/new');
+    });
     it.each([false, true])('applies a canonical delete outcome to the warm library while an older list is pending (unmounted=%s)', async (unmounted) => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
