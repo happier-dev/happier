@@ -1128,6 +1128,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     )}
                     meta={headerMeta}
                     actions={runControls}
+                    // The Run's controls hang from the title's line, top right, with its facts beneath at full width
+                    // (lab run-A); a narrow main beside an open details pane never drops them under the title.
+                    {...(phone ? {} : { actionsLayout: 'hang' as const })}
                 />
             )}
             <View
