@@ -15,6 +15,10 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { removeTempDir } from '@/testkit/fs/tempDir';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
+import { configuration } from '@/configuration';
+import { readSettings, updateSettings } from '@/persistence';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 // Observe the genuine OS boundary while allowing the actual Git processes and
 // canonical Exec supervision to run. No SCM or identity owner is substituted.
@@ -28,7 +32,7 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
     const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-scm-member-' });
     const machineId = 'shared-machine';
     const installationId = 'shared-installation';
-    const home = 'shared-home';
+    const home = configuration.activeServerId;
     const registration = createGitScmBackendRuntimeRegistration();
     // This is the installed daemon policy port, without any selected member
     // launch identity. Disabled optional isolation cannot grant owner execution
@@ -61,12 +65,18 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
         machineId, installationId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } });
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner-account' })).toString('base64url')}.signature`, encryption: null };
+    const directInvocations: string[] = [];
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
         sessionId: '', mode: 'plain', ctx: null, serverId: home, serverIdentityId: home,
         externalActionMachineInstallationId: installationId, externalActionMachineRequestPrivateKey: new Uint8Array(32),
         actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
-        machineActionDirectTargetTransport: { machineId, invoke: (method, input, options) => manager.invokeLocal(method, input, options) },
+        machineActionDirectTargetTransport: { machineId, invoke: (method, input, options) => {
+            directInvocations.push(method);
+            return manager.invokeLocal(method, input, options);
+        } },
     }));
+    const previousSettings = await readSettings();
+    let servingRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
     vi.mocked(spawn).mockClear();
     try {
         const ownerEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'owner-scm-read', target, input: actionInput });
@@ -101,7 +111,60 @@ it('refuses an admitted shared-Machine Use SCM request before launching as the d
             uid: options?.uid ?? process.getuid?.(), gid: options?.gid ?? process.getgid?.() }));
         expect(launches).toEqual([]);
         expect(response).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+
+        // Publish the real bundled Git runtime as an installed daemon does.
+        // Live blame can otherwise bypass the Machine transport entirely.
+        await updateSettings(settings => ({ ...settings,
+            machineIdByServerId: { ...settings.machineIdByServerId, [home]: machineId } }));
+        expect((await readSettings()).machineId).toBe(machineId);
+        servingRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
+            controller: pluginReloadController, runtimeOptions: {
+                pluginIds: ['happier.scm.backend.git'],
+                scopedActionRuntime: { credentials,
+                    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }) },
+                agentIsolation: { read: () => ({ enabled: false,
+                    status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }) },
+            },
+        });
+        const blameInput = { cwd: repository.rootPath, path: repository.trackedPath };
+        const executeBlame = async (accountId: string) => {
+            const blameEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+                requestId: `${accountId}-blame`, target, input: blameInput });
+            const blameAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
+                binding: { ...authorization.binding, accountId, actionId: 'scm.blame.get',
+                    requestId: blameEnvelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(blameEnvelope) },
+            });
+            return await executor.execute('scm.blame.get', blameInput, {
+                surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' },
+                actionRequestId: blameEnvelope.requestId, runtimeAccountId: accountId, serverId: home, serverIdentityId: home,
+                machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner-account', machineId,
+                    installationId, role: accountId === 'owner-account' ? 'manage' : 'use', encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true,
+                externalActionExecutionAuthorization: blameAuthorization, externalActionTarget: target,
+            });
+        };
+        vi.mocked(spawn).mockClear();
+        directInvocations.length = 0;
+        const ownerBlame = await executeBlame('owner-account');
+        expect(ownerBlame.ok, JSON.stringify(ownerBlame)).toBe(true);
+        expect(ownerBlame).toMatchObject({ ok: true, result: { success: true } });
+        const ownerBlameLaunches = vi.mocked(spawn).mock.calls.map(([, , options]) => ({
+            uid: options?.uid ?? process.getuid?.(), gid: options?.gid ?? process.getgid?.(),
+        }));
+        expect(ownerBlameLaunches.length).toBeGreaterThan(0);
+        expect(ownerBlameLaunches.every(launch => launch.uid === process.getuid?.() && launch.gid === process.getgid?.())).toBe(true);
+        expect(directInvocations).toEqual([]);
+
+        vi.mocked(spawn).mockClear();
+        const memberBlame = await executeBlame('member-account');
+        const blameLaunches = vi.mocked(spawn).mock.calls.map(([command, , options]) => ({ command,
+            uid: options?.uid ?? process.getuid?.(), gid: options?.gid ?? process.getgid?.() }));
+        expect(blameLaunches).toEqual([]);
+        expect(memberBlame).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
     } finally {
+        await servingRuntime?.dispose();
+        await pluginReloadController.shutdown();
+        await updateSettings(settings => ({ ...settings, machineIdByServerId: previousSettings.machineIdByServerId }));
         await removeTempDir(repository.rootPath);
     }
 });

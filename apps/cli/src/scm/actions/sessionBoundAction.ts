@@ -242,7 +242,10 @@ export function createSessionBoundScmAction(
         ? tryAcquireAuthoritativePluginRuntimeRegistryLease() : null;
       const installedScmOwner = localRuntime !== null;
       await localRuntime?.release();
-      if (params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner)) {
+      // Live work for another Account needs the receiving identity owner.
+      // Retained evidence keeps its existing Session authorization below.
+      if (params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner
+        && (!signedAuthorization || signedAuthorization.binding.accountId === signedAuthorization.binding.custodianAccountId))) {
         const currentMachine = await readCurrentMachineControlIdentity();
         if (currentMachine.machineId === machineId) {
           if (!await localReviewHomeCurrent()) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
