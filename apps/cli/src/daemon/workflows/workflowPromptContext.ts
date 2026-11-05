@@ -1,4 +1,4 @@
-import { renderDiscussionContextBlockV1, type DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { renderDiscussionContextBlockV1, renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { isWorkflowJsonObject, type WorkflowJsonValue } from './input';
@@ -19,6 +19,12 @@ export function projectWorkflowPromptContext(input: Readonly<{
     entries?: readonly Readonly<{ author: DiscussionPromptAuthorV1; source: WorkflowJsonValue; value: WorkflowJsonValue }>[] }>;
 }>): WorkflowPromptContext[] {
   const { reference, value } = input;
+  // The declared PR input is opaque forge data, even if its JSON happens to
+  // resemble a Discussion or workflow result. Preserve the exact selected value.
+  if (reference.kind === 'input' && reference.name === 'prUpdate') {
+    return [{ reference, ...(input.token ? { token: input.token } : {}), value,
+      author: { kind: 'person', displayName: 'Workflow input' } }];
+  }
   if (reference.kind === 'result' && reference.path.length === 0 && input.resultSource?.entries) {
     return input.resultSource.entries.flatMap(entry => projectWorkflowPromptContext({ reference, value: entry.value,
       resultSource: { author: entry.author, source: entry.source } }));
@@ -65,6 +71,22 @@ function serializeWorkflowPromptContextEntry({ author, ...entry }: WorkflowPromp
 }
 
 export function renderWorkflowPromptContext(entries: readonly WorkflowPromptContext[]): string {
+  const forgeEntries: WorkflowPromptContext[] = [];
+  const discussionEntries: WorkflowPromptContext[] = [];
+  for (const entry of entries) {
+    (entry.reference.kind === 'input' && entry.reference.name === 'prUpdate' ? forgeEntries : discussionEntries).push(entry);
+  }
+  if (forgeEntries.length > 0) {
+    return renderSessionInputContextPromptV1({
+      transformedUserText: '',
+      discussionContext: discussionEntries.map(serializeWorkflowPromptContextEntry),
+      forgeEvidence: { v: 1, items: forgeEntries.map(entry => ({
+        source: { kind: 'pullRequest', label: 'Pull request workflow input' },
+        author: { kind: 'unknown' },
+        text: serializeWorkflowPromptContextEntry(entry).text,
+      })) },
+    });
+  }
   return renderDiscussionContextBlockV1(entries.map(serializeWorkflowPromptContextEntry));
 }
 

@@ -11,7 +11,7 @@ import {
   type AutomationStoredContentEnvelopeV1,
 } from '../automations/automationStoredContentEnvelopeV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
-import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
+import { WorkflowAcceptedSnapshotListingV1Schema, WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotListingV1 } from './workflowDefinitionV1.js';
 import {
   WorkflowCheckpointEnvelopeV1Schema,
   WorkflowDecimalV1Schema,
@@ -62,6 +62,11 @@ const WorkflowAcceptedSnapshotStoredPayloadV1Schema = lazyZodSchema(() => z.stri
   v: z.literal(2), binding: WorkflowAcceptedSnapshotStoredBindingV1Schema,
   content: WorkflowAcceptedSnapshotV1Schema,
 }));
+// Run lists read the same authenticated payload through the listed facts only.
+const WorkflowAcceptedSnapshotListingStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2), binding: WorkflowAcceptedSnapshotStoredBindingV1Schema,
+  content: WorkflowAcceptedSnapshotListingV1Schema,
+}));
 const WorkflowInvocationProgressStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), binding: WorkflowInvocationProgressStoredBindingV1Schema,
   content: WorkflowProgressEnvelopeV1Schema,
@@ -76,7 +81,7 @@ const WorkflowFinalResultStoredPayloadV1Schema = lazyZodSchema(() => z.strictObj
 }));
 
 export const WorkflowStoredContentEnvelopeV1Schema = AutomationStoredContentEnvelopeV1Schema;
-export type WorkflowStoredContentEnvelopeV1 = AutomationStoredContentEnvelopeV1;
+export type WorkflowStoredContentEnvelopeV1 = z.infer<typeof WorkflowStoredContentEnvelopeV1Schema>;
 
 export type WorkflowStoredContentOpenFailureV1 =
   | Readonly<{ kind: 'materialUnavailable' }>
@@ -109,35 +114,44 @@ function isWorkflowRunDataKey(key: unknown): key is Uint8Array {
   return key instanceof Uint8Array && key.byteLength === tweetnacl.secretbox.keyLength;
 }
 
-type ParsedWorkflowStoredPayloadV1 = Readonly<{
-  binding: WorkflowStoredContentBindingV1;
-  content: unknown;
-}>;
+// Carry the purpose together with its admitted payload; public openers can
+// narrow this union without admitting the content a second time.
+type ParsedWorkflowStoredPayloadV1 =
+  | Readonly<{ purpose: 'accepted_snapshot'; payload: z.infer<typeof WorkflowAcceptedSnapshotStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'accepted_snapshot_listing'; payload: z.infer<typeof WorkflowAcceptedSnapshotListingStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'invocation_progress'; payload: z.infer<typeof WorkflowInvocationProgressStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'checkpoint'; payload: z.infer<typeof WorkflowCheckpointStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'final_result'; payload: z.infer<typeof WorkflowFinalResultStoredPayloadV1Schema> }>;
 
 function parsePayloadForBinding(
   binding: WorkflowStoredContentBindingV1,
   value: unknown,
   storedRead = false,
+  listing = false,
 ): ParsedWorkflowStoredPayloadV1 | null {
   switch (binding.purpose) {
     case 'accepted_snapshot': {
+      if (listing) {
+        const parsed = createStoredReadSchema(WorkflowAcceptedSnapshotListingStoredPayloadV1Schema).safeParse(value);
+        return parsed.success ? { purpose: 'accepted_snapshot_listing', payload: parsed.data } : null;
+      }
       const parsed = (storedRead ? createStoredReadSchema(WorkflowAcceptedSnapshotStoredPayloadV1Schema) : WorkflowAcceptedSnapshotStoredPayloadV1Schema).safeParse(value);
-      return parsed.success ? parsed.data : null;
+      return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
     }
     case 'invocation_progress': {
       const parsed = (storedRead ? createStoredReadSchema(WorkflowInvocationProgressStoredPayloadV1Schema) : WorkflowInvocationProgressStoredPayloadV1Schema).safeParse(value);
       if (!parsed.success || parsed.data.content.attempt !== parsed.data.binding.attempt) return null;
       if (parsed.data.binding.attempt === '0'
         && parsed.data.content.logicalInvocationRecordId !== parsed.data.binding.recordId) return null;
-      return parsed.data;
+      return { purpose: binding.purpose, payload: parsed.data };
     }
     case 'checkpoint': {
       const parsed = (storedRead ? createStoredReadSchema(WorkflowCheckpointStoredPayloadV1Schema) : WorkflowCheckpointStoredPayloadV1Schema).safeParse(value);
-      return parsed.success ? parsed.data : null;
+      return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
     }
     case 'final_result': {
       const parsed = (storedRead ? createStoredReadSchema(WorkflowFinalResultStoredPayloadV1Schema) : WorkflowFinalResultStoredPayloadV1Schema).safeParse(value);
-      return parsed.success ? parsed.data : null;
+      return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
     }
   }
 }
@@ -156,14 +170,14 @@ export function validateWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
 }
 
 type ReadWorkflowStoredEnvelopeOuterV1 =
-  | Readonly<{ kind: 'available'; envelope: Extract<WorkflowStoredContentEnvelopeV1, { t: 'plain' }>; bytes: null }>
-  | Readonly<{ kind: 'available'; envelope: Extract<WorkflowStoredContentEnvelopeV1, { t: 'encrypted' }>; bytes: Uint8Array }>
+  | Readonly<{ kind: 'available'; envelope: Extract<WorkflowStoredContentEnvelopeV1, { t: 'plain' }>; bytes: null; payload: ParsedWorkflowStoredPayloadV1 }>
+  | Readonly<{ kind: 'available'; envelope: Extract<WorkflowStoredContentEnvelopeV1, { t: 'encrypted' }>; bytes: Uint8Array; binding: WorkflowStoredContentBindingV1 }>
   | Exclude<WorkflowStoredContentOuterValidationV1, { kind: 'available' }>;
 
 // Keep the validated ciphertext with this read so opening does not decode and
 // re-encode it again. The public outer-only validator still returns no bytes.
 function readWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
-  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1; envelope: unknown;
+  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1; envelope: unknown; listing?: boolean;
 }>): ReadWorkflowStoredEnvelopeOuterV1 {
   const binding = WorkflowStoredContentBindingV1Schema.safeParse(params.binding);
   const envelope = createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema).safeParse(params.envelope);
@@ -175,12 +189,12 @@ function readWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
   if (envelope.data.t === 'encrypted') {
     const bytes = readWorkflowRunCiphertext(envelope.data.c);
     return bytes
-      ? { kind: 'available', envelope: envelope.data, bytes } : { kind: 'contentInvalid' };
+      ? { kind: 'available', envelope: envelope.data, bytes, binding: binding.data } : { kind: 'contentInvalid' };
   }
-  const payload = parsePayloadForBinding(binding.data, envelope.data.v, true);
+  const payload = parsePayloadForBinding(binding.data, envelope.data.v, true, params.listing);
   if (!payload) return { kind: 'contentInvalid' };
-  return sameBinding(payload.binding, binding.data)
-    ? { kind: 'available', envelope: envelope.data, bytes: null }
+  return sameBinding(payload.payload.binding, binding.data)
+    ? { kind: 'available', envelope: envelope.data, bytes: null, payload }
     : { kind: 'bindingMismatch' };
 }
 
@@ -191,13 +205,13 @@ function sealWorkflowStoredEnvelopeV1(params: Readonly<{
   const payload = parsePayloadForBinding(binding, params.payload);
   if (!payload) throw new TypeError('Invalid Workflow stored content payload');
   if (params.mode === 'plain') {
-    return WorkflowStoredContentEnvelopeV1Schema.parse({ t: 'plain', v: payload });
+    return WorkflowStoredContentEnvelopeV1Schema.parse({ t: 'plain', v: payload.payload });
   }
   if (!isWorkflowRunDataKey(params.runDataKey)) throw new TypeError('Workflow run data key must be 32 bytes');
   const nonce = params.randomBytes(tweetnacl.secretbox.nonceLength);
   if (nonce.length !== tweetnacl.secretbox.nonceLength) throw new TypeError('Invalid Workflow encryption nonce');
   // Content is not an identity digest: schema property order carries the author's presentation.
-  const boxed = tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(payload)), nonce, params.runDataKey);
+  const boxed = tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(payload.payload)), nonce, params.runDataKey);
   const bytes = new Uint8Array(nonce.length + boxed.length);
   bytes.set(nonce); bytes.set(boxed, nonce.length);
   return WorkflowStoredContentEnvelopeV1Schema.parse({
@@ -208,15 +222,13 @@ function sealWorkflowStoredEnvelopeV1(params: Readonly<{
 
 function openWorkflowStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1;
-  envelope: unknown; runDataKey?: Uint8Array;
-}>): Readonly<{ kind: 'available'; content: unknown }> | WorkflowStoredContentOpenFailureV1 {
-  const binding = WorkflowStoredContentBindingV1Schema.safeParse(params.binding);
-  if (!binding.success) return { kind: 'contentInvalid' };
-  const outer = readWorkflowStoredEnvelopeOuterForModeV1({ ...params, binding: binding.data });
+  envelope: unknown; runDataKey?: Uint8Array; listing?: boolean;
+}>): Readonly<{ kind: 'available'; payload: ParsedWorkflowStoredPayloadV1 }> | WorkflowStoredContentOpenFailureV1 {
+  const outer = readWorkflowStoredEnvelopeOuterForModeV1(params);
   if (outer.kind !== 'available') return outer;
   let rawPayload: unknown;
   if (outer.bytes === null) {
-    rawPayload = outer.envelope.v;
+    return { kind: 'available', payload: outer.payload };
   } else {
     if (params.runDataKey === undefined) return { kind: 'materialUnavailable' };
     if (!isWorkflowRunDataKey(params.runDataKey)) return { kind: 'contentInvalid' };
@@ -227,19 +239,10 @@ function openWorkflowStoredEnvelopeV1(params: Readonly<{
     try { rawPayload = parseSerializedJsonValue(new TextDecoder().decode(opened)); }
     catch { return { kind: 'contentInvalid' }; }
   }
-  const payload = parsePayloadForBinding(binding.data, rawPayload, true);
+  const payload = parsePayloadForBinding(outer.binding, rawPayload, true, params.listing);
   if (!payload) return { kind: 'contentInvalid' };
-  if (!sameBinding(payload.binding, binding.data)) return { kind: 'bindingMismatch' };
-  return { kind: 'available', content: payload.content };
-}
-
-function narrowOpenedWorkflowContentV1<T>(
-  opened: ReturnType<typeof openWorkflowStoredEnvelopeV1>,
-  schema: z.ZodMiniType<T>,
-): Readonly<{ kind: 'available'; content: T }> | WorkflowStoredContentOpenFailureV1 {
-  if (opened.kind !== 'available') return opened;
-  const content = createStoredReadSchema(schema).safeParse(opened.content);
-  return content.success ? { kind: 'available', content: content.data } : { kind: 'contentInvalid' };
+  if (!sameBinding(payload.payload.binding, outer.binding)) return { kind: 'bindingMismatch' };
+  return { kind: 'available', payload };
 }
 
 export function sealWorkflowAcceptedSnapshotStoredEnvelopeV1(params: Readonly<{
@@ -253,8 +256,24 @@ export function sealWorkflowAcceptedSnapshotStoredEnvelopeV1(params: Readonly<{
 export function openWorkflowAcceptedSnapshotStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee'; binding: WorkflowAcceptedSnapshotStoredBindingV1;
   envelope: unknown; runDataKey?: Uint8Array;
-}>) {
-  return narrowOpenedWorkflowContentV1(openWorkflowStoredEnvelopeV1(params), WorkflowAcceptedSnapshotV1Schema);
+}>): Readonly<{ kind: 'available'; content: z.infer<typeof WorkflowAcceptedSnapshotV1Schema> }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1(params);
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'accepted_snapshot'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
+}
+
+/** Run lists: the authenticated accepted facts a row shows, without admitting the frozen program. */
+export function openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(params: Readonly<{
+  mode: 'plain' | 'e2ee'; binding: WorkflowAcceptedSnapshotStoredBindingV1;
+  envelope: unknown; runDataKey?: Uint8Array;
+}>): Readonly<{ kind: 'available'; content: WorkflowAcceptedSnapshotListingV1 }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1({ ...params, listing: true });
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'accepted_snapshot_listing'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
 }
 
 export function sealWorkflowProgressStoredEnvelopeV1(params: Readonly<{
@@ -268,8 +287,12 @@ export function sealWorkflowProgressStoredEnvelopeV1(params: Readonly<{
 export function openWorkflowProgressStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee'; binding: WorkflowInvocationProgressStoredBindingV1;
   envelope: unknown; runDataKey?: Uint8Array;
-}>) {
-  return narrowOpenedWorkflowContentV1(openWorkflowStoredEnvelopeV1(params), WorkflowProgressEnvelopeV1Schema);
+}>): Readonly<{ kind: 'available'; content: z.infer<typeof WorkflowProgressEnvelopeV1Schema> }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1(params);
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'invocation_progress'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
 }
 
 export function sealWorkflowCheckpointStoredEnvelopeV1(params: Readonly<{
@@ -283,8 +306,12 @@ export function sealWorkflowCheckpointStoredEnvelopeV1(params: Readonly<{
 export function openWorkflowCheckpointStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee'; binding: WorkflowCheckpointStoredBindingV1;
   envelope: unknown; runDataKey?: Uint8Array;
-}>) {
-  return narrowOpenedWorkflowContentV1(openWorkflowStoredEnvelopeV1(params), WorkflowCheckpointEnvelopeV1Schema);
+}>): Readonly<{ kind: 'available'; content: z.infer<typeof WorkflowCheckpointEnvelopeV1Schema> }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1(params);
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'checkpoint'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
 }
 
 export function sealWorkflowFinalResultStoredEnvelopeV1(params: Readonly<{
@@ -298,8 +325,12 @@ export function sealWorkflowFinalResultStoredEnvelopeV1(params: Readonly<{
 export function openWorkflowFinalResultStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee'; binding: WorkflowFinalResultStoredBindingV1;
   envelope: unknown; runDataKey?: Uint8Array;
-}>) {
-  return narrowOpenedWorkflowContentV1(openWorkflowStoredEnvelopeV1(params), WorkflowFinalResultV1Schema);
+}>): Readonly<{ kind: 'available'; content: z.infer<typeof WorkflowFinalResultV1Schema> }> | WorkflowStoredContentOpenFailureV1 {
+  const opened = openWorkflowStoredEnvelopeV1(params);
+  if (opened.kind !== 'available') return opened;
+  return opened.payload.purpose === 'final_result'
+    ? { kind: 'available' as const, content: opened.payload.payload.content }
+    : { kind: 'contentInvalid' as const };
 }
 
 export function serializeWorkflowStoredContentEnvelopeV1(envelope: unknown): string {

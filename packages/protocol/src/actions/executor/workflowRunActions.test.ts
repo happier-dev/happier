@@ -99,6 +99,55 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it('admits only the listed facts of each accepted program on a Run list page', async () => {
+    // Every list page and background Run refresh re-reads every listed Run's
+    // accepted snapshot. The page shows names, origin, place and starter, so
+    // the work must not scale with the frozen program's size.
+    const objectsAdmittedForListing = async (steps: number) => {
+      const sized = validateWorkflowDefinition({ ...definition, blocks: Array.from({ length: steps }, (_, index) => `work ${index}`) })
+        .normalizedDefinition!;
+      const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition: sized, context: {
+        source: { kind: 'saved', definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null },
+        inputs: {}, machineId: 'machine-a', executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct', originSessionId: 'origin-1' }, authorization: { principal: { kind: 'host' } },
+      }, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      if (!materialized.ok) throw new Error('snapshot_fixture_failed');
+      // E2EE is the product read: the stored envelope is one opaque string.
+      const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+        material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
+      const encryption: AvailableAutomationAccountEncryptionV1 = { kind: 'available', material,
+        witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: material.contentPublicKeyFingerprint } };
+      const prepared = prepareWorkflowRunDataKeyV1({ accountId: 'account-1', encryption, randomBytes });
+      if (prepared.runCrypto.mode !== 'e2ee') throw new Error('run_key_fixture_failed');
+      const snapshot = runSnapshot();
+      snapshot.keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ ...snapshot.keyCensus,
+        encryptionMode: 'e2ee', ownerAccountCurrentness: encryption.witness,
+        dataEncryptionKey: prepared.recipientKeyEnvelopes[0]!.encryptedDataKey,
+        callerDataEncryptionKey: prepared.recipientKeyEnvelopes[0]!.encryptedDataKey });
+      snapshot.acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'e2ee', runDataKey: prepared.runCrypto.runDataKey, randomBytes,
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: materialized.snapshot,
+      }));
+      const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async () => ({ runs: [snapshot.run],
+        acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope }, keyCensusByRunId: { [runId]: snapshot.keyCensus } }) }),
+      resolveEncryption: async () => encryption });
+      await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+      // Every structural JSON walk and strict copy registers each object it
+      // visits in a WeakSet, so this counts the objects a page admits.
+      const add = vi.spyOn(WeakSet.prototype, 'add');
+      try {
+        const page = await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
+        expect(page.runs[0]).toMatchObject({ id: runId, startedBy: 'user', where: { machineId: 'machine-a', directory: '/repo' },
+          origin: { kind: 'direct', originSessionId: 'origin-1' } });
+        return add.mock.calls.length;
+      } finally {
+        add.mockRestore();
+      }
+    };
+    expect(await objectsAdmittedForListing(40)).toBe(await objectsAdmittedForListing(1));
+  });
+
   it('projects frozen source authorship without reading the current definition or Run detail', async () => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     for (const savedBy of [

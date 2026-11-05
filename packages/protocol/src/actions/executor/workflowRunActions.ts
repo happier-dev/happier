@@ -29,7 +29,7 @@ import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, Workflo
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
   hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import type { WorkflowActionIdV1 } from '../actionIds.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
@@ -2374,13 +2374,21 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               if (typeof rawEnvelope !== 'string') throw workflowError('content_unavailable');
               const envelope = parseWorkflowStoredContentEnvelopeV1(rawEnvelope);
               if (!envelope) throw workflowError('content_unavailable');
-              const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({
-                ...openMode(resolved.encryption),
-                binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.ownerAccountId, runId: run.id },
-                envelope,
-              });
-              if (opened.kind !== 'available') throw workflowError('content_unavailable');
-              const accepted = WorkflowAcceptedSnapshotV1Schema.parse(opened.content);
+              const acceptedOpen = { ...openMode(resolved.encryption), envelope,
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.ownerAccountId, runId: run.id } } as const;
+              // A row shows only listed facts. The frozen program is admitted
+              // only when this page must name authored steps or derive an
+              // older snapshot's destinations.
+              const listed = openWorkflowAcceptedSnapshotListingStoredEnvelopeV1(acceptedOpen);
+              if (listed.kind !== 'available') throw workflowError('content_unavailable');
+              const accepted = listed.content;
+              let program: WorkflowAcceptedSnapshotV1 | undefined;
+              const openProgram = () => {
+                if (program) return program;
+                const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1(acceptedOpen);
+                if (opened.kind !== 'available') throw workflowError('content_unavailable');
+                return program = opened.content;
+              };
               origin = projectAcceptedOrigin(accepted.origin, run.origin) ?? run.origin;
               callerAccessByRunId[run.id] = projectRunCallerAccess(census);
               supportsAnotherRoundByRunId[run.id] = supportsWorkflowAnotherRoundV1(accepted.authoredDefinition);
@@ -2393,13 +2401,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               // Resolve authored names against the accepted definition, never a mutable source.
               // Nested workflows have local ids; branch scope does not change their numbering.
               const authoredContext = (path: WorkflowProgressEnvelopeV1['invocationPath']) => {
-                let definition: WorkflowDefinitionV1 | undefined = accepted.definition;
+                const { definition: root, frozenChildren } = openProgram();
+                let definition: WorkflowDefinitionV1 | undefined = root;
                 let laneLabel: string | undefined;
                 for (const scope of path.scope) {
                   if (!definition) break;
                   const block: WorkflowBlock | undefined = walkWorkflowBlocks(definition.blocks).find(block => block.id === scope.blockId);
                   if (scope.kind === 'workflow') {
-                    definition = block?.kind === 'workflow' ? accepted.frozenChildren[block.workflowRef] : undefined;
+                    definition = block?.kind === 'workflow' ? frozenChildren[block.workflowRef] : undefined;
                   } else if (scope.kind === 'branch' && block?.kind === 'parallel') {
                     laneLabel = block.branches.find(branch => branch.id === scope.branchId)?.name?.trim() || laneLabel;
                   }
@@ -2444,7 +2453,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                 }
               }
               const targetSessionIds = accepted.targetSessionIds
-                ?? deriveWorkflowDestinationsV1({ definition: accepted.definition, materializedLeaves: accepted.materializedLeaves,
+                ?? deriveWorkflowDestinationsV1({ definition: openProgram().definition, materializedLeaves: openProgram().materializedLeaves,
                   originSessionId: accepted.origin?.originSessionId }).targetSessionIds;
               matchesDestination = args.input.targetSessionId === undefined || targetSessionIds.includes(args.input.targetSessionId);
               if (underSessionIds !== null) matchesUnder ||= targetSessionIds.some(id => underSessionIds.has(id));

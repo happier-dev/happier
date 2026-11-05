@@ -15,6 +15,7 @@ import {
     isWorkflowRunStopPending,
     resolveWorkStatusTone,
     WORK_STATUS_PILL_VARIANT,
+    type WorkStatusPresentation,
 } from '@/components/work/status/resolveWorkStatusTone';
 import { t } from '@/text';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
@@ -146,16 +147,23 @@ export function isWorkflowWaitForYouHold(
     return lifecycle === 'waiting_for_review' && context?.blockKind === 'wait';
 }
 
+export function resolveWorkflowInvocationWorkStatus(
+    lifecycle: WorkflowInvocationLifecycleV1,
+    context?: WorkflowInvocationLifecycleContext,
+): WorkStatusPresentation {
+    const label = isWorkflowWaitForYouHold(lifecycle, context)
+        ? t('workflows.review.waitTitle')
+        : t(`workflows.invocationState.${lifecycle}`);
+    const attention = WORKFLOW_ATTENTION_LIFECYCLES.includes(lifecycle);
+    return resolveWorkStatusTone({ kind: 'workflow_step', facts: { ...context, lifecycle, word: label, inAttentionWindow: attention } });
+}
+
 export function describeWorkflowInvocationLifecycle(
     lifecycle: WorkflowInvocationLifecycleV1,
     context?: WorkflowInvocationLifecycleContext,
 ): WorkflowLifecyclePresentation {
     const shape = WORKFLOW_LIFECYCLE_SHAPES[lifecycle];
-    const label = isWorkflowWaitForYouHold(lifecycle, context)
-        ? t('workflows.review.waitTitle')
-        : t(`workflows.invocationState.${lifecycle}`);
-    const attention = WORKFLOW_ATTENTION_LIFECYCLES.includes(lifecycle);
-    const status = resolveWorkStatusTone({ kind: 'workflow_step', facts: { ...context, lifecycle, word: label, inAttentionWindow: attention } });
+    const status = resolveWorkflowInvocationWorkStatus(lifecycle, context);
     return {
         lifecycle,
         label: status.word,

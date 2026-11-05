@@ -7,6 +7,7 @@ import { z } from 'zod/mini';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 
 import {
+  WorkflowDefinitionBaseSchema,
   WorkflowDefinitionV1Schema,
   type WorkflowBlock,
   type WorkflowDefinitionV1,
@@ -210,10 +211,12 @@ export const WorkflowRunStartedByV1Schema = lazyZodSchema(() => z.enum(['user', 
 export type WorkflowRunStartedByV1 = z.infer<typeof WorkflowRunStartedByV1Schema>;
 export const WorkflowFrozenChildrenV1Schema = lazyZodSchema(() => z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema));
 
+/** Private relation frozen by admission, inside the existing Run envelope. */
+const WorkflowAcceptedTargetSessionIdsV1Schema = lazyZodSchema(() => z.optional(z.array(preservedBoundedNfcString(191, 'Session ids'))));
+
 const workflowMaterializationFields = () => ({
   approvedOperation: z.optional(WorkflowApprovedOperationV1Schema),
-  /** Private relation frozen by admission, inside the existing Run envelope. */
-  targetSessionIds: z.optional(z.array(preservedBoundedNfcString(191, 'Session ids'))),
+  targetSessionIds: WorkflowAcceptedTargetSessionIdsV1Schema,
   requiresMachineStartCapacity: z.optional(z.boolean()),
   startedBy: WorkflowRunStartedByV1Schema,
   workDepth: z.number().check(z.int(), z.nonnegative(), z.int()),
@@ -238,6 +241,14 @@ export const WorkflowAcceptedOriginV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type WorkflowAcceptedOriginV1 = z.infer<typeof WorkflowAcceptedOriginV1Schema>;
 
+const WorkflowAcceptedAutomationSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('automation'),
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  definitionId: zMini.optional(WorkflowDefinitionIdV1Schema),
+  revision: z.optional(WorkflowArtifactRevisionV1Schema),
+  savedBy: zMini.optional(zMini.nullable(WorkflowDefinitionSavedByV1Schema)),
+}));
+
 const WorkflowAcceptedSnapshotAutomationV1Schema = lazyZodSchema(() => z.strictObject({
   ...workflowMaterializationFields(),
   definition: WorkflowDefinitionV1Schema,
@@ -250,13 +261,7 @@ const WorkflowAcceptedSnapshotAutomationV1Schema = lazyZodSchema(() => z.strictO
   origin: z.optional(WorkflowAcceptedOriginV1Schema),
   resultDelivery: z.optional(WorkflowResultDeliveryV1Schema),
   authorization: z.lazy((): typeof WorkflowAcceptedAuthorizationV1Schema => WorkflowAcceptedAuthorizationV1Schema),
-  source: z.strictObject({
-    kind: z.literal('automation'),
-    automationId: asProtocolZod(AutomationIdV1Schema),
-    definitionId: zMini.optional(WorkflowDefinitionIdV1Schema),
-    revision: z.optional(WorkflowArtifactRevisionV1Schema),
-    savedBy: zMini.optional(zMini.nullable(WorkflowDefinitionSavedByV1Schema)),
-  }),
+  source: WorkflowAcceptedAutomationSourceV1Schema,
 }).check(z.superRefine((value, context) => {
   if (value.source.definitionId !== undefined && value.source.savedBy === undefined) {
     context.addIssue({ code: 'custom', path: ['source', 'savedBy'], message: 'Saved sources must freeze the authorship observation' });
@@ -416,3 +421,21 @@ export const WorkflowAcceptedSnapshotV1Schema = lazyZodSchema(() => z.union([
 export type WorkflowAcceptedSnapshotV1 = z.infer<typeof WorkflowAcceptedSnapshotV1Schema>;
 
 export { type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';
+
+/**
+ * The accepted facts a Run list row shows: names, starter, origin, place and
+ * destinations. A stored read through this projection drops the frozen
+ * program (definitions, leaves, approvals) without admitting it; Run detail
+ * and authored-step labels open the complete snapshot.
+ */
+export const WorkflowAcceptedSnapshotListingV1Schema = lazyZodSchema(() => z.object({
+  targetSessionIds: WorkflowAcceptedTargetSessionIdsV1Schema,
+  startedBy: WorkflowRunStartedByV1Schema,
+  authoredDefinition: z.object({ inputs: WorkflowDefinitionBaseSchema.shape.inputs }),
+  metadata: z.nullable(WorkflowDefinitionMetadataV1Schema),
+  source: z.union([WorkflowAcceptedDirectSourceV1Schema, WorkflowAcceptedAutomationSourceV1Schema]),
+  machineId: preservedBoundedNfcString(191, 'Machine ids'),
+  workspaceTarget: WorkflowAcceptedWorkspaceTargetV1Schema,
+  origin: z.optional(WorkflowAcceptedOriginV1Schema),
+}));
+export type WorkflowAcceptedSnapshotListingV1 = z.infer<typeof WorkflowAcceptedSnapshotListingV1Schema>;
