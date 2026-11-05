@@ -6,6 +6,7 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presenta
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
+import type { AutomationEventAuthoringSeed } from '@/sync/domains/workflows/automationEventAuthoringSeed';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
@@ -395,12 +396,14 @@ function AccountTriggerPopover(props: Readonly<{
 type NewAccountTriggerPopoverProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
-    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    eventSeed?: AutomationEventAuthoringSeed;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    /** Opened from a Machine's own Triggers section: Runs on starts at that Machine. */
+    initialProject?: WorkflowProjectTargetV1;
 }>;
 
 export function NewAccountTriggerPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
-    const eventSeed = props.eventSeed;
+    const eventSeed = props.eventSeed && !('kind' in props.eventSeed) ? props.eventSeed : undefined;
     return eventSeed?.sourceInstanceId
         ? <ExistingAccountEventSourceIntake {...props} eventSeed={eventSeed} sourceInstanceId={eventSeed.sourceInstanceId} />
         : <NewAccountTriggerDraftPopover {...props} />;
@@ -467,7 +470,9 @@ function ExistingAccountEventSourceIntake(props: Omit<NewAccountTriggerPopoverPr
 
 function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
     const thenOptions = useTriggerThenOptions(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
-    const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(null);
+    const runSeed = props.eventSeed && 'kind' in props.eventSeed && props.eventSeed.kind === 'managedRunLifecycle' ? props.eventSeed : null;
+    const eventSeed = props.eventSeed && !('kind' in props.eventSeed) ? props.eventSeed : undefined;
+    const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(() => runSeed?.project ?? props.initialProject ?? null);
     return (
         <TriggerPopover
             testID="workflows-column-new-trigger-popover"
@@ -476,8 +481,9 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
             whenKinds={['schedule', 'pluginEvent']}
             sessionId={null}
             initial={null}
-            initialWhen={props.eventSeed ? { kind: 'pluginEvent', value: null, eventRef: props.eventSeed.eventRef } : undefined}
-            initialEventSeed={props.eventSeed}
+            initialWhen={runSeed ? { kind: 'runLifecycle', source: runSeed.source, condition: 'terminal' }
+                : eventSeed ? { kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef } : undefined}
+            initialEventSeed={eventSeed}
             accountLifetime={props.accountLifetime}
             serverId={props.accountLifetime?.scope.serverId}
             workflowOptions={thenOptions.workflowOptions}

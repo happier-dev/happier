@@ -10,6 +10,7 @@ import {
   WorkflowResolvedInputsV1Schema,
   WorkflowRunExecutionTargetV1Schema,
 } from '../workflows/workflowDefinitionV1.js';
+import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 import { WorkflowDefinitionV1Schema } from '../workflows/workflowV1.js';
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import {
@@ -45,6 +46,7 @@ export function parseAutomationObservationOnlyDefinitionV1(serialized: unknown):
 }
 
 export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.strictObject({
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   workspace: z.strictObject({
     directory: z.string().check(z.minLength(1)),
     workspaceRefId: zMini.optional(preservedBoundedNfcString(191, 'Workspace reference ids')),

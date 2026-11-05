@@ -158,7 +158,7 @@ export type TriggerPopoverShellProps = Readonly<{
     }>) => React.ReactNode;
 }>;
 
-function TriggerAnchoredPopoverShell(props: TriggerPopoverShellProps): React.ReactElement {
+export function TriggerAnchoredPopoverShell(props: TriggerPopoverShellProps): React.ReactElement {
     return (
         <Popover
             {...props}
@@ -192,7 +192,7 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
 
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
 // T1's content width plus the canonical page-row insets, rather than charging the insets to its controls.
-const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHorizontalPx;
+export const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHorizontalPx;
 const CLOCK_FIELD_STYLE = { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } as const;
 
 const styles = StyleSheet.create((theme) => ({
@@ -236,7 +236,7 @@ function useTriggerFieldLayout() {
     return useViewportClass() === 'compact' ? 'stacked' as const : 'adaptive' as const;
 }
 
-function whenDescription(kind: SessionTriggerWhenKind, sessionScoped: boolean): string | undefined {
+function whenDescription(kind: TriggerWhenValue['kind'], sessionScoped: boolean): string | undefined {
     switch (kind) {
         case 'turnEnds':
         case 'needsYou':
@@ -250,12 +250,13 @@ function whenDescription(kind: SessionTriggerWhenKind, sessionScoped: boolean): 
         case 'schedule':
             return sessionScoped ? t(`workflows.triggers.kindDescription.${kind}`) : undefined;
         case 'ciFailed':
+        case 'runLifecycle':
             return undefined;
     }
 }
 
 /** A field select row: the canonical `DropdownMenu` item trigger, opened from its own row. */
-function FieldSelect(props: Readonly<{
+export function FieldSelect(props: Readonly<{
     testID: string;
     title: string;
     subtitle?: string;
@@ -354,7 +355,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const promptDestination = useSessionReferenceTarget(
         needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
     );
-    const unavailableWhen = props.unavailableKinds?.[when.kind];
+    const unavailableWhen = when.kind === 'runLifecycle' ? undefined : props.unavailableKinds?.[when.kind];
     const complete = (props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
         && (observationOnly || props.hostComplete !== false) && (!needsTarget || then.kind !== 'runWorkflow'
             || (workflow.status === 'ready' && !inputFields.some((field) => field.blocking)))
@@ -589,7 +590,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 }
 
 /** Repeat · Day · At, or the expression a schedule was written with when it is not a simple one. */
-function ScheduleRows(props: Readonly<{
+export function ScheduleRows(props: Readonly<{
     testID: string;
     when: Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>>;
     onChange: (next: TriggerWhenValue) => void;
@@ -792,7 +793,7 @@ function ThenRows(props: Readonly<{
 }
 
 /** Uses the editor/New Session catalog and picker only while authoring a new Agent session. */
-function PromptAgentRows(props: Readonly<{
+export function PromptAgentRows(props: Readonly<{
     testID: string;
     then: Extract<TriggerThenValue, { kind: 'sendPrompt' }>;
     onChange: (next: TriggerThenValue) => void;

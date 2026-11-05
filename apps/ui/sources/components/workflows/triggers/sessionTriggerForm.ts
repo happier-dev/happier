@@ -6,6 +6,7 @@ import { projectFollowEventConditionPickerV1, type AutomationTriggerDefinitionIn
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 
 import { readSessionLifecycleKind } from './formatTriggerSummary';
 import { buildSimpleScheduleCron, parseSimpleSchedule, type SimpleSchedule } from './triggerSchedule';
@@ -31,6 +32,7 @@ export type SessionTriggerWhenKind = (typeof SESSION_TRIGGER_WHEN_KINDS)[number]
 export type PluginEventTriggerInput = Extract<AutomationTriggerDefinitionInput, Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>>;
 
 export type TriggerWhenValue =
+    | AutomationRunLifecycleTrigger
     | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }>;
         observationOnly?: Readonly<{ kind: 'observationOnly' }> }>
     | Readonly<{
@@ -170,6 +172,7 @@ export function buildTriggerDefinition(params: Readonly<{
     sessionId: string | null;
 }>): AutomationTriggerDefinitionInput | null {
     const { when, enabled } = params;
+    if (when.kind === 'runLifecycle') return { ...when, enabled };
     if (when.kind === 'pluginEvent') return when.value === null ? null : { ...when.value, enabled };
     if (when.kind === 'schedule') {
         if (when.schedule === null && when.everyMs !== undefined) {
@@ -201,7 +204,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     enabled: boolean;
 }>): SessionInitialTriggerDefinitionV1 | null {
     const { when, enabled } = params;
-    if (when.kind === 'pluginEvent') return null;
+    if (when.kind === 'pluginEvent' || when.kind === 'runLifecycle') return null;
     if (when.kind === 'schedule') {
         const trigger = buildTriggerDefinition({ ...params, sessionId: null });
         return trigger?.kind === 'schedule' ? trigger : null;
@@ -393,6 +396,7 @@ export function readTriggerWhen(
         return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null };
     }
     if (trigger.kind === 'schedule') return readScheduleWhen(trigger.schedule);
+    if (trigger.kind === 'runLifecycle') return { kind: 'runLifecycle', source: trigger.source, condition: trigger.condition };
     if (trigger.kind === 'sessionLifecycle') {
         const kind = readSessionLifecycleKind(trigger.events);
         const source = 'sourceSessionId' in trigger ? { sourceSessionId: trigger.sourceSessionId } : {};

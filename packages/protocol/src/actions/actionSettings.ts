@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { normalizeStoredApprovalProfilesV1, type ApprovalProfileV1 } from './approvalProfiles.js';
 import { z } from 'zod/mini';
 
 import { ActionIdSchema, normalizeLegacyActionId, type ActionId } from './actionIds.js';
@@ -182,6 +183,7 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     /** One viewing Action waiver per plugin, never a retained source grant. */
     pluginHostCaptureApprovalWaived: z.catch(z.optional(z.array(z.string().check(z.minLength(1)))), undefined),
     scopedApprovalPreferences: z.optional(z.array(ActionScopedApprovalPreferenceV1Schema)),
+    approvalProfiles: z.optional(z.pipe(z.unknown(), z.transform(normalizeStoredApprovalProfilesV1))),
     callerSurfacePolicies: z.catch(z.optional(CallerSurfacePoliciesV1Schema), undefined),
   }), z.transform((value) => ({
     v: 1 as const,
@@ -189,6 +191,7 @@ export const ActionsSettingsV1Schema = lazyZodSchema(() => z.pipe(z.looseObject(
     ...(value.approvalWaivedSurfaces ? { approvalWaivedSurfaces: value.approvalWaivedSurfaces } : {}),
     ...(value.pluginHostCaptureApprovalWaived ? { pluginHostCaptureApprovalWaived: value.pluginHostCaptureApprovalWaived } : {}),
     ...(value.scopedApprovalPreferences ? { scopedApprovalPreferences: normalizeScopedApprovalRows(value.scopedApprovalPreferences) } : {}),
+    ...(value.approvalProfiles ? { approvalProfiles: value.approvalProfiles } : {}),
     ...(value.callerSurfacePolicies ? { callerSurfacePolicies: value.callerSurfacePolicies } : {}),
   }))));
 
@@ -198,6 +201,7 @@ export type ActionsSettingsV1 = Readonly<{
   approvalWaivedSurfaces?: Record<string, ActionSurfaceKey[]>;
   pluginHostCaptureApprovalWaived?: string[];
   scopedApprovalPreferences?: ActionScopedApprovalPreferenceV1[];
+  approvalProfiles?: ApprovalProfileV1[];
   callerSurfacePolicies?: z.infer<typeof CallerSurfacePoliciesV1Schema>;
 }>;
 
@@ -220,6 +224,7 @@ function isActionsSettingsV1Document(value: unknown): value is Readonly<{
   approvalWaivedSurfaces?: unknown;
   pluginHostCaptureApprovalWaived?: unknown;
   scopedApprovalPreferences?: unknown;
+  approvalProfiles?: unknown;
   callerSurfacePolicies?: unknown;
 }> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -268,6 +273,7 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
     }
   }
   return { v: 1, actions, ...(waivers ? { approvalWaivedSurfaces: waivers } : {}),
+    ...(value.approvalProfiles === undefined ? {} : { approvalProfiles: normalizeStoredApprovalProfilesV1(value.approvalProfiles) }),
     ...(pluginWaivers ? { pluginHostCaptureApprovalWaived: pluginWaivers } : {}),
     ...(callerSurfacePolicies ? { callerSurfacePolicies } : {}),
     ...(Array.isArray(value.scopedApprovalPreferences) ? { scopedApprovalPreferences: normalizeScopedApprovalRows(scopedRows) } : {}) };

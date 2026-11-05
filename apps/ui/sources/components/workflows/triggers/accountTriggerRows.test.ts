@@ -35,7 +35,9 @@ describe('projectAccountTriggerRows', () => {
             inputs: [{ name: 'topic', valueType: 'string' as const, required: false }] } };
         const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null,
             sets: [set('digest', { target, triggers: [] })] });
-        expect(rows[0]?.subtitle).toBe('Morning digest');
+        // A manual set is told apart by what it runs, so that leads and "Manual" is the quiet line.
+        expect(rows[0]?.title).toBe('Morning digest');
+        expect(rows[0]?.subtitle).toBe('workflows.triggers.summary.manual');
     });
     it('shows the legacy prompt and retained placements in the column, including an unreadable legacy row', () => {
         const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null, sets: [
@@ -74,5 +76,17 @@ describe('projectAccountTriggerRows', () => {
             expect.objectContaining({ automationId: 'off', off: true }),
             expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowDeleted' }),
         ]);
+    });
+});
+
+describe('projectAccountTriggerRows subject', () => {
+    it("keeps only the sets that run on the subject Machine, by their project or any placement", () => {
+        const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null, subject: { kind: 'machine', machineId: 'm1' }, sets: [
+            set('project-here', { project: { machineId: 'm1', directory: '~' }, triggers: [daily('a', '0 9 * * *')] }),
+            set('placed-here', { placements: [{ machineId: 'm2', directory: '~' }, { machineId: 'm1', directory: '~/app' }], triggers: [] }),
+            set('elsewhere', { project: { machineId: 'm2', directory: '~' }, triggers: [daily('b', '0 9 * * *')] }),
+            set('nowhere', { triggers: [] }),
+        ] });
+        expect(rows.map((row) => row.automationId)).toEqual(['project-here', 'placed-here']);
     });
 });
