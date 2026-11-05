@@ -545,6 +545,12 @@ resources with the deterministic Account/source identity. A still-present,
 uncharacterized or stale source supplies no recovered proof. Unrecognized
 historical credentials remain cleanup-pending rather than being removed wholesale.
 
+Within one material-demand operation, the Saved Secret owner reuses the current
+material admission produced by that recovery when validating the selected
+references. It reads material again if the recovery's snapshot was replaced or
+the caller requires a reference census the recovery did not request. A later
+operation still observes material and access anew.
+
 The predecessor UI's `accountLegacySettingDefinitions` admits
 `inferenceOpenAIKey` as a nullable bare Account string, not a SavedSecret object
 or binding. The same importer preserves its exact opened value as an `apiKey`

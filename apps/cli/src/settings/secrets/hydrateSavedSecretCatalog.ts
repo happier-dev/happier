@@ -3,6 +3,7 @@ import {
   readRequestedSavedSecretOperationReferences,
   readSavedSecretCatalogForOperation,
   readSavedSecretCatalogAdmissionForOperation,
+  assertSavedSecretOperationReferencesReady,
   captureSavedSecretReferencesForOperation,
   type SavedSecretCatalogRefreshInputV1,
   type SavedSecretCatalogOperationAdmissionV1,
@@ -81,11 +82,22 @@ type SharedSavedSecretPromoteInputV1 = ReturnType<typeof SharedSavedSecretPromot
 
 export async function refreshSavedSecretCatalogAdmissionForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<SavedSecretCatalogOperationAdmissionV1> {
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-  const result = await importLegacySavedSecretsForOperation(input);
-  const observedSourceVersion = (input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot())?.settingsVersion;
+  const readSnapshot = () => input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
+  const imported: { admission?: SavedSecretCatalogOperationAdmissionV1 } = {};
+  const result = await importLegacySavedSecrets(input, admission => { imported.admission = admission; });
+  const observedSnapshot = readSnapshot();
+  const observedSourceVersion = observedSnapshot?.settingsVersion;
   let admission: SavedSecretCatalogOperationAdmissionV1;
   try {
-    admission = await readSavedSecretCatalogAdmissionForOperation(input);
+    input.signal?.throwIfAborted();
+    // History recovery already admitted these materials in this operation.
+    // A later import/publication or failed refresh withdraws that snapshot.
+    if (imported.admission && imported.admission.snapshot === observedSnapshot) {
+      admission = imported.admission;
+      assertSavedSecretOperationReferencesReady(admission.snapshot, readRequestedSavedSecretOperationReferences(input));
+    } else {
+      admission = await readSavedSecretCatalogAdmissionForOperation(input);
+    }
   } finally {
     // A denied reference still has an import outcome to report at this source.
     const refreshed = input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
@@ -641,6 +653,17 @@ function readCurrentInlineVoiceReceipt(raw: Readonly<Record<string, unknown>>, r
 
 /** Material demand imports recognized legacy sources, without making partial import a catalog failure. */
 export async function importLegacySavedSecretsForOperation(input: SavedSecretCatalogRefreshInputV1): Promise<SavedSecretLegacyImportResultV1> {
+  return importLegacySavedSecrets(input);
+}
+
+async function importLegacySavedSecrets(input: SavedSecretCatalogRefreshInputV1,
+  onCatalogAdmission?: (admission: SavedSecretCatalogOperationAdmissionV1) => void,
+): Promise<SavedSecretLegacyImportResultV1> {
+  const readCatalog = async (request: SavedSecretCatalogRefreshInputV1) => {
+    const admission = await readSavedSecretCatalogAdmissionForOperation(request);
+    if (!input.includeReferenceCensus || request.includeReferenceCensus) onCatalogAdmission?.(admission);
+    return admission.snapshot;
+  };
   const context = input.operationContext;
   const captured = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   const raw = captured?.rawSettings;
@@ -701,7 +724,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
         || originalValue === null || material.value !== originalValue) return false;
       const expectedReceipt = readCurrentInlineVoiceReceipt(source.raw, receipt);
       const verify = async (refreshMaterial?: true) => {
-        if (refreshMaterial) await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+        if (refreshMaterial) await readCatalog({ expectedScopeKey: input.expectedScopeKey,
           refreshCatalog: true, references: [{ ref }], signal: input.signal, operationContext: context });
         const frontier = acknowledgedSource ?? source;
         const readback = await store.readSourceSnapshot();
@@ -737,7 +760,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
         return { status: 'pending', reason: 'conflict' };
       }
       const ref = receipt.credential.source.resourceRef;
-      const resources = await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+      const resources = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
         refreshCatalog: true, references: [{ ref }], signal: input.signal, operationContext: context });
       if (!await admitInlineResourceReceipt(receipt, source, resources, ref)) {
         return { status: 'pending', reason: 'source-uncharacterized' };
@@ -883,7 +906,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
         }
       }
       if (inline) {
-        const admitted = await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+        const admitted = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
           refreshCatalog: true, references: [{ ref, revision: 1 }], signal: input.signal, operationContext: context });
         if (!await admitInlineResourceReceipt(inline, readback, admitted, ref)) {
           pending = { status: 'pending', reason: 'outcome-unknown' }; break;
@@ -895,7 +918,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
     if (await isCurrent()) {
       const source = await store.readSourceSnapshot();
       if (!matchesSourceFrontier(source)) return { status: 'pending', reason: 'conflict' };
-      const resources = await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+      const resources = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
         refreshCatalog: true, signal: input.signal, operationContext: context });
       const materializer = createSavedSecretMaterializerFromSnapshotV1(resources,
         context ? { isCurrent: () => context.readSnapshot() === resources } : undefined);
@@ -916,7 +939,7 @@ export async function importLegacySavedSecretsForOperation(input: SavedSecretCat
     }
     if (result.status === 'complete' && sourceFrontier) {
       if (verifiedReferences.length) {
-        const admitted = await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
+        const admitted = await readCatalog({ expectedScopeKey: input.expectedScopeKey,
           refreshCatalog: true, operationContext: context, signal: input.signal,
           references: verifiedReferences.map(reference => ({ ref: reference.resourceRef, revision: reference.revision })) });
         const materializer = createSavedSecretMaterializerFromSnapshotV1(admitted,
