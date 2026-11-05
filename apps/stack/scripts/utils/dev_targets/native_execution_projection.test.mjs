@@ -91,18 +91,19 @@ test('dependency-backed commands without another class still enter dependency-in
   assert.equal(policy.heavyClass, 'dependency-install');
 });
 
-test('CLI unit script dispatch reserves compiler demand without charging plain focused readers', () => {
+test('CLI unit script dispatch reserves compiler demand without charging plain focused readers', async () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   for (const [args, expectedClass] of [
-    [['--script=test:unit:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'focused-validation'],
-    [['corepack', 'yarn', '-s', 'test:unit:vitest:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'focused-validation'],
+    [['--script=test:unit:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'validation'],
+    [['corepack', 'yarn', '-s', 'test:unit:vitest:local', 'src/api/artifacts/accountArtifactStore.test.ts'], 'validation'],
     [['corepack', 'yarn', '-s', 'test:local'], 'compilation'],
     [['corepack', 'yarn', '-s', 'test:unit'], 'compilation'],
     [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'compilation'],
     [['vitest', 'run'], 'compilation'],
     [['hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'vitest', 'run', 'scripts/__tests__/runPkgrollBuild.test.ts'], 'compilation'],
   ]) {
-    const policy = resolveRemoteCommandPolicy(args, { cwd: 'apps/cli' });
+    // Admission consumes the complete policy after deferred Vitest selection.
+    const policy = await resolvePackageCommandPolicy(args, { repoRoot: root, cwd: 'apps/cli' });
     assert.equal(policy.heavyClass, expectedClass);
     assert.equal(policy.kind, 'source-test');
     const native = spawnSync('/bin/sh', ['-c', `${renderNativeCommandPolicy()}\nrepo_root=$1; invoked_cwd=$1/apps/cli; shift; resolve_native_command_policy "$@"; printf '%s,%s' "$policy_kind" "$policy_heavyClass"`, 'policy', root, ...args], { encoding: 'utf8' });
@@ -119,13 +120,13 @@ test('root Yarn workspace CLI unit requests retain the selected component and va
   const policy = await resolvePackageCommandPolicy(args, { repoRoot: root, cwd: root });
   assert.equal(policy.component, 'apps/cli');
   assert.equal(policy.kind, 'source-test');
-  assert.equal(policy.heavyClass, 'focused-validation');
+  assert.equal(policy.heavyClass, 'validation');
   const metadata = spawnSync(process.execPath, [fileURLToPath(new URL('./remote_commands.mjs', import.meta.url)),
     '--package-policy', root, root, ...args], { encoding: 'utf8' });
   assert.equal(metadata.status, 0, metadata.stderr);
   const native = spawnSync('/bin/sh', ['-c', 'eval "$1"; printf \'%s,%s,%s\' "$policy_component" "$policy_kind" "$policy_heavyClass"', 'policy', metadata.stdout], { encoding: 'utf8' });
   assert.equal(native.status, 0, native.stderr);
-  assert.equal(native.stdout, 'apps/cli,source-test,focused-validation');
+  assert.equal(native.stdout, 'apps/cli,source-test,validation');
 });
 
 test('native runtime worker admits installed source tools without emitting workspace prerequisites', () => {
@@ -408,7 +409,7 @@ test('native execution projection contains all POSIX targets and marks automatic
   assert.doesNotMatch(output, /win-host|C:\/repo/);
 });
 
-test('native command decision artifact is current and executes the canonical classifier policy', () => {
+test('native command decision artifact is current and executes the canonical classifier policy', async () => {
   const artifact = new URL('./native_command_policy.sh', import.meta.url);
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
@@ -525,14 +526,20 @@ test('native command decision artifact is current and executes the canonical cla
       ...args.slice(0, compilerIndex + 1),
       ...resolveWorkspaceTypeScriptCompilerArgs({ compilerArgs: args.slice(compilerIndex + 1), env }),
     ];
-    const policy = resolveRemoteCommandPolicy(effectiveArgs, { cwd, env });
+    const authoredPolicy = resolveRemoteCommandPolicy(effectiveArgs, { cwd, env });
+    // The shell refines Vitest selections through the complete async owner;
+    // explicit admission fixtures retain their enclosing authored policy.
+    const policy = authoredPolicy.workerTool === 'vitest'
+      && authoredPolicy.generatorCheck === '0' && !effectiveArgs.includes('--heavyweight-admission')
+      ? await resolvePackageCommandPolicy(effectiveArgs, { repoRoot: root, cwd, env })
+      : authoredPolicy;
     if (expectedHeavyClass !== undefined) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
     if (expectedPlacement) assert.equal(policy.placement, expectedPlacement, args.join(' '));
     if (expectedPreparationBuildMode) assert.equal(policy.preparationBuildMode, expectedPreparationBuildMode, args.join(' '));
     if (expectedComponent) assert.equal(policy.component, expectedComponent, args.join(' '));
     if (expectedBootstrap) assert.equal(policy.bootstrap, expectedBootstrap, args.join(' '));
     if (expectedKind) assert.equal(policy.kind, expectedKind, args.join(' '));
-    const keys = Object.keys(policy);
+    const keys = Object.keys(authoredPolicy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord
       + '; resolve_native_command_policy "$@"; printf "%s\\n" '
