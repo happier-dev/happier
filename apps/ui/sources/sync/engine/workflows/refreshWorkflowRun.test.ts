@@ -101,10 +101,12 @@ describe('refreshWorkflowRunById through the real Account summary and store owne
         expect(home.requestsFor(route)).toHaveLength(1);
     });
 
-    it('keeps readable accepted content without an authored title unnamed', async () => {
+    it('names readable accepted content from its frozen step when no title was authored (FIN M3)', async () => {
         await serveRun();
         await refreshWorkflowRunById(run.id);
-        expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.metadata).toBeNull();
+        expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id)]?.metadata).toEqual({
+            kind: 'available', value: { title: 'Continue' },
+        });
     });
 
     it('reports genuinely unopened accepted content with its typed unavailable reason', async () => {

@@ -7,7 +7,7 @@ import type {
     WorkflowProgressEnvelopeV1,
     WorkflowRunInvocationIndexV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { WorkflowInvocationCoverageKind } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { classifyWorkflowInvocationCoverage, type WorkflowInvocationCoverageKind } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { t } from '@/text';
 import {
     indexWorkflowFlowRunStates,
@@ -425,11 +425,7 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
             blockId: resolved.blockId,
             occurrence: describeOccurrence(resolved.scope, loopsById, frameHint, itemLabels),
             isFrame: resolved.isFrame,
-            coverageKind: resolved.isFrame || resolved.blockId === '$root'
-                ? 'structural'
-                : blockKind === undefined
-                    ? 'unknown'
-                    : blockKind === 'step' || blockKind === 'action' || blockKind === 'wait' ? 'executable' : 'structural',
+            coverageKind: classifyWorkflowInvocationCoverage(blockKind, resolved.isFrame || resolved.blockId === '$root'),
         });
     };
 

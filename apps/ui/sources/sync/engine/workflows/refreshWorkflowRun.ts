@@ -11,7 +11,7 @@ import { readWorkflowRunDisplayMetadataV1 } from '@happier-dev/protocol/workflow
 
 /** Opened detail uses the same Account body owner as the exact Run screen. Callers fence the read before publication. */
 export function publishOpenedWorkflowRunDetail(detail: WorkflowRunGetResultV1, scope?: ServerAccountScope | null): void {
-    const metadata = readWorkflowRunDisplayMetadataV1(detail.acceptedContext);
+    const metadata = readWorkflowRunDisplayMetadataV1(detail.acceptedContext, () => detail.authoredDefinition);
     storage.getState().upsertWorkflowRuns([{ ...workflowRunRowFromSummary(detail.run,
         metadata ? { kind: 'available', value: metadata } : null,
         supportsWorkflowAnotherRoundV1(detail.definition), detail.callerAccess), detail }], scope);

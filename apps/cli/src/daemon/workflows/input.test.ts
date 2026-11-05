@@ -37,8 +37,14 @@ const contextGoal = { id: 'goal', kind: 'goal' as const, origin: 'happier' as co
   title: 'Finish', updatedAt: 1, tokenBudget: 100 };
 
 function promptValues(text: string): Record<string, unknown>[] {
-  return text.split('<happier_discussion_context>\n')[1]!.split('\n</happier_discussion_context>')[0]!
-    .split('\n').slice(1).map(line => JSON.parse(JSON.parse(line.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')).text));
+  const entries = text.split('<happier_discussion_context>\n')[1]!.split('\n</happier_discussion_context>')[0]!
+    .split('\n').slice(1).map(line => JSON.parse(line.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')));
+  return entries.flatMap((entry, index) => {
+    if (entry.kind === 'host_reference_metadata') return [];
+    let value: unknown;
+    try { value = JSON.parse(entry.text); } catch { value = entry.text; }
+    return [{ ...JSON.parse(entries[index - 1].text), value }];
+  });
 }
 
 async function materializeWithRenderCount(params: Parameters<typeof materializeWorkflowStepInput>[0]) {
@@ -685,5 +691,21 @@ describe('workflow input materialization', () => {
     expect(result.text.match(/Failure log:/g)).toHaveLength(1);
   });
 
+
+  it('presents the item content separately from host reference metadata to a review Agent (FIN H2b)', async () => {
+    const result = await materializeWorkflowStepInput({
+      document: { text: 'Reply with the input item.', references: [], attachments: [] },
+      references: [{ kind: 'item', field: 'value' }], runtime: { ...runtime,
+        item: { value: 'alpha', index: 0, position: 1, count: 3 } },
+      reviewContext: { runId: 'run', invocationRecordId: 'held', contentRevision: '0' },
+    });
+    const lines = result.text.split('<happier_discussion_context>\n')[1]!.split('\n</happier_discussion_context>')[0]!
+      .split('\n').slice(1).map(line => JSON.parse(line));
+    expect(lines.filter(entry => entry.author).map(entry => entry.text)).toEqual(['alpha']);
+    expect(lines.find(entry => entry.kind === 'host_reference_metadata')).toMatchObject({
+      text: JSON.stringify({ reference: { kind: 'item', field: 'value' } }),
+    });
+    expect(result.values).toEqual(['alpha']);
+  });
 
 });

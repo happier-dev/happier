@@ -2463,8 +2463,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               where = { machineId: project.machineId, directory: project.directory,
                 ...(project.workspaceRefId ? { workspaceRefId: project.workspaceRefId } : {}) };
               // Names come from this already-opened snapshot, never a mutable
-              // definition lookup. Anonymous inline Runs remain untitled.
-              const displayMetadata = readWorkflowRunDisplayMetadataV1(accepted);
+              // definition lookup. Unnamed Runs use the frozen authored step.
+              const displayMetadata = readWorkflowRunDisplayMetadataV1(accepted, () => accepted.authoredDefinition);
               projected = displayMetadata
                 ? { kind: 'available', value: displayMetadata }
                 : null;

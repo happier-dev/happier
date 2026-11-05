@@ -2698,8 +2698,8 @@ describe('shared Account workflow run owner', () => {
       stepProgress: { completed: 1, total: 3, currentLoop: { completed: 1, total: 4 } } },
       { id: unreadableId, where: null, startedBy: null, stepProgress: null, stepProgressCurrentness: null }],
       metadataByRunId: { [unreadableId]: { kind: 'unavailable', reason: 'content_unavailable' } } });
-    // The name may be absent on a readable snapshot; its Where remains available.
-    expect(result.metadataByRunId).not.toHaveProperty(runId);
+    // FIN M3: a readable unnamed snapshot uses its frozen step, while Where remains available.
+    expect(result.metadataByRunId[runId]).toMatchObject({ kind: 'available', value: { title: 'work' } });
     const detail = await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} });
     expect(detail.run.stepProgress).toEqual(result.runs[0]?.stepProgress);
     expect(detail.run.stepProgressCurrentness).toEqual(result.runs[0]?.stepProgressCurrentness);
@@ -2807,4 +2807,54 @@ describe('shared Account workflow run owner', () => {
     await expect(owner.execute({ actionId: 'workflow.run.cancel', input: { runId, expectedRevision: 0 }, context: {} })).rejects.toMatchObject({ code: 'account_retired' });
     expect(writes).toBe(0);
   });
+
+  it('uses the first named step after an unnamed block consistently in list and detail (FIN M3)', async () => {
+    const snapshot = runSnapshot();
+    const envelope = JSON.parse(snapshot.acceptedEnvelope);
+    const step = envelope.v.content.authoredDefinition.blocks[0];
+    envelope.v.content.authoredDefinition.blocks = [
+      { kind: 'action', id: 'unnamed', actionId: 'notifications.notify_me',
+        input: { message: { kind: 'literal', value: 'Ready' } } },
+      { ...step, id: 'named', name: 'Inspect the parser' },
+    ];
+    snapshot.acceptedEnvelope = JSON.stringify(envelope);
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation === 'list') return { runs: [snapshot.run],
+        acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope }, keyCensusByRunId: { [runId]: snapshot.keyCensus } };
+      if (operation.operation === 'get') return snapshot;
+      if (operation.operation === 'invocations.list') return { invocations: [] };
+      throw new Error('unexpected_storage_operation');
+    } }));
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
+      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'Inspect the parser' } } } });
+    expect(await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }))
+      .toMatchObject({ authoredDefinition: { blocks: [{ id: 'unnamed' }, { id: 'named', name: 'Inspect the parser' }] } });
+  });
+
+  it('names an unnamed Run from its frozen step without extra storage or mutable definition reads (FIN M3)', async () => {
+    const operations: string[] = [];
+    const snapshot = runSnapshot();
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      operations.push(operation.operation);
+      if (operation.operation === 'list') return { runs: [snapshot.run],
+        acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+        keyCensusByRunId: { [runId]: snapshot.keyCensus } };
+      throw new Error('run_name_must_use_the_listed_snapshot');
+    } }), definitions: { get: async () => { throw new Error('run_name_must_not_read_a_mutable_definition'); } } });
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
+      .toMatchObject({ metadataByRunId: { [runId]: { kind: 'available', value: { title: 'work' } } } });
+    expect(operations).toEqual(['list']);
+  });
+
+  it('keeps listed facts readable when the first authored block cannot supply a title (FIN M3)', async () => {
+    const snapshot = runSnapshot();
+    const envelope = JSON.parse(snapshot.acceptedEnvelope);
+    envelope.v.content.authoredDefinition.blocks = [{ kind: 'unknown_future_step' }];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => ({ runs: [snapshot.run],
+      acceptedEnvelopesByRunId: { [runId]: JSON.stringify(envelope) }, keyCensusByRunId: { [runId]: snapshot.keyCensus } }) }));
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} })).toMatchObject({
+      runs: [{ id: runId, startedBy: 'user', where: { machineId: 'machine-a', directory: '/repo' } }], metadataByRunId: {},
+    });
+  });
+
 });

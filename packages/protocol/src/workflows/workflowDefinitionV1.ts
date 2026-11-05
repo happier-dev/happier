@@ -5,9 +5,11 @@ import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { workflowDefinitionDisplayTitleV1 } from './workflowStepLabel.js';
 
 import {
   WorkflowDefinitionBaseSchema,
+  WorkflowBlockSchema,
   WorkflowDefinitionV1Schema,
   type WorkflowBlock,
   type WorkflowDefinitionV1,
@@ -431,7 +433,19 @@ export { type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1
 export const WorkflowAcceptedSnapshotListingV1Schema = lazyZodSchema(() => z.object({
   targetSessionIds: WorkflowAcceptedTargetSessionIdsV1Schema,
   startedBy: WorkflowRunStartedByV1Schema,
-  authoredDefinition: z.object({ inputs: WorkflowDefinitionBaseSchema.shape.inputs }),
+  authoredDefinition: z.object({
+    inputs: WorkflowDefinitionBaseSchema.shape.inputs,
+    // Admit only enough authored structure to find its display title; named
+    // early steps do not admit the rest of the program or resolved leaves.
+    blocks: z.transform((blocks: unknown): WorkflowBlock[] => {
+      if (!Array.isArray(blocks)) return [];
+      for (const candidate of blocks) {
+        const block = WorkflowBlockSchema.safeParse(candidate);
+        if (block.success && workflowDefinitionDisplayTitleV1([block.data])) return [block.data];
+      }
+      return [];
+    }),
+  }),
   metadata: z.nullable(WorkflowDefinitionMetadataV1Schema),
   source: z.union([WorkflowAcceptedDirectSourceV1Schema, WorkflowAcceptedAutomationSourceV1Schema]),
   machineId: preservedBoundedNfcString(191, 'Machine ids'),

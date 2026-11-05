@@ -151,10 +151,13 @@ export function resolveWorkflowInvocationWorkStatus(
     lifecycle: WorkflowInvocationLifecycleV1,
     context?: WorkflowInvocationLifecycleContext,
 ): WorkStatusPresentation {
-    const label = isWorkflowWaitForYouHold(lifecycle, context)
+    const structural = classifyWorkflowInvocationCoverage(context?.blockKind) === 'structural';
+    const label = structural && lifecycle === 'needs_attention'
+        ? t('workflows.runState.interrupted')
+        : isWorkflowWaitForYouHold(lifecycle, context)
         ? t('workflows.review.waitTitle')
         : t(`workflows.invocationState.${lifecycle}`);
-    const attention = WORKFLOW_ATTENTION_LIFECYCLES.includes(lifecycle);
+    const attention = !structural && WORKFLOW_ATTENTION_LIFECYCLES.includes(lifecycle);
     return resolveWorkStatusTone({ kind: 'workflow_step', facts: { ...context, lifecycle, word: label, inAttentionWindow: attention } });
 }
 
@@ -274,6 +277,13 @@ export function describeWorkflowInvocationAttempt(attempt: string): Readonly<{
 
 /** Classification comes from the frozen definition/opened runtime structure owner. */
 export type WorkflowInvocationCoverageKind = 'executable' | 'structural' | 'unknown';
+
+/** The invocation structure and its status share one executable/structural classification. */
+export function classifyWorkflowInvocationCoverage(blockKind: string | null | undefined, isFrame = false): WorkflowInvocationCoverageKind {
+    if (isFrame) return 'structural';
+    if (blockKind === undefined || blockKind === null) return 'unknown';
+    return blockKind === 'step' || blockKind === 'action' || blockKind === 'wait' ? 'executable' : 'structural';
+}
 
 /** Structural stop custody is not a request for the person to review a step. */
 export function isWorkflowAttentionInvocation(

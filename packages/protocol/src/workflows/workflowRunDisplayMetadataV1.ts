@@ -1,6 +1,8 @@
 import type { WorkflowRunAcceptedContextV1 } from './actionsV1.js';
 import type { BuiltinWorkflowIdV1 } from './builtins/catalog.js';
 import type { WorkflowDefinitionMetadataV1, WorkflowDefinitionSavedByV1 } from './workflowDefinitionV1.js';
+import type { WorkflowDefinitionV1 } from './workflowV1.js';
+import { workflowDefinitionDisplayTitleV1 } from './workflowStepLabel.js';
 
 /** Information only, from the immutable accepted source; no current-definition lookup. */
 export function readWorkflowRunSourceSavedByV1(context: Readonly<{
@@ -26,9 +28,15 @@ export const BUILTIN_WORKFLOW_TITLES_V1 = Object.freeze({
 export function readWorkflowRunDisplayMetadataV1(context: Readonly<{
   source: WorkflowRunAcceptedContextV1['source'];
   metadata?: WorkflowDefinitionMetadataV1 | null;
-}>): WorkflowDefinitionMetadataV1 | null {
+}>, readDefinition?: () => Pick<WorkflowDefinitionV1, 'blocks'>): WorkflowDefinitionMetadataV1 | null {
   if (context.metadata) return context.metadata;
   const ref = context.source.kind === 'catalog' ? context.source.ref : null;
-  if (ref === null || !Object.hasOwn(BUILTIN_WORKFLOW_TITLES_V1, ref)) return null;
-  return { title: BUILTIN_WORKFLOW_TITLES_V1[ref as BuiltinWorkflowIdV1] };
+  if (ref !== null && Object.hasOwn(BUILTIN_WORKFLOW_TITLES_V1, ref)) {
+    return { title: BUILTIN_WORKFLOW_TITLES_V1[ref as BuiltinWorkflowIdV1] };
+  }
+  if (readDefinition) {
+    const title = workflowDefinitionDisplayTitleV1(readDefinition().blocks);
+    if (title) return { title };
+  }
+  return null;
 }

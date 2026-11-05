@@ -1,4 +1,4 @@
-import { renderDiscussionContextBlockV1, renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { renderDiscussionContextBlockV1, renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1, type DiscussionPromptContextEntryV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { isWorkflowJsonObject, type WorkflowJsonValue } from './input';
@@ -66,8 +66,10 @@ export function projectWorkflowPromptContext(input: Readonly<{
     ...(input.resultSource ? { source: input.resultSource.source } : {}) }];
 }
 
-function serializeWorkflowPromptContextEntry({ author, ...entry }: WorkflowPromptContext) {
-  return { author, text: JSON.stringify(entry) };
+function serializeWorkflowPromptContextEntry({ author, value, ...metadata }: WorkflowPromptContext): DiscussionPromptContextEntryV1[] {
+  // Reference provenance describes the content; it is not the value the Agent is asked to use.
+  return [{ kind: 'host_reference_metadata', text: JSON.stringify(metadata) },
+    { author, text: typeof value === 'string' ? value : JSON.stringify(value) }];
 }
 
 export function renderWorkflowPromptContext(entries: readonly WorkflowPromptContext[]): string {
@@ -79,15 +81,15 @@ export function renderWorkflowPromptContext(entries: readonly WorkflowPromptCont
   if (forgeEntries.length > 0) {
     return renderSessionInputContextPromptV1({
       transformedUserText: '',
-      discussionContext: discussionEntries.map(serializeWorkflowPromptContextEntry),
+      discussionContext: discussionEntries.flatMap(serializeWorkflowPromptContextEntry),
       forgeEvidence: { v: 1, items: forgeEntries.map(entry => ({
         source: { kind: 'pullRequest', label: 'Pull request workflow input' },
         author: { kind: 'unknown' },
-        text: serializeWorkflowPromptContextEntry(entry).text,
+        text: typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value),
       })) },
     });
   }
-  return renderDiscussionContextBlockV1(entries.map(serializeWorkflowPromptContextEntry));
+  return renderDiscussionContextBlockV1(entries.flatMap(serializeWorkflowPromptContextEntry));
 }
 
 /** Reduce only the prompt projection. Exact values and source custody remain at their existing owners. */

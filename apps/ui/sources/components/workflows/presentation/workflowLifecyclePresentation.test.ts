@@ -30,6 +30,17 @@ import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/wor
  * three claims.
  */
 describe('describeWorkflowInvocationLifecycle', () => {
+    it('keeps an interrupted condition structural while its failed child owns attention (FIN M10)', () => {
+        expect(describeWorkflowInvocationLifecycle('needs_attention', { blockKind: 'if' })).toMatchObject({
+            lifecycle: 'needs_attention', label: 'workflows.runState.interrupted', attention: false,
+        });
+        expect(describeWorkflowInvocationLifecycle('waiting_for_review', { blockKind: 'step' })).toMatchObject({
+            attention: true,
+        });
+        expect(describeWorkflowInvocationLifecycle('failed', { blockKind: 'step' })).toMatchObject({
+            label: 'workflows.invocationState.failed', attention: false,
+        });
+    });
     it('withdraws held attention as soon as the canonical Stop receipt is accepted', () => {
         expect(isWorkflowAttentionInvocation('waiting_for_review', 'executable', 'running', true)).toBe(false);
         expect(isWorkflowAttentionInvocation('waiting_for_review', 'executable', 'running', false)).toBe(true);

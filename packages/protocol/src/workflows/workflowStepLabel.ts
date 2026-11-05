@@ -72,6 +72,15 @@ export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): s
     : firstNonemptyLine;
 }
 
+/** An unnamed Run uses the first authored name or prompt in execution order. */
+export function workflowDefinitionDisplayTitleV1(blocks: readonly WorkflowBlock[]): string | null {
+  for (const block of walkWorkflowBlocks(blocks)) {
+    const title = block.name?.trim() || (block.kind === 'step' || block.kind === 'wait' ? workflowStepPromptLabel(block) : null);
+    if (title) return title;
+  }
+  return null;
+}
+
 /**
  * The one visible numbering of a workflow's blocks (lab `editor-E1`): every leaf — an Agent step, a
  * Wait for you, an Action, a Run a workflow, a loop's deciding step — is numbered 1, 2, 3 … in authored
