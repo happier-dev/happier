@@ -4,7 +4,7 @@ export { BotTemplateVersionV1Schema, type BotTemplateVersionV1 } from './templat
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ArtifactCreateIdV1Schema } from '../../artifacts/artifactIdV1.js';
 import { ArtifactRevisionV1Schema } from '../../artifacts/artifactRevisionV1.js';
-import { SessionBotFaceV1Schema } from '../../sessions/identity/sessionBotFaceV1.js';
+import { SessionBotFaceV1Schema, SessionBotFaceV1AuthoringSchema } from '../../sessions/identity/sessionBotFaceV1.js';
 import { MachineRecipeReferenceV1Schema } from '../../machines/setup/machineRecipeReferenceV1.js';
 import { RegistryItemPointerV1Schema } from '../../registries/registryContentRefV1.js';
 import { PromptBundleActionEntryV1Schema, validatePromptBundleBodyV1AgainstSchemaId } from '../../prompts/library/promptBundleSchemas.js';
@@ -42,6 +42,10 @@ export const BotTemplateContentV1Schema = lazyZodSchema(() => z.strictObject({
 }).check(z.refine(value => [value.memoryRules, value.skills, value.needs.software,
   value.needs.connectedAccounts, value.needs.mcpServers].every(uniqueKeys), 'Template item keys must be unique within their section')));
 export type BotTemplateContentV1 = z.infer<typeof BotTemplateContentV1Schema>;
+/** Admission for draft/release authors; Artifact and preview reads remain structural. */
+export const BotTemplateContentV1AuthoringSchema = lazyZodSchema(() => z.safeExtend(BotTemplateContentV1Schema, {
+  identity: z.safeExtend(identity, { face: z.optional(SessionBotFaceV1AuthoringSchema) }),
+}));
 
 export const BotTemplateCandidatesV1Schema = lazyZodSchema(() => z.strictObject({
   memoryRules: z.array(z.strictObject({ ...BotTemplateMemoryRuleV1Schema.shape,
@@ -60,6 +64,9 @@ export type BotTemplateDraftV1 = z.infer<typeof BotTemplateDraftV1Schema>;
 export const BotTemplateReleaseV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1), version: BotTemplateVersionV1Schema,
   releasedAtMs: z.number().check(z.int(), z.nonnegative()), changelog: z.string(), content: BotTemplateContentV1Schema }));
 export type BotTemplateReleaseV1 = z.infer<typeof BotTemplateReleaseV1Schema>;
+export const BotTemplateReleaseV1AuthoringSchema = lazyZodSchema(() => z.safeExtend(BotTemplateReleaseV1Schema, {
+  content: BotTemplateContentV1AuthoringSchema,
+}));
 export const BotTemplateReleasedArtifactV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(1), state: z.literal('released'), release: BotTemplateReleaseV1Schema }));
 export const BotTemplateArtifactV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [BotTemplateDraftV1Schema, BotTemplateReleasedArtifactV1Schema]));
 export type BotTemplateArtifactV1 = z.infer<typeof BotTemplateArtifactV1Schema>;
@@ -112,7 +119,7 @@ export function projectBotTemplateContentV1(draft: BotTemplateDraftV1): BotTempl
 
 export function projectBotTemplateReleaseV1(draft: BotTemplateDraftV1,
   metadata: Omit<BotTemplateReleaseV1, 'v' | 'content'>): BotTemplateReleaseV1 {
-  return { v: 1, ...metadata, content: projectBotTemplateContentV1(draft) };
+  return { v: 1, ...metadata, content: BotTemplateContentV1AuthoringSchema.parse(projectBotTemplateContentV1(draft)) };
 }
 
 export function projectBotTemplateArtifactHeaderV1(artifact: BotTemplateArtifactV1): BotTemplateArtifactHeaderV1 {

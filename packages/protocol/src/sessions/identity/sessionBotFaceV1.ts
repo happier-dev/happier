@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '../../actions/externalActionLimits.js';
@@ -55,6 +55,21 @@ function areBotFaceShapesEqual(left: BotFaceShapeV1 | undefined, right: BotFaceS
       === JSON.stringify([right.fill, right.stroke ?? [], right.cut ?? [], right.mouth]));
 }
 export const SessionBotFaceV1StoredSchema = createStoredReadSchema(SessionBotFaceV1Schema);
+
+/** New cosmetic writes share geometric admission; retained data stays structural. */
+export const SessionBotFaceV1AuthoringSchema = defineStoredReadProjection(lazyZodSchema(() => z.pipe(
+  SessionBotFaceV1Schema,
+  z.transform((face, ctx) => {
+    if (!face.shape) return face;
+    const result = normaliseAndValidateBotFaceShape(face.shape);
+    if (!result.ok) {
+      for (const constraint of result.constraints) ctx.issues.push({ code: 'custom', input: face, path: ['shape'],
+        message: 'Invalid Bot shape', params: { constraint } });
+      return z.NEVER;
+    }
+    return { ...face, shape: result.shape };
+  }),
+)), () => SessionBotFaceV1StoredSchema);
 
 export function readSessionBotFaceV1(value: unknown): SessionBotFaceV1 | null {
   if (value == null) return null;

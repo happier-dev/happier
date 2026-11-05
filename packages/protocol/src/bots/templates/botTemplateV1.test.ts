@@ -20,6 +20,18 @@ const draft = () => BotTemplateArtifactV1Schema.parse({ v: 1, state: 'draft',
 const metadata = { version: '1.0.0', releasedAtMs: 100, changelog: 'First release' };
 
 describe('Bot template release boundary', () => {
+  it('admits retained draft art when publishing without changing the stored draft reader', () => {
+    const source = draft();
+    if (source.state !== 'draft') throw new Error('fixture must be a draft');
+    const shape = { v: 1 as const, fill: ['M20 0 L100 0 L100 80 L20 80 Z'], mouth: [60, 46, 0.8] as [number, number, number] };
+    source.content.identity.face = { shape };
+    expect(BotTemplateArtifactV1Schema.parse(source)).toEqual(source);
+    expect(projectBotTemplateReleaseV1(source, metadata).content.identity.face?.shape?.mouth).toEqual([45, 46, 0.8]);
+    source.content.identity.face.shape = { ...shape, fill: ['M0 0 H90 V90 Z'] };
+    expect(BotTemplateArtifactV1Schema.parse(source)).toEqual(source);
+    expect(() => projectBotTemplateReleaseV1(source, metadata)).toThrow();
+  });
+
   it('reads the ordinary Artifact writer receipt with its body-derived header excerpt', () => {
     const source = draft();
     if (source.state !== 'draft') throw new Error('fixture must be a draft');
