@@ -5,9 +5,11 @@ import {
   createProviderBindingSecurityFingerprintV1,
   createProviderCatalogFingerprintV1,
   createProviderConnectionSecurityFingerprintV1,
+  createProviderConnectionSecurityFingerprintV2,
   createProviderCredentialDestinationFingerprintV1,
   createProviderEndpointFingerprintV1,
   createProviderEndpointSetFingerprintV1,
+  createProviderEndpointSetFingerprintV2,
   createProviderMachineGrantFingerprintV1,
   createProviderManagedProbeRequestFingerprintV1,
   createProviderObservationAuthorizationFingerprintV1,
@@ -118,6 +120,41 @@ function publicManagedDeploymentWithPurposes(purposes: readonly string[]) {
 }
 
 describe('typed provider security fingerprints', () => {
+  it('excludes managed catalog and endpoint declaration policy from destination-only consent', () => {
+    const managedDeployment = publicManagedDeploymentWithPurposes(['upstream']);
+    const input = { ...connectionInput, endpoints: [], managedDeployment };
+    const fingerprint = createProviderConnectionSecurityFingerprintV2(input);
+    expect(createProviderConnectionSecurityFingerprintV2({ ...input, managedDeployment: {
+      ...managedDeployment, managedRuntime: { ...managedDeployment.managedRuntime, dependencies: ['new-runtime'],
+        connectedAccounts: [{ ...managedDeployment.managedRuntime.connectedAccounts[0]!, title: 'Renamed source',
+          staticModels: [{ id: 'new-model', name: 'New model' }] }] },
+    } })).toBe(fingerprint);
+    const external = createProviderConnectionSecurityFingerprintV2(connectionInput);
+    expect(createProviderConnectionSecurityFingerprintV2({ ...connectionInput,
+      endpoints: [{ ...connectionInput.endpoints[0], modelIdPattern: '^new-model$', requiredPublicHeaders: ['x-title'] }],
+    })).toBe(external);
+    const endpointPair = [connectionInput.endpoints[0], { ...connectionInput.endpoints[0], endpointTemplateId: 'secondary',
+      url: 'https://secondary.example/v1' }];
+    expect(createProviderConnectionSecurityFingerprintV2({ ...connectionInput, endpoints: endpointPair }))
+      .toBe(createProviderConnectionSecurityFingerprintV2({ ...connectionInput, endpoints: [...endpointPair].reverse() }));
+    const assessedPair = endpointPair.map(endpoint => ({ endpointTemplateId: endpoint.endpointTemplateId,
+      endpoint: assessProviderEndpoint(endpoint.url, { purpose: 'configuration', privateNetworkConfirmed: true }) }));
+    expect(createProviderEndpointSetFingerprintV2({ endpoints: assessedPair }))
+      .toBe(createProviderEndpointSetFingerprintV2({ endpoints: [...assessedPair].reverse() }));
+    expect(createProviderConnectionSecurityFingerprintV2({ ...input, managedDeployment: { ...managedDeployment,
+      managedRuntime: { ...managedDeployment.managedRuntime, requestAuthUses: [{ purpose: 'upstream',
+        materialization: { kind: 'httpHeaders', origin: 'https://changed.example', headerNames: ['authorization'] } }] },
+    } })).not.toBe(fingerprint);
+    const billing = { id: 'credits', endpointTemplateId: 'responses', path: '/credits', parser: 'credits',
+      billingCredential: { slotId: 'billing', destination: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const } } };
+    const billingConsent = createProviderConnectionSecurityFingerprintV2({ ...connectionInput, usageSources: [billing] });
+    expect(createProviderConnectionSecurityFingerprintV2({ ...connectionInput,
+      usageSources: [{ ...billing, id: 'renamed', path: '/renamed', parser: 'new-parser' }],
+    })).toBe(billingConsent);
+    expect(createProviderConnectionSecurityFingerprintV2({ ...connectionInput, usageSources: [{ ...billing,
+      billingCredential: { ...billing.billingCredential, slotId: 'another-key' },
+    }] })).not.toBe(billingConsent);
+  });
   it('binds managed connection grants to the selected hub and preserves the omitted session-machine contract', () => {
     const base = { ...connectionInput, endpoints: [], managedDeployment: publicManagedDeploymentWithPurposes([]) };
     const omitted = createProviderConnectionSecurityFingerprintV1(base);
@@ -468,8 +505,8 @@ describe('typed provider security fingerprints', () => {
     expect(reorderedEndpoints).not.toBe(a);
   });
 
-  it('refuses fabricated machine-hostname assessments with no complete non-public DNS set', () => {
-    const fabricated = {
+  it('accepts canonical configuration-only localhost assessments and rejects forged locality', () => {
+    const configured = {
       normalizedUrl: 'http://service.localhost:11434/',
       origin: 'http://service.localhost:11434',
       hostname: 'service.localhost',
@@ -479,9 +516,12 @@ describe('typed provider security fingerprints', () => {
       resolvedAddresses: [],
       nonPublicAddresses: [],
     } as const satisfies AssessedProviderEndpoint;
+    expect(createProviderEndpointSetFingerprintV1({ endpoints: [
+      { endpointTemplateId: 'local', endpoint: configured },
+    ] })).toMatch(/^endpoint-set:v1:/);
     expect(() => createProviderEndpointSetFingerprintV1({ endpoints: [
-      { endpointTemplateId: 'local', endpoint: fabricated },
-    ] })).toThrowError(/successful A\/AAAA resolution/u);
+      { endpointTemplateId: 'local', endpoint: { ...configured, scope: 'account', locality: 'public' } },
+    ] })).toThrowError(/canonical assessed endpoint/u);
   });
 
   it('fingerprints persisted secret records without plaintext or mutable display metadata', () => {

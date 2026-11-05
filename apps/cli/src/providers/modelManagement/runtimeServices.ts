@@ -19,7 +19,7 @@ import type { DaemonProviderBindingStatusRequestV1, DaemonProviderBindingStatusR
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
 import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderContributionRegistryView, ProviderEndpointDnsEvidence } from '@/providers/registry';
-import { resolveProviderConnectionForMachine } from '@/providers/registry';
+import { resolveProviderConnectionForMachine, resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
 import { getProviderContribution } from '@/providers/registry/lookup';
 import { readProviderModelNameCatalog, resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { createProviderProbeHttpClient } from '@/providers/probe/client';
@@ -630,6 +630,8 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
           return acquired
             ? Object.freeze({
+                pluginId: identity.pluginId,
+                activationOccurrenceId: acquired.activationOccurrenceId,
                 parsersByFormat: acquired.parsersByFormat,
                 isCurrent: () => acquired.isCurrent(),
               })
@@ -775,8 +777,8 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         }>> = [];
         for (const { connection, connectionRuntimeState, context } of resolvedContexts) {
           if (context.status === 'error') continue;
-          if (request.providerConnection && context.connection.connectionSecurityFingerprint
-            !== request.providerConnection.expectedConnectionSecurityFingerprint) continue;
+          if (request.providerConnection && !resolveProviderConnectionSecurityFingerprintMatch(context.connection,
+            request.providerConnection.expectedConnectionSecurityFingerprint).matches) continue;
           resolvedConnectionById.set(connection.id, context.connection);
           const authorizedForDemand = context.connection.authorization.authorized && hasPickerDemand(connection.id,
             context.connection.source.kind === 'custom' ? 'custom' : context.connection.source.definition.kind);
@@ -972,7 +974,8 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
                   },
                   definitionRevision: resolvedConnection.source.definition.v,
                 },
-                connectionSecurityFingerprint: resolvedConnection.connectionSecurityFingerprint,
+                connectionSecurityFingerprint: request.providerConnection?.expectedConnectionSecurityFingerprint
+                  ?? resolvedConnection.connectionSecurityFingerprint,
               } as const
             : null;
           const sourceRevision = computeCanonicalDomainSeparatedDigest(

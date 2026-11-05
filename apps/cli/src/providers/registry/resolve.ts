@@ -1,11 +1,12 @@
-import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
-import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecurityFingerprintV1, createProviderEndpointSetFingerprintV1, createProviderMachineGrantFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { assessProviderEndpoint, classifyProviderEndpointSyntaxScope } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecurityFingerprintV1, createProviderConnectionSecurityFingerprintV2, createProviderEndpointSetFingerprintV1, createProviderEndpointSetFingerprintV2, createProviderMachineGrantFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
 import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 as resolveManagedPurposeBindingIntents } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderConnectionId, ProviderConnectionV1, ProviderEndpointTemplateV1, ProviderManagedSecurityEndpointV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
-import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { ProviderConnectionSecurityFingerprintV1Schema, isProviderDestinationGrantFingerprintV2,
+  selectProviderSecurityFingerprintProjectionV1, type ProviderSecurityFingerprintValuesV1 } from '@happier-dev/protocol/providers/fingerprints';
 import { readProviderConnectionSourceFactsV1, type ProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
@@ -49,6 +50,7 @@ function resolveEndpoints(input: Readonly<{
   custom: boolean;
   dnsEvidenceByEndpointUrl: ResolveProviderConnectionForMachineInput['dnsEvidenceByEndpointUrl'];
   localCandidateUrlsByEndpointTemplateId: ReadonlyMap<string, string> | undefined;
+  configurationMachineConsent: boolean;
 }>): readonly ResolvedProviderConnectionEndpoint[] {
   return input.endpointTemplates.flatMap((template) => {
     const effective = resolveEffectiveProviderEndpointV1({ connection: input.connection, template, machineId: input.machineId,
@@ -60,10 +62,12 @@ function resolveEndpoints(input: Readonly<{
     const normalizedUrl = effective.baseUrl;
     const resolvedAddresses = input.dnsEvidenceByEndpointUrl.get(normalizedUrl);
     const assessed = assessProviderEndpoint(normalizedUrl, {
+      purpose: 'configuration',
       ...(resolvedAddresses ? { resolvedAddresses } : {}),
       // This call classifies the endpoint and computes grant identity. Authorization is
       // decided separately below; setting this flag never authorizes provider use.
       privateNetworkConfirmed: true,
+      ...(input.configurationMachineConsent ? { configurationScope: 'machine' as const } : {}),
     });
     const source = effective.effectiveSource === 'machineOverride'
       ? 'machine_override'
@@ -87,6 +91,32 @@ function resolveEndpoints(input: Readonly<{
   });
 }
 
+/** New grants use destination identity; only existing opaque grants need the historical projection. */
+function fingerprintsForRecord(
+  securityFacts: Parameters<typeof createProviderConnectionSecurityFingerprintV1>[0],
+  endpointFacts: Parameters<typeof createProviderEndpointSetFingerprintV1>[0],
+) {
+  return {
+    connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse(createProviderConnectionSecurityFingerprintV2(securityFacts)),
+    endpointSetFingerprint: createProviderEndpointSetFingerprintV2(endpointFacts),
+    // Captured facts serve old grants AND persisted source pins after re-consent.
+    // New-only admission does no historical hashing or inventory work.
+    legacyGrantFingerprints: {
+      get connectionSecurityFingerprint() { return createProviderConnectionSecurityFingerprintV1(securityFacts); },
+      get endpointSetFingerprint() { return createProviderEndpointSetFingerprintV1(endpointFacts); },
+    },
+  };
+}
+
+/** Grant and source readers share the Protocol tag-selected historical/current projection. */
+export function resolveProviderConnectionSecurityFingerprintMatch(
+  record: Pick<ResolvedProviderConnectionRecord, 'connectionSecurityFingerprint' | 'endpointSetFingerprint' | 'legacyGrantFingerprints'>,
+  expectedConnectionSecurityFingerprint: string,
+): Readonly<{ matches: boolean; fingerprints: ProviderSecurityFingerprintValuesV1 }> {
+  const fingerprints = selectProviderSecurityFingerprintProjectionV1(expectedConnectionSecurityFingerprint, record);
+  return { matches: fingerprints.connectionSecurityFingerprint === expectedConnectionSecurityFingerprint, fingerprints };
+}
+
 function authorizationForRecord(
   settings: ProviderSettingsV1,
   record: Readonly<{
@@ -95,6 +125,7 @@ function authorizationForRecord(
     machineId: string;
     connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1;
     endpointSetFingerprint: string;
+    legacyGrantFingerprints?: Readonly<{ connectionSecurityFingerprint: string; endpointSetFingerprint: string }>;
   }>,
 ): ResolvedProviderConnectionAuthorization {
   const resolution = resolveProviderGrantV1(settings, {
@@ -103,6 +134,7 @@ function authorizationForRecord(
     machineId: record.machineId,
     connectionSecurityFingerprint: record.connectionSecurityFingerprint,
     endpointSetFingerprint: record.endpointSetFingerprint,
+    ...(record.legacyGrantFingerprints ? { legacyGrantFingerprints: record.legacyGrantFingerprints } : {}),
   });
   if (!resolution.authorized) {
     switch (resolution.errorCode) {
@@ -268,14 +300,14 @@ function resolveProviderConnectionFromSettings(
         ...(template.publicHeaders ? { publicHeaders: template.publicHeaders } : {}),
       });
     }
-    const connectionSecurityFingerprint = ProviderConnectionSecurityFingerprintV1Schema.parse(
-      createProviderConnectionSecurityFingerprintV1({
+    const securityFacts = {
       securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
       endpoints: [],
       catalogProbes: facts.catalogProbes,
       ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
       ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
       credentialTransports: facts.credentialTransports,
+      ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
       ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
       managedDeployment: {
         gatewayPlacement: connection.gatewayPlacement,
@@ -283,11 +315,8 @@ function resolveProviderConnectionFromSettings(
         managedRuntime: resolvedManagedDeployment.managedRuntime,
         logicalEndpoints: managedLogicalEndpoints,
       },
-      }),
-    );
-    const endpointSetFingerprint = createProviderEndpointSetFingerprintV1({
-      endpoints: [],
-    });
+    } satisfies Parameters<typeof createProviderConnectionSecurityFingerprintV1>[0];
+    const fingerprints = fingerprintsForRecord(securityFacts, { endpoints: [] });
     const recordWithoutAuthorization = {
       v: 1 as const,
       connectionId,
@@ -298,8 +327,7 @@ function resolveProviderConnectionFromSettings(
       deployment: resolvedManagedDeployment,
       endpoints: [] as const,
       scope: 'machine' as const,
-      connectionSecurityFingerprint,
-      endpointSetFingerprint,
+      ...fingerprints,
     };
     return {
       status: 'resolved',
@@ -318,6 +346,8 @@ function resolveProviderConnectionFromSettings(
   }
 
   let endpoints: readonly ResolvedProviderConnectionEndpoint[];
+  const hasMachineConsent = settings.machineGrants.some(grant => grant.connectionId === connectionId
+    && grant.machineId === machineId && isProviderDestinationGrantFingerprintV2(grant.connectionSecurityFingerprint));
   try {
     endpoints = resolveEndpoints({
       connection,
@@ -326,6 +356,7 @@ function resolveProviderConnectionFromSettings(
       custom: source.kind === 'custom',
       dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
       localCandidateUrlsByEndpointTemplateId: input.localCandidateUrlsByConnectionId?.get(connectionId),
+      configurationMachineConsent: hasMachineConsent,
     });
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? error.code : null;
@@ -337,13 +368,17 @@ function resolveProviderConnectionFromSettings(
     return endpointUnresolved(connectionId, diagnostics, reason);
   }
 
-  const scope: ResolvedProviderConnectionRecord['scope'] = endpoints.some(
-    (endpoint) => endpoint.machineOverrideApplied || endpoint.endpointScope === 'machine',
-  )
+  // A V2 grant captures the deliberate consent scope, independently of DNS.
+  // Machine consent takes precedence on its Machine; opaque grants preserve
+  // the historical observed-locality selection until explicit re-consent.
+  const hasAccountConsent = settings.accountGrants.some(grant => grant.connectionId === connectionId
+    && isProviderDestinationGrantFingerprintV2(grant.connectionSecurityFingerprint));
+  const syntaxRequiresMachine = endpoints.some(endpoint => endpoint.machineOverrideApplied
+    || classifyProviderEndpointSyntaxScope(endpoint.normalizedUrl) === 'machine');
+  const scope: ResolvedProviderConnectionRecord['scope'] = syntaxRequiresMachine || hasMachineConsent
     ? 'machine'
-    : 'account';
-  const connectionSecurityFingerprint = ProviderConnectionSecurityFingerprintV1Schema.parse(
-    createProviderConnectionSecurityFingerprintV1({
+    : hasAccountConsent ? 'account' : endpoints.some(endpoint => endpoint.endpointScope === 'machine') ? 'machine' : 'account';
+  const securityFacts = {
     securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
     endpoints: facts.endpointTemplates.map(template => {
       const effective = resolveEffectiveProviderEndpointV1({ connection, template, machineId,
@@ -355,17 +390,19 @@ function resolveProviderConnectionFromSettings(
     ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
     ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
     credentialTransports: facts.credentialTransports,
+    ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
     ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
-    }),
-  );
+  } satisfies Parameters<typeof createProviderConnectionSecurityFingerprintV1>[0];
   const assessedByTemplateId = new Map(endpoints.map((endpoint) => [
     endpoint.endpointTemplateId,
     assessProviderEndpoint(endpoint.normalizedUrl, {
+      purpose: 'configuration',
       ...(endpoint.resolvedAddresses.length > 0 ? { resolvedAddresses: endpoint.resolvedAddresses } : {}),
       privateNetworkConfirmed: true,
+      ...(hasMachineConsent ? { configurationScope: 'machine' as const } : {}),
     }),
   ]));
-  const endpointSetFingerprint = createProviderEndpointSetFingerprintV1({
+  const fingerprints = fingerprintsForRecord(securityFacts, {
     endpoints: endpoints.map((endpoint) => ({
       endpointTemplateId: endpoint.endpointTemplateId,
       endpoint: assessedByTemplateId.get(endpoint.endpointTemplateId)!,
@@ -381,8 +418,7 @@ function resolveProviderConnectionFromSettings(
     deployment: { kind: 'external' as const },
     endpoints,
     scope,
-    connectionSecurityFingerprint,
-    endpointSetFingerprint,
+    ...fingerprints,
   };
   return {
     status: 'resolved',

@@ -6,13 +6,13 @@ export type { AccountProviderDeclarationV1 } from '../catalog/accountModelProjec
 import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 } from '../contributions/v1.js';
 import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1, parseProviderContributionIdentityV1 } from '../contributionIdentityV1.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorCodeV1 } from '../errors.js';
-import { canonicalizeFingerprintValue, createProviderFingerprintV1 } from '../fingerprints.js';
+import { canonicalizeFingerprintValue, createProviderFingerprintV1, isProviderDestinationGrantFingerprintV2 } from '../fingerprints.js';
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1, type ProviderActionInputByIdV1 } from '../providerActionsV1.js';
-import { createProviderConnectionSecurityFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '../securityFingerprintsV1.js';
+import { createProviderConnectionSecurityFingerprintV1, createProviderConnectionSecurityFingerprintV2, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '../securityFingerprintsV1.js';
 import { addProviderConnectionV1, bindProviderConnectionSecretV1,
   addOrUpdateProviderManualModelsV1, removeProviderManualModelV1, deleteProviderConnectionV1,
   setProviderModelVisibilityV1, resetProviderModelVisibilityV1, setProviderModelPickerVisibilityV1,
-  setProviderExperimentalConfirmationV1 } from '../settings/operationsV1.js';
+  setProviderExperimentalConfirmationV1, resolveProviderGrantV1 } from '../settings/operationsV1.js';
 import type { ProviderSettingsV1 } from '../settings/v1.js';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from './v1.js';
 import { prepareProviderConnectionCreationV1 } from './creationV1.js';
@@ -47,13 +47,14 @@ function accountEndpoints(connection: ProviderConnectionV1, source: NonNullable<
   });
 }
 
-function securityFingerprint(connection: ProviderConnectionV1, source: NonNullable<ReturnType<typeof sourceFor>>, machineId?: string) {
+function securityFingerprint(connection: ProviderConnectionV1, source: NonNullable<ReturnType<typeof sourceFor>>, machineId?: string, legacy = false) {
   const definition = source.definition;
   const facts = readProviderConnectionSourceFactsV1(definition);
   const contribution = connection.source.kind === 'contribution' && 'kind' in definition ? definition : null;
   const identity = connection.source.kind === 'contribution' ? parseProviderContributionIdentityV1(connection.source.contributionKey)?.identity : null;
   if (connection.deployment.kind === 'managedLocal' && (!contribution?.managedRuntime || !identity)) refuse('provider_connection_invalid', connection.id);
-  return createProviderConnectionSecurityFingerprintV1({
+  const createFingerprint = legacy ? createProviderConnectionSecurityFingerprintV1 : createProviderConnectionSecurityFingerprintV2;
+  return createFingerprint({
     securityContractVersion: PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
     endpoints: accountEndpoints(connection, source, machineId).map(endpoint => ({ endpointTemplateId: endpoint.endpointTemplateId,
       protocol: endpoint.protocol, url: endpoint.baseUrl, publicHeaders: endpoint.publicHeaders,
@@ -62,6 +63,7 @@ function securityFingerprint(connection: ProviderConnectionV1, source: NonNullab
     ...(facts.availabilityProbe ? { availabilityProbe: facts.availabilityProbe } : {}),
     ...(facts.catalogFallback ? { catalogFallback: facts.catalogFallback } : {}),
     ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
+    ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
     ...(connection.deployment.kind === 'managedLocal' && contribution?.managedRuntime && identity ? {
       managedDeployment: { implementationIdentity: identity, managedRuntime: contribution.managedRuntime,
         gatewayPlacement: connection.gatewayPlacement,
@@ -86,7 +88,12 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
   const bindings = settings.secretBindingsByConnectionId[connection.id];
   const accountGrant = settings.accountGrants.find(grant => grant.connectionId === connection.id);
   const completeEndpoints = source && (connection.deployment.kind === 'managedLocal' || accountEndpointsAreReady(connection, source));
-  const accountState = !accountGrant ? 'absent' : source && completeEndpoints && accountGrant.connectionSecurityFingerprint === securityFingerprint(connection, source) ? 'valid' : 'stale';
+  const accountState = !accountGrant ? 'absent' : source && completeEndpoints
+    ? resolveProviderGrantV1(settings, { scope: 'account', connectionId: connection.id, machineId: '',
+      connectionSecurityFingerprint: securityFingerprint(connection, source), endpointSetFingerprint: '',
+      ...(!isProviderDestinationGrantFingerprintV2(accountGrant.connectionSecurityFingerprint)
+        ? { legacyGrantFingerprints: { connectionSecurityFingerprint: securityFingerprint(connection, source, undefined, true), endpointSetFingerprint: '' } } : {}),
+    }).state : 'stale';
   const identity = connection.source.kind === 'contribution' ? parseProviderContributionIdentityV1(connection.source.contributionKey)?.identity : null;
   const managed = contribution?.managedRuntime && identity ? resolveProviderManagedRuntimeDeclarationV1({
     implementationIdentity: identity, managedRuntime: contribution.managedRuntime,

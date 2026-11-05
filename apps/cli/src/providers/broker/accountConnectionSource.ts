@@ -5,7 +5,7 @@ import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/pro
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
-import { resolveProviderConnectionForMachine } from '@/providers/registry';
+import { resolveProviderConnectionForMachine, resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveManagedProviderPurposeBindingSnapshot, type ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
@@ -79,8 +79,9 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
       const record = resolved.record;
       const targetMachineId = record.connection.gatewayPlacement?.kind === 'machine'
         ? record.connection.gatewayPlacement.machineId : payload.consumerMachineId;
+      const sourceFingerprint = resolveProviderConnectionSecurityFingerprintMatch(record, payload.source.expectedConnectionSecurityFingerprint);
       if (!record.authorization.authorized || record.deployment.kind !== 'managedLocal'
-        || record.connectionSecurityFingerprint !== payload.source.expectedConnectionSecurityFingerprint
+        || !sourceFingerprint.matches
         || record.deployment.managedRuntime.sharing !== 'connectionMachine'
         || record.source.kind !== 'contribution' || targetMachineId !== input.machineId) return null;
       const application = projectProviderBrokerApplication({ connection: record, agentTargetKey: payload.application.agentTargetKey,
@@ -99,7 +100,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
       return {
         identity: record.deployment.implementationIdentity,
         contributionKey: record.source.contributionKey,
-        securityFingerprint: record.connectionSecurityFingerprint,
+        securityFingerprint: sourceFingerprint.fingerprints.connectionSecurityFingerprint,
         grantFingerprint: record.authorization.grantFingerprint,
         purposeBindings,
         purposeBasis,

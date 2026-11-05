@@ -1,9 +1,12 @@
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderEndpointSetFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { isProviderDestinationGrantFingerprintV2 } from '@happier-dev/protocol/providers/fingerprints';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { mergeProviderCatalogV1, resolveProviderCatalogReferenceV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { assessProviderEndpoint, normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import type { AssessedProviderEndpoint } from '@happier-dev/protocol';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
@@ -127,7 +130,51 @@ export type ProviderSpawnAuthorizationResult =
   | Readonly<{ ok: true; authorization: ProviderSpawnAuthorization }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
 
+/** Only opaque legacy Machine grants bind DNS evidence. Destination-only grants
+ * retain their admission; the transport separately assesses the actual dial. */
+type ProviderDispatchGrantAuthorization = (destination: AssessedProviderEndpoint) =>
+  Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>;
+
+function captureProviderDispatchGrantAuthorization(input: Readonly<{
+  record: ResolvedProviderConnectionRecord;
+  providerSettings: ProviderSettingsV1;
+  endpointTemplateId: string;
+}>): ProviderDispatchGrantAuthorization {
+  const machineGrant = input.record.authorization.authorized && input.record.authorization.grantKind === 'machine'
+    ? input.providerSettings.machineGrants.find(grant => grant.connectionId === input.record.connectionId && grant.machineId === input.record.machineId)
+    : undefined;
+  if (!machineGrant || isProviderDestinationGrantFingerprintV2(machineGrant.connectionSecurityFingerprint)) {
+    return () => ({ ok: true });
+  }
+  return destination => {
+    const endpointFacts = {
+      endpoints: input.record.endpoints.map(endpoint => {
+        const resolvedAddresses = endpoint.endpointTemplateId === input.endpointTemplateId
+          ? destination.resolvedAddresses : endpoint.resolvedAddresses;
+        return { endpointTemplateId: endpoint.endpointTemplateId,
+          endpoint: assessProviderEndpoint(endpoint.normalizedUrl, {
+          purpose: 'configuration', privateNetworkConfirmed: true,
+          ...(endpoint.endpointTemplateId === input.endpointTemplateId || resolvedAddresses.length ? { resolvedAddresses } : {}),
+          ...(input.record.scope === 'machine' ? { configurationScope: 'machine' as const } : {}),
+          }),
+        };
+      }),
+    };
+    const grant = resolveProviderGrantV1(input.providerSettings, { scope: input.record.scope,
+      connectionId: input.record.connectionId, machineId: input.record.machineId,
+      connectionSecurityFingerprint: input.record.connectionSecurityFingerprint, endpointSetFingerprint: input.record.endpointSetFingerprint,
+      ...(input.record.legacyGrantFingerprints ? { legacyGrantFingerprints: {
+        connectionSecurityFingerprint: input.record.legacyGrantFingerprints.connectionSecurityFingerprint,
+        endpointSetFingerprint: createProviderEndpointSetFingerprintV1(endpointFacts),
+      } } : {}),
+    });
+    return grant.authorized ? { ok: true } : { ok: false,
+      error: createProviderErrorV1(grant.errorCode, { connectionId: input.record.connectionId, machineId: input.record.machineId }) };
+  };
+}
+
 export type ProviderExternalProbeHostAuthorizationTicket = Readonly<{
+  authorizeDestination?: ProviderDispatchGrantAuthorization;
   deployment?: 'external';
   connectionId: ProviderBindingAuthorizationTicketV1['connectionId'];
   connectionRevision: number;
@@ -185,6 +232,7 @@ export type ProviderModelLoadHostRequest = Readonly<{
 }>;
 
 export type ProviderModelLoadHostAuthorizationTicket = Readonly<{
+  authorizeDestination?: ProviderDispatchGrantAuthorization;
   connectionId: ProviderBindingAuthorizationTicketV1['connectionId'];
   connectionRevision: number;
   machineId: string;
@@ -537,6 +585,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
     ok: true,
     ticket: {
       deployment: 'external',
+      authorizeDestination: captureProviderDispatchGrantAuthorization({ record, providerSettings, endpointTemplateId: endpoint.endpointTemplateId }),
       connectionId: record.connectionId,
       connectionRevision: record.connection.revision,
       machineId: input.request.machineId,
@@ -639,6 +688,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
   }
   const reference = credentialReferenceResult.reference;
   const ticket: ProviderModelLoadHostAuthorizationTicket = {
+    authorizeDestination: captureProviderDispatchGrantAuthorization({ record, providerSettings, endpointTemplateId: endpoint.endpointTemplateId }),
     connectionId: record.connectionId,
     connectionRevision: record.connection.revision,
     machineId: input.request.machineId,

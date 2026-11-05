@@ -90,14 +90,13 @@ export type ContributedProviderCatalogParsers = NonNullable<
 >;
 
 /**
- * Contributed catalog formats bound to the plugin activation generation that
- * owns them. Probe work outlives plugin replacement, so the generation handle
- * travels with the implementations and a retired generation refuses before its
- * output is parsed or persisted rather than authoring a current observation.
+ * Catalog formats acquired from the canonical plugin registry at admission.
+ * A finite refresh keeps these implementations until it settles; a plugin
+ * replacement changes the next acquisition, not an admitted refresh.
  */
 export type ContributedProviderCatalogParserBinding = Readonly<{
+  pluginId: string;
   parsersByFormat: ContributedProviderCatalogParsers;
-  isCurrent(): boolean;
 }>;
 
 export type ProviderCatalogRefreshResult =
@@ -357,25 +356,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
       const machineId = ProviderMachineIdSchema.parse(input.machineId);
       const contributedParsers = input.contributedCatalogParsers;
       const operationScope = input.operationScope;
-      // A contributed format's implementation belongs to one activation
-      // generation. Queued or in-flight probe work can outlive a plugin
-      // replacement, so refuse before dispatch and again before persistence
-      // instead of letting a retired implementation author a current catalog.
-      const contributionRetired = (): boolean => {
-        if (!contributedParsers) return false;
-        try {
-          return contributedParsers.isCurrent() !== true;
-        } catch {
-          return true;
-        }
-      };
-      const contributionUnavailable = (): ProviderCatalogRefreshResult => ({
-        status: 'error',
-        error: createProviderErrorV1('provider_contribution_unavailable', {
-          connectionId,
-          machineId,
-        }),
-      });
+      const catalogParsers = contributedParsers?.parsersByFormat;
       if (input.managedSources) {
         if (input.mode === 'health') return { status: 'not_supported' };
         if (!dependencies.managedCatalogRuntime) {
@@ -618,14 +599,13 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               parser: authorization.probe.parser,
               publicHeaders: authorization.source.publicHeaders,
             });
-            if (contributionRetired()) return contributionUnavailable();
             try {
               const result = await observeProviderOperationPhase(operationScope?.lifetime, 'catalog_dispatch', () => dependencies.client.getCatalog({
                 endpointUrl,
                 path: authorization.probe.path,
                 parser: authorization.probe.parser,
-                ...(contributedParsers
-                  ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+                ...(catalogParsers
+                  ? { contributedCatalogParsers: catalogParsers }
                   : {}),
                 publicHeaders: authorization.source.publicHeaders,
                 credentialPolicy: 'required',
@@ -651,7 +631,6 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               if (result.requestFingerprint !== exactRuntimeFingerprint) {
                 throw new TypeError('Managed Provider probe client returned a mismatched realized request fingerprint');
               }
-              if (contributionRetired()) return contributionUnavailable();
               return await commitManagedCatalog(
                 authorization,
                 result.catalog.models,
@@ -680,7 +659,6 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
               if (!fallbackValidation.ok) {
                 return { status: 'error', error: fallbackValidation.error };
               }
-              if (contributionRetired()) return contributionUnavailable();
               const fallback = await observeProviderOperationPhase(operationScope?.lifetime, 'catalog_dispatch', () => dependencies.localCatalogFallback!.run({
                 descriptor: catalogFallback,
                 endpointUrl: fallbackEndpointUrl,
@@ -688,11 +666,10 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
                   signal: input.signal,
                   wallDeadlineAtMs: input.wallDeadlineAtMs ?? Infinity,
                 },
-                ...(contributedParsers
-                  ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+                ...(catalogParsers
+                  ? { contributedCatalogParsers: catalogParsers }
                   : {}),
               }));
-              if (contributionRetired()) return contributionUnavailable();
               if (fallback.status === 'success') {
                 return await commitManagedCatalog(fallbackAuthorization, fallback.models, []);
               }
@@ -806,16 +783,12 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
         };
         try {
           const credentialRef = authorization.credentialRef;
-          if (contributionRetired()) {
-            await clearCheckingActivity();
-            return contributionUnavailable();
-          }
           const result = await observeProviderOperationPhase(operationScope?.lifetime, 'catalog_dispatch', () => dependencies.client.getCatalog({
             endpointUrl: request.endpoint.normalizedUrl,
             path: request.probe.path,
             parser: request.probe.parser,
-            ...(contributedParsers
-              ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+            ...(catalogParsers
+              ? { contributedCatalogParsers: catalogParsers }
               : {}),
             publicHeaders: request.endpoint.publicHeaders,
             credentialPolicy: request.endpoint.credentialPolicy ?? 'optional',
@@ -840,10 +813,6 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           }));
           if (result.requestFingerprint !== request.requestFingerprint) {
             throw new TypeError('Provider probe client returned a mismatched request fingerprint');
-          }
-          if (contributionRetired()) {
-            await clearCheckingActivity();
-            return contributionUnavailable();
           }
           const observedAt = now();
           const catalogObservationId = dependencies.createObservationId();
@@ -977,7 +946,6 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           operationScope,
         );
         if (!validation.ok) return { status: 'error', error: validation.error };
-        if (contributionRetired()) return contributionUnavailable();
         const fallback = await observeProviderOperationPhase(operationScope?.lifetime, 'catalog_dispatch', () => dependencies.localCatalogFallback!.run({
           descriptor: catalogFallback,
           endpointUrl: fallbackEndpoint.normalizedUrl,
@@ -985,11 +953,10 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
             signal: input.signal,
             wallDeadlineAtMs: input.wallDeadlineAtMs ?? Infinity,
           },
-          ...(contributedParsers
-            ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+          ...(catalogParsers
+            ? { contributedCatalogParsers: catalogParsers }
             : {}),
         }));
-        if (contributionRetired()) return contributionUnavailable();
         if (fallback.status === 'success') {
           const observedAt = now();
           const catalogObservationId = dependencies.createObservationId();

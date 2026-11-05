@@ -259,13 +259,12 @@ async function acquireContributedProviderCatalogParsers(
   const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir });
   try {
     const acquired = await lease.registry.acquireProviderCatalogParsers?.(identity);
-    // The registry lease ends here, so the acquired generation handle travels
-    // with the implementations: probe work admitted or queued before a plugin
-    // replacement must still refuse before parsing or persisting its output.
+    // Acquisition admits the parser once. A finite probe keeps its captured
+    // implementation even if a later reload replaces the plugin.
     return acquired
       ? Object.freeze({
+          pluginId: identity.pluginId,
           parsersByFormat: acquired.parsersByFormat,
-          isCurrent: () => acquired.isCurrent(),
         })
       : null;
   } finally {
@@ -511,7 +510,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
-    if (!settingsBasis && snapshot?.providerConnectionsCatalog?.status !== 'ready') {
+    if (!settingsBasis && !scope.accountSettingsBasis && snapshot?.providerConnectionsCatalog?.status !== 'ready') {
       if (scope.getAccountSettingsSnapshot) return { ok: false as const,
         error: createProviderErrorV1('provider_catalog_unavailable', identity) };
       if (!snapshot?.scopeKey) return { ok: false as const, error: createProviderErrorV1('provider_settings_invalid', identity) };
@@ -533,21 +532,15 @@ export function createRuntimeProviderServices(input: Readonly<{
     }
     const scopedAccountSettingsBasisIsCurrent = !settingsBasis
       && scope.accountSettingsBasis !== undefined
-      && scope.accountSettingsBasis.scopeKey === snapshot!.scopeKey
-      && scope.accountSettingsBasis.settingsVersion === snapshot!.settingsVersion
-      && sameProviderConnectionsCatalogAuthority(scope.accountSettingsBasis.providerConnectionsCatalog, snapshot!.providerConnectionsCatalog);
-    if (!settingsBasis && scope.accountSettingsBasis && (
-      scope.accountSettingsBasis.scopeKey !== snapshot!.scopeKey
-      || scope.accountSettingsBasis.settingsVersion > snapshot!.settingsVersion
-      || !sameProviderConnectionsCatalogAuthority(scope.accountSettingsBasis.providerConnectionsCatalog, snapshot!.providerConnectionsCatalog)
-    )) {
+      && scope.accountSettingsBasis.scopeKey === snapshot?.scopeKey;
+    if (!settingsBasis && scope.accountSettingsBasis && !scopedAccountSettingsBasisIsCurrent) {
       return {
         ok: false as const,
         error: createProviderErrorV1('provider_authorization_changed', identity),
       };
     }
-    // Preferences have an independent revision. Reparse a newer observation;
-    // the probe ticket, rather than that revision, decides authorization.
+    // Nested phases consume the admitted model/settings facts. Only Account
+    // identity and the caller's local cancellation can withdraw this work.
     const accountSettings = settingsBasis?.snapshot.settings
       ?? (scopedAccountSettingsBasisIsCurrent
         ? scope.accountSettingsBasis!.accountSettings
@@ -742,13 +735,14 @@ export function createRuntimeProviderServices(input: Readonly<{
           connection.source.definition as unknown as Readonly<Record<string, unknown>>,
         )
       : [];
-    const contributedCatalogParsers = contributedFormats.length > 0
+    const needsContributedCatalogParsers = contributedFormats.length > 0
       && connection.source.kind === 'contribution'
       && (probes.some((probe) => contributedFormats.includes(probe.parser))
         // The command fallback declares a format from the same contributed
         // vocabulary, so a plugin whose only contributed format serves the
         // fallback must still reach its own implementation.
-        || (catalogFallback ? contributedFormats.includes(catalogFallback.parser) : false))
+        || (catalogFallback ? contributedFormats.includes(catalogFallback.parser) : false));
+    const contributedCatalogParsers = needsContributedCatalogParsers && connection.source.kind === 'contribution'
       ? await awaitWithinProviderOperation(
           (operationParserResolver ?? resolveContributedCatalogParsers)({
             pluginId: connection.source.pluginId,
@@ -757,6 +751,10 @@ export function createRuntimeProviderServices(input: Readonly<{
           lifetime,
         )
       : null;
+    if (needsContributedCatalogParsers && (!contributedCatalogParsers || connection.source.kind !== 'contribution'
+      || contributedCatalogParsers.pluginId !== connection.source.pluginId)) {
+      return { ok: false, error: createProviderErrorV1('provider_contribution_unavailable', identity) };
+    }
     if (connection.deployment.kind === 'managedLocal') {
       if (mode === 'health') {
         return {

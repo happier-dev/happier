@@ -20,74 +20,20 @@ import { createProviderOperationLifetime } from '../operationLifetime';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createProviderProbeHttpClient, type ProviderProbeTransport } from '../probe/client';
+import { createProviderProbeHttpClient, ProviderProbeCancelledError, type ProviderProbeTransport } from '../probe/client';
 import { ProviderProbeDestinationAuthorizationError } from '../probe/authorization';
 
 import {
   createRuntimeProviderModelLoadAuthorizationPort,
   createRuntimeProviderProbeAuthorizationPort,
-  revalidateProviderModelLoadAuthorizationTicket,
-  revalidateProviderProbeAuthorizationTicket,
 } from './probePort';
 import { renderProviderProbeCredential } from './runtimeCredential';
-import type {
-  ProviderManagedProbeHostAuthorizationTicket,
-  ProviderModelLoadHostAuthorizationTicket,
-  ProviderProbeHostAuthorizationTicket,
-} from './resolve';
-
-const ticket: ProviderProbeHostAuthorizationTicket = {
-  connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
-  connectionRevision: 3,
-  machineId: 'machine-a',
-  connectionSecurityFingerprint: 'connection-security:v1:one',
-  endpointSetFingerprint: 'endpoint-set:v1:one',
-  grantFingerprint: 'account-grant:v1:one',
-  connectionScope: 'account',
-  endpointTemplateId: 'responses',
-  endpointUrl: 'https://gateway.example/v1',
-  protocol: 'openai-responses',
-  probeRequestFingerprint: ProviderProbeRequestFingerprintV1Schema.parse('probe-request:v1:one'),
-  selectedSecretBindingId: 'secret-a',
-  selectedSecretRecordFingerprint: 'saved-secret-record:v1:one',
-};
-
-const managedTicket: ProviderManagedProbeHostAuthorizationTicket = {
-  deployment: 'managedLocal',
-  connectionId: ProviderConnectionIdSchema.parse('pc_managed_gateway'),
-  connectionRevision: 3,
-  machineId: 'machine-a',
-  connectionSecurityFingerprint: 'connection-security:v1:managed',
-  endpointSetFingerprint: 'endpoint-set:v1:managed',
-  grantFingerprint: 'machine-grant:v1:managed',
-  connectionScope: 'machine',
-  contributionKey: 'happier.provider.gateway/gateway',
-  implementationIdentity: {
-    pluginId: 'happier.provider.gateway',
-    localId: 'gateway',
-  },
-  managedRuntime: {
-    kind: 'managed',
-    dependencies: [],
-    connectedAccounts: [],
-    requestAuthUses: [],
-    endpointTemplateIds: ['responses'],
-  },
-  purposeBindings: { v: 1, bindings: [] },
-  endpointTemplateId: 'responses',
-  protocol: 'openai-responses',
-  sourceRegistryVersion: 'managed-test:v1',
-  path: '/models',
-  parser: 'openai-models',
-  probeRequestFingerprint:
-    ProviderProbeRequestFingerprintV1Schema.parse('probe-request:v1:managed'),
-};
 
 const privateConnectionId = ProviderConnectionIdSchema.parse('pc_private_gateway');
 const privateEndpointUrl = 'http://gateway.internal:1234/';
 const privateRegistry = { providersByContributionKey: new Map() };
 
-function privateGrantedSnapshot() {
+function privateGrantedSnapshot(legacy = false) {
   const providerSettings = ProviderSettingsV1Schema.parse({
     ...DEFAULT_PROVIDER_SETTINGS_V1,
     connections: [{
@@ -132,14 +78,15 @@ function privateGrantedSnapshot() {
     dnsEvidenceByEndpointUrl: new Map([[privateEndpointUrl, ['10.0.0.1']]]),
   });
   if (resolution.status !== 'resolved') throw new Error('Expected private connection resolution');
+  const fingerprints = legacy ? resolution.record.legacyGrantFingerprints! : resolution.record;
   const granted = ProviderSettingsV1Schema.parse({
     ...providerSettings,
     machineGrants: [{
       v: 1,
       machineId: 'machine-a',
       connectionId: privateConnectionId,
-      endpointSetFingerprint: resolution.record.endpointSetFingerprint,
-      connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: fingerprints.endpointSetFingerprint,
+      connectionSecurityFingerprint: fingerprints.connectionSecurityFingerprint,
       confirmedAt: 1,
     }],
   });
@@ -197,7 +144,7 @@ const privateModelLoadRegistry = {
   providersByContributionKey: new Map([[privateModelLoadContributionKey, privateModelLoadContribution]]),
 };
 
-function privateModelLoadGrantedSnapshot() {
+function privateModelLoadGrantedSnapshot(legacy = false) {
   const providerSettings = ProviderSettingsV1Schema.parse({
     ...DEFAULT_PROVIDER_SETTINGS_V1,
     connections: [{
@@ -220,14 +167,15 @@ function privateModelLoadGrantedSnapshot() {
     dnsEvidenceByEndpointUrl: new Map([[privateModelLoadEndpointUrl, ['10.0.0.1']]]),
   });
   if (resolution.status !== 'resolved') throw new Error('Expected private model-load connection resolution');
+  const fingerprints = legacy ? resolution.record.legacyGrantFingerprints! : resolution.record;
   const granted = ProviderSettingsV1Schema.parse({
     ...providerSettings,
     machineGrants: [{
       v: 1,
       machineId: 'machine-a',
       connectionId: privateModelLoadConnectionId,
-      endpointSetFingerprint: resolution.record.endpointSetFingerprint,
-      connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: fingerprints.endpointSetFingerprint,
+      connectionSecurityFingerprint: fingerprints.connectionSecurityFingerprint,
       confirmedAt: 1,
     }],
   });
@@ -243,10 +191,10 @@ function privateModelLoadGrantedSnapshot() {
 }
 
 describe('provider probe authorization port', () => {
-  it('rejects a private dispatch address set that differs from the granted set even when an independent DNS lookup returns the granted address', async () => {
+  it.each([false, true])('retains V2 private dispatch across DNS drift, preserves opaque legacy comparison and rejects changed origin (legacy=%s)', async legacy => {
     const port = createRuntimeProviderProbeAuthorizationPort({
       registry: privateRegistry,
-      getAccountSettingsSnapshot: privateGrantedSnapshot,
+      getAccountSettingsSnapshot: () => privateGrantedSnapshot(legacy),
       resolveAddresses: async () => ['10.0.0.1'],
     });
     const request = {
@@ -275,13 +223,13 @@ describe('provider probe authorization port', () => {
         resolvedAddresses: ['10.0.0.2'],
         privateNetworkConfirmed: true,
       }),
-    )).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_machine_grant_stale' },
-    });
+    )).resolves.toMatchObject(legacy ? { ok: false, error: { code: 'provider_machine_grant_stale' } } : { ok: true });
+    await expect(port.authorizeDestination(authorization.ticket, request,
+      assessProviderEndpoint('http://other.internal:1234/', { resolvedAddresses: ['10.0.0.1'], privateNetworkConfirmed: true }),
+    )).resolves.toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
   });
 
-  it('reuses a matching bulk parse and rechecks newer preferences without treating their version as authorization', async () => {
+  it('keeps the admitted bulk catalog across preference and catalog edits while new admissions read current authority', async () => {
     const admitted = privateGrantedSnapshot();
     let current = admitted;
     const resolveAddresses = vi.fn(async () => ['10.0.0.1']);
@@ -339,94 +287,9 @@ describe('provider probe authorization port', () => {
       settingsVersion: admitted.settingsVersion + 2,
     };
     await expect(port.authorize(request, scope)).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
-  });
-
-  it('revalidates every request/grant/secret field and returns the precise current refusal', () => {
-    expect(revalidateProviderProbeAuthorizationTicket(ticket, ticket)).toEqual({ ok: true });
-    expect(revalidateProviderProbeAuthorizationTicket(ticket, {
-      ...ticket,
-      connectionRevision: 4,
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
-    expect(revalidateProviderProbeAuthorizationTicket(ticket, {
-      ...ticket,
-      probeRequestFingerprint: ProviderProbeRequestFingerprintV1Schema.parse('probe-request:v1:two'),
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
-    expect(revalidateProviderProbeAuthorizationTicket(managedTicket, managedTicket)).toEqual({
       ok: true,
     });
-    expect(revalidateProviderProbeAuthorizationTicket(managedTicket, {
-      ...managedTicket,
-      connectionRevision: 4,
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
-  });
-
-  it('keeps account-unverified managed catalog authorization stable across group-member churn', () => {
-    const service = {
-      pluginId: 'happier.connected-account.example',
-      localId: 'example',
-    } as const;
-    const groupTicket: ProviderManagedProbeHostAuthorizationTicket = {
-      ...managedTicket,
-      managedRuntime: {
-        ...managedTicket.managedRuntime,
-        connectedAccounts: [{
-          purpose: 'upstream',
-          service,
-          required: true,
-        }],
-      },
-      purposeBindings: {
-        v: 1,
-        bindings: [{
-          purpose: {
-            consumer: managedTicket.implementationIdentity,
-            purpose: 'upstream',
-          },
-          target: {
-            kind: 'group',
-            service,
-            groupId: 'primary',
-          },
-        }],
-      },
-    };
-
-    // The characterized source is credential-free/account-unverified, so an
-    // A/gen7 -> B/gen8 selection change deliberately produces the same ticket.
-    expect(revalidateProviderProbeAuthorizationTicket(
-      groupTicket,
-      { ...groupTicket },
-    )).toEqual({ ok: true });
-    expect(revalidateProviderProbeAuthorizationTicket(groupTicket, {
-      ...groupTicket,
-      purposeBindings: {
-        v: 1,
-        bindings: [{
-          ...groupTicket.purposeBindings.bindings[0]!,
-          target: {
-            kind: 'group',
-            service,
-            groupId: 'secondary',
-          },
-        }],
-      },
-    })).toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
-    expect(revalidateProviderProbeAuthorizationTicket(groupTicket, {
-      ...groupTicket,
-      managedRuntime: {
-        ...groupTicket.managedRuntime,
-        dependencies: ['changed-runtime'],
-      },
-    })).toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
+    await expect(port.authorize(request)).resolves.toMatchObject({ ok: false, error: { code: 'provider_connection_not_found' } });
   });
 
   it('renders only the selected typed destination', () => {
@@ -469,7 +332,7 @@ describe('provider probe authorization port', () => {
     });
   });
 
-  it('keeps raw, rendered, and encoded credential forms inside the opaque probe lease predicate', async () => {
+  it('captures one admitted credential across legacy Machine admission DNS and same-Account edits while keeping credential forms inside its opaque lease', async () => {
     const key = new Uint8Array(32).fill(7);
     const rawSecret = 'raw secret/value';
     const encryptedValue = {
@@ -483,43 +346,71 @@ describe('provider probe authorization port', () => {
     const settings = AccountSettingsSchema.parse({ secrets: [{
       id: 'secret-a', name: 'Probe key', kind: 'apiKey', encryptedValue, createdAt: 1, updatedAt: 1,
     }] });
-    const inspected = createSavedSecretMaterializerV1({ resources: [], resourceCatalogState: undefined,
-      accountSettings: settings,
-      settingsSecretsReadKeys: [key],
-    }).inspect('secret-a');
-    if (inspected.status !== 'ready') throw new Error('Expected ready personal secret');
-    const secretRecordFingerprint = inspected.fingerprint;
+    const baseSettings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
+      v: 1, id: 'pc_gateway', source: { kind: 'custom', template: {
+        v: 1, name: 'Gateway', endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://gateway.internal/v1',
+          capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+        catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }] },
+        credential: { kind: 'apiKey', required: true, transports: [{ id: 'bearer', protocols: ['openai-responses'], uses: ['probe'],
+          destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] },
+      } }, role: 'named', displayName: 'Gateway', displayNameMode: 'custom',
+      revision: 1, createdAt: 1, updatedAt: 1,
+    }], secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: 'secret-a' } } } });
+    const registry = { providersByContributionKey: new Map() };
+    const connection = resolveProviderConnectionForMachine({ connectionId: 'pc_gateway', machineId: 'machine-a',
+      providerSettings: baseSettings, registry, dnsEvidenceByEndpointUrl: new Map([['https://gateway.internal/v1', ['10.0.0.1']]]) });
+    if (connection.status !== 'resolved') throw new Error('Expected private credential source');
+    const providerSettings = ProviderSettingsV1Schema.parse({ ...baseSettings, machineGrants: [{
+      v: 1, connectionId: 'pc_gateway', machineId: 'machine-a', endpointSetFingerprint: connection.record.legacyGrantFingerprints!.endpointSetFingerprint,
+      connectionSecurityFingerprint: connection.record.legacyGrantFingerprints!.connectionSecurityFingerprint, confirmedAt: 1,
+    }] });
+    let current: ActiveAccountSettingsSnapshot = { source: 'network', settings, settingsVersion: 1, loadedAtMs: 1,
+      settingsSecretsReadKeys: [key], scopeKey: 'account-a',
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(providerSettings).catalog } };
+    let enterDns!: () => void;
+    let releaseDns!: () => void;
+    const dnsEntered = new Promise<void>(resolve => { enterDns = resolve; });
+    const heldDns = new Promise<readonly string[]>(resolve => { releaseDns = () => resolve(['10.0.0.1']); });
+    const resolveAddresses = vi.fn(async () => { enterDns(); return heldDns; });
     const port = createRuntimeProviderProbeAuthorizationPort({
-      registry: { providersByContributionKey: new Map() },
-      getAccountSettingsSnapshot: () => ({
-        source: 'network',
-        settings,
-        settingsVersion: 1,
-        loadedAtMs: 1,
-        settingsSecretsReadKeys: [key],
-        scopeKey: 'account-a',
-      }),
+      registry,
+      getAccountSettingsSnapshot: () => current,
+      resolveAddresses,
     });
-
-    const resolved = await port.resolveCredential({
-      connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
-      machineId: 'machine-a',
-      reference: { kind: 'apiKey', secretId: 'secret-a', secretRecordFingerprint },
-      transport: {
-        id: 'bearer',
-        protocols: ['openai-responses'],
-        uses: ['probe'],
-        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
-      },
-      protocol: 'openai-responses',
-    });
-    if (!resolved.ok) throw new Error(`Expected credential lease, received ${resolved.error.code}`);
-
-    expect(resolved.lease.credential.value).toBe(`Bearer ${rawSecret}`);
-    expect(resolved.lease.containsSensitiveValue(`echo ${rawSecret}`)).toBe(true);
-    expect(resolved.lease.containsSensitiveValue(`echo Bearer ${rawSecret}`)).toBe(true);
-    expect(resolved.lease.containsSensitiveValue('echo raw%20secret%2Fvalue')).toBe(true);
-    resolved.lease.close();
+    const request = { connectionId: ProviderConnectionIdSchema.parse('pc_gateway'), machineId: 'machine-a',
+      endpointTemplateId: 'responses', endpointUrl: 'https://gateway.internal/v1', protocol: 'openai-responses' as const,
+      path: '/models', parser: 'openai-models' as const, probeRequestFingerprint: createProviderProbeRequestFingerprintV1({
+        method: 'GET', endpointUrl: 'https://gateway.internal/v1', path: '/models', parser: 'openai-models', publicHeaders: {},
+      }) };
+    const pending = port.authorize(request);
+    try {
+      await dnsEntered;
+      const renamed = ProviderSettingsV1Schema.parse({ ...providerSettings, connections: providerSettings.connections.map(connection => ({
+        ...connection, displayName: 'Renamed Gateway', revision: connection.revision + 1,
+      })) });
+      current = { ...current, settings: AccountSettingsSchema.parse({}), settingsVersion: 2,
+        providerConnectionsCatalog: { status: 'ready', revision: 2, catalog: splitProviderSettingsV1(renamed).catalog } };
+      releaseDns();
+      const authorized = await pending;
+      if (!authorized.ok) throw new Error(`Expected admitted credential, received ${authorized.error.code}`);
+      if (!authorized.credentialRef) throw new Error('Expected admitted credential reference');
+      await expect(port.revalidate(authorized.ticket, request)).resolves.toEqual({ ok: true });
+      await expect(port.authorizeDestination(authorized.ticket, request,
+        assessProviderEndpoint(request.endpointUrl, { resolvedAddresses: ['1.1.1.1'] }),
+      )).resolves.toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+      const resolved = await port.resolveCredential(authorized.credentialRef);
+      if (!resolved.ok) throw new Error(`Expected credential lease, received ${resolved.error.code}`);
+      try {
+        expect(resolved.lease.credential.value).toBe(`Bearer ${rawSecret}`);
+        expect(resolved.lease.containsSensitiveValue(`echo ${rawSecret}`)).toBe(true);
+        expect(resolved.lease.containsSensitiveValue(`echo Bearer ${rawSecret}`)).toBe(true);
+        expect(resolved.lease.containsSensitiveValue('echo raw%20secret%2Fvalue')).toBe(true);
+        expect(resolveAddresses).toHaveBeenCalledOnce();
+      } finally { resolved.lease.close(); }
+    } finally {
+      releaseDns();
+      await pending;
+    }
   });
 
   it('keeps authorization and credential resolution pinned to the first account scope', async () => {
@@ -591,26 +482,22 @@ describe('provider probe authorization port', () => {
 });
 
 describe('provider model-load authorization port', () => {
-  it.each(['retained', 'grant_revoked', 'account_withdrawn'] as const)(
-    'checks current authority after held destination DNS before a credential-free model POST (%s)',
+  it.each(['retained', 'renamed', 'grant_revoked', 'account_withdrawn', 'cancelled'] as const)(
+    'uses admitted authority and local cancellation across held destination DNS before a credential-free model POST (%s)',
     async (transition) => {
       const admitted = privateModelLoadGrantedSnapshot();
       let current: ActiveAccountSettingsSnapshot | null = admitted;
-      let holdDestinationDns = false;
       let enterHeldDns!: () => void;
       const heldDnsEntered = new Promise<void>((resolve) => { enterHeldDns = resolve; });
       let releaseHeldDns!: () => void;
       const heldDns = new Promise<readonly string[]>((resolve) => {
         releaseHeldDns = () => resolve(['10.0.0.1']);
       });
+      const resolveAddresses = vi.fn(async () => ['10.0.0.1']);
       const port = createRuntimeProviderModelLoadAuthorizationPort({
         registry: privateModelLoadRegistry,
         getAccountSettingsSnapshot: () => current,
-        resolveAddresses: async () => {
-          if (!holdDestinationDns) return ['10.0.0.1'];
-          enterHeldDns();
-          return heldDns;
-        },
+        resolveAddresses,
       });
       const request = { connectionId: privateModelLoadConnectionId, machineId: 'machine-a', modelId: 'model-a' };
       const authorized = await port.authorize(request);
@@ -621,66 +508,57 @@ describe('provider model-load authorization port', () => {
       const transport = vi.fn<ProviderProbeTransport>(async () => ({
         status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}'),
       }));
-      const client = createProviderProbeHttpClient({ resolveAddresses: async () => ['10.0.0.1'], transport });
-      holdDestinationDns = true;
+      const client = createProviderProbeHttpClient({ resolveAddresses: async () => { enterHeldDns(); return heldDns; }, transport });
+      const controller = new AbortController();
       const outcome = client.postModelLoad({
         endpointUrl: authorized.authorization.endpoint.endpointUrl,
         path: authorized.authorization.descriptor.path,
         modelId: request.modelId,
         publicHeaders: authorized.authorization.endpoint.publicHeaders,
+        signal: controller.signal,
         authorizeDestination: async (destination) => {
           const checked = await port.authorizeDestination(authorized.authorization.ticket, request, destination);
           if (!checked.ok) throw new ProviderProbeDestinationAuthorizationError(checked.error);
         },
       }).then((result) => ({ result }), (error: unknown) => ({ error }));
-      await heldDnsEntered;
-      if (transition === 'grant_revoked') {
-        current = { ...admitted, providerConnectionsCatalog: { status: 'ready', revision: 2,
-          catalog: { ...admitted.providerConnectionsCatalog.catalog, machineGrants: [] } } };
-      } else if (transition === 'account_withdrawn') {
-        current = null;
-      }
-      releaseHeldDns();
-      if (transition === 'retained') {
-        expect(await outcome).toEqual({ result: { statusCode: 200 } });
-        expect(transport).toHaveBeenCalledOnce();
-        expect(transport.mock.calls[0]?.[0]).toMatchObject({ method: 'POST', url: `${privateModelLoadEndpointUrl}models/load` });
-      } else {
-        const result = await outcome;
-        expect(transport).not.toHaveBeenCalled();
-        expect(result).toMatchObject({ error: { error: { code: transition === 'grant_revoked'
-          ? 'provider_not_enabled_on_machine' : 'provider_authorization_changed' } } });
-      }
+      try {
+        await heldDnsEntered;
+        if (transition === 'grant_revoked') {
+          current = { ...admitted, providerConnectionsCatalog: { status: 'ready', revision: 2,
+            catalog: { ...admitted.providerConnectionsCatalog.catalog, machineGrants: [] } } };
+        } else if (transition === 'renamed') {
+          current = { ...admitted, providerConnectionsCatalog: { status: 'ready', revision: 2,
+            catalog: { ...admitted.providerConnectionsCatalog.catalog, connections: admitted.providerConnectionsCatalog.catalog.connections.map(connection => ({
+              ...connection, displayName: 'Renamed loader', revision: connection.revision + 1,
+            })) } } };
+        } else if (transition === 'account_withdrawn') {
+          current = null;
+        } else if (transition === 'cancelled') {
+          controller.abort();
+        }
+        releaseHeldDns();
+        if (transition === 'account_withdrawn' || transition === 'cancelled') {
+          const result = await outcome;
+          expect(transport).not.toHaveBeenCalled();
+          expect(result).toMatchObject(transition === 'cancelled' ? { error: expect.any(ProviderProbeCancelledError) }
+            : { error: { error: { code: 'provider_authorization_changed' } } });
+        } else {
+          expect(await outcome).toEqual({ result: { statusCode: 200 } });
+          expect(transport).toHaveBeenCalledOnce();
+          expect(transport.mock.calls[0]?.[0]).toMatchObject({ method: 'POST', url: `${privateModelLoadEndpointUrl}models/load` });
+        }
+        expect(resolveAddresses).not.toHaveBeenCalled();
+        if (transition === 'grant_revoked') await expect(port.authorize(request)).resolves.toMatchObject({
+          status: 'error', error: { code: 'provider_not_enabled_on_machine' },
+        });
+      } finally { releaseHeldDns(); await outcome; }
     },
   );
 
-  const loadTicket: ProviderModelLoadHostAuthorizationTicket = {
-    connectionId: ProviderConnectionIdSchema.parse('pc_local'),
-    connectionRevision: 3,
-    machineId: 'machine-a',
-    modelId: 'model-a',
-    connectionSecurityFingerprint: 'connection-security:v1:one',
-    endpointSetFingerprint: 'endpoint-set:v1:one',
-    grantFingerprint: 'machine-grant:v1:one',
-    connectionScope: 'machine',
-    endpointTemplateId: 'local',
-    endpointUrl: 'http://127.0.0.1:1234/',
-    protocol: 'openai-chat',
-    descriptor: {
-      endpointTemplateId: 'local',
-      path: '/api/v1/models/load',
-      request: 'json-model-id-v1',
-      confirmation: 'refresh-catalog-load-state',
-      preflightPolicy: 'advisory',
-    },
-    selectedSecretBindingId: null,
-    selectedSecretRecordFingerprint: null,
-  };
-
-  it('rejects a model-load dispatch address set that differs from the exact granted private set', async () => {
+  it.each([false, true])('retains V2 model-load dispatch across DNS drift, preserves opaque legacy comparison and rejects changed origin (legacy=%s)', async legacy => {
     const port = createRuntimeProviderModelLoadAuthorizationPort({
       registry: privateModelLoadRegistry,
-      getAccountSettingsSnapshot: privateModelLoadGrantedSnapshot,
+      getAccountSettingsSnapshot: () => privateModelLoadGrantedSnapshot(legacy),
       resolveAddresses: async () => ['10.0.0.1'],
     });
     const request = {
@@ -698,26 +576,10 @@ describe('provider model-load authorization port', () => {
         resolvedAddresses: ['10.0.0.2'],
         privateNetworkConfirmed: true,
       }),
-    )).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_machine_grant_stale' },
-    });
-  });
-
-  it('revalidates the exact model, descriptor, endpoint, grant, and credential identity', () => {
-    expect(revalidateProviderModelLoadAuthorizationTicket(loadTicket, loadTicket)).toEqual({ ok: true });
-    expect(revalidateProviderModelLoadAuthorizationTicket(loadTicket, {
-      ...loadTicket,
-      connectionRevision: 4,
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
-    expect(revalidateProviderModelLoadAuthorizationTicket(loadTicket, {
-      ...loadTicket,
-      modelId: 'model-b',
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
-    expect(revalidateProviderModelLoadAuthorizationTicket(loadTicket, {
-      ...loadTicket,
-      descriptor: { ...loadTicket.descriptor, path: '/different' },
-    })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    )).resolves.toMatchObject(legacy ? { ok: false, error: { code: 'provider_machine_grant_stale' } } : { ok: true });
+    await expect(port.authorizeDestination(authorization.authorization.ticket, request,
+      assessProviderEndpoint('http://other.internal:1234/models/load', { resolvedAddresses: ['10.0.0.1'], privateNetworkConfirmed: true }),
+    )).resolves.toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
   });
 
   it('exposes a concrete runtime factory without sharing draft probe authorization', () => {
@@ -727,7 +589,6 @@ describe('provider model-load authorization port', () => {
     });
     expect(port).toMatchObject({
       authorize: expect.any(Function),
-      revalidate: expect.any(Function),
       authorizeDestination: expect.any(Function),
       resolveCredential: expect.any(Function),
     });

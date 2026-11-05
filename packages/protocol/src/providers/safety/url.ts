@@ -351,10 +351,22 @@ export function assessProviderEndpoint(
   options: Readonly<{
     resolvedAddresses?: readonly string[];
     privateNetworkConfirmed?: boolean;
+    /** Configuration admission does not dial: the Agent may resolve through a proxy. */
+    purpose?: 'configuration' | 'network';
+    /** Existing Machine consent can classify a configured hostname without DNS; never used for dialing. */
+    configurationScope?: 'machine';
   }> = {},
 ): AssessedProviderEndpoint {
   const syntax = normalizeProviderEndpointUrlSyntax(rawUrl);
-  const { locality, resolvedAddresses, nonPublicAddresses } = assessEndpointHostLocality({
+  const { locality, resolvedAddresses, nonPublicAddresses } = options.purpose === 'configuration'
+    && syntax.literalAddress === null && options.resolvedAddresses === undefined
+    ? {
+      locality: classifyProviderHostnameSyntax(syntax.hostname) === 'loopback' ? 'loopback' as const
+        : options.configurationScope === 'machine' ? 'private' as const : 'public' as const,
+      resolvedAddresses: [],
+      nonPublicAddresses: [],
+    }
+    : assessEndpointHostLocality({
     hostname: syntax.hostname,
     literalAddress: syntax.literalAddress,
     ...(options.resolvedAddresses ? { resolvedAddresses: options.resolvedAddresses } : {}),
@@ -377,6 +389,13 @@ export function assessProviderEndpoint(
     resolvedAddresses,
     nonPublicAddresses,
   };
+}
+
+/** Configuration identity follows URL syntax; actual transport locality remains DNS-assessed. */
+export function classifyProviderEndpointSyntaxScope(rawUrl: string): 'account' | 'machine' {
+  const syntax = normalizeProviderEndpointUrlSyntax(rawUrl);
+  return syntax.literalAddress ? syntax.literalAddress.locality === 'public' ? 'account' : 'machine'
+    : classifyProviderHostnameSyntax(syntax.hostname) === 'loopback' ? 'machine' : 'account';
 }
 
 export function buildProviderEndpointSetFingerprintInput(

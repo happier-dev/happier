@@ -13,7 +13,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
-import { resolveProviderConnectionForMachine } from '@/providers/registry';
+import { resolveProviderConnectionForMachine, resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
 import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
@@ -171,10 +171,11 @@ export function resolveProviderConnectionBrokerSource(
   if (!record.authorization.authorized) {
     return fail(record.authorization.errorCode, input.source, input.machineId);
   }
+  const sourceFingerprint = resolveProviderConnectionSecurityFingerprintMatch(record, input.source.connectionSecurityFingerprint);
   if (
     record.deployment.kind !== 'external'
     || record.source.kind !== 'contribution'
-    || record.connectionSecurityFingerprint !== input.source.connectionSecurityFingerprint
+    || !sourceFingerprint.matches
   ) {
     return fail('provider_authorization_changed', input.source, input.machineId);
   }

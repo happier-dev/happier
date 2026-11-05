@@ -74,6 +74,7 @@ import {
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { createForegroundAgentRuntimeAdmissionOwner } from '@/daemon/agentRuntime/foregroundAdmission';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 const contributionKey = 'acme.gateway/gateway';
@@ -2682,6 +2683,49 @@ describe('provider spawn authorization resolver', () => {
 });
 
 describe('shared provider probe authorization resolver', () => {
+  it.each(['current Account', 'legacy Account', 'current Machine', 'legacy Machine'] as const)(
+    'checks captured grant authority at dispatch only for opaque legacy Machine grants: %s', kind => {
+      const machine = kind.endsWith('Machine');
+      const evidence = new Map([['https://gateway.example/v1', [machine ? '10.0.0.1' : '1.1.1.1']]]);
+      const initial = grantedSettings();
+      const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+        providerSettings: initial, registry, dnsEvidenceByEndpointUrl: evidence });
+      if (resolved.status !== 'resolved') throw new Error('Expected configured source');
+      const fingerprints = kind.startsWith('legacy') ? resolved.record.legacyGrantFingerprints! : resolved.record;
+      const grant = { v: 1 as const, connectionId, confirmedAt: 1,
+        connectionSecurityFingerprint: fingerprints.connectionSecurityFingerprint };
+      const settings = ProviderSettingsV1Schema.parse({ ...initial,
+        accountGrants: machine ? [] : [grant], machineGrants: machine ? [{ ...grant, machineId: 'machine-a',
+          endpointSetFingerprint: fingerprints.endpointSetFingerprint }] : [],
+      });
+      let authorityReads = 0;
+      // Observe actual authority reads without replacing any domain decision.
+      const observed = { ...settings,
+        get accountGrants() { authorityReads += 1; return settings.accountGrants; },
+        get machineGrants() { authorityReads += 1; return settings.machineGrants; },
+      };
+      const authorization = resolveProviderProbeAuthorization(withSavedSecretMaterializer({
+        request: { connectionId, machineId: 'machine-a', endpointTemplateId: 'responses',
+          endpointUrl: 'https://gateway.example/v1', protocol: 'openai-responses',
+          path: '/models', parser: 'openai-models', probeRequestFingerprint: createProviderProbeRequestFingerprintV1({
+            method: 'GET', endpointUrl: 'https://gateway.example/v1', path: '/models', parser: 'openai-models',
+            publicHeaders: {},
+          }) },
+        accountSettings: accountSettings(settings), providerSettings: observed,
+        settingsRead: { settings: observed, diagnostics: [] }, registry, dnsEvidenceByEndpointUrl: evidence,
+      }));
+      if (!authorization.ok || authorization.ticket.deployment === 'managedLocal') throw new Error('Expected external probe admission');
+      const destination = assessProviderEndpoint('https://gateway.example/v1', {
+        resolvedAddresses: [machine ? '10.0.0.1' : '1.1.1.1'], privateNetworkConfirmed: true,
+      });
+      authorityReads = 0;
+      expect(authorization.ticket.authorizeDestination?.(destination)).toEqual({ ok: true });
+      expect(authorityReads).toBe(kind === 'legacy Machine' ? 1 : 0);
+      if (machine) expect(authorization.ticket.authorizeDestination?.(assessProviderEndpoint(
+        'https://gateway.example/v1', { resolvedAddresses: ['10.0.0.2'], privateNetworkConfirmed: true },
+      ))).toMatchObject(kind === 'legacy Machine' ? { ok: false, error: { code: 'provider_machine_grant_stale' } } : { ok: true });
+    });
+
   it.each(['machine-a', 'machine-b'])('G1 authorizes the managed catalog only on the saved gateway machine %s', gatewayMachineId => {
     const settings = managedGrantedSettings(managedRegistry, gatewayMachineId);
     const purposeBindings = {

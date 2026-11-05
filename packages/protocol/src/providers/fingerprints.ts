@@ -28,9 +28,10 @@ function canonicalFingerprintSchema(prefix: string) {
   return z.string().check(z.minLength(1), z.maxLength(256), z.refine((value) => value === value.trim(), 'Fingerprint must already be canonical'), z.startsWith(prefix));
 }
 
-export const ProviderConnectionSecurityFingerprintV1Schema = canonicalFingerprintSchema(
-  'connection-security:v1:',
-).brand<'ProviderConnectionSecurityFingerprintV1'>();
+export const ProviderConnectionSecurityFingerprintV1Schema = z.union([
+  canonicalFingerprintSchema('connection-security:v1:'),
+  canonicalFingerprintSchema('connection-security:v2:'),
+]).brand<'ProviderConnectionSecurityFingerprintV1'>();
 export type ProviderConnectionSecurityFingerprintV1 = z.infer<
   typeof ProviderConnectionSecurityFingerprintV1Schema
 >;
@@ -129,7 +130,42 @@ export function createProviderFingerprintV1(
   value: unknown,
   options: Readonly<{ setPaths?: readonly string[] }> = {},
 ): string {
+  return createFingerprint(domain, 1, value, options);
+}
+
+/** Destination-only consent has its own tag; opaque V1 grants retain their original comparison. */
+export function createProviderGrantFingerprintV2(
+  domain: 'connection-security' | 'endpoint-set',
+  value: unknown,
+): string {
+  return createFingerprint(domain, 2, value);
+}
+
+export function isProviderDestinationGrantFingerprintV2(value: string): boolean {
+  return value.startsWith('connection-security:v2:');
+}
+
+export type ProviderSecurityFingerprintValuesV1 = Readonly<{
+  connectionSecurityFingerprint: string;
+  endpointSetFingerprint: string;
+}>;
+
+/** A persisted expected tag selects exactly one projection, never acceptance of either hash. */
+export function selectProviderSecurityFingerprintProjectionV1(
+  expectedConnectionSecurityFingerprint: string,
+  current: ProviderSecurityFingerprintValuesV1 & Readonly<{ legacyGrantFingerprints?: ProviderSecurityFingerprintValuesV1 }>,
+): ProviderSecurityFingerprintValuesV1 {
+  return isProviderDestinationGrantFingerprintV2(expectedConnectionSecurityFingerprint)
+    ? current : current.legacyGrantFingerprints ?? current;
+}
+
+function createFingerprint(
+  domain: ProviderFingerprintDomainV1,
+  version: 1 | 2,
+  value: unknown,
+  options: Readonly<{ setPaths?: readonly string[] }> = {},
+): string {
   const canonical = canonicalizeFingerprintValue(value, options);
   const digest = encodeBase64(sha256(utf8ToBytes(JSON.stringify(canonical))), 'base64url').replace(/=+$/u, '');
-  return `${domain}:v1:${digest}`;
+  return `${domain}:v${version}:${digest}`;
 }

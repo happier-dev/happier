@@ -28,7 +28,7 @@ export type ProviderProbeAccountSettingsBasis = Readonly<{
   scopeKey: string;
   settingsVersion: number;
   providerConnectionsCatalog: ActiveAccountSettingsSnapshot['providerConnectionsCatalog'];
-  accountSettings: unknown;
+  accountSettings: ActiveAccountSettingsSnapshot['settings'];
   settingsRead: ReturnType<typeof readProviderSettingsForCli>;
 }>;
 

@@ -8,6 +8,7 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
+import { resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
 import { resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { readProviderModelNameCatalog } from '@/providers/registry/contributions';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
@@ -50,11 +51,12 @@ export async function readProviderConnectionSourceCatalog(input: SourceInput) {
       resolveManagedPurposeBindingIntent: input.accountScope?.resolveManagedPurposeBindingIntent,
       modelNameCatalog: readProviderModelNameCatalog(input.registry) }), input.lifetime);
   if (context.status === 'error') return context;
-  if (context.connection.connectionSecurityFingerprint !== input.source.expectedConnectionSecurityFingerprint) {
+  const sourceFingerprint = resolveProviderConnectionSecurityFingerprintMatch(context.connection, input.source.expectedConnectionSecurityFingerprint);
+  if (!sourceFingerprint.matches) {
     return { status: 'error' as const, error: createProviderErrorV1('provider_connection_changed', identity) };
   }
   if (!context.connection.authorization.authorized) {
-    return { status: 'success' as const, context, presentation: { rows: [], staleRows: [] } };
+    return { status: 'success' as const, context, sourceFingerprints: sourceFingerprint.fingerprints, presentation: { rows: [], staleRows: [] } };
   }
   const present = () => {
     if (context.status !== 'success') throw new TypeError('Expected admitted source');
@@ -70,7 +72,7 @@ export async function readProviderConnectionSourceCatalog(input: SourceInput) {
     context = projectProviderCatalogContextRuntimeState(context, await input.runtime.runtimeStore.read());
     presentation = present();
   }
-  return { status: 'success' as const, context, presentation };
+  return { status: 'success' as const, context, sourceFingerprints: sourceFingerprint.fingerprints, presentation };
 }
 
 /** Binds source declarations to an application label, never to an Agent

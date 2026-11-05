@@ -5,6 +5,7 @@ import {
   canonicalizeProviderContributionKeyV1,
 } from '../contributionIdentityV1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
+import { selectProviderSecurityFingerprintProjectionV1 } from '../fingerprints.js';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
 import {
   ModelVisibilityRefV1Schema,
@@ -269,6 +270,7 @@ export function resolveProviderGrantV1(
     machineId: string;
     connectionSecurityFingerprint: string;
     endpointSetFingerprint: string;
+    legacyGrantFingerprints?: Readonly<{ connectionSecurityFingerprint: string; endpointSetFingerprint: string }>;
   }>,
 ): ProviderGrantResolutionV1 {
   const connectionId = ProviderConnectionIdSchema.parse(input.connectionId);
@@ -278,7 +280,8 @@ export function resolveProviderGrantV1(
   if (input.scope === 'account') {
     const grant = settings.accountGrants.find((candidate) => candidate.connectionId === connectionId);
     if (!grant) return { state: 'absent', authorized: false, errorCode: 'provider_connection_disabled' };
-    if (grant.connectionSecurityFingerprint !== input.connectionSecurityFingerprint) {
+    const expected = selectProviderSecurityFingerprintProjectionV1(grant.connectionSecurityFingerprint, input);
+    if (grant.connectionSecurityFingerprint !== expected.connectionSecurityFingerprint) {
       return { state: 'stale', authorized: false, errorCode: 'provider_account_grant_stale' };
     }
     return { state: 'valid', authorized: true, grantKind: 'account' };
@@ -287,8 +290,9 @@ export function resolveProviderGrantV1(
   const grant = settings.machineGrants.find((candidate) =>
     candidate.connectionId === connectionId && candidate.machineId === machineId);
   if (!grant) return { state: 'absent', authorized: false, errorCode: 'provider_not_enabled_on_machine' };
-  if (grant.connectionSecurityFingerprint !== input.connectionSecurityFingerprint
-    || grant.endpointSetFingerprint !== input.endpointSetFingerprint) {
+  const expected = selectProviderSecurityFingerprintProjectionV1(grant.connectionSecurityFingerprint, input);
+  if (grant.connectionSecurityFingerprint !== expected.connectionSecurityFingerprint
+    || grant.endpointSetFingerprint !== expected.endpointSetFingerprint) {
     return { state: 'stale', authorized: false, errorCode: 'provider_machine_grant_stale' };
   }
   return { state: 'valid', authorized: true, grantKind: 'machine' };

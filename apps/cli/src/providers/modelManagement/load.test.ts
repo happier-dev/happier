@@ -55,7 +55,6 @@ function harness(input: Readonly<{
   authorization?: ProviderModelLoadAuthorization<Ticket, CredentialRef> | ProviderErrorV1 | 'unavailable';
   post?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['http']['postJsonModelId'];
   authorize?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['authorization']['authorize'];
-  revalidate?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['authorization']['revalidate'];
   authorizeDestination?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['authorization']['authorizeDestination'];
   refresh?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['catalog']['refresh'];
   http?: ProviderModelLoadServiceDependencies<Ticket, CredentialRef>['http'];
@@ -72,7 +71,6 @@ function harness(input: Readonly<{
     refreshed = true;
     return { status: 'success' as const };
   }));
-  const revalidate = vi.fn(input.revalidate ?? (async () => ({ ok: true as const })));
   const authorize = vi.fn(input.authorize ?? (async () => auth === 'unavailable'
     ? { status: 'unavailable' as const }
     : 'code' in auth
@@ -90,7 +88,6 @@ function harness(input: Readonly<{
     isFeatureEnabled: input.isEnabled ?? (() => input.enabled ?? true),
     authorization: {
       authorize,
-      revalidate,
       authorizeDestination: vi.fn(input.authorizeDestination ?? (async () => ({ ok: true as const }))),
       resolveCredential,
     },
@@ -103,7 +100,6 @@ function harness(input: Readonly<{
     postJsonModelId,
     readCurrentModel,
     refresh,
-    revalidate,
     resolveCredential,
   };
 }
@@ -264,20 +260,6 @@ describe('explicit provider model loading', () => {
     expect(test.postJsonModelId).not.toHaveBeenCalled();
   });
 
-  it('revalidates the exact ticket before reading the current catalog or resolving a credential', async () => {
-    const changed = createProviderErrorV1('provider_authorization_changed', {
-      connectionId: request.connectionId, machineId: request.machineId,
-    });
-    const test = harness({
-      authorization: authorization({ credentialRef: { id: 'credential-a' } }),
-      revalidate: async () => ({ ok: false, error: changed }),
-    });
-    await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
-    expect(test.readCurrentModel).not.toHaveBeenCalled();
-    expect(test.resolveCredential).not.toHaveBeenCalled();
-    expect(test.postJsonModelId).not.toHaveBeenCalled();
-  });
-
   it('constructs only the fixed request and reports success after exact catalog confirmation', async () => {
     const test = harness({
       authorization: authorization({ credentialRef: { id: 'credential-a' } }),
@@ -365,69 +347,11 @@ describe('explicit provider model loading', () => {
     }
   });
 
-  it('discards a successful response when the authorization ticket changes', async () => {
-    let calls = 0;
-    const changed = createProviderErrorV1('provider_authorization_changed', {
-      connectionId: request.connectionId, machineId: request.machineId,
-    });
-    const test = harness({ revalidate: async () => (++calls < 4 ? { ok: true } : { ok: false, error: changed }) });
-    await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
-    expect(test.postJsonModelId).toHaveBeenCalledTimes(1);
-    expect(test.refresh).not.toHaveBeenCalled();
-  });
-
-  it('prefers a current ticket refusal over an obsolete HTTP or refresh failure', async () => {
-    const changed = createProviderErrorV1('provider_machine_grant_stale', {
-      connectionId: request.connectionId, machineId: request.machineId,
-    });
-    let httpChecks = 0;
-    const httpFailure = harness({
-      revalidate: async () => (++httpChecks < 4 ? { ok: true } : { ok: false, error: changed }),
-      post: async () => ({
-        ok: false,
-        error: createProviderErrorV1('provider_endpoint_unavailable', {
-          connectionId: request.connectionId, machineId: request.machineId,
-        }),
-      }),
-    });
-    await expect(httpFailure.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
-
-    let refreshChecks = 0;
-    const refreshFailure = harness({
-      revalidate: async () => (++refreshChecks < 5 ? { ok: true } : { ok: false, error: changed }),
-      refresh: async () => ({
-        status: 'error',
-        error: createProviderErrorV1('provider_endpoint_unavailable', {
-          connectionId: request.connectionId, machineId: request.machineId,
-        }),
-      }),
-    });
-    await expect(refreshFailure.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
-  });
-
-  it('revalidates after an unexpected catalog read failure before returning a generic error', async () => {
-    const changed = createProviderErrorV1('provider_authorization_changed', {
-      connectionId: request.connectionId, machineId: request.machineId,
-    });
-    let checks = 0;
-    const test = harness({
-      revalidate: async () => (++checks === 1 ? { ok: true } : { ok: false, error: changed }),
-    });
+  it('redacts an unexpected catalog read failure without dispatching a model load', async () => {
+    const test = harness();
     test.readCurrentModel.mockRejectedValueOnce(new Error('catalog resolver raced'));
-    await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
+    await expect(test.service.loadNow(request)).resolves.toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable' } });
     expect(test.postJsonModelId).not.toHaveBeenCalled();
-  });
-
-  it.each([5, 6])('discards confirmation when ticket revalidation step %s changes', async (failAt) => {
-    let calls = 0;
-    const changed = createProviderErrorV1('provider_authorization_changed', {
-      connectionId: request.connectionId, machineId: request.machineId,
-    });
-    const test = harness({
-      revalidate: async () => (++calls === failAt ? { ok: false, error: changed } : { ok: true }),
-    });
-    await expect(test.service.loadNow(request)).resolves.toEqual({ status: 'error', error: changed });
-    expect(test.postJsonModelId).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the exact destination-authorization error and issues no accepted POST', async () => {
@@ -875,9 +799,9 @@ describe('explicit provider model loading', () => {
   it('aborts a newly-created single-flight when its first subscriber is already cancelled', async () => {
     const controller = new AbortController();
     const test = harness({
-      revalidate: () => {
+      authorize: () => {
         controller.abort();
-        return Promise.resolve({ ok: true });
+        return Promise.resolve({ status: 'authorized', authorization: authorization() });
       },
     });
     await expect(test.service.loadNow({ ...request, signal: controller.signal })).resolves.toEqual({

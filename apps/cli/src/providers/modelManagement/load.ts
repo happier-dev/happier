@@ -20,6 +20,7 @@ import {
   type ProviderOperationLifetime,
 } from '../operationLifetime';
 import type { ProviderContributionRegistryView } from '../registry';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 export const PROVIDER_MODEL_LOAD_WALL_TIME_MS = PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs;
 export const PROVIDER_MODEL_LOAD_MAX_DECODED_BODY_BYTES = PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes;
@@ -42,6 +43,7 @@ export type ProviderModelLoadRequest = Readonly<{
 export type ProviderModelLoadOperationScope = Readonly<{
   registry?: ProviderContributionRegistryView;
   lifetime: ProviderOperationLifetime;
+  savedSecretOperationContext?: SavedSecretOperationContextV1 | null;
 }>;
 
 export type ProviderModelLoadAuthorization<TTicket, TCredentialRef> = Readonly<{
@@ -74,11 +76,6 @@ export type ProviderModelLoadAuthorizationPort<TTicket, TCredentialRef> = Readon
     | Readonly<{ status: 'unavailable' }>
     | Readonly<{ status: 'error'; error: ProviderErrorV1 }>
   >;
-  revalidate(
-    ticket: TTicket,
-    request: Omit<ProviderModelLoadRequest, 'signal'>,
-    scope?: ProviderModelLoadOperationScope,
-  ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   authorizeDestination(
     ticket: TTicket,
     request: Omit<ProviderModelLoadRequest, 'signal'>,
@@ -436,21 +433,11 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
     const { request, authorization, signal, scope } = input;
     try {
       if (signal.aborted) return cancelledResult();
-      const beforeCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!beforeCatalogRead.ok) return { status: 'error', error: beforeCatalogRead.error };
       const before = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket, scope });
       if (signal.aborted) return cancelledResult();
-      const afterCatalogRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!afterCatalogRead.ok) return { status: 'error', error: afterCatalogRead.error };
       if (before.status === 'error') return { status: 'error', error: before.error };
       if (before.status === 'not_found') return modelNotFound(request);
       if (before.loadState === 'loaded') return { status: 'loaded', source: 'already_loaded' };
-
-      const beforeDispatch = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!beforeDispatch.ok) return { status: 'error', error: beforeDispatch.error };
 
       const credentialRef = authorization.credentialRef;
       const requestHadCredential = credentialRef !== null;
@@ -484,9 +471,6 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
         signal,
       });
       if (signal.aborted) return cancelledResult();
-      const afterResponse = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!afterResponse.ok) return { status: 'error', error: afterResponse.error };
       if (!response.ok) return { status: 'error', error: response.error };
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return {
@@ -505,17 +489,11 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
         scope,
       });
       if (signal.aborted) return cancelledResult();
-      const afterRefresh = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!afterRefresh.ok) return { status: 'error', error: afterRefresh.error };
       if (refreshed.status === 'error') return { status: 'error', error: refreshed.error };
       if (refreshed.status === 'not_supported') return modelStillUnloaded(request);
 
       const confirmed = await dependencies.catalog.readCurrentModel({ ...request, ticket: authorization.ticket, scope });
       if (signal.aborted) return cancelledResult();
-      const afterRead = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-      if (signal.aborted) return cancelledResult();
-      if (!afterRead.ok) return { status: 'error', error: afterRead.error };
       if (confirmed.status === 'error') return { status: 'error', error: confirmed.error };
       if (confirmed.status !== 'listed'
         || confirmed.catalogObservationId === before.catalogObservationId
@@ -525,13 +503,6 @@ export function createProviderModelLoadService<TTicket, TCredentialRef>(
       return { status: 'loaded', source: 'requested' };
     } catch (error) {
       if (signal.aborted || error instanceof ProviderModelLoadCancelledError) return cancelledResult();
-      try {
-        const current = await dependencies.authorization.revalidate(authorization.ticket, request, scope);
-        if (!current.ok) return { status: 'error', error: current.error };
-      } catch {
-        // Fall through to the redacted error below. Revalidation itself is
-        // allowed to fail closed but must never expose its raw exception.
-      }
       if (error instanceof ProviderProbeDestinationAuthorizationError) {
         return { status: 'error', error: error.error };
       }

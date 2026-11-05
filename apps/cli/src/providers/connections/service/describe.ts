@@ -189,6 +189,7 @@ export async function describeProviderConnections(
             machineId: input.machineId,
             connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,
             endpointSetFingerprint: resolved.record.endpointSetFingerprint,
+            ...(resolved.record.legacyGrantFingerprints ? { legacyGrantFingerprints: resolved.record.legacyGrantFingerprints } : {}),
           })
         : null;
       const effectiveGrantResolution = resolved
@@ -198,6 +199,7 @@ export async function describeProviderConnections(
             machineId: input.machineId,
             connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,
             endpointSetFingerprint: resolved.record.endpointSetFingerprint,
+            ...(resolved.record.legacyGrantFingerprints ? { legacyGrantFingerprints: resolved.record.legacyGrantFingerprints } : {}),
           })
         : null;
       // Saved Account enablement is syntax-derived at the Account owner. DNS

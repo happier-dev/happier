@@ -30,6 +30,7 @@ import type {
 import {
   ProviderManagedRuntimeDeclarationV1Schema,
   ProviderModelLoadDescriptorV1Schema,
+  ProviderUsageSourceV1Schema,
   resolveProviderManagedRuntimeDeclarationV1,
 } from './contributions/v1.js';
 import type { ProviderCatalogCommandFallbackV1 } from './detection/v1.js';
@@ -40,6 +41,7 @@ import { compareProviderCanonicalStringsV1 } from './canonicalOrderV1.js';
 import { ProviderEndpointUrlSyntaxSchema } from './endpointUrlSchema.js';
 import {
   createProviderFingerprintV1,
+  createProviderGrantFingerprintV2,
   ProviderCatalogFingerprintV1Schema,
   ProviderEndpointObservationFingerprintV1Schema,
   ProviderObservationAuthorizationFingerprintV1Schema,
@@ -71,6 +73,7 @@ import {
 } from './safety/headers.js';
 import {
   assessProviderEndpoint,
+  normalizeProviderEndpointUrlSyntax,
   buildProviderEndpointSetFingerprintInput,
   type AssessedProviderEndpoint,
 } from './safety/url.js';
@@ -200,6 +203,7 @@ function normalizeTransport(transport: ProviderCredentialTransportV1): ProviderC
     protocols: [...parsed.protocols].sort(),
     uses: [...parsed.uses].sort(),
     destination: normalizeDestination(parsed.destination),
+    ...(parsed.additionalCredentials?.length ? { additionalCredentials: parsed.additionalCredentials.map(({slotId, destination}) => ({ slotId, destination: normalizeDestination(destination) })).sort((a,b) => compareProviderCanonicalStringsV1(a.slotId,b.slotId)) } : {}),
   };
 }
 
@@ -213,6 +217,13 @@ function normalizeEndpoint(endpoint: ProviderSecurityEndpointV1) {
   };
 }
 
+function projectUsageSourceSecurityFacts(source: import('./contributions/v1.js').ProviderUsageSourceV1) {
+  const parsed = ProviderUsageSourceV1Schema.parse(source);
+  return { id: parsed.id, endpointTemplateId: parsed.endpointTemplateId, path: parsed.path, parser: parsed.parser,
+    ...(parsed.billingCredential ? { billingCredential: { slotId: parsed.billingCredential.slotId,
+      destination: parsed.billingCredential.destination } } : {}) };
+}
+
 export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   securityContractVersion: number;
   endpoints: readonly ProviderSecurityEndpointV1[];
@@ -221,6 +232,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   credentialTransports: readonly ProviderCredentialTransportV1[];
   modelLoad?: ProviderModelLoadDescriptorV1;
+  usageSources?: readonly import('./contributions/v1.js').ProviderUsageSourceV1[];
   managedDeployment?: Readonly<{
     gatewayPlacement?: ProviderGatewayPlacementV1;
     implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
@@ -251,6 +263,8 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
       : null,
     credentialTransports,
     modelLoad: input.modelLoad ? ProviderModelLoadDescriptorV1Schema.parse(input.modelLoad) : null,
+    ...(input.usageSources?.length ? { usageSources: input.usageSources.map(projectUsageSourceSecurityFacts)
+      .sort((left, right) => compareProviderCanonicalStringsV1(left.id, right.id)) } : {}),
   };
   if (input.managedDeployment === undefined) {
     return createProviderFingerprintV1('connection-security', {
@@ -261,6 +275,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
       catalogFallback: normalizedSharedFacts.catalogFallback,
       credentialTransports: normalizedSharedFacts.credentialTransports,
       modelLoad: normalizedSharedFacts.modelLoad,
+      ...('usageSources' in normalizedSharedFacts ? { usageSources: normalizedSharedFacts.usageSources } : {}),
     });
   }
   if (input.endpoints.length !== 0) {
@@ -284,6 +299,58 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
           right.endpointTemplateId,
         )),
       managedRuntime: managedDeclaration.managedRuntime,
+    },
+  });
+}
+
+/** New consent follows destinations and credential disclosure, not plugin observation declarations. */
+export function createProviderConnectionSecurityFingerprintV2(
+  input: Parameters<typeof createProviderConnectionSecurityFingerprintV1>[0],
+): string {
+  const credentialTransports = input.credentialTransports.map(normalizeTransport)
+    .sort((left, right) => compareProviderCanonicalStringsV1(JSON.stringify(left), JSON.stringify(right)));
+  // Usage paths/parsers are observation declarations. A separate billing slot
+  // and its destination still change which credential the host discloses.
+  const billingCredentialDestinations = [...new Map((input.usageSources ?? []).flatMap(source =>
+    source.billingCredential ? [{ endpointTemplateId: source.endpointTemplateId,
+      slotId: source.billingCredential.slotId, destination: normalizeDestination(source.billingCredential.destination) }] : [])
+    .map(destination => [JSON.stringify(destination), destination])).entries()]
+    .sort(([left], [right]) => compareProviderCanonicalStringsV1(left, right)).map(([, destination]) => destination);
+  const sharedFacts = {
+    securityContractVersion: positiveSchemaVersion(input.securityContractVersion, 'Security contract version'),
+    credentialTransports,
+    billingCredentialDestinations,
+  };
+  if (!input.managedDeployment) {
+    return createProviderGrantFingerprintV2('connection-security', {
+      ...sharedFacts, endpoints: input.endpoints.map(endpoint => {
+        const { endpointTemplateId, protocol, url, publicHeaders } = normalizeEndpoint(endpoint);
+        return { endpointTemplateId, protocol, url, publicHeaders };
+      }).sort((left, right) => compareProviderCanonicalStringsV1(left.endpointTemplateId, right.endpointTemplateId)),
+    });
+  }
+  if (input.endpoints.length !== 0) {
+    throw new TypeError('Managed Provider connection security facts must not contain durable endpoints');
+  }
+  const declaration = projectManagedRuntimeDeclarationSecurityFactsV1(input.managedDeployment);
+  return createProviderGrantFingerprintV2('connection-security', {
+    ...sharedFacts,
+    deployment: {
+      kind: 'managedLocal',
+      ...(input.managedDeployment.gatewayPlacement?.kind === 'machine'
+        ? { gatewayPlacement: ProviderGatewayPlacementV1Schema.parse(input.managedDeployment.gatewayPlacement) } : {}),
+      implementationIdentity: declaration.implementationIdentity,
+      logicalEndpoints: input.managedDeployment.logicalEndpoints.map(normalizeManagedEndpoint)
+        .sort((left, right) => compareProviderCanonicalStringsV1(left.endpointTemplateId, right.endpointTemplateId)),
+      connectedAccounts: declaration.managedRuntime.connectedAccounts.map(account => ({
+        purpose: account.purpose, service: account.service,
+        ...(account.materializationKinds ? { materializationKinds: account.materializationKinds } : {}),
+        ...(account.credentialKinds ? { credentialKinds: [...account.credentialKinds].sort(compareProviderCanonicalStringsV1) } : {}),
+        ...(account.endpointTemplateIds ? { endpointTemplateIds: [...account.endpointTemplateIds].sort(compareProviderCanonicalStringsV1) } : {}),
+      })),
+      requestAuthUses: declaration.managedRuntime.requestAuthUses,
+      ...(declaration.managedRuntime.sourceEnvelopeTransport
+        ? { sourceEnvelopeTransport: declaration.managedRuntime.sourceEnvelopeTransport } : {}),
     },
   });
 }
@@ -391,15 +458,16 @@ export function createProviderBindingSecurityFingerprintV1(
   });
 }
 
-export function createProviderEndpointSetFingerprintV1(input: Readonly<{
+function canonicalAssessedGrantEndpoints(input: Readonly<{
   endpoints: readonly Readonly<{
     endpointTemplateId: string;
     endpoint: AssessedProviderEndpoint;
   }>[];
-}>): string {
-  const assessedEndpoints = input.endpoints.map(({ endpointTemplateId, endpoint }) => {
+}>) {
+  return input.endpoints.map(({ endpointTemplateId, endpoint }) => {
     const reassessed = assessProviderEndpoint(endpoint.normalizedUrl, {
-      resolvedAddresses: endpoint.resolvedAddresses,
+      ...(endpoint.resolvedAddresses.length ? { resolvedAddresses: endpoint.resolvedAddresses } : {}),
+      purpose: 'configuration',
       privateNetworkConfirmed: true,
     });
     const claimed = {
@@ -420,10 +488,27 @@ export function createProviderEndpointSetFingerprintV1(input: Readonly<{
       endpoint: reassessed,
     };
   });
+}
+
+export function createProviderEndpointSetFingerprintV1(
+  input: Parameters<typeof canonicalAssessedGrantEndpoints>[0],
+): string {
   return createProviderFingerprintV1(
     'endpoint-set',
-    buildProviderEndpointSetFingerprintInput(assessedEndpoints),
+    buildProviderEndpointSetFingerprintInput(canonicalAssessedGrantEndpoints(input)),
   );
+}
+
+export function createProviderEndpointSetFingerprintV2(
+  input: Parameters<typeof canonicalAssessedGrantEndpoints>[0],
+): string {
+  // No DNS or claimed assessment fields participate in destination-only consent.
+  const endpoints = input.endpoints.map(({ endpointTemplateId, endpoint }) => ({
+    endpointTemplateId: ProviderLocalIdSchema.parse(endpointTemplateId),
+    normalizedUrl: normalizeProviderEndpointUrlSyntax(endpoint.normalizedUrl).normalizedUrl,
+  }));
+  return createProviderGrantFingerprintV2('endpoint-set', endpoints.sort((left, right) =>
+    compareProviderCanonicalStringsV1(left.endpointTemplateId, right.endpointTemplateId)));
 }
 
 export function createProviderSavedSecretRecordFingerprintV1(input: Readonly<{

@@ -1,7 +1,5 @@
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
-import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
 import type { AssessedProviderEndpoint, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -10,12 +8,9 @@ import type {
   ProviderProbeAuthorizationPort,
   ProviderProbeOperationScope,
 } from '../probe/authorization';
-import type {
-  ProviderContributionRegistryView,
-  ProviderEndpointDnsEvidence,
-} from '../registry/types';
+import type { ProviderContributionRegistryView } from '../registry/types';
 import { readProviderSettingsForCli } from '../settings/read';
-import { createAccountBoundProviderSnapshotReader, sameProviderConnectionsCatalogAuthority } from '../lifecycle/currentAccountSettingsSnapshot';
+import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import {
   awaitAbortableWithinProviderOperation,
@@ -50,11 +45,6 @@ export type RuntimeProviderModelLoadAuthorizationPort = Readonly<{
     request: ProviderModelLoadHostRequest,
     scope?: ProviderModelLoadOperationScope,
   ): Promise<ProviderModelLoadHostAuthorizationResult>;
-  revalidate(
-    ticket: ProviderModelLoadHostAuthorizationTicket,
-    request: ProviderModelLoadHostRequest,
-    scope?: ProviderModelLoadOperationScope,
-  ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
   authorizeDestination(
     ticket: ProviderModelLoadHostAuthorizationTicket,
     request: ProviderModelLoadHostRequest,
@@ -66,17 +56,6 @@ export type RuntimeProviderModelLoadAuthorizationPort = Readonly<{
   ): ReturnType<ProviderProbeAuthorizationPort<ProviderProbeHostAuthorizationTicket, ProviderProbeHostCredentialReference>['resolveCredential']>;
 }>;
 
-function bindExactDispatchAddressEvidence(
-  evidence: ProviderEndpointDnsEvidence,
-  destination: Readonly<{ endpointUrl: string; endpoint: AssessedProviderEndpoint }>,
-): ProviderEndpointDnsEvidence {
-  const exactEvidence = new Map(evidence);
-  exactEvidence.set(
-    normalizeProviderEndpointUrlSyntax(destination.endpointUrl).normalizedUrl,
-    destination.endpoint.resolvedAddresses,
-  );
-  return exactEvidence;
-}
 
 /**
  * Direct authorization calls are public admission boundaries. Nested catalog
@@ -103,91 +82,7 @@ function startModelLoadOperationScope(
   };
 }
 
-export function revalidateProviderProbeAuthorizationTicket(
-  ticket: ProviderProbeHostAuthorizationTicket,
-  current: ProviderProbeHostAuthorizationTicket | ProviderErrorV1,
-): Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }> {
-  if ('code' in current) return { ok: false, error: current };
-  const equal = ticket.deployment === 'managedLocal'
-    ? current.deployment === 'managedLocal'
-      && ticket.connectionId === current.connectionId
-      && ticket.connectionRevision === current.connectionRevision
-      && ticket.machineId === current.machineId
-      && ticket.connectionSecurityFingerprint === current.connectionSecurityFingerprint
-      && ticket.endpointSetFingerprint === current.endpointSetFingerprint
-      && ticket.grantFingerprint === current.grantFingerprint
-      && ticket.connectionScope === current.connectionScope
-      && ticket.contributionKey === current.contributionKey
-      && createProviderManagedRuntimeBindingEqualityKeyV1({
-        implementationIdentity: ticket.implementationIdentity,
-        managedRuntime: ticket.managedRuntime,
-        purposeBindings: ticket.purposeBindings,
-      })
-        === createProviderManagedRuntimeBindingEqualityKeyV1({
-          implementationIdentity: current.implementationIdentity,
-          managedRuntime: current.managedRuntime,
-          purposeBindings: current.purposeBindings,
-        })
-      && ticket.endpointTemplateId === current.endpointTemplateId
-      && ticket.protocol === current.protocol
-      && ticket.sourceRegistryVersion === current.sourceRegistryVersion
-      && ticket.path === current.path
-      && ticket.parser === current.parser
-      && ticket.probeRequestFingerprint === current.probeRequestFingerprint
-    : current.deployment !== 'managedLocal'
-    && ticket.connectionId === current.connectionId
-    && ticket.connectionRevision === current.connectionRevision
-    && ticket.machineId === current.machineId
-    && ticket.connectionSecurityFingerprint === current.connectionSecurityFingerprint
-    && ticket.endpointSetFingerprint === current.endpointSetFingerprint
-    && ticket.grantFingerprint === current.grantFingerprint
-    && ticket.connectionScope === current.connectionScope
-    && ticket.endpointTemplateId === current.endpointTemplateId
-    && ticket.endpointUrl === current.endpointUrl
-    && ticket.protocol === current.protocol
-    && ticket.probeRequestFingerprint === current.probeRequestFingerprint
-    && ticket.selectedSecretBindingId === current.selectedSecretBindingId
-    && ticket.selectedSecretRecordFingerprint === current.selectedSecretRecordFingerprint;
-  return equal
-    ? { ok: true }
-    : {
-        ok: false,
-        error: createProviderErrorV1('provider_authorization_changed', {
-          connectionId: ticket.connectionId,
-          machineId: ticket.machineId,
-        }),
-      };
-}
 
-export function revalidateProviderModelLoadAuthorizationTicket(
-  ticket: ProviderModelLoadHostAuthorizationTicket,
-  current: ProviderModelLoadHostAuthorizationTicket | ProviderErrorV1,
-): Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }> {
-  if ('code' in current) return { ok: false, error: current };
-  const equal = ticket.connectionId === current.connectionId
-    && ticket.connectionRevision === current.connectionRevision
-    && ticket.machineId === current.machineId
-    && ticket.modelId === current.modelId
-    && ticket.connectionSecurityFingerprint === current.connectionSecurityFingerprint
-    && ticket.endpointSetFingerprint === current.endpointSetFingerprint
-    && ticket.grantFingerprint === current.grantFingerprint
-    && ticket.connectionScope === current.connectionScope
-    && ticket.endpointTemplateId === current.endpointTemplateId
-    && ticket.endpointUrl === current.endpointUrl
-    && ticket.protocol === current.protocol
-    && JSON.stringify(ticket.descriptor) === JSON.stringify(current.descriptor)
-    && ticket.selectedSecretBindingId === current.selectedSecretBindingId
-    && ticket.selectedSecretRecordFingerprint === current.selectedSecretRecordFingerprint;
-  return equal
-    ? { ok: true }
-    : {
-        ok: false,
-        error: createProviderErrorV1('provider_authorization_changed', {
-          connectionId: ticket.connectionId,
-          machineId: ticket.machineId,
-        }),
-      };
-}
 
 export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
   secretSources?: TargetSecretSourcesV1;
@@ -204,7 +99,6 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
   );
   const authorizeWithDestination = async (
     request: Parameters<ProviderProbeAuthorizationPort<ProviderProbeHostAuthorizationTicket, ProviderProbeHostCredentialReference>['authorize']>[0],
-    destination?: Readonly<{ endpointUrl: string; endpoint: AssessedProviderEndpoint }>,
     scope?: ProviderProbeOperationScope,
   ): Promise<ProviderProbeHostAuthorizationResult> => {
     const operationScope = startProbeOperationScope(scope);
@@ -219,27 +113,15 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     }) };
     let registry = operationScope.registry ?? input.registry;
     if (!registry && input.resolveRegistry) {
-      try {
-        registry = await awaitWithinProviderOperation(
-          Promise.resolve().then(() => input.resolveRegistry!()),
-          operationScope.lifetime,
-        );
-      } catch (error) {
-        if (error instanceof ProviderOperationAbandonedError) {
-          return {
-            ok: false,
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
-              connectionId: request.connectionId,
-              machineId: request.machineId,
-            }),
-          };
-        }
-        throw error;
-      }
+      registry = await awaitWithinProviderOperation(
+        Promise.resolve().then(() => input.resolveRegistry!()),
+        operationScope.lifetime,
+      );
     }
     if (!registry) throw new TypeError('Provider probe authorization requires a contribution registry');
     const snapshot = readSnapshot();
-    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') {
+    const admittedSettingsBasis = operationScope.accountSettingsBasis;
+    if (!snapshot || !admittedSettingsBasis && snapshot.providerConnectionsCatalog?.status !== 'ready') {
       return {
         ok: false,
         error: createProviderErrorV1('provider_connection_not_found', {
@@ -248,16 +130,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         }),
       };
     }
-    const admittedSettingsBasis = operationScope.accountSettingsBasis;
-    const settingsBasisIsCurrent = admittedSettingsBasis !== undefined
-      && admittedSettingsBasis.scopeKey === snapshot.scopeKey
-      && admittedSettingsBasis.settingsVersion === snapshot.settingsVersion
-      && sameProviderConnectionsCatalogAuthority(admittedSettingsBasis.providerConnectionsCatalog, snapshot.providerConnectionsCatalog);
-    if (admittedSettingsBasis && (
-      admittedSettingsBasis.scopeKey !== snapshot.scopeKey
-      || admittedSettingsBasis.settingsVersion > snapshot.settingsVersion
-      || !sameProviderConnectionsCatalogAuthority(admittedSettingsBasis.providerConnectionsCatalog, snapshot.providerConnectionsCatalog)
-    )) {
+    if (admittedSettingsBasis && admittedSettingsBasis.scopeKey !== snapshot.scopeKey) {
       return {
         ok: false,
         error: createProviderErrorV1('provider_authorization_changed', {
@@ -266,7 +139,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         }),
       };
     }
-    const settingsRead = settingsBasisIsCurrent
+    const settingsRead = admittedSettingsBasis
       ? admittedSettingsBasis.settingsRead
       : readProviderSettingsForCli(snapshot);
     const providerSettings = settingsRead.settings;
@@ -289,27 +162,14 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       ? operationScope.dnsEvidenceByConnectionId?.get(request.connectionId)
       : undefined;
     if (!operationScope.dnsEvidenceByConnectionId) {
-      try {
-        dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-          connectionId: request.connectionId,
-          machineId: request.machineId,
-          providerSettings,
-          registry,
-          ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-          lifetime: operationScope.lifetime,
-        });
-      } catch (error) {
-        if (error instanceof ProviderOperationAbandonedError) {
-          return {
-            ok: false,
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
-              connectionId: request.connectionId,
-              machineId: request.machineId,
-            }),
-          };
-        }
-        throw error;
-      }
+      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+        connectionId: request.connectionId,
+        machineId: request.machineId,
+        providerSettings,
+        registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+        lifetime: operationScope.lifetime,
+      });
     }
     if (!dnsEvidenceByEndpointUrl) {
       return {
@@ -319,12 +179,6 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
           machineId: request.machineId,
         }),
       };
-    }
-    if (destination) {
-      dnsEvidenceByEndpointUrl = bindExactDispatchAddressEvidence(
-        dnsEvidenceByEndpointUrl,
-        destination,
-      );
     }
     let managedPurposeBindingResolution:
       QualifiedConnectedAccountPurposeBindingsV1 | undefined;
@@ -377,12 +231,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
       }
     }
     const currentSnapshot = readSnapshot();
-    if (!await accountCurrent() || currentSnapshot?.providerConnectionsCatalog?.status !== 'ready'
-      || admittedSettingsBasis && (
-        admittedSettingsBasis.scopeKey !== currentSnapshot.scopeKey
-        || admittedSettingsBasis.settingsVersion > currentSnapshot.settingsVersion
-        || !sameProviderConnectionsCatalogAuthority(admittedSettingsBasis.providerConnectionsCatalog, currentSnapshot.providerConnectionsCatalog)
-      )) {
+    if (currentSnapshot?.scopeKey !== snapshot.scopeKey) {
       return {
         ok: false,
         error: createProviderErrorV1('provider_authorization_changed', {
@@ -391,20 +240,16 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         }),
       };
     }
-    const reuseSettingsRead = admittedSettingsBasis
-      && admittedSettingsBasis.settingsVersion === currentSnapshot.settingsVersion;
-    const currentSettingsRead = reuseSettingsRead
-      ? settingsRead
-      : readProviderSettingsForCli(currentSnapshot);
-    return resolveProviderProbeAuthorization({
+    const capturedSnapshot = { ...snapshot, settings: admittedSettingsBasis?.accountSettings ?? snapshot.settings };
+    const authorized = resolveProviderProbeAuthorization({
       request,
-      accountSettings: reuseSettingsRead ? admittedSettingsBasis.accountSettings : currentSnapshot.settings,
-      savedSecretResources: currentSnapshot.savedSecretResources,
-      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(currentSnapshot, {
+      accountSettings: capturedSnapshot.settings,
+      savedSecretResources: capturedSnapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(capturedSnapshot, {
         isCurrent: () => !operationScope.lifetime.signal?.aborted,
       }),
-      providerSettings: currentSettingsRead.settings,
-      settingsRead: currentSettingsRead,
+      providerSettings,
+      settingsRead,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(managedPurposeBindingResolution
@@ -417,20 +262,27 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
     });
+    return authorized.ok && authorized.credentialRef
+      ? { ...authorized, credentialRef: { ...authorized.credentialRef, admittedSnapshot: capturedSnapshot,
+        admittedOperationContext: operationScope.savedSecretOperationContext ?? undefined } }
+      : authorized;
   };
   const authorize = (
     request: Parameters<typeof authorizeWithDestination>[0],
     scope?: ProviderProbeOperationScope,
   ) => observeProviderOperationPhase(scope?.lifetime, 'pre_effect_revalidation', () =>
-    authorizeWithDestination(request, undefined, scope));
+    authorizeWithDestination(request, scope));
+  const active = async (request: Readonly<{ connectionId: string; machineId: string }>, scope?: ProviderProbeOperationScope) => {
+    const errorContext = { connectionId: request.connectionId, machineId: request.machineId };
+    if (scope?.lifetime.signal?.aborted) throw new ProviderOperationAbandonedError('cancelled');
+    const current = (scope?.getAccountSettingsSnapshot ?? getAccountSettingsSnapshot)();
+    return current && (!scope?.accountSettingsBasis || current.scopeKey === scope.accountSettingsBasis.scopeKey)
+      ? { ok: true as const } : { ok: false as const,
+        error: createProviderErrorV1('provider_authorization_changed', errorContext) };
+  };
   return Object.freeze({
     authorize,
-    revalidate: async (ticket, request, scope) => {
-      const current = await authorize(request, scope);
-      return current.ok
-        ? revalidateProviderProbeAuthorizationTicket(ticket, current.ticket)
-        : { ok: false, error: current.error };
-    },
+    revalidate: async (_ticket, request, scope) => active(request, scope),
     authorizeDestination: async (ticket, request, destination, scope) => {
       if (ticket.deployment === 'managedLocal' || request.deployment === 'managedLocal') {
         return {
@@ -451,14 +303,10 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
           }),
         };
       }
-      const current = await observeProviderOperationPhase(scope?.lifetime, 'pre_effect_revalidation', () => authorizeWithDestination(request, {
-        endpointUrl: ticket.endpointUrl,
-        endpoint: destination,
-      }, scope));
-      if (!current.ok) return { ok: false, error: current.error };
-      const validation = revalidateProviderProbeAuthorizationTicket(ticket, current.ticket);
-      if (!validation.ok) return validation;
-      return { ok: true };
+      const current = await active(request, scope);
+      if (!current.ok) return current;
+      return ticket.authorizeDestination?.(destination) ?? { ok: false,
+        error: createProviderErrorV1('provider_probe_authorization_invalid', { connectionId: ticket.connectionId, machineId: ticket.machineId }) };
     },
     resolveCredential: async (credentialRef, scope) => {
       if (scope?.isAccountCurrent && !await scope.isAccountCurrent()) return {
@@ -492,29 +340,15 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
   );
   const authorizeWithDestination = async (
     request: ProviderModelLoadHostRequest,
-    destination?: Readonly<{ endpointUrl: string; endpoint: AssessedProviderEndpoint }>,
     scope?: ProviderModelLoadOperationScope,
   ): Promise<ProviderModelLoadHostAuthorizationResult> => {
     const operationScope = startModelLoadOperationScope(scope);
     let registry = operationScope.registry ?? input.registry;
     if (!registry && input.resolveRegistry) {
-      try {
-        registry = await awaitWithinProviderOperation(
-          Promise.resolve().then(() => input.resolveRegistry!()),
-          operationScope.lifetime,
-        );
-      } catch (error) {
-        if (error instanceof ProviderOperationAbandonedError) {
-          return {
-            status: 'error',
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
-              connectionId: request.connectionId,
-              machineId: request.machineId,
-            }),
-          };
-        }
-        throw error;
-      }
+      registry = await awaitWithinProviderOperation(
+        Promise.resolve().then(() => input.resolveRegistry!()),
+        operationScope.lifetime,
+      );
     }
     if (!registry) throw new TypeError('Provider model-load authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
@@ -528,36 +362,16 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
       };
     }
     const providerSettings = readProviderSettingsForCli(snapshot).settings;
-    let dnsEvidenceByEndpointUrl;
-    try {
-      dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
-        connectionId: request.connectionId,
-        machineId: request.machineId,
-        providerSettings,
-        registry,
-        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-        lifetime: operationScope.lifetime,
-      });
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          status: 'error',
-          error: createProviderErrorV1('provider_endpoint_unavailable', {
-            connectionId: request.connectionId,
-            machineId: request.machineId,
-          }),
-        };
-      }
-      throw error;
-    }
-    if (destination) {
-      dnsEvidenceByEndpointUrl = bindExactDispatchAddressEvidence(
-        dnsEvidenceByEndpointUrl,
-        destination,
-      );
-    }
+    const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
+      connectionId: request.connectionId,
+      machineId: request.machineId,
+      providerSettings,
+      registry,
+      ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
+      lifetime: operationScope.lifetime,
+    });
     const currentSnapshot = getAccountSettingsSnapshot();
-    if (currentSnapshot?.providerConnectionsCatalog?.status !== 'ready') {
+    if (currentSnapshot?.scopeKey !== snapshot.scopeKey) {
       return {
         status: 'error',
         error: createProviderErrorV1('provider_authorization_changed', {
@@ -566,41 +380,32 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
         }),
       };
     }
-    return resolveProviderModelLoadAuthorization({
+    const authorized = resolveProviderModelLoadAuthorization({
       request,
-      accountSettings: currentSnapshot.settings,
-      savedSecretResources: currentSnapshot.savedSecretResources,
-      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(currentSnapshot, {
+      accountSettings: snapshot.settings,
+      savedSecretResources: snapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
         isCurrent: () => !operationScope.lifetime.signal?.aborted,
       }),
-      providerSettings: readProviderSettingsForCli(currentSnapshot).settings,
+      providerSettings,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(input.localCandidateUrlsByConnectionId
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
     });
+    return authorized.status === 'authorized' && authorized.authorization.credentialRef
+      ? { ...authorized, authorization: { ...authorized.authorization,
+        credentialRef: { ...authorized.authorization.credentialRef, admittedSnapshot: snapshot,
+          admittedOperationContext: operationScope.savedSecretOperationContext ?? undefined } } }
+      : authorized;
   };
   const authorize = (
     request: ProviderModelLoadHostRequest,
     scope?: ProviderModelLoadOperationScope,
-  ) => authorizeWithDestination(request, undefined, scope);
+  ) => authorizeWithDestination(request, scope);
   return Object.freeze({
     authorize,
-    revalidate: async (ticket, request, scope) => {
-      const current = await authorize(request, scope);
-      if (current.status === 'error') return { ok: false, error: current.error };
-      if (current.status === 'unavailable') {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_authorization_changed', {
-            connectionId: ticket.connectionId,
-            machineId: ticket.machineId,
-          }),
-        };
-      }
-      return revalidateProviderModelLoadAuthorizationTicket(ticket, current.authorization.ticket);
-    },
     authorizeDestination: async (ticket, request, destination, scope) => {
       const authorizedOrigin = new URL(ticket.endpointUrl).origin;
       if (destination.origin !== authorizedOrigin || destination.scope !== ticket.connectionScope) {
@@ -612,23 +417,11 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
           }),
         };
       }
-      const current = await authorizeWithDestination(request, {
-        endpointUrl: ticket.endpointUrl,
-        endpoint: destination,
-      }, scope);
-      if (current.status === 'error') return { ok: false, error: current.error };
-      if (current.status === 'unavailable') {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_authorization_changed', {
-            connectionId: ticket.connectionId,
-            machineId: ticket.machineId,
-          }),
-        };
-      }
-      const validation = revalidateProviderModelLoadAuthorizationTicket(ticket, current.authorization.ticket);
-      if (!validation.ok) return validation;
-      return { ok: true };
+      if (scope?.lifetime.signal?.aborted) throw new ProviderOperationAbandonedError('cancelled');
+      if (!getAccountSettingsSnapshot()) return { ok: false,
+        error: createProviderErrorV1('provider_authorization_changed', { connectionId: ticket.connectionId, machineId: ticket.machineId }) };
+      return ticket.authorizeDestination?.(destination) ?? { ok: false,
+        error: createProviderErrorV1('provider_probe_authorization_invalid', { connectionId: ticket.connectionId, machineId: ticket.machineId }) };
     },
     resolveCredential: async (credentialRef) => resolveRuntimeProviderCredential({
       credentialRef,

@@ -40,6 +40,7 @@ export type ProviderConnectionSourceFactsV1 = Readonly<{
   availabilityProbe?: NonNullable<ProviderContributionV1['discovery']>['availabilityProbe'];
   catalogFallback?: ProviderCatalogCommandFallbackV1;
   modelLoad?: ProviderModelLoadDescriptorV1;
+  usageSources?: ProviderContributionV1['usageSources'];
 }>;
 
 /** Account grant authoring and machine admission fingerprint the same declared effects. */
@@ -54,5 +55,6 @@ export function readProviderConnectionSourceFactsV1(
     ...(contribution?.discovery ? { availabilityProbe: contribution.discovery.availabilityProbe } : {}),
     ...(contribution?.discovery?.catalogFallback ? { catalogFallback: contribution.discovery.catalogFallback } : {}),
     ...(contribution?.modelLoad ? { modelLoad: contribution.modelLoad } : {}),
+    ...(contribution?.usageSources ? { usageSources: contribution.usageSources } : {}),
   };
 }

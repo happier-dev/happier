@@ -94,6 +94,8 @@ type ResolvedProviderConnectionRecordBase = Readonly<{
   scope: 'account' | 'machine';
   connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1;
   endpointSetFingerprint: string;
+  /** Historical expected values exist only for an opaque grant already in the captured settings. */
+  legacyGrantFingerprints?: Readonly<{ connectionSecurityFingerprint: string; endpointSetFingerprint: string }>;
   authorization: ResolvedProviderConnectionAuthorization;
 }>;
 
