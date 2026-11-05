@@ -42,6 +42,7 @@ import type { AgentExternalSessionTakeoverContribution } from '../sessions/exter
 import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
+    ProviderUsageParser,
 } from '../managed-services/contract.js';
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 
@@ -96,6 +97,7 @@ export interface PluginRegistrationValueByFamily {
     providers: Readonly<{
         managedRuntime?: ManagedProviderRuntime;
         catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+        usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
     }>;
     scmHostingProviders: HostingProviderRuntime;
     scmBackends: BackendRuntime;

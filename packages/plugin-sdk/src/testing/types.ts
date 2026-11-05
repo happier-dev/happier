@@ -131,6 +131,7 @@ secretSources: Parameters<PluginApi['secretSources']['register']>[1];
     notificationChannels: Parameters<PluginApi['notifications']['registerChannel']>[1];
     connectedAccountDescriptors: Parameters<PluginApi['connectedAccounts']['register']>[1];
     providers: Readonly<{
+        usageParsers?: Readonly<Record<string, Parameters<PluginApi['providers']['registerUsageParser']>[2]>>;
         managedRuntime?: Parameters<PluginApi['providers']['register']>[1];
         catalogParsers?: Readonly<Record<
             string,

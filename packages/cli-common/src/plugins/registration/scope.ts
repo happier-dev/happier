@@ -210,6 +210,11 @@ export function createPluginRegistrationScope(
         const catalogParsers = {
             ...((current?.catalogParsers as Readonly<Record<string, unknown>> | undefined) ?? {}),
         };
+        const usageParsers = { ...((current?.usageParsers as Readonly<Record<string, unknown>> | undefined) ?? {}) };
+        for (const [id, parse] of Object.entries((fields.usageParsers as Readonly<Record<string, unknown>> | undefined) ?? {})) {
+            if (Object.hasOwn(usageParsers, id)) fail(`Plugin '${params.pluginId}' registered duplicate usage parser '${id}' for Provider '${localId}'`);
+            usageParsers[id] = parse;
+        }
         for (const [format, parse] of Object.entries((fields.catalogParsers as Readonly<Record<string, unknown>> | undefined) ?? {})) {
             if (Object.hasOwn(catalogParsers, format)) {
                 fail(`Plugin '${params.pluginId}' registered duplicate catalog format '${format}' for Provider '${localId}'`);
@@ -220,6 +225,7 @@ export function createPluginRegistrationScope(
             family: REGISTRATION_FAMILY.providers,
             localId,
             value: Object.freeze({
+                ...(Object.keys(usageParsers).length > 0 ? { usageParsers: Object.freeze(usageParsers) } : {}),
                 ...(fields.managedRuntime !== undefined
                     ? { managedRuntime: fields.managedRuntime }
                     : current?.managedRuntime !== undefined
@@ -415,6 +421,10 @@ export function createPluginRegistrationScope(
                 register(REGISTRATION_FAMILY.connectedAccounts, id, runtime),
         }),
         providers: Object.freeze({
+            registerUsageParser: (id: string, parserId: string, parse: unknown) => {
+                assertRegistrationLocalId(parserId);
+                return registerProviderFields(id, Object.freeze({ usageParsers: Object.freeze({ [parserId]: parse }) }), 'Provider usage parser');
+            },
             register: (id: string, runtime: unknown) =>
                 registerProviderFields(
                     id,

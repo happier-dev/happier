@@ -20,6 +20,7 @@ import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { PluginExecSpawnRequest } from '../services/io.js';
 import type { HttpMethod } from '../services/io.js';
 import type { PluginInvocationContext } from '../invocation.js';
+import type { ProviderUsageParseResultV1 } from '@happier-dev/protocol/providers/contributions';
 
 export type ProviderLocalId = PluginContributionLocalId;
 export const ManagedServiceLocalIdSchema: Readonly<{
@@ -518,7 +519,12 @@ export type ProviderCatalogParseResult = Readonly<{
  */
 export type ProviderCatalogParser = (body: unknown) => ProviderCatalogParseResult;
 
+/** Maps decoded upstream usage onto Q1 facts; the host owns snapshot identity and clocks. */
+export type ProviderUsageParseResult = Readonly<ProviderUsageParseResultV1>;
+export type ProviderUsageParser = (body: unknown) => ProviderUsageParseResult;
+
 export interface ProvidersRegistrationApi {
+    registerUsageParser(localId: ProviderLocalId, parserId: string, parse: ProviderUsageParser): void;
     register(localId: ProviderLocalId, runtime: ManagedProviderRuntime): void;
     /**
      * Contributes the implementation of one catalog wire format this plugin's

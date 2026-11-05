@@ -127,6 +127,10 @@ import type {
 } from './projections.js';
 
 const PROVIDER_EXPORTS = [
+    'ProviderUsageParseResultV1',
+    'ProviderUsageParser',
+    'ProviderUsageParseResult',
+    'ProviderUsageSourceV1',
     'PROVIDER_REASONING_EFFORT_OPTION_ID',
     'readProviderReasoningEffortOption',
     'AgentProviderRequirementsV1',

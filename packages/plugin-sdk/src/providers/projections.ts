@@ -31,6 +31,7 @@ import type {
     DaemonProviderProfileMigrationPreviewResponseV1,
 } from '@happier-dev/protocol/rpc';
 import { resolveSessionModelSelectionIntentV1 as canonicalResolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+export type { ProviderUsageParseResultV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveProviderBindingCompatibilityWithFingerprintV1 as canonicalResolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type {
     ResolveProviderBindingCompatibilityInputV1,
@@ -117,6 +118,7 @@ export type {
     ProviderLegacyProfileMigrationDescriptorV1,
     ProviderManagedRuntimeDeclarationV1 as ProviderManagedRuntimeDeclaration,
     ProviderModelLoadDescriptorV1,
+    ProviderUsageSourceV1,
     ProviderModelLoadStateV1,
     ProviderWireProtocol,
 } from '@happier-dev/protocol/providers';
@@ -131,6 +133,8 @@ export type {
     ProviderCatalogParsedModelLoadState,
     ProviderCatalogParseResult,
     ProviderCatalogParser,
+    ProviderUsageParser,
+    ProviderUsageParseResult,
     ProviderLocalId,
     ProvidersRegistrationApi,
 } from '../managed-services/contract.js';

@@ -2117,6 +2117,10 @@
 | `./providers` | `ProviderProfileMigrationPreviewRequest` | type | daemon |
 | `./providers` | `ProviderProfileMigrationPreviewResult` | type | daemon |
 | `./providers` | `ProviderPublicHeadersV1Schema` | value | any |
+| `./providers` | `ProviderUsageParseResult` | type | daemon |
+| `./providers` | `ProviderUsageParseResultV1` | type | any |
+| `./providers` | `ProviderUsageParser` | type | daemon |
+| `./providers` | `ProviderUsageSourceV1` | type | any |
 | `./providers` | `ProviderWireProtocol` | type | any |
 | `./providers` | `ProvidersRegistrationApi` | type | daemon |
 | `./providers` | `ProvidersService` | type | daemon |

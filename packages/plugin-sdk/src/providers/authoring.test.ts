@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { definePlugin } from '../definePlugin.js';
+import { createPluginTestkit } from '../testing/host.js';
+import { ProviderUsageParseResultV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 import type { PluginManifest } from '../manifest.js';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
@@ -13,6 +16,23 @@ import {
 } from './index.js';
 
 describe('Provider authoring through the public manifest SDK', () => {
+  it('activates an external usage parser through the declared Provider and admits Q1 output', async () => {
+    const parse = (body: unknown) => ({ meters: [{ meterId: 'balance', label: 'Balance', used: null,
+      remaining: Number(body), limit: null, unit: 'usd' as const, utilizationPct: null, resetsAt: null,
+      status: 'ok' as const, details: {} }] });
+    const plugin = definePlugin({ id: 'acme.usage', version: '1.0.0', entrypoints: { daemon: './daemon.js' },
+      providers: { gateway: { declaration: { v: 1, name: 'Usage gateway', kind: 'cloud',
+        endpointTemplates: [{ id: 'api', protocol: 'openai-chat', baseUrl: 'https://gateway.example/v1',
+          capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+        catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+        usageSources: [{ id: 'credits', endpointTemplateId: 'api', path: '/v1/credits', parser: 'credits-v1' }] },
+        usageParsers: { 'credits-v1': parse } } } });
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+    try {
+      const parsed = kit.registration('providers', 'gateway')?.usageParsers?.['credits-v1']?.('-2.5');
+      expect(ProviderUsageParseResultV1Schema.parse(parsed).meters[0]).toMatchObject({ remaining: -2.5, limit: null, unit: 'usd' });
+    } finally { await kit.dispose(); }
+  });
   it('admits an external gateway declaration and its Account configuration through existing public contracts', async () => {
     const provider = ProviderContributionV1Schema.parse({
       v: 1, id: 'gateway', name: 'Acme Gateway', kind: 'aggregator',

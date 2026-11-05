@@ -67,6 +67,7 @@ import type { InputPredicate } from './actions/inputHints.js';
 import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
+    ProviderUsageParser,
 } from './managed-services/contract.js';
 import type { ProviderContribution } from './providers/projections.js';
 import type {
@@ -486,13 +487,14 @@ type PluginDescriptorOnlyProviderDefinition = Readonly<{
     }>;
     runtime?: never;
     catalogParsers?: PluginProviderCatalogParsers;
+    usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
 }>;
 export type PluginProviderDefinition = RuntimeContributionDefinition<
     'providers',
     ManagedProviderRuntime,
     'runtime',
     PluginManagedProviderDeclaration
-> & Readonly<{ catalogParsers?: PluginProviderCatalogParsers }>;
+> & Readonly<{ catalogParsers?: PluginProviderCatalogParsers; usageParsers?: Readonly<Record<string, ProviderUsageParser>> }>;
 type PluginProviderAuthorDefinition =
     | PluginProviderDefinition
     | PluginDescriptorOnlyProviderDefinition;
@@ -1093,6 +1095,7 @@ deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploym
                 }>;
                 runtime: ManagedProviderRuntime;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+                usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
             }>
             | Readonly<{
                 declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'> & Readonly<{
@@ -1100,6 +1103,7 @@ deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploym
                 }>;
                 runtime?: never;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
+                usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
             }>
         >>;
         voiceProviders?: Readonly<Record<PluginContributionLocalId, PluginVoiceProviderDefinition>>;
@@ -2283,6 +2287,9 @@ const PROVIDERS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
             }
             for (const [format, parse] of Object.entries(definition.catalogParsers ?? {})) {
                 api.providers.registerCatalogParser(localId, format, parse);
+            }
+            for (const [id, parse] of Object.entries(definition.usageParsers ?? {})) {
+                api.providers.registerUsageParser(localId, id, parse);
             }
         }
     },
