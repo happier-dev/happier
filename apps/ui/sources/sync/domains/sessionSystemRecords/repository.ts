@@ -53,6 +53,10 @@ type Entry = {
 };
 type SessionEntries = {
     queries: Map<string, Entry>;
+    /** Selector membership shares the lifetime of the retained queries, including hidden ones. */
+    lists: Map<string, Set<Entry>>;
+    legacyWorkflows: Set<Entry>;
+    boardInventoryPages: Set<Entry>;
     boardCount?: BoardCount;
     authority?: Pick<SessionSystemRecordObservationBase, 'readCapabilities' | 'readContentContext' | 'isCurrent'>;
 };
@@ -62,6 +66,10 @@ function queryKey(query: SessionSystemRecordQuery): string {
     return query.type === 'read'
         ? JSON.stringify(['read', query.address.namespace, query.address.kind, query.address.localId])
         : JSON.stringify(['list', query.namespace, query.kind ?? null, query.localId ?? null, query.limit ?? 100, query.cursor ?? null]);
+}
+
+function listSelectorKey(namespace: HostSessionSystemRecordListQuery['namespace'], kind?: string, localId?: string): string {
+    return JSON.stringify([namespace, kind ?? null, localId ?? null]);
 }
 
 function retainRecord(previous: SessionSystemRecordStored | undefined, next: SessionSystemRecordStored) {
@@ -118,7 +126,10 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
     function sessionEntries(session: SessionAddress, create: boolean): SessionEntries | null {
         if (retired || !isScopeHome(session)) return null;
         let retained = sessions.get(session.sessionId);
-        if (!retained && create) { retained = { queries: new Map() }; sessions.set(session.sessionId, retained); }
+        if (!retained && create) {
+            retained = { queries: new Map(), lists: new Map(), legacyWorkflows: new Set(), boardInventoryPages: new Set() };
+            sessions.set(session.sessionId, retained);
+        }
         return retained ?? null;
     }
     function boardCount(session: SessionAddress, create: boolean): BoardCount | null {
@@ -144,10 +155,7 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
     function retainCompleteBoardInventory(session: SessionAddress) {
         const retained = sessionEntries(session, false);
         if (!retained) return;
-        const pages = [...retained.queries.values()].filter(entry => entry.query.type === 'list'
-            && entry.query.namespace === 'surface' && (entry.query.kind === undefined || entry.query.kind === 'item.v1')
-            && entry.query.localId === undefined
-            && entry.snapshot.freshness === 'fresh' && entry.snapshot.lastError === null);
+        const pages = [...retained.boardInventoryPages].filter(entry => entry.snapshot.freshness === 'fresh' && entry.snapshot.lastError === null);
         for (const first of pages) {
             if (first.query.type !== 'list' || first.query.cursor) continue;
             const firstQuery = first.query;
@@ -221,6 +229,16 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
         if (!entry && create) {
             entry = { session, query, snapshot: empty, listeners: new Set(), invalidatedWhileLoading: false, transientFailures: 0 };
             queries.set(key, entry);
+            if (query.type === 'list') {
+                const selector = listSelectorKey(query.namespace, query.kind, query.localId);
+                let pages = retained.lists.get(selector);
+                if (!pages) { pages = new Set(); retained.lists.set(selector, pages); }
+                pages.add(entry);
+                // Preserve the existing inventory precedence (query insertion order)
+                // while excluding unrelated queries from scalar count reuse.
+                if (query.namespace === 'surface' && (query.kind === undefined || query.kind === 'item.v1')
+                    && query.localId === undefined) retained.boardInventoryPages.add(entry);
+            } else if (query.type === 'legacy_workflow') retained.legacyWorkflows.add(entry);
         }
         return entry ?? null;
     }
@@ -309,14 +327,35 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
         });
         return entry.pending;
     }
-    function invalidate(session: SessionAddress) {
+    function invalidateEntry(entry: Entry) {
+        entry.invalidatedWhileLoading = Boolean(entry.pending);
+        if (entry.snapshot.freshness !== 'stale') publish(entry, { ...entry.snapshot, freshness: 'stale' });
+        if (entry.listeners.size > 0 && !entry.pending) void refresh(entry.session, entry.query);
+    }
+    function invalidate(session: SessionAddress, addresses?: readonly HostSessionSystemRecordAddress[]) {
         if (retired || !isScopeHome(session)) return;
-        invalidateBoardCount(session);
-        for (const entry of sessions.get(session.sessionId)?.queries.values() ?? []) {
-            entry.invalidatedWhileLoading = Boolean(entry.pending);
-            if (entry.snapshot.freshness !== 'stale') publish(entry, { ...entry.snapshot, freshness: 'stale' });
-            if (entry.listeners.size > 0 && !entry.pending) void refresh(session, entry.query);
+        if (!addresses || addresses.some(address => address.namespace === 'surface' && address.kind === 'item.v1')) invalidateBoardCount(session);
+        const retained = sessions.get(session.sessionId);
+        if (!retained) return;
+        if (!addresses) {
+            for (const entry of retained.queries.values()) invalidateEntry(entry);
+            return;
         }
+        const affected = new Set<Entry>();
+        for (const address of addresses) {
+            const direct = retained.queries.get(queryKey({ type: 'read', address }));
+            if (direct) affected.add(direct);
+            if (address.namespace === 'activity' && address.kind === 'workflow_run.v1') {
+                const legacy = retained.queries.get(queryKey({ type: 'legacy_workflow', localId: address.localId }));
+                if (legacy) affected.add(legacy);
+            }
+            // A list selects namespace plus optional kind/localId. Cursor and limit
+            // distinguish its retained pages, not which addressed changes affect it.
+            for (const kind of [undefined, address.kind]) for (const localId of [undefined, address.localId]) {
+                for (const entry of retained.lists.get(listSelectorKey(address.namespace, kind, localId)) ?? []) affected.add(entry);
+            }
+        }
+        for (const entry of affected) invalidateEntry(entry);
     }
     return {
         scope: options.scope,
@@ -408,6 +447,11 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
             };
         },
         invalidate,
+        /** Released Homes without addressed publications wake their revisionless workflow reader through Session changes. */
+        invalidateLegacyWorkflows(session: SessionAddress) {
+            if (retired || !isScopeHome(session)) return;
+            for (const entry of sessions.get(session.sessionId)?.legacyWorkflows ?? []) invalidateEntry(entry);
+        },
         /** A content-free Home wake withdraws freshness, not retained bytes or access authority. */
         invalidateAll() {
             for (const sessionId of sessions.keys()) invalidate({ serverId: options.scope.serverId, sessionId });

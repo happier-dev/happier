@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SessionSystemRecordListQuerySchema, SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
+import { LegacyHostSessionSystemRecordSchema, SessionSystemRecordListQuerySchema, SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
 import { createSessionSystemRecordRepository } from './repository';
 import { selectWorkflowSystemRecordQuery } from './compatibility/legacyHostTransport';
 import { invalidateSessionSystemRecordsFromChanges } from './changeWatch';
@@ -20,6 +20,72 @@ const record = {
 const page = () => new Response(JSON.stringify({ records: [record], nextCursor: null, hasNext: false }));
 
 describe('Account-scoped Session System Record repository', () => {
+    it('addresses matching list pages without scanning retained unrelated selectors', async () => {
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => {
+            const params = new URL(path, 'https://home-a').searchParams;
+            const localId = params.get('localId') ?? 'run-one';
+            const current = { ...record, id: localId, address: { ...record.address, localId } };
+            return Response.json(path.includes('/record?') ? { record: current } : { records: [current], nextCursor: null, hasNext: false });
+        } });
+        let unrelatedQueryVisits = 0;
+        for (let index = 0; index < 1000; index++) {
+            await repository.refresh(session, { get type() { unrelatedQueryVisits++; return 'list' as const; },
+                namespace: 'activity', kind: 'workflow_run.v1', localId: `unrelated-${index}` });
+        }
+        const matching = [
+            { type: 'list', namespace: 'activity' },
+            { type: 'list', namespace: 'activity', kind: 'workflow_run.v1' },
+            { type: 'list', namespace: 'activity', localId: 'run-one' },
+            { type: 'list', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one', cursor: 'next', limit: 1 },
+        ] as const;
+        // Parse the wire fixture once, preserving the host-address discriminant.
+        const address = SessionSystemRecordStoredSchema.parse(record).address;
+        if (address.owner !== 'host') throw new Error('Expected host fixture');
+        const read = { type: 'read', address } as const;
+        await repository.refresh(session, read);
+        for (const retained of matching) await repository.refresh(session, retained);
+        const otherSession = { ...session, sessionId: 'other-session' };
+        await repository.refresh(otherSession, read);
+        unrelatedQueryVisits = 0;
+        repository.invalidate(session, [address, address]);
+        expect(unrelatedQueryVisits).toBe(0);
+        expect(repository.getSnapshot(session, read).freshness).toBe('stale');
+        for (const retained of matching) expect(repository.getSnapshot(session, retained).freshness).toBe('stale');
+        expect(repository.getSnapshot(otherSession, read).freshness).toBe('fresh');
+        repository.retire();
+    });
+    it('keeps legacy workflow invalidation addressed and preserves retained hidden queries through release', async () => {
+        const selection = selectWorkflowSystemRecordQuery({ localId: 'run-one', protocolVersions: null });
+        if (selection.status !== 'ready') throw new Error('Expected supported predecessor reader');
+        const legacy = selection.query;
+        const otherLegacy = { type: 'legacy_workflow', localId: 'other-run' } as const;
+        let reads = 0;
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => {
+            reads++;
+            const localId = new URL(path, 'https://home-a').searchParams.get('localId') ?? 'run-one';
+            return Response.json({ record: LegacyHostSessionSystemRecordSchema.parse({
+                id: localId, sessionId: session.sessionId, namespace: 'activity', kind: 'workflow_run.v1', localId,
+                content: { t: 'plain', v: makeSessionWorkflowRunSnapshot({ runId: localId }) },
+                createdAt: record.createdAt, updatedAt: record.updatedAt,
+            }) });
+        } });
+        const release = repository.subscribe(session, legacy, () => {});
+        await repository.refresh(session, legacy);
+        await repository.refresh(session, otherLegacy);
+        release();
+        repository.invalidate(session, [{ owner: 'host', namespace: 'activity', kind: 'workflow_run.v1', localId: 'run-one' }]);
+        expect(repository.getSnapshot(session, legacy).freshness).toBe('stale');
+        expect(repository.getSnapshot(session, otherLegacy).freshness).toBe('fresh');
+        expect(reads).toBe(2);
+        const remount = repository.subscribe(session, legacy, () => {});
+        await repository.refresh(session, legacy);
+        expect(reads).toBe(3);
+        repository.invalidateLegacyWorkflows(session);
+        expect(repository.getSnapshot(session, otherLegacy).freshness).toBe('stale');
+        remount();
+        repository.retire();
+        expect(repository.getSnapshot(session, legacy).lastError).toEqual({ status: 'forbidden' });
+    });
     it('keeps a shared explicit count read alive when the mounted rail releases its demand', async () => {
         let resolveReply: ((response: Response) => void) | undefined;
         let requests = 0;
