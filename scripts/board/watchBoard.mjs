@@ -77,7 +77,10 @@ async function main() {
         if (reports.has(key)) continue;
         reports.add(key);
         await record({ report: file, line });
-        if (!silent && /^(?:STATUS:\s*)?(DONE|BLOCKED|IMPLEMENTED_NOT_VERIFIED)\b/.test(line)) {
+        // Any upper-case verdict word wakes (lanes also write FIXED, PARTIAL, IMPLEMENTED…), after an optional
+        // Markdown heading marker and Status: label in any case; only in-progress lines stay quiet.
+        const verdict = line.replace(/^#+\s*/, '').replace(/^status:\s*/i, '');
+        if (!silent && /^[A-Z][A-Z_]{2,}\b/.test(verdict) && !/^(?:IN[ _]PROGRESS|RUNNING)\b/.test(verdict)) {
           process.stdout.write(`${file}: ${line}\n`);
           wake = true;
         }
@@ -96,7 +99,9 @@ async function main() {
         seen.add(heading);
         if (silent) continue;
         process.stdout.write(heading + '\n');
-        if (!selfNames.has(match[1].trim()) && (broadcast || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading))) wake = true;
+        // ALL-leads HOLDs are batched: recorded and printed with the next real wake (Systemic ruling 11-04 09:30Z), not a wake of their own.
+        const wakesNow = (broadcast && match[3] !== 'HOLD') || ['ASK', 'URGENT', 'RULING'].includes(match[3]) || wakeRegex?.test(heading);
+        if (!selfNames.has(match[1].trim()) && wakesNow) wake = true;
       }
     }
     // Persist initialization even when there were no current items to record.

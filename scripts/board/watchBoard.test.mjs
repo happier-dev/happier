@@ -174,6 +174,19 @@ for (const status of ['DONE', 'BLOCKED', 'IMPLEMENTED_NOT_VERIFIED']) {
   });
 }
 
+for (const line of ['# DONE: producer committed', 'Status: BLOCKED — prerequisite named']) {
+  test(`default lane reports wake on a heading or mixed-case status verdict: ${line}`, { timeout: 15000 }, async (t) => {
+    const f = await fixture(t);
+    const report = path.join(f.root, 'lanes', 'lane.md');
+    await fs.writeFile(report, 'STATUS: IN_PROGRESS\nbody\n');
+    await fs.writeFile(f.board, heading('Programme', 'CLAIM') + '\n');
+    const run = start(t, f);
+    await run.line();
+    await fs.writeFile(report, `${line}\nbody\n`);
+    assert.deepEqual(await run.done, [heading('Programme', 'CLAIM'), `${report}: ${line}`]);
+  });
+}
+
 test('optional wake regex wakes on RESULT', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);
   const reports = path.join(f.root, 'custom');
