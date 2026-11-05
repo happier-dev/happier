@@ -6,14 +6,10 @@ function trimTrailingZero(value: string): string {
     return value.endsWith('.0') ? value.slice(0, -2) : value;
 }
 
-export function formatTokenCount(value: number): string {
+export function formatTokenCount(value: number, locales?: Intl.LocalesArgument): string {
     if (!isValidUsageNumber(value)) return '—';
 
-    const count = Math.trunc(value);
-    if (count >= 1_000_000_000) return `${trimTrailingZero((count / 1_000_000_000).toFixed(1))}B`;
-    if (count >= 1_000_000) return `${trimTrailingZero((count / 1_000_000).toFixed(1))}M`;
-    if (count >= 1_000) return `${trimTrailingZero((count / 1_000).toFixed(1))}k`;
-    return String(count);
+    return new Intl.NumberFormat(locales, { notation: 'compact', maximumFractionDigits: 1 }).format(Math.trunc(value));
 }
 
 export function formatTokenCountLong(value: number, locales?: Intl.LocalesArgument): string {
@@ -21,13 +17,13 @@ export function formatTokenCountLong(value: number, locales?: Intl.LocalesArgume
     return new Intl.NumberFormat(locales).format(Math.trunc(value));
 }
 
-export function formatUsageCost(usd: number, currency: string): string {
+export function formatUsageCost(usd: number, currency: string, locales?: Intl.LocalesArgument): string {
     if (!isValidUsageNumber(usd)) return '—';
 
     // Cents from a dime up; smaller amounts keep the digits that show them.
     const maximumFractionDigits = usd < 0.1 ? 4 : 2;
     try {
-        return new Intl.NumberFormat(undefined, {
+        return new Intl.NumberFormat(locales, {
             style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits,
         }).format(usd);
     } catch {
@@ -40,8 +36,13 @@ export function formatPercent(value: number): string {
     return `${trimTrailingZero(value.toFixed(1))}%`;
 }
 
-/** A share, not a percentage-valued measure. */
-export const formatUsageSharePercent = (share: number): string => `${Math.round(share * 100)}%`;
+/** A share, not a percentage-valued measure. A partial share never rounds to none or all ("<1%", ">99%"). */
+export const formatUsageSharePercent = (share: number): string => {
+    const percent = Math.round(share * 100);
+    if (share > 0 && percent === 0) return '<1%';
+    if (share < 1 && percent === 100) return '>99%';
+    return `${percent}%`;
+};
 
 /** Hours on the Usage chart's calendar, including its closing 24:00 tick. */
 export const formatUsageChartClock = (hour: number): string => `${String(Math.floor(hour) % 24 === 0 && hour >= 24 ? 24 : Math.floor(hour) % 24).padStart(2, '0')}:${String(Math.round((hour % 1) * 60)).padStart(2, '0')}`;

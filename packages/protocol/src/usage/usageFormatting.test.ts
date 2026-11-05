@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { formatUsageCalendarDate, formatUsageCalendarRange, formatUsageChartClock, formatUsageDuration,
+import { formatTokenCount, formatUsageCost, formatUsageCalendarDate, formatUsageCalendarRange, formatUsageChartClock, formatUsageDuration,
     formatUsageDurationCompact, formatUsageSharePercent, formatUsageUtcOffset, isUnattributedUsageAgentId } from './usageFormatting.js';
 
 describe('shared Usage formatting', () => {
+    it('formats money and compact quantities in the supplied reader locale', () => {
+        expect(formatTokenCount(321_900_000, 'fr')).toBe('321,9\u00a0M');
+        expect(formatUsageCost(21.76, 'USD', 'fr')).toBe('21,76\u00a0$US');
+        expect(formatTokenCount(1_000, 'en')).toBe('1K');
+    });
     it('keeps measured duration rounding and host-owned long/narrow unit labels', () => {
         const labels = {
             seconds: (seconds: number) => `${seconds} s`,
@@ -41,6 +46,8 @@ describe('shared Usage formatting', () => {
         expect(formatUsageChartClock(7.5)).toBe('07:30');
         expect(formatUsageSharePercent(0)).toBe('0%');
         expect(formatUsageSharePercent(0.245)).toBe('25%');
+        // A partial share never reads as none or all: Claude's 94k beside Codex's 321M is not "0%".
+        expect([formatUsageSharePercent(0.0003), formatUsageSharePercent(0.9997), formatUsageSharePercent(1)]).toEqual(['<1%', '>99%', '100%']);
         expect(formatUsageUtcOffset(120)).toBe('UTC+02:00');
         expect(formatUsageUtcOffset(-330)).toBe('UTC−05:30');
     });
