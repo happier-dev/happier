@@ -6279,6 +6279,19 @@ decision and execution owners resume. Ordinary Artifact writes cannot supply
 consent, and private operands stay in the original invocation. The origin closes
 with that invocation; an unavailable origin returns a typed refusal.
 
+Retained local Account authentication hosts keep their existing live approval
+lifetime. Their retained client sends the decision and collects its typed result
+on the same host that owns the authentication attempt.
+
+While a CLI approval prompt is open, a remote rejection or recorded execution
+result closes the prompt and settles the caller. Observing approval history does
+not claim the daemon's execution or resubmit the original Action.
+
+The CLI advertises and accepts `--wait` for Actions declaring an operation or
+a terminal operation observer in their canonical spec. It observes the returned
+operation address through the existing operation owner and preserves each
+Action's settled result type. An approval alone does not add a `--wait` flag.
+
 In 0.3 development, a retained native plugin `discussion.post` or
 `discussion.reply` keeps its open person approval when its executable generation
 retires. The successor reconstructs the native operands from the existing

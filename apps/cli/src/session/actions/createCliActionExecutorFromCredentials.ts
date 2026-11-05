@@ -703,6 +703,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
   happyHomeDir?: Parameters<typeof createCliActionExecutor>[0]['happyHomeDir'];
   admittedAccountEncryptionMode?: Parameters<typeof createCliActionDeps>[0]['admittedAccountEncryptionMode'];
+  connectedAccountAuthenticationHost?: Parameters<typeof createCliActionDeps>[0]['connectedAccountAuthenticationHost'];
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
   providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
@@ -1047,6 +1048,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(personalSavedSecretActionExecute ? { personalSavedSecretActionExecute } : {}),
       ...(params.admittedAccountEncryptionMode !== undefined
         ? { admittedAccountEncryptionMode: params.admittedAccountEncryptionMode } : {}),
+      ...(params.connectedAccountAuthenticationHost ? { connectedAccountAuthenticationHost: params.connectedAccountAuthenticationHost } : {}),
       ...(routeHostChildAction ? { routeHostChildAction } : {}),
       ...(readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions } : {}),
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
@@ -1194,8 +1196,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               // their original process may already have closed its live endpoint.
               const live = request.status === 'open' || request.status === 'approved'
                 ? await replayLiveCliApprovalOrigin({ artifactId, request, decision, context, ...(signal ? { signal } : {}) }, {
-                  token: credentials.token, accountId: readAccountIdFromToken(credentials.token), serverUrl: approvalServerApiUrl,
-                  isCurrent: async () => hasStoredSessionCredentialProvenance(credentials) && !signal?.aborted,
+                  token: credentials.token, serverUrl: approvalServerApiUrl,
                 }) : null;
               if (live) return live;
               if (signal?.aborted) return actionFailure('cancelled');
@@ -1229,9 +1230,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       approvalRequestApprovedReplay: async args => {
         const { artifactId, request, decision, context, requestId, signal } = args;
         const live = await replayLiveCliApprovalOrigin(args, { token: credentials.token,
-          accountId: readAccountIdFromToken(credentials.token), serverUrl: approvalServerApiUrl,
-          isCurrent: async () => hasStoredSessionCredentialProvenance(credentials)
-            && !signal?.aborted,
+          serverUrl: approvalServerApiUrl,
         });
         if (live) return live;
         if (decision) {
@@ -1786,6 +1785,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               : {}),
           });
           return await consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
+            token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
             execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
             context: signal ? { ...context, signal } : context });
         }) };

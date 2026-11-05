@@ -65,7 +65,10 @@ const ACTION_CLI_PROJECT_DIRECTORY_FLAG = '--project-directory' as const;
 const ACTION_CLI_WORKSPACE_REF_ID_FLAG = '--workspace-ref-id' as const;
 const ACTION_CLI_SOURCE_PATH_FLAG = '--source-path' as const;
 const ACTION_CLI_DESTINATION_PATH_FLAG = '--destination-path' as const;
-const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--yes] [--wait] [--json]';
+function invokeUsage(actionId?: string): string {
+  const wait = actionId && supportsFiniteActionOutcome(actionId) ? ' [--wait]' : '';
+  return `Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--yes]${wait} [--json]`;
+}
 const INVOKE_WAIT_FLAG = '--wait' as const;
 const INVOKE_YES_FLAG = '--yes' as const;
 
@@ -100,8 +103,8 @@ const DEFAULT_DEPS: ActionsDeps = {
 };
 
 
-function invalidInvokeArguments(message: string): never {
-  throw Object.assign(new Error(`${message}\n${INVOKE_USAGE}`), { code: 'invalid_arguments' });
+function invalidInvokeArguments(message: string, actionId?: string): never {
+  throw Object.assign(new Error(`${message}\n${invokeUsage(actionId)}`), { code: 'invalid_arguments' });
 }
 
 function hasInvokeOption(args: readonly string[], ...flags: readonly string[]): boolean {
@@ -141,7 +144,7 @@ function resolveInvokeActionInput(
 ): unknown {
   if (compiled.kind === 'local' && isPrivateSecretCliWrite(compiled.actionId)
     && hasInvokeOption(args, ACTION_CLI_WHOLE_INPUT_FLAG)) {
-    invalidInvokeArguments('Secret values are read from stdin or a hidden prompt. --input-json is unavailable for this command.');
+    invalidInvokeArguments('Secret values are read from stdin or a hidden prompt. --input-json is unavailable for this command.', args[1]);
   }
   const target = { fields: compiled.fields, positionals: [] as const };
   const flags = describeActionCliCommandFlags(target);
@@ -149,7 +152,7 @@ function resolveInvokeActionInput(
   // Unknown flags, missing values and surplus positionals fail here, before any
   // credential read or executor construction.
   assertCommandArguments(args, {
-    usage: INVOKE_USAGE,
+    usage: invokeUsage(args[1]),
     startIndex: 1,
     booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, INVOKE_YES_FLAG, ...finiteFlags, ...flags.booleanFlags],
     valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ACTION_CLI_WHOLE_INPUT_FLAG, ...flags.valueFlags],
@@ -162,7 +165,7 @@ function resolveInvokeActionInput(
   // happens to equal the Action id.
   const tokens = stripped.slice(1);
   const parsed = parseActionCliInput(target, tokens);
-  if (!parsed.ok) invalidInvokeArguments(parsed.message);
+  if (!parsed.ok) invalidInvokeArguments(parsed.message, args[1]);
   if (compiled.kind === 'local') {
     const composed = composeActionCliInput({
       parsed,
@@ -177,7 +180,7 @@ function resolveInvokeActionInput(
         output: wantsJson(args) ? 'json' : 'human',
       },
     });
-    if (!composed.ok) invalidInvokeArguments(composed.message);
+    if (!composed.ok) invalidInvokeArguments(composed.message, args[1]);
     return composed.input;
   }
   // A discovered definition publishes canonical top-level data fields only and
@@ -243,7 +246,7 @@ function validateDiscoveredActionInput(definition: ActionDefinitionV1, input: un
     });
   }
   if (!isValidPluginJsonSchemaValue(validate, input)) {
-    invalidInvokeArguments(`Invalid input for ${definition.id}.`);
+    invalidInvokeArguments(`Invalid input for ${definition.id}.`, definition.id);
   }
 }
 
@@ -297,9 +300,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
     || ACTION_CLI_HELP_FLAGS.includes(subcommand as typeof ACTION_CLI_HELP_FLAGS[number])
   ) { showHelp(); return; }
   const json = wantsJson(args);
-  if (subcommand !== 'invoke') throw Object.assign(new Error(`Unknown actions subcommand: ${subcommand}\n${INVOKE_USAGE}`), { code: 'unknown_subcommand' });
+  if (subcommand !== 'invoke') throw Object.assign(new Error(`Unknown actions subcommand: ${subcommand}\n${invokeUsage()}`), { code: 'unknown_subcommand' });
   const requested = args[1];
-  if (!requested || requested.startsWith('-')) throw Object.assign(new Error(INVOKE_USAGE), { code: 'invalid_arguments' });
+  if (!requested || requested.startsWith('-')) throw Object.assign(new Error(invokeUsage()), { code: 'invalid_arguments' });
   const wait = supportsFiniteActionOutcome(requested) && hasInvokeOption(args, INVOKE_WAIT_FLAG);
 
   // The invoked Action, its request identity and its input are resolved before
@@ -338,7 +341,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         try { input = resolveInvokeActionInput(args, invokeFields); }
         catch (error) {
           if (isPrivateSecretCliWrite(signedRootActionId.data)) {
-            invalidInvokeArguments('Invalid secret arguments. Values are read from stdin or a hidden prompt.');
+            invalidInvokeArguments('Invalid secret arguments. Values are read from stdin or a hidden prompt.', requested);
           }
           throw error;
         }
@@ -355,7 +358,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   const localPath = (flag: string) => {
     const options = argvBeforeOptionTerminator(args);
     const occurrences = options.filter(value => value === flag || value.startsWith(`${flag}=`));
-    if (occurrences.length > 1) invalidInvokeArguments(`Provide ${flag} once.`);
+    if (occurrences.length > 1) invalidInvokeArguments(`Provide ${flag} once.`, requested);
     const value = readRawFlagValue(options, flag);
     return value === null ? null : expandHomeDirPath(value);
   };
@@ -363,14 +366,14 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   const destinationPath = localPath(ACTION_CLI_DESTINATION_PATH_FLAG);
   const isUpload = localInvocation?.actionId === 'daemon.filesystem.upload';
   const isDownload = localInvocation?.actionId === 'daemon.filesystem.download';
-  if (sourcePath !== null && !isUpload) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is only valid for filesystem upload.`);
-  if (destinationPath !== null && !isDownload) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is only valid for filesystem download.`);
-  if (isUpload && !sourcePath) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is required for filesystem upload.`);
-  if (isDownload && !destinationPath) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is required for filesystem download.`);
-  if ((isUpload || isDownload) && !readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG)) invalidInvokeArguments(`${ACTION_CLI_MACHINE_ID_FLAG} is required for filesystem transfer.`);
+  if (sourcePath !== null && !isUpload) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is only valid for filesystem upload.`, requested);
+  if (destinationPath !== null && !isDownload) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is only valid for filesystem download.`, requested);
+  if (isUpload && !sourcePath) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is required for filesystem upload.`, requested);
+  if (isDownload && !destinationPath) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is required for filesystem download.`, requested);
+  if ((isUpload || isDownload) && !readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG)) invalidInvokeArguments(`${ACTION_CLI_MACHINE_ID_FLAG} is required for filesystem transfer.`, requested);
 
   const requestedServerId = readActionCliServerId(args, true);
-  if ((isUpload || isDownload) && requestedServerId === null) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`);
+  if ((isUpload || isDownload) && requestedServerId === null) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`, requested);
   if (localInvocation?.requiresServerId && requestedServerId === null) {
     throw Object.assign(
       new Error(`Option ${ACTION_CLI_SERVER_ID_FLAG} is required for this Home-scoped Action.`),
@@ -382,7 +385,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
     requireServerIdentityId: localInvocation?.requiresServerId === true,
     deps,
   });
-  if ((isUpload || isDownload) && !fixedServer) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`);
+  if ((isUpload || isDownload) && !fixedServer) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`, requested);
   if (!credentials) throw Object.assign(new Error('Not authenticated. Run "happier auth login" first.'), { code: 'not_authenticated' });
   const machineId = readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG) ?? undefined;
   const projectDirectory = readFlagValue(args, ACTION_CLI_PROJECT_DIRECTORY_FLAG) ?? undefined;
@@ -457,7 +460,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
         return;
       }
       input = resolveInvokeActionInput(args, compiled);
-      if (!input || typeof input !== 'object' || Array.isArray(input)) invalidInvokeArguments('Action input must be an object.');
+      if (!input || typeof input !== 'object' || Array.isArray(input)) invalidInvokeArguments('Action input must be an object.', requested);
       input = await prepareSavedSecretsCliInput({ actionId: requested,
         input: input as Readonly<Record<string, unknown>>, secretInput: definition, signal,
         execute: (actionId, readInput) => executor.execute(actionId, readInput, { ...context, actionRequestId: randomUUID() }),
@@ -475,7 +478,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   let resolvedInput = invocation.input;
   if (!contributed && (needsSavedSecretsInputPreparation(invocation.actionId)
     || readMissingActionSecretInputPaths(getActionSpec(invocation.actionId), resolvedInput).length > 0)) {
-    if (!resolvedInput || typeof resolvedInput !== 'object' || Array.isArray(resolvedInput)) invalidInvokeArguments('Action input must be an object.');
+    if (!resolvedInput || typeof resolvedInput !== 'object' || Array.isArray(resolvedInput)) invalidInvokeArguments('Action input must be an object.', requested);
     try {
       resolvedInput = await prepareSavedSecretsCliInput({ actionId: invocation.actionId,
         input: resolvedInput as Readonly<Record<string, unknown>>, signal,
@@ -494,7 +497,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
       throw error;
     }
     const validated = getActionSpec(invocation.actionId).inputSchema.safeParse(resolvedInput);
-    if (!validated.success) invalidInvokeArguments('Invalid prepared Action input.');
+    if (!validated.success) invalidInvokeArguments('Invalid prepared Action input.', requested);
     resolvedInput = validated.data;
   }
   let defaultSessionId: string | null = null;

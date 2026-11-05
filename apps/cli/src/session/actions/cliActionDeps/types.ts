@@ -16,6 +16,7 @@ import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncrypti
 import type { RoleWorkspaceWritesPolicyPreparer } from '../roleActions';
 import type { RoleSourceReader } from '@/session/roles/roleSources';
 import type { StoredCredentials } from '@/persistence';
+import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/runtime/connectedAccounts/authenticationHost';
 import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import type { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
@@ -165,6 +166,7 @@ export type CliActionDepsParams = Readonly<{
   consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
   onArtifactSignedInLinkOpened?: (opened: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
+  connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost;
   /** Immutable Account mode from finite requester admission, including unavailable. */
   admittedAccountEncryptionMode?: ConnectedServiceAccountEncryptionMode;
   /** Daemon startup already owns this service; do not loop through its not-yet-open control transport. */

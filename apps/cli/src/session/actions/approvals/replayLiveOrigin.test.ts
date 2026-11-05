@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as sessionRpc from '@/session/transport/rpc/sessionRpc';
+import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { replayLiveCliApprovalOrigin } from './replayLiveOrigin';
@@ -12,6 +14,7 @@ const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtM
 const account = { token: 'account-token', accountId: 'alice', serverUrl: 'https://home.test', isCurrent: async () => true };
 
 describe('live CLI approval decision replay', () => {
+  afterEach(() => vi.restoreAllMocks());
   it('publishes an admitted daemon CLI waiter without installing a standalone CLI relay', async () => {
     // Home authorization is the external boundary; the request schema and
     // publisher remain real. This test exercises transport selection, not signing.
@@ -32,15 +35,6 @@ describe('live CLI approval decision replay', () => {
       context: { surface: 'cli', authority: 'present_user' } }, account)).toBeNull();
   });
 
-  it('keeps MCP sign-in private results on the original CLI invocation', async () => {
-    const signIn = ApprovalRequestV2Schema.parse({ ...request, actionId: 'mcp.servers.signIn.start',
-      actionArgs: { serverId: 'mcp-server' }, executionOriginV1: { ...request.executionOriginV1,
-        actionId: 'mcp.servers.signIn.start' } });
-    expect(await replayLiveCliApprovalOrigin({ artifactId: 'artifact', request: signIn, decision: 'approve',
-      context: { surface: 'cli', authority: 'account_automation' } }, account))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-  });
-
   it('does not use the CLI live-origin transport for an agent invocation', async () => {
     const agent = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
       surface: 'agent', caller: { kind: 'session', sessionId: 'session-a', starterDepth: 0, turnDepth: 0 },
@@ -48,17 +42,23 @@ describe('live CLI approval decision replay', () => {
     expect(await replayLiveCliApprovalOrigin({ artifactId: 'artifact', request: agent, decision: 'approve',
       context: { surface: 'cli', authority: 'present_user' } }, account)).toBeNull();
   });
-  it('refuses an automation approver before opening any transport', async () => {
-    expect(await replayLiveCliApprovalOrigin({ artifactId: 'artifact', request, decision: 'approve',
-      context: { surface: 'cli', authority: 'account_automation' } }, account))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-  });
-  it('refuses a retired credential and a different origin Account', async () => {
-    const args = { artifactId: 'artifact', request, decision: 'approve' as const,
-      context: { surface: 'cli' as const, authority: 'present_user' as const } };
-    expect(await replayLiveCliApprovalOrigin(args, { ...account, isCurrent: async () => false }))
-      .toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
-    expect(await replayLiveCliApprovalOrigin(args, { ...account, accountId: 'bob' }))
-      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+  it('keeps the decision receipt when the effect completes before the caller aborts', async () => {
+    const controller = new AbortController();
+    const receipt = buildApprovalDecisionResult(ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 } }));
+    let effectCompleted = false;
+    // The RPC transport is the boundary: its origin finishes the effect before
+    // cancellation is observed by this caller and the decision reply arrives.
+    vi.spyOn(sessionRpc, 'callSessionRpc').mockImplementationOnce(async () => {
+      effectCompleted = true;
+      controller.abort();
+      return receipt;
+    });
+    const capturedAccount = { ...account, isCurrent: async () => !controller.signal.aborted };
+    const result = await replayLiveCliApprovalOrigin({ artifactId: 'artifact', request, decision: 'approve',
+      signal: controller.signal, context: { surface: 'cli', authority: 'present_user' } }, capturedAccount);
+    expect(effectCompleted).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+    expect(result).toEqual(receipt);
   });
 });

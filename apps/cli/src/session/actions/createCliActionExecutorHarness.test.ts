@@ -89,14 +89,14 @@ async function expectPromiseStillPending(promise: Promise<unknown>): Promise<voi
 }
 
 describe('createCliActionExecutorHarness', () => {
-  it.each(['live', 'recorded', 'notification', 'refused'] as const)(
+  it.each(['live', 'recorded', 'notification', 'refused', 'rejected'] as const)(
     'consumes one forwarded approval without resubmitting its Action (%s)', async delivery => {
       const pending = { kind: 'approval_request_created', artifactId: 'forwarded-approval', actionId: 'browser.diagnostics.snapshot' };
       const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
       const failure = { ok: false as const, errorCode: 'approval_rejected', error: 'approval_rejected' };
       const notification = vi.fn(async () => delivery === 'notification' ? undefined
         : delivery === 'refused' ? failure
-          : { ok: true as const, result: { ok: true, status: 'executed',
+          : { ok: true as const, result: { ok: true, status: delivery === 'rejected' ? 'rejected' : 'executed',
             ...(delivery === 'live' ? { liveExecution: { ok: true, result: receipt } } : {}) } });
       // The installed browser adapter is an OS/daemon transport boundary.
       const native = vi.fn(async () => pending);
@@ -105,19 +105,71 @@ describe('createCliActionExecutorHarness', () => {
         actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
         executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
           serverId: 'home', actionId: pending.actionId, requestId: 'browser-request' },
-        status: 'executed', decision: { kind: 'approve', decidedAtMs: 2 },
-        execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } }));
+        status: delivery === 'rejected' ? 'rejected' : 'executed',
+        decision: { kind: delivery === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 },
+        ...(delivery === 'rejected' ? {} : { execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } }) }));
       const { executor } = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
         onApprovalRequested: notification }, { ...createUnavailableActionTransportDeps(),
         runtimeActionExecute: native, approvalsGet: read });
       expect(await executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
         { surface: 'cli' })).toEqual(delivery === 'notification' ? { ok: true, result: pending }
-          : delivery === 'refused' ? failure : { ok: true, result: receipt });
+          : delivery === 'refused' || delivery === 'rejected' ? failure : { ok: true, result: receipt });
       expect(notification).toHaveBeenCalledOnce();
       expect(notification).toHaveBeenCalledWith('forwarded-approval', expect.any(AbortSignal));
       expect(native).toHaveBeenCalledOnce();
-      expect(read).toHaveBeenCalledTimes(delivery === 'recorded' ? 1 : 0);
+      expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
     });
+
+  it.each(['rejected', 'executed'] as const)('closes an open deferred approval prompt after a remote %s decision', async status => {
+    const artifactId = 'remote-deferred-approval';
+    const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
+    let request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'browser.diagnostics.snapshot',
+      actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
+      approval: { flow: 'deferred', result: 'required' }, status: 'open',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId: 'browser.diagnostics.snapshot', requestId: 'browser-request' } });
+    const lifetime = new AbortController();
+    let promptSignal: AbortSignal | undefined;
+    // Artifact persistence and Socket.IO are boundaries; the waiting coordinator
+    // and receipt projection stay real while the terminal prompt remains open.
+    const native = vi.fn(async () => ({ kind: 'approval_request_created', artifactId, actionId: request.actionId }));
+    const read = vi.fn(async () => request);
+    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test',
+      onApprovalRequested: (_id, signal) => new Promise<never>((_resolve, reject) => {
+        promptSignal = signal;
+        signal.addEventListener('abort', () => reject(new Error('prompt closed')), { once: true });
+      }) }, { ...createUnavailableActionTransportDeps(), runtimeActionExecute: native, approvalsGet: read });
+    const pending = harness.executor.execute('browser.diagnostics.snapshot', { browserSessionId: 'session', viewId: 'view' },
+      { surface: 'cli', signal: lifetime.signal });
+    try {
+      await vi.waitFor(() => expect(promptSignal).toBeDefined());
+      await vi.waitFor(() => expect(wire.sockets.length).toBeGreaterThan(0));
+      // A generic Artifact write is history, not authenticated consent or an
+      // execution receipt. It cannot close the prompt or execute the Action.
+      request = ApprovalRequestV2Schema.parse({ ...request, status: 'approved',
+        decision: { kind: 'approve', decidedAtMs: 2 } });
+      const readsBeforeApproval = read.mock.calls.length;
+      for (const socket of wire.sockets) socket.update({ t: 'account-change' });
+      await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(readsBeforeApproval));
+      expect(promptSignal?.aborted).toBe(false);
+      expect(native).toHaveBeenCalledOnce();
+      request = ApprovalRequestV2Schema.parse({ ...request, status, updatedAtMs: 2,
+        decision: { kind: status === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 },
+        ...(status === 'executed' ? { execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } } : {}) });
+      for (const socket of wire.sockets) socket.update({ t: 'account-change' });
+      await vi.waitFor(() => expect(promptSignal?.aborted).toBe(true));
+      await expect(pending).resolves.toEqual(status === 'rejected'
+        ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' }
+        : { ok: true, result: receipt });
+      expect(native).toHaveBeenCalledOnce();
+      expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
+    } finally {
+      lifetime.abort();
+      await pending.catch(() => undefined);
+    }
+  });
   beforeEach(() => { wire.sockets.length = 0; wire.io.mockClear(); });
   afterEach(() => vi.restoreAllMocks());
   it.each(['update', 'reconnect'] as const)('delivers an independently persisted PDF rejection to the Agent MCP caller on %s', async wake => {

@@ -1,5 +1,6 @@
 import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
 import type { SignedRootActionId } from '@happier-dev/protocol';
+import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { isApprovalRequestCreatedResult } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -65,11 +66,10 @@ export function readFiniteActionOutcome(params: Readonly<{
     if (isApprovalRequestCreatedResult(operation.result)) {
       refuse('approval_waiting', { operation }, 'Action is waiting for approval. Open the approval in Happier.');
     }
-    if (operation.actionId !== 'deployments.deploy'
-      && operation.actionId !== 'deployments.rollback' && operation.actionId !== 'deployments.promote'
-      && operation.actionId !== 'deployments.teardown') return data;
+    const actionId = SignedRootActionIdSchema.safeParse(operation.actionId);
+    if (!actionId.success || getActionSpec(actionId.data).outputSchema !== DeploymentReceiptResultV1Schema) return data;
     data = operation.result;
-  }
+  } else if (getActionSpec(params.actionId).outputSchema !== DeploymentReceiptResultV1Schema) return data;
   const receipt = DeploymentReceiptResultV1Schema.safeParse(data);
   if (!receipt.success) refuse('outcome_unknown', data, 'Deployment outcome is unavailable. Inspect its receipt in Happier before retrying.');
   if (!receipt.data.ok) refuse(receipt.data.error, receipt.data, receipt.data.error);

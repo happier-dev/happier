@@ -14,8 +14,8 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from './createDaemo
 export function createRequesterConnectedAccountPurposeBindingRuntime(input: Readonly<{
   operationContext: SavedSecretOperationContextV1;
   accountId: string;
-  machineId: string;
-  reloadController: PluginReloadController;
+  machineId?: string;
+  reloadController: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
   getAccountEncryptionMode: ApiClient['getAccountEncryptionMode'];
   isCurrent(signal?: AbortSignal): Promise<boolean>;
   subscribe?: ConnectedAccountPurposeBindingStore['subscribe'];

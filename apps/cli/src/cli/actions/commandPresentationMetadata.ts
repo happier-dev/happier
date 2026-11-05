@@ -1,4 +1,5 @@
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
 /** Released JSON spellings, shared by execution presenters and static help. */
 export const ACTION_CLI_ENVELOPE_KINDS = Object.freeze({
@@ -40,7 +41,9 @@ export function readActionCliPresentationEnvelopeKind(command: Readonly<{
 
 /** Actions whose CLI invocation can wait for a finite settlement (`--wait`). */
 export function supportsFiniteActionOutcome(actionId: string): boolean {
-  return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
-    || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
-    || actionId === 'action.operations.get';
+  const parsed = SignedRootActionIdSchema.safeParse(actionId);
+  if (!parsed.success) return false;
+  const spec = getActionSpec(parsed.data);
+  return spec.operation !== undefined
+    || spec.inputHints?.fields.some(field => field.path === 'waitForTerminal') === true;
 }

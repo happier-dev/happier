@@ -4,9 +4,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/runtime/connectedAccounts/authenticationHost';
+import type { AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
@@ -39,6 +41,7 @@ import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnected
 
 export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
+  authenticationHost?: CredentialedConnectedAccountAuthenticationHost;
   serverHttpBaseUrl?: string;
   serverId?: string;
   operationContext?: SavedSecretOperationContextV1;
@@ -77,6 +80,23 @@ export function createCliConnectedServiceAction(params: Readonly<{
           throw Object.assign(new Error('Captured Connected Account retired'), { code: 'scope-retired' });
         }
         signal?.throwIfAborted();
+      };
+      let authenticationRuntime: Promise<AccountExecutionRuntime> | undefined;
+      const readAuthenticationHost = async () => {
+        if (params.authenticationHost) return params.authenticationHost;
+        // Daemon/core Action factories do not carry the CLI journey's retained
+        // host. Compose the same Account owner here, after ordinary admission,
+        // so attempt-only continuations never become unaddressed native RPCs.
+        authenticationRuntime ??= import('@/plugins/runtime/accountExecutionRuntime').then(({ resolveAccountExecutionRuntime }) =>
+          resolveAccountExecutionRuntime({ ...(signal ? { signal } : {}), accountExecution: {
+            credentials: params.credentials, serverUrl: serverHttpBaseUrl,
+            isCurrent: () => !signal?.aborted,
+            ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
+            ...(params.operationContext ? { savedSecretOperationContext: params.operationContext } : {}),
+          } }));
+        const authenticationHost = (await authenticationRuntime).registry.connectedAccountAuthenticationHost;
+        if (!authenticationHost) throw Object.assign(new Error('connected_account_service_unavailable'), { code: 'connected_account_service_unavailable' });
+        return authenticationHost;
       };
       const resolveCredentialStorage = async () => {
         await assertReadCurrent();
@@ -392,24 +412,26 @@ export function createCliConnectedServiceAction(params: Readonly<{
       },
       authenticationCommand: async (machineId, command) => {
         await assertReadCurrent();
-        const response = await params.callMachineAction({ machineId, ...(params.serverId ? { serverId: params.serverId } : {}),
+        const native = async (target: string, nativeCommand: typeof command) => ConnectedAccountAttemptResponseSchema.parse(await params.callMachineAction({ machineId: target, ...(params.serverId ? { serverId: params.serverId } : {}),
           method: CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
-          request: ConnectedAccountAuthenticationCommandRequestSchema.parse({ v: 1, machineId, command }),
+          request: ConnectedAccountAuthenticationCommandRequestSchema.parse({ v: 1, machineId: target, command: nativeCommand }),
           authority: context.authority, authorization: context.rpcSessionAuthorization, context, effectActionId: actionId, exactMachine: true,
           ...(signal ? { signal } : {}),
-        });
+        }));
+        const response = await (await readAuthenticationHost()).authenticationCommand(machineId, command, { signal, native });
         await assertReadCurrent();
         return response;
       },
       controlCommand: async (machineId, command) => {
         await assertReadCurrent();
-        const response = await params.callMachineAction({
-          machineId, ...(params.serverId ? { serverId: params.serverId } : {}),
+        const native = async (target: string, nativeCommand: typeof command) => ConnectedAccountDaemonControlResponseSchema.parse(await params.callMachineAction({
+          machineId: target, ...(params.serverId ? { serverId: params.serverId } : {}),
           method: CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
-          request: ConnectedAccountControlCommandRequestSchema.parse({ v: 1, machineId, command }),
+          request: ConnectedAccountControlCommandRequestSchema.parse({ v: 1, machineId: target, command: nativeCommand }),
           authority: context.authority, authorization: context.rpcSessionAuthorization, context, effectActionId: actionId, exactMachine: true,
           ...(signal ? { signal } : {}),
-        });
+        }));
+        const response = await (await readAuthenticationHost()).controlCommand(machineId, command, { signal, native });
         if (command.operation === 'listPendingAttempts' || command.operation === 'describeService'
           || command.operation === 'readConfiguration') await assertReadCurrent();
         return response;
@@ -417,9 +439,15 @@ export function createCliConnectedServiceAction(params: Readonly<{
       };
       const readOnlyCatalog = actionId === 'connectedServices.accounts.list' || actionId === 'connectedServices.catalog.list';
       if (readOnlyCatalog) await assertReadCurrent();
-      const result = await (prepare ? prepareConnectedServiceRevokeInputV1(host, input) : executeConnectedServiceConfigurationActionV1(host, actionId, input));
-      if (readOnlyCatalog) await assertReadCurrent();
-      return result;
+      try {
+        const result = await (prepare ? prepareConnectedServiceRevokeInputV1(host, input) : executeConnectedServiceConfigurationActionV1(host, actionId, input));
+        if (readOnlyCatalog) await assertReadCurrent();
+        return result;
+      } finally {
+        // A supplied journey/Session host keeps its own lifetime. Only this
+        // one-shot Account composition belongs to the current Action.
+        await authenticationRuntime?.then(runtime => runtime.registry.dispose(), () => undefined);
+      }
     };
     return runWithServerHttpBaseUrl(serverHttpBaseUrl, run);
   };

@@ -1,4 +1,4 @@
-import { type ConnectTarget, localizedText, sameService, exactServiceCommandId, legacyServiceIdFor, projectConnectTargets, showConnectHelp } from './connect/help';
+import { type ConnectTarget, localizedText, sameService, exactServiceCommandId, legacyServiceIdFor, projectConnectTargets, printConnectHelp } from './connect/help';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -22,9 +22,8 @@ import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/t
 import { configuration } from '@/configuration';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
 import { readStoredCredentials } from '@/persistence';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import { openBrowser } from '@/ui/openBrowser';
 import { delay } from '@/utils/time';
@@ -89,10 +88,8 @@ type AuthenticationIntent =
 
 
 
-async function loadConnectTargets(): Promise<readonly ConnectTarget[]> {
-  const registry = await resolveMergedContributionRegistry({
-    happyHomeDir: configuration.happyHomeDir,
-  });
+async function loadConnectTargets(client: ConnectedAccountDaemonClient): Promise<readonly ConnectTarget[]> {
+  const registry = await client.readContributions();
   return projectConnectTargets({ connectedAccountDescriptors: (registry.connectedAccountDescriptors ?? []).flatMap((contribution) => {
     const parsed = PluginConnectedAccountDescriptorContributionV2Schema.safeParse(contribution.definition);
     return parsed.success ? [{ ...contribution, definition: parsed.data }] : [];
@@ -111,7 +108,7 @@ function findTarget(
   return matches.length === 1 ? matches[0]! : null;
 }
 
-async function createDaemonClient(signal?: AbortSignal): Promise<ConnectedAccountDaemonClient> {
+async function createDaemonClient(signal?: AbortSignal, yes = false): Promise<ConnectedAccountDaemonClient> {
   const credentials = await readStoredCredentials();
   if (!credentials) {
     throw new Error(
@@ -119,7 +116,31 @@ async function createDaemonClient(signal?: AbortSignal): Promise<ConnectedAccoun
     );
   }
   const { machineId } = await ensureMachineIdForCredentials(credentials);
-  return createConnectedAccountDaemonClient({ credentials, machineId, ...(signal ? { signal } : {}) });
+  let confirmed = yes;
+  return createConnectedAccountDaemonClient({ credentials, machineId, ...(signal ? { signal } : {}),
+    onApprovalRequested: async (artifactId, confirmationSignal, decide) => {
+      console.error(`Waiting for approval: ${artifactId}`);
+      let approve = confirmed;
+      if (!approve) {
+        try {
+          approve = await promptConfirmYesNo('Approve this connected-account operation?', {
+            default: 'no', signal: confirmationSignal,
+          });
+        } catch (error) {
+          // EOF or an unavailable terminal declines consent. A decision from
+          // another surface instead aborts this prompt through the wait owner.
+          if (confirmationSignal.aborted) throw error;
+        }
+      }
+      // This command owns one initiated Connect flow. Its confirmation covers
+      // the configuration/save steps, while every Artifact decision still goes
+      // through the canonical authority and explicit Ask policy.
+      confirmed = approve;
+      const result = await decide(approve ? 'approve' : 'reject');
+      if (!result.ok) throw Object.assign(new Error(result.errorCode ?? result.error), { code: result.errorCode });
+      return result;
+    },
+  });
 }
 
 function modeSelectedByFlags(
@@ -699,6 +720,7 @@ async function describeService(
 }
 
 async function handleConnectTarget(
+  client: ConnectedAccountDaemonClient,
   target: ConnectTarget,
   options: ConnectParsedOptions,
   signal?: AbortSignal,
@@ -708,7 +730,6 @@ async function handleConnectTarget(
       subtitle: 'Happier daemon',
     })}\n`,
   );
-  const client = await createDaemonClient(signal);
   const described = await describeService(client, target);
   const nativeImport = options.import ? resolveConnectNativeImportIntent(described.descriptor.authentication.modes, options.source) : null;
   const accountId =
@@ -727,6 +748,7 @@ async function handleConnectTarget(
         service: target.service,
         modeId: nativeImport?.modeId ?? modeSelectedByFlags(described, target, options).id,
       };
+  console.error(`Connect may require approval before credential entry. Review requests in Happier's Inbox or another terminal using the same Home: ${cmd('happier actions invoke approval.request.list --json')}`);
   const initial =
     intent.kind === 'reconnect'
       ? await client.authenticate({
@@ -765,9 +787,8 @@ function accountPresentation(
   );
 }
 
-async function handleConnectStatus(targets: readonly ConnectTarget[], signal?: AbortSignal): Promise<void> {
+async function handleConnectStatus(client: ConnectedAccountDaemonClient, targets: readonly ConnectTarget[]): Promise<void> {
   console.log(`\n${sectionTitle('Connection status')}\n`);
-  const client = await createDaemonClient(signal);
   for (const target of targets) {
     const fallbackTitle =
       localizedText(target.descriptor.title) || target.commandId;
@@ -808,7 +829,6 @@ async function handleConnectStatus(targets: readonly ConnectTarget[], signal?: A
 
 export async function handleConnectCommand(args: string[], signal?: AbortSignal): Promise<void> {
   const { subcommand, options } = parseConnectArgs(args);
-  const targets = await loadConnectTargets();
 
   if (
     !subcommand ||
@@ -816,18 +836,24 @@ export async function handleConnectCommand(args: string[], signal?: AbortSignal)
     subcommand === '--help' ||
     subcommand === '-h'
   ) {
-    showConnectHelp(targets);
+    await printConnectHelp(configuration.happyHomeDir);
     return;
   }
-  if (subcommand.toLowerCase() === 'status') {
-    await handleConnectStatus(targets, signal);
-    return;
+  const client = await createDaemonClient(signal, args.includes('--yes'));
+  try {
+    const targets = await loadConnectTargets(client);
+    if (subcommand.toLowerCase() === 'status') {
+      await handleConnectStatus(client, targets);
+      return;
+    }
+    const target = findTarget(targets, subcommand);
+    if (!target) {
+      throw new Error(`Unknown or ambiguous connected-account service: ${subcommand}`);
+    }
+    await handleConnectTarget(client, target, options, signal);
+  } finally {
+    await client.dispose();
   }
-  const target = findTarget(targets, subcommand);
-  if (!target) {
-    throw new Error(`Unknown or ambiguous connected-account service: ${subcommand}`);
-  }
-  await handleConnectTarget(target, options, signal);
 }
 
 export async function handleConnectCliCommand(

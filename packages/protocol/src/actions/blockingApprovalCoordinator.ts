@@ -8,6 +8,7 @@ import { targetActionApprovalSubjectsEqual } from '../approvals/targetActionAppr
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionExecuteResult } from './actionExecutionResult.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import type { ApprovalRequestPublicRead } from '../approvals/approvalRequestPublicRead.js';
 
 type RequesterApprovalDecision = NonNullable<ActionExecutorContext['requesterApprovalDecision']>;
 
@@ -112,7 +113,12 @@ function readDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDec
   return null;
 }
 
-function readDurableDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDecision | null {
+/** Observation of history never supplies a live approval witness or claims execution. */
+export function readRecordedApprovalDecision<Request extends BlockingApprovalRequest | ApprovalRequestPublicRead>(request: Request):
+  | Readonly<{ decision: 'approve'; request: Request }>
+  | Readonly<{ decision: 'reject'; request: Request }>
+  | Readonly<{ decision: 'canceled'; request: Request }>
+  | null {
   // A persisted person label is history, never a live decision witness. The
   // original waiter must receive the authenticated ingress's currentness check.
   if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
@@ -224,7 +230,7 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
                 const latest = await readRequest();
                 if (settled) return;
                 if (latest) {
-                  const decision = readDurableDecision(latest);
+                  const decision = readRecordedApprovalDecision(latest);
                   if (decision) {
                     waiter.resolve(decision);
                     return;
@@ -265,7 +271,7 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
           // Queue delivery listeners are isolated; their owner records diagnostics.
         }
       }
-      const decision = readDurableDecision(request);
+      const decision = readRecordedApprovalDecision(request);
       if (!decision) return;
 
       const waiters = waitersByArtifactId.get(artifactId);

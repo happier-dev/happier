@@ -1864,7 +1864,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         actionFormConnectedAccounts?: Pick<
             ConnectedAccountPurposeBindingOwner,
             'resolveBindingIntent'
-        > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>>;
+        > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings' | 'resolveBindingIntentSelection'>>;
         /** Process-owned Account/system boundary dependencies for the canonical host. */
         accountStorageDependencies?: AccountPluginDataStorageHostDependencies;
         /**

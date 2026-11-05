@@ -193,7 +193,7 @@ it('keeps authenticated origin consent bound to its original Action and blocking
       try {
         result = await replayLiveCliApprovalOrigin({ artifactId, request: approved, decision: 'approve',
           context: { ...f.context, authority: 'present_user' },
-        }, { token: f.credentials.token, accountId: f.accountId, serverUrl: f.serverUrl, isCurrent: async () => true });
+        }, { token: f.credentials.token, serverUrl: f.serverUrl });
       } catch (error) { result = error; }
       // An uncertain transport receipt must not hide an already performed
       // substituted effect. Inspect the actual effect before its response.
@@ -254,7 +254,7 @@ it.each(['ready', 'decision-before-create-ack'] as const)('delivers authenticate
         isApprovalExecutionOriginCurrent: async () => true,
         approvalsResolveBlockingDecision: args => decidingCoordinator.resolveBlockingDecision(args),
         approvalRequestApprovedReplay: args => replayLiveCliApprovalOrigin(args, { token: f.credentials.token,
-          accountId: f.accountId, serverUrl: f.serverUrl, isCurrent: async () => true }),
+          serverUrl: f.serverUrl }),
       } satisfies ActionExecutorDeps);
       const decision = deciding.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
         ...f.context, actionRequestId: 'deciding-request', authority: 'present_user', serverId: 'deciding-profile',

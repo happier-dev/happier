@@ -138,6 +138,29 @@ describe('actions root command', () => {
     expect(native).toHaveBeenCalledOnce();
   });
 
+  it('wait preserves a settled result from an Action that declares an operation', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    await seedTestServerProfile({ id: 'home', homeId: 'srv_wait_home', serverUrl: 'https://wait-home.example' });
+    const result = { kind: 'ambiguous' as const, candidates: [] };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      projectsOpen: async () => result, isActionApprovalRequired: () => false });
+    await handleActionsCommand(['invoke', 'projects.open', '--server-id', 'home', '--input-json', JSON.stringify({
+      serverId: 'srv_wait_home', machineId: 'machine', source: { kind: 'folder', path: '/repo' },
+      materialization: { kind: 'attach' },
+    }), '--wait', '--json'], {
+      readCredentialsForServerIdFn: async () => credentials('api_token'),
+      createExecutorFn: () => ({ ...executor, resolveSessionTarget: async () => { throw new Error('No Session'); } }),
+    });
+    expect(JSON.parse(output), output).toMatchObject({ ok: true, data: result });
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
   it.each(['succeeded', 'held', 'missing', 'mismatched', 'home-alias', 'foreign-home'] as const)('finite pending submission observes its recorded host for %s', async outcome => {
     let output = '';
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
@@ -480,6 +503,29 @@ describe('actions root command', () => {
     expect(help).toContain('Request correlation identifier');
     expect(help).not.toContain('Idempotency request identifier');
   });
+
+  it.each([['deployments.deploy', true], ['deployments.domains.add', true], ['session.list', false], ['home.public_profiles.restrict', false]] as const)(
+    'finite invocation help and parser agree for %s', async (actionId, supported) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const readCredentialsFn = vi.fn();
+      await handleActionsCommand(['invoke', actionId, '--help'], { readCredentialsFn });
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+      expect(log.mock.calls.flat().join('\n').includes('--wait')).toBe(supported);
+      let output = '';
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+        output += String(chunk);
+        const callback = args.find(argument => typeof argument === 'function');
+        if (typeof callback === 'function') callback();
+        return true;
+      });
+      await handleActionsCommand(['invoke', actionId, '--wait', '--unknown-option', '--json'], { readCredentialsFn });
+      const envelope = JSON.parse(output);
+      expect(envelope).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+      const [reason, ...usage] = envelope.error.message.split('\n');
+      expect(reason).toContain(`Unknown option: ${supported ? '--unknown-option' : '--wait'}`);
+      expect(usage.join('\n').includes('--wait')).toBe(supported);
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+    });
 
   it('shows help from a concrete subcommand without reading credentials', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
