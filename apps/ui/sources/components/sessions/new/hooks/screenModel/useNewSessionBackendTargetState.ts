@@ -124,6 +124,13 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         preservedPluginTarget,
     ]);
     const [backendTarget, setBackendTargetState] = React.useState<PersistedBackendTargetRefV2>(() => initialBackendTarget);
+    // A saved selection can arrive after mount. Hydrate it before committing
+    // authoring effects; a matching fallback catalog row is not authored intent.
+    if (!hasExplicitUserSelection
+        && (explicitRouteTarget || params.tempBackendTarget || params.persistedBackendTarget || params.tempAgentType)
+        && !backendTargetKeysMatch(backendTarget, initialBackendTarget)) {
+        setBackendTargetState(initialBackendTarget);
+    }
     const setBackendTarget = React.useCallback<React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>>((next) => {
         setHasExplicitUserSelection(true);
         // Picker rows reuse their target object. A fresh selection still owns

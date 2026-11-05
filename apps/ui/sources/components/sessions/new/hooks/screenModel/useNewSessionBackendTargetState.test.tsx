@@ -1,3 +1,11 @@
+import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
+import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { flushSessionDraft, prepareLocalSessionDraftScope, resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import renderer, { act } from 'react-test-renderer';
@@ -5,7 +13,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
@@ -86,6 +94,80 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
 ];
 
 describe('useNewSessionBackendTargetState', () => {
+    it.each(['warm', 'delayed'] as const)('reopens the owned draft Agent, model and account after %s hydration', async (hydration) => {
+        const scope = { serverId: 'draft-home', accountId: 'draft-owner' };
+        const draftId = '00000000-0000-4000-8000-000000001104';
+        await prepareLocalSessionDraftScope(scope);
+        const codexTarget = { kind: 'agent' as const,
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const claudeEntry = resolvedEntryFixture({ ...configuredPreferredEntries[0]!,
+            backendTarget: { kind: 'backend', backendId: 'claude' },
+            backendTargetKey: 'agent:happier.agent.claude/claude', backendId: 'claude', agentId: 'claude',
+            catalogAgentId: 'claude', builtInAgentId: 'claude', iconAgentId: 'claude', title: 'Claude', subtitle: 'claude' });
+        const candidates = [claudeEntry, configuredPreferredEntries[0]!];
+        seedPreferences({ lastUsedAgent: 'claude', lastUsedBackendTarget: null });
+        let retained: Readonly<NewSessionDraft> | null = null;
+        const restoredCommits: string[] = [];
+        function useDraftSelection() {
+            const agent = useNewSessionBackendTargetState({ entries: candidates, projectionPhase: 'ready',
+                persistedBackendTarget: retained?.agentTarget });
+            const targetKey = resolveBackendTargetKeyV2(agent.backendTarget);
+            const engine = useNewSessionAgentAuthoringOptionsState({
+                agentType: agent.selectedUiAgentType, backendTargetKey: targetKey,
+                hydratedTempAuthoringDraft: null,
+                hydratedPersistedAuthoringDraft: retained ? buildNewSessionAuthoringDraftFromPersistedDraft(retained) : null,
+            });
+            const account = parseConnectedServicesBindingsByServiceIdFromAgentOptionState({
+                agentOptionState: readBackendNewSessionOptionStateByTargetKey(retained)?.[targetKey],
+            });
+            React.useLayoutEffect(() => {
+                if (retained) restoredCommits.push(targetKey);
+            });
+            return { agent, engine, account };
+        }
+        const initial = await renderHook(useDraftSelection);
+        await act(async () => initial.getCurrent().agent.setBackendTarget(codexTarget));
+        const modelSelection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 123, ref: {
+            agentTargetKey: resolveBackendTargetKeyV2(codexTarget), providerConnectionId: 'pc_draft', modelId: 'openrouter/free',
+        } });
+        await act(async () => initial.getCurrent().engine.setModelSelection(modelSelection));
+        const serviceId = 'happier.agent.codex/codex-subscription';
+        const account = { source: 'connected' as const, profileId: 'chosen-draft-account' };
+        const draft: NewSessionDraft = {
+            input: 'Keep my explicit engine', selectedMachineId: null, selectedPath: null,
+            selectedProfileId: null, selectedSecretId: null, agentType: 'codex',
+            agentTarget: codexTarget, permissionMode: 'default', acpSessionModeId: null,
+            modelSelection: initial.getCurrent().engine.modelSelection,
+            backendNewSessionOptionStateByTargetKey: { [modelSelection.ref.agentTargetKey]: {
+                connectedServicesBindingsByServiceId: { [serviceId]: account },
+            } }, updatedAt: 123,
+        };
+        writeNewSessionDraftToRepository({ scope, draftId, draft });
+        await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.agentTarget).toEqual(codexTarget);
+        await initial.unmount();
+        resetSessionDraftRepositoryForTests();
+        // A different composer can change the device's last-used choice before reopen.
+        seedPreferences({ lastUsedAgent: 'claude', lastUsedBackendTarget: null });
+        if (hydration === 'warm') retained = readNewSessionDraftFromRepository({ scope, draftId });
+        if (hydration === 'warm') expect(retained?.agentTarget).toEqual(codexTarget);
+        const reopened = await renderHook(useDraftSelection);
+        try {
+            if (hydration === 'delayed') {
+                retained = readNewSessionDraftFromRepository({ scope, draftId });
+                expect(retained?.agentTarget).toEqual(codexTarget);
+                await reopened.rerender();
+            }
+            expect(reopened.getCurrent().agent.backendTarget).toEqual(codexTarget);
+            expect(reopened.getCurrent().engine.modelSelection).toEqual(modelSelection);
+            expect(reopened.getCurrent().account[serviceId]).toEqual(account);
+            expect(restoredCommits.length).toBeGreaterThan(0);
+            expect(restoredCommits.every(key => key === modelSelection.ref.agentTargetKey)).toBe(true);
+        } finally {
+            await reopened.unmount();
+            resetSessionDraftRepositoryForTests();
+        }
+    });
     it('retains an explicit route while a remembered configured Agent and the catalog hydrate', async () => {
         seedPreferences({ lastUsedBackendTarget: entries[0]!.backendTarget });
         const routeBackendTarget = { kind: 'agent' as const,
