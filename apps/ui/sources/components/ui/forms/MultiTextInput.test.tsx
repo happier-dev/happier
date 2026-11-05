@@ -1645,6 +1645,184 @@ describe('MultiTextInput', () => {
         expect(mockTextarea.scrollTop).toBe(0);
     });
 
+    describe('web autosize during IME composition', () => {
+        // The textarea's own box is the baseline a composition tick compares against, so the
+        // boundary fake derives clientHeight from the written height like a real fixed-height box.
+        const createTextareaMock = (initial: { value: string; scrollHeight: number }) => {
+            const heightWrites: string[] = [];
+            const style = new Proxy({} as Record<string, string>, {
+                set(target, key, next) {
+                    if (key === 'height') heightWrites.push(String(next));
+                    target[key as string] = next;
+                    return true;
+                },
+            });
+            return {
+                heightWrites,
+                textarea: {
+                    value: initial.value,
+                    selectionStart: initial.value.length,
+                    selectionEnd: initial.value.length,
+                    scrollTop: 0,
+                    scrollHeight: initial.scrollHeight,
+                    get clientHeight() {
+                        return Number.parseInt(style.height ?? '0', 10) || 0;
+                    },
+                    style,
+                    setSelectionRange: vi.fn(),
+                    dispatchEvent: vi.fn(),
+                },
+            };
+        };
+
+        const renderComposer = async (
+            mock: ReturnType<typeof createTextareaMock>,
+            props: { value: string; maxHeight?: number; onChangeText?: (text: string) => void; onContentHeightChange?: (height: number) => void; onBlur?: () => void },
+        ) => {
+            const { MultiTextInput } = await import('./MultiTextInput.web');
+            const Composer = MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>;
+            const element = (value: string) => (
+                <Composer testID="composer-input" maxHeight={400} onChangeText={() => {}} {...props} value={value} />
+            );
+            let tree!: renderer.ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(element(props.value), {
+                    createNodeMock: (node) => (node.type === 'textarea' ? mock.textarea : null),
+                });
+            });
+            const input = () => tree.root.findByType('textarea' as any);
+            const type = async (text: string, scrollHeight: number, isComposing: boolean) => {
+                mock.textarea.value = text;
+                mock.textarea.scrollHeight = scrollHeight;
+                await act(async () => {
+                    input().props.onChange({
+                        target: mock.textarea,
+                        currentTarget: mock.textarea,
+                        nativeEvent: { isComposing },
+                    });
+                });
+            };
+            return {
+                input,
+                type,
+                startComposition: () => act(async () => { input().props.onCompositionStart(); }),
+                rerender: (value: string) => act(async () => { tree.update(element(value)); }),
+            };
+        };
+
+        it('keeps the box and skips the collapse when a composition tick shrinks the text', async () => {
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello' });
+            expect(mock.textarea.style.height).toBe('200px');
+            await composer.startComposition();
+            mock.heightWrites.length = 0;
+
+            // A real fixed-height box never reports a scrollHeight below its own height.
+            await composer.type('hi', 200, true);
+
+            expect(mock.heightWrites).toEqual([]);
+        });
+
+        it('grows the box without collapsing when composed text needs more room', async () => {
+            const onContentHeightChange = vi.fn();
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello', onContentHeightChange });
+            await composer.startComposition();
+            mock.heightWrites.length = 0;
+
+            await composer.type('hello composed much longer text', 300, true);
+
+            expect(mock.heightWrites).toEqual(['300px']);
+            expect(onContentHeightChange).toHaveBeenLastCalledWith(300);
+        });
+
+        it('reports content growth past the height cap so the expand toggle can appear', async () => {
+            const onContentHeightChange = vi.fn();
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 400 });
+            const composer = await renderComposer(mock, { value: 'hello', onContentHeightChange });
+            expect(mock.textarea.style.height).toBe('400px');
+            await composer.startComposition();
+            mock.heightWrites.length = 0;
+
+            await composer.type('hello composed far past the cap', 640, true);
+
+            expect(onContentHeightChange).toHaveBeenLastCalledWith(640);
+            expect(mock.textarea.style.height).toBe('400px');
+            expect(mock.heightWrites).not.toContain('auto');
+        });
+
+        it('settles the exact height when composition ends', async () => {
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello' });
+            await composer.startComposition();
+            await composer.type('hi', 200, true);
+
+            mock.textarea.scrollHeight = 120;
+            await act(async () => {
+                composer.input().props.onCompositionEnd({ target: mock.textarea, currentTarget: mock.textarea });
+            });
+
+            expect(mock.textarea.style.height).toBe('120px');
+        });
+
+        it('settles a composition whose compositionend never arrived when the first non-composing input lands', async () => {
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello' });
+            await composer.startComposition();
+
+            await composer.type('hello', 120, false);
+
+            expect(mock.textarea.style.height).toBe('120px');
+        });
+
+        it('settles a composition whose compositionend never arrived on blur', async () => {
+            const onBlur = vi.fn();
+            const onChangeText = vi.fn();
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello', onBlur, onChangeText });
+            await composer.startComposition();
+            await composer.type('hi', 200, true);
+
+            mock.textarea.scrollHeight = 120;
+            await act(async () => {
+                composer.input().props.onBlur();
+            });
+
+            expect(mock.textarea.style.height).toBe('120px');
+            expect(onChangeText).toHaveBeenLastCalledWith('hi');
+            expect(onBlur).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not re-measure on an ordinary blur', async () => {
+            const onBlur = vi.fn();
+            const mock = createTextareaMock({ value: 'hello', scrollHeight: 200 });
+            const composer = await renderComposer(mock, { value: 'hello', onBlur });
+            mock.heightWrites.length = 0;
+
+            await act(async () => {
+                composer.input().props.onBlur();
+            });
+
+            expect(mock.heightWrites).toEqual([]);
+            expect(onBlur).toHaveBeenCalledTimes(1);
+        });
+
+        it('still fully measures the confirm render of a composition crossing the emptiness edge', async () => {
+            // A grow-only tick must not record the confirm-render dedup key: that render would
+            // skip its measurement and leave the box stale until compositionend.
+            const mock = createTextareaMock({ value: '', scrollHeight: 30 });
+            const composer = await renderComposer(mock, { value: '' });
+            await composer.startComposition();
+            mock.heightWrites.length = 0;
+
+            await composer.type('hello', 200, true);
+            expect(mock.heightWrites).toEqual(['200px']);
+
+            await composer.rerender('hello');
+            expect(mock.heightWrites).toContain('auto');
+        });
+    });
+
     // "does not reapply web scroll restore on controlled value changes without
     // a new restore token" was consolidated into "re-applies a consumed web
     // scroll restore after adopting an external value, but never after

@@ -327,6 +327,22 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         lastMeasuredKeyRef.current = { text: liveValueRef.current, textareaStyle, maxHeight: normalizedMaxHeight };
     }, [normalizedMaxHeight, notifyContentHeightChange, textareaStyle]);
 
+    // Composition ticks must not collapse-measure: that path forces three synchronous layout
+    // flushes per tick (the scrollTop read on an already-dirty layout, the scrollHeight read after
+    // the auto-collapse write, and the scrollTop restore). A fixed-height box already reports
+    // overflow, so one scrollHeight read decides growth and the clientHeight read after it costs
+    // no further layout. The box only grows here; settleComposition restores the exact height.
+    // This deliberately leaves the confirm-render dedup key alone: every full-path run stays the
+    // authoritative measurement for its text.
+    const growTextareaHeightForComposition = React.useCallback((node: HTMLTextAreaElement) => {
+        const measuredHeight = Math.ceil(node.scrollHeight);
+        if (!(measuredHeight > node.clientHeight)) return;
+        notifyContentHeightChange(measuredHeight);
+        const nextHeight = Math.min(normalizedMaxHeight, measuredHeight);
+        node.style.height = `${nextHeight}px`;
+        setTextareaHeight((current) => (current === nextHeight ? current : nextHeight));
+    }, [normalizedMaxHeight, notifyContentHeightChange]);
+
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
         if (!node) return;
@@ -503,11 +519,15 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     const handleChange = React.useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const text = e.target.value;
         liveValueRef.current = text;
-        applyTextareaHeight(e.currentTarget, text.length);
         // An input the browser reports as non-composing proves no composition is active, even
         // if its compositionend never reached us (e.g. a script value write cancelled it).
         if (readEventIsComposing(e.nativeEvent) === false) {
             isComposingRef.current = false;
+        }
+        if (isComposingRef.current) {
+            growTextareaHeightForComposition(e.currentTarget);
+        } else {
+            applyTextareaHeight(e.currentTarget, text.length);
         }
         // Uncommitted IME text (pinyin, kana, hangul jamo) stays inside the DOM-owned textarea:
         // emitting each update re-rendered the whole session screen per composition keystroke.
@@ -520,7 +540,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
             if (containsLikelyNonWhitespace(text) === containsLikelyNonWhitespace(parentText)) return;
         }
         emitInputState(e.target);
-    }, [applyTextareaHeight, emitInputState]);
+    }, [applyTextareaHeight, emitInputState, growTextareaHeightForComposition]);
 
     const handleSelect = React.useCallback((e: React.SyntheticEvent<HTMLTextAreaElement>) => {
         if (isComposingRef.current) return;
@@ -551,12 +571,26 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     // Reads the committed text from the DOM rather than the last input event: Chromium fires the
     // final input before compositionend, WebKit after it (that later input is then deduped by
     // `emitInputState`). A cancelled composition restores the prior text and emits selection only.
-    const handleCompositionEnd = React.useCallback((e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    // The height settles directly: composition ticks only grow the box, and the parent's confirm
+    // render is debounced for large drafts and never comes for a cancelled composition.
+    const settleComposition = React.useCallback((node: HTMLTextAreaElement) => {
         isComposingRef.current = false;
-        const node = textareaRef.current ?? e.currentTarget;
         liveValueRef.current = node.value;
         emitInputState(node);
-    }, [emitInputState]);
+        applyTextareaHeight(node);
+    }, [applyTextareaHeight, emitInputState]);
+
+    const handleCompositionEnd = React.useCallback((e: React.CompositionEvent<HTMLTextAreaElement>) => {
+        settleComposition(textareaRef.current ?? e.currentTarget);
+    }, [settleComposition]);
+
+    // Focus leaving proves composition is over. Chromium fires compositionend first, so this only
+    // acts on a composition that ended without one, such as one a value write cancelled.
+    const handleBlur = React.useCallback(() => {
+        const node = textareaRef.current;
+        if (isComposingRef.current && node) settleComposition(node);
+        props.onBlur?.();
+    }, [props.onBlur, settleComposition]);
 
     const handlePaste = React.useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
         const cb = props.onFilesPasted;
@@ -689,7 +723,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         onDragOver: handleDragOver,
         onDrop: handleDrop,
         onFocus: props.onFocus,
-        onBlur: props.onBlur,
+        onBlur: handleBlur,
         readOnly: props.editable === false,
         autoCapitalize: 'sentences',
         autoCorrect: 'on',
