@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
-import { ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { admitApprovalRequesterDecisionV1, ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
+import { ExecutionRunHostActionApprovalRequestV1Schema } from '../approvals/executionRunHostActionApprovalRequestV1.js';
 import { buildApprovalRequesterConfirmationV1 } from '../approvals/approvalRequestV1.js';
-import { buildApprovalExecutionOriginV1 } from './actionExecutor.js';
+import { buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from './externalActionExecutionAuthorization.js';
 import type { ActionExecutorContext } from './executor/types.js';
@@ -49,7 +50,64 @@ function approvalRequest(overrides: Partial<ApprovalRequestV2> = {}): ApprovalRe
 
 describe('createBlockingApprovalCoordinator', () => {
   afterEach(() => vi.useRealTimers());
-  it.each(['builtin', 'target'] as const)('keeps $0 requester confirmation waiting for the host decision proof after a durable update', async family => {
+  it.each(['target', 'execution-run-host'] as const)('requires authenticated live consent for %s despite approved durable reads and notifications', async family => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const request = family === 'target' ? TargetActionApprovalRequestV1Schema.parse({
+      v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.alpha/actions/run',
+      input: {}, sourceCustody: { kind: 'development', registeredRootId: 'root' },
+      approvalInputCustody: 'live_only', policyFingerprint: 'b'.repeat(64), subjectFingerprint: 'a'.repeat(64), summary: 'Run',
+    }) : ExecutionRunHostActionApprovalRequestV1Schema.parse({
+      v: 1, kind: 'execution_run_host_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent', sessionId: 'session' }, requestedSurface: 'agent', actionId: 'reviews.comments.create',
+      sessionId: 'session', runId: 'run', callId: 'call', profileId: 'acme.review/review', pluginId: 'acme.review',
+      agentId: 'claude', projectId: 'project', workspaceId: 'workspace', serverId: 'home', proposalCount: 1,
+      proposalPreview: [], subjectFingerprint: 'a'.repeat(64), summary: 'Create review comment',
+    });
+    const approved = { ...request, status: 'approved' as const, updatedAtMs: 2,
+      decision: { kind: 'approve' as const, decidedAtMs: 2, authority: 'present_user' as const } };
+    let effects = 0;
+    const read = vi.fn(async () => approved);
+    const pending = coordinator.waitForDecision({ artifactId: 'forged-family', request, readRequest: read })
+      .then(result => { if (result.decision === 'approve') effects++; return result; });
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      coordinator.notifyApprovalUpdated({ artifactId: 'forged-family', request: approved });
+      await Promise.resolve();
+      expect(coordinator.getLiveWaiterCount('forged-family')).toBe(1);
+      expect(effects).toBe(0);
+      await expect(coordinator.resolveBlockingDecision({ artifactId: 'forged-family',
+        request: { ...approved, summary: 'Substituted subject' }, decision: 'approve', decisionAuthority: 'present_user' }))
+        .rejects.toMatchObject({ code: 'approval_request_conflict' });
+      expect(coordinator.getLiveWaiterCount('forged-family')).toBe(1);
+      expect(await coordinator.resolveBlockingDecision({ artifactId: 'forged-family', request: approved,
+        decision: 'approve', decisionAuthority: 'present_user' })).toEqual({ resolved: true });
+      await expect(pending).resolves.toMatchObject({ decision: 'approve', decisionAuthority: 'present_user' });
+      expect(await coordinator.resolveBlockingDecision({ artifactId: 'forged-family', request: approved,
+        decision: 'approve', decisionAuthority: 'present_user' })).toEqual({ resolved: false });
+      expect(effects).toBe(1);
+    } finally { coordinator.dispose(); await pending.catch(() => undefined); }
+  });
+  it('refuses a live decision for a substituted confidential CLI subject without losing its original waiter', async () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const request = approvalRequest({ actionId: 'secrets.create', requestedSurface: 'cli',
+      actionArgs: { name: 'Original credential', kind: 'apiKey' }, approval: { flow: 'blocking', result: 'required' },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+        accountId: 'alice', serverId: 'server-1', serverIdentityId: 'stable-home',
+        actionId: 'secrets.create', requestId: 'private-request' } });
+    const pending = coordinator.waitForDecision({ artifactId: 'private-request', request });
+    const approved = { ...request, status: 'approved' as const, updatedAtMs: 2,
+      decision: { kind: 'approve' as const, decidedAtMs: 2, authority: 'present_user' as const } };
+    await expect(coordinator.resolveBlockingDecision({ artifactId: 'private-request', decision: 'approve',
+      decisionAuthority: 'present_user', request: { ...approved, actionArgs: { name: 'Substituted credential', kind: 'apiKey' } } }))
+      .rejects.toMatchObject({ code: 'approval_request_conflict' });
+    expect(coordinator.getLiveWaiterCount('private-request')).toBe(1);
+    await expect(coordinator.resolveBlockingDecision({ artifactId: 'private-request', decision: 'approve',
+      decisionAuthority: 'present_user', request: approved })).resolves.toEqual({ resolved: true });
+    await expect(pending).resolves.toEqual({ decision: 'approve', request: approved, decisionAuthority: 'present_user' });
+    coordinator.dispose();
+  });
+  it.each(['builtin', 'target'] as const)('keeps $0 requester confirmation waiting for the host decision proof after a failed durable read', async family => {
     const coordinator = createBlockingApprovalCoordinator();
     const base = approvalRequest();
     const targetInput = { title: 'Release' };
@@ -85,17 +143,60 @@ describe('createBlockingApprovalCoordinator', () => {
       executionOriginV1,
       requesterConfirmation,
     });
-    const pending = coordinator.waitForDecision({ artifactId: 'requester-live', request });
+    const readRequest = vi.fn(async () => {
+      throw Object.assign(new Error('artifact_read_unavailable'), { code: 'artifact_read_unavailable' });
+    });
+    const dispose = vi.fn();
+    const pending = coordinator.waitForDecision({ artifactId: 'requester-live', request,
+      readRequest, subscribeChanges: () => ({ dispose }) });
+    const observed = pending.then(
+      value => ({ kind: 'resolved' as const, value }),
+      error => ({ kind: 'rejected' as const, error }),
+    );
+    await vi.waitFor(() => expect(readRequest).toHaveBeenCalledTimes(1));
+    expect(coordinator.getLiveWaiterCount('requester-live')).toBe(1);
     const approved = { ...request, status: 'approved' as const, updatedAtMs: 2,
       decision: { kind: 'approve' as const, decidedAtMs: 2, authority: 'present_user' as const, decidingAccountId: 'bob' } };
     coordinator.notifyApprovalUpdated({ artifactId: 'requester-live', request: approved });
     expect(coordinator.getLiveWaiterCount('requester-live')).toBe(1);
+    const requesterLifetime = new AbortController();
     const requesterApprovalDecision = { sessionId: 'bot-session',
       actor: { kind: 'accountUser', accountId: 'bob', relationship: 'sharedApprover' },
-      isCurrent: async () => true } as const;
+      isCurrent: async () => !requesterLifetime.signal.aborted } as const;
     await expect(coordinator.resolveBlockingDecision({ artifactId: 'requester-live', request: approved,
       decision: 'approve', decisionAuthority: 'present_user', requesterApprovalDecision })).resolves.toEqual({ resolved: true });
-    await expect(pending).resolves.toMatchObject({ decision: 'approve', requesterApprovalDecision });
+    await expect(observed).resolves.toMatchObject({ kind: 'resolved', value: {
+      decision: 'approve', requesterApprovalDecision,
+    } });
+    const delivered = await observed;
+    if (delivered.kind !== 'resolved' || delivered.value.decision !== 'approve') throw new Error('Expected the live decision');
+    const consumingRequest = { ...request, actionId, actionArgs: input };
+    const decisionContext = { ...context, requesterApprovalDecision: delivered.value.requesterApprovalDecision };
+    expect(await admitApprovalRequesterDecisionV1({ request: consumingRequest, context: decisionContext })).toMatchObject({ ok: true });
+    requesterLifetime.abort();
+    expect((await admitApprovalRequesterDecisionV1({ request: consumingRequest, context: decisionContext })).ok).toBe(false);
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    const denied = coordinator.waitForDecision({ artifactId: 'requester-denied', request,
+      readRequest, subscribeChanges: () => ({ dispose }) });
+    await vi.waitFor(() => expect(readRequest).toHaveBeenCalledTimes(2));
+    expect(coordinator.getLiveWaiterCount('requester-denied')).toBe(1);
+    const rejected = { ...request, status: 'rejected' as const, updatedAtMs: 3,
+      decision: { kind: 'reject' as const, decidedAtMs: 3 } };
+    coordinator.notifyApprovalUpdated({ artifactId: 'requester-denied', request: rejected });
+    await expect(denied).resolves.toEqual({ decision: 'reject', request: rejected });
+    expect(coordinator.getLiveWaiterCount('requester-denied')).toBe(0);
+
+    const terminalDispose = vi.fn();
+    const terminalRead = vi.fn(async () => {
+      throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
+    });
+    const terminal = coordinator.waitForDecision({ artifactId: 'requester-terminal', request,
+      readRequest: terminalRead, subscribeChanges: () => ({ dispose: terminalDispose }) });
+    await expect(terminal).rejects.toMatchObject({ code: 'artifact_read_invalid' });
+    expect(terminalRead).toHaveBeenCalledTimes(1);
+    expect(terminalDispose).toHaveBeenCalledTimes(1);
+    expect(coordinator.getLiveWaiterCount('requester-terminal')).toBe(0);
   });
   it('returns an approval decision only to the exact live waiter', async () => {
     const coordinator = createBlockingApprovalCoordinator();
@@ -116,6 +217,46 @@ describe('createBlockingApprovalCoordinator', () => {
     })).resolves.toEqual({ resolved: true });
     await expect(pending).resolves.toEqual({ decision: 'approve', request: approved });
     expect(coordinator.getLiveWaiterCount('approval-1')).toBe(0);
+  });
+
+  it('keeps an ordinary blocking waiter for direct approval after one unavailable durable read', async () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const request = approvalRequest();
+    const readRequest = vi.fn(async () => {
+      throw Object.assign(new Error('artifact_read_unavailable'), { code: 'artifact_read_unavailable' });
+    });
+    const dispose = vi.fn();
+    const pending = coordinator.waitForDecision({
+      artifactId: 'ordinary-read-unavailable',
+      request,
+      readRequest,
+      subscribeChanges: () => ({ dispose }),
+    });
+    const observed = pending.then(
+      value => ({ kind: 'resolved' as const, value }),
+      error => ({ kind: 'rejected' as const, error }),
+    );
+
+    await vi.waitFor(() => expect(readRequest).toHaveBeenCalledTimes(1));
+    expect(coordinator.getLiveWaiterCount('ordinary-read-unavailable')).toBe(1);
+    const approved = approvalRequest({
+      status: 'approved',
+      updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+    });
+    await expect(coordinator.resolveBlockingDecision({
+      artifactId: 'ordinary-read-unavailable',
+      request: approved,
+      decision: 'approve',
+      decisionAuthority: 'present_user',
+    })).resolves.toEqual({ resolved: true });
+    await expect(observed).resolves.toEqual({
+      kind: 'resolved',
+      value: { decision: 'approve', request: approved, decisionAuthority: 'present_user' },
+    });
+    expect(readRequest).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(coordinator.getLiveWaiterCount('ordinary-read-unavailable')).toBe(0);
   });
 
   it('reads durable changes without polling and waits for the built-in execution result', async () => {

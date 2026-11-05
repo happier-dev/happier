@@ -1,5 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ApprovalRequestV2StatusSchema } from './approvalRequestStatus.js';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import {
@@ -26,10 +27,6 @@ export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
 
 const boundedId = z.string().check(z.minLength(1), maxCodeUnits(TARGET_ACTION_APPROVAL_LIMITS_V1.idUtf16Units));
 
-const TargetActionApprovalStatusV1Schema = lazyZodSchema(() => z.enum([
-  'open', 'approved', 'executing', 'rejected', 'executed', 'failed', 'canceled',
-]));
-
 /**
  * Host-stamped routing evidence for an automated or live-only-input Action approval. It is
  * durable approval subject data, never caller-supplied Action input.
@@ -44,7 +41,7 @@ export type TargetActionApprovalReplayPlacementV1 = z.infer<
 >;
 
 export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(1), kind: z.literal('plugin_target_action'), status: TargetActionApprovalStatusV1Schema,
+  v: z.literal(1), kind: z.literal('plugin_target_action'), status: ApprovalRequestV2StatusSchema,
   createdAtMs: z.number().check(z.int(), z.minimum(0)), updatedAtMs: z.number().check(z.int(), z.minimum(0)),
   createdBy: ApprovalRequestCreatedBySchema,
   requestedSurface: z.string().check(z.minLength(1), maxCodeUnits(TARGET_ACTION_APPROVAL_LIMITS_V1.surfaceUtf16Units)),
@@ -79,10 +76,13 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
     }
   }
   if (value.status === 'open' && (value.decision || value.execution)) ctx.addIssue({ code: 'custom', message: 'open target-action approval cannot contain a decision or execution' });
-  if ((value.status === 'approved' || value.status === 'executing' || value.status === 'executed' || value.status === 'failed') && value.decision?.kind !== 'approve') ctx.addIssue({ code: 'custom', message: `${value.status} target-action approval requires approve` });
+  if ((value.status === 'approved' || value.status === 'executing' || value.status === 'executed' || value.status === 'failed' || value.status === 'outcome_unknown') && value.decision?.kind !== 'approve') ctx.addIssue({ code: 'custom', message: `${value.status} target-action approval requires approve` });
   if (value.status === 'rejected' && value.decision?.kind !== 'reject') ctx.addIssue({ code: 'custom', message: 'rejected target-action approval requires reject' });
   if (value.status === 'canceled' && value.decision) ctx.addIssue({ code: 'custom', message: 'canceled target-action approval cannot contain a decision' });
-  if ((value.status === 'executed' || value.status === 'failed') !== Boolean(value.execution)) ctx.addIssue({ code: 'custom', message: 'target-action approval execution/status mismatch' });
+  if ((value.status === 'executed' || value.status === 'failed' || value.status === 'outcome_unknown') !== Boolean(value.execution)) ctx.addIssue({ code: 'custom', message: 'target-action approval execution/status mismatch' });
+  if (value.status === 'outcome_unknown' && (value.execution?.ok !== false || value.execution.effectAttempted !== true)) {
+    ctx.addIssue({ code: 'custom', message: 'Unknown target-action approval outcomes require a possibly attempted execution' });
+  }
   if (value.requestedSurface === 'api' && value.replayPlacement === undefined) {
     ctx.addIssue({
       code: 'custom',

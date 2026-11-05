@@ -2,6 +2,7 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from './approvalRequestV1.js';
+export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
 
 /**
  * The one approval subject/transition contract for built-in approval Artifacts.

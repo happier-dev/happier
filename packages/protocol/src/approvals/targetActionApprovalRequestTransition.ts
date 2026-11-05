@@ -70,7 +70,7 @@ export function admitTargetActionApprovalTransition(
     && request.execution.errorCode === 'approval_canceled' && request.execution.effectAttempted === false
     && stable(existing.decision) === stable(request.decision);
   const isExecutingTerminal = existing.status === 'executing'
-    && (request.status === 'executed' || request.status === 'failed')
+    && (request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
     && request.decision?.kind === 'approve' && request.execution !== undefined
     // A cancellation receipt cannot settle custody another invocation claimed.
     && !(request.execution.errorCode === 'approval_canceled' && request.execution.effectAttempted === false);

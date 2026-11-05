@@ -1,6 +1,10 @@
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
+import { ApprovalRequestConflict, decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '../approvals/executionRunHostActionApprovalRequestV1.js';
+import { executionRunHostActionApprovalSubjectsEqual } from '../approvals/executionRunHostActionApprovalRequestV1.js';
 import type { TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
+import { targetActionApprovalSubjectsEqual } from '../approvals/targetActionApprovalRequestTransition.js';
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionExecuteResult } from './actionExecutionResult.js';
 import type { ActionExecutorContext } from './executor/types.js';
@@ -64,6 +68,7 @@ export type BlockingApprovalCoordinator = Readonly<{
 }>;
 
 type Waiter = {
+  request: BlockingApprovalRequest;
   resolve: (value: BlockingApprovalWaitDecision) => void;
   reject: (error: Error) => void;
   cleanup: () => void | Promise<void>;
@@ -77,11 +82,23 @@ function createCoordinatorError(reason: unknown, fallback: string): Error {
   return new Error(typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : fallback);
 }
 
+function isArtifactReadUnavailable(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'artifact_read_unavailable';
+}
+
+function isTargetApproval(request: BlockingApprovalRequest): request is TargetActionApprovalRequestV1 {
+  return 'kind' in request && request.kind === 'plugin_target_action';
+}
+
+function isHostApproval(request: BlockingApprovalRequest): request is ExecutionRunHostActionApprovalRequestV1 {
+  return 'kind' in request && request.kind === 'execution_run_host_action';
+}
+
 function readDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDecision | null {
   if (
     (request.status === 'approved'
       || request.status === 'executed'
-      || (request.status === 'failed' && 'execution' in request && request.execution))
+      || ((request.status === 'failed' || request.status === 'outcome_unknown') && 'execution' in request && request.execution))
     && request.decision?.kind === 'approve'
   ) {
     return { decision: 'approve', request };
@@ -98,15 +115,7 @@ function readDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDec
 function readDurableDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDecision | null {
   // A persisted person label is history, never a live decision witness. The
   // original waiter must receive the authenticated ingress's currentness check.
-  if ('requesterConfirmation' in request && request.requesterConfirmation
-    && request.status === 'approved' && request.decision?.kind === 'approve') return null;
-  if ('kind' in request
-    && (request.kind === 'plugin_target_action' || request.kind === 'execution_run_host_action')
-    && request.status === 'approved'
-    && request.decision?.kind === 'approve') {
-    return { decision: 'approve', request };
-  }
-  if ((request.status === 'executed' || request.status === 'failed')
+  if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
     && request.decision?.kind === 'approve'
     && 'execution' in request
     && request.execution) {
@@ -148,7 +157,7 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
   };
 
   return {
-    waitForDecision: ({ artifactId: rawArtifactId, signal, readRequest, subscribeChanges }) => {
+    waitForDecision: ({ artifactId: rawArtifactId, request, signal, readRequest, subscribeChanges }) => {
       const artifactId = normalizeId(rawArtifactId);
       if (!artifactId) return Promise.reject(new Error('approval_artifact_id_required'));
       if (signal?.aborted) {
@@ -160,6 +169,7 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
         let settled = false;
         let subscription: ReturnType<BlockingApprovalChangeSubscription> | undefined;
         const waiter: Waiter = {
+          request,
           resolve: (value) => {
             if (settled) { if (value.decision === 'approve') void value.tokenExecution?.dispose(); return; }
             if (value.decision === 'approve' && value.tokenExecution) {
@@ -222,6 +232,11 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
                 }
               }
             } catch (error) {
+              // An unavailable projection is non-decision evidence. Keep the
+              // waiter's existing signal/direct-decision lifetime so the
+              // authenticated command racing the read can still reach it. This
+              // does not retry or treat a persisted approval label as authority.
+              if (isArtifactReadUnavailable(error)) return;
               waiter.reject(error instanceof Error ? error : createCoordinatorError(error, 'approval_read_failed'));
             } finally {
               reading = false;
@@ -276,6 +291,24 @@ export function createBlockingApprovalCoordinator(): BlockingApprovalCoordinator
       if (!artifactId) return { resolved: false };
       const waiters = waitersByArtifactId.get(artifactId);
       if (!waiters || waiters.size === 0) return { resolved: false };
+
+      // A generic Artifact writer cannot substitute the subject whose private
+      // input this waiter retains. Refuse before releasing any waiter; treating
+      // a mismatch as absent custody would relay back into this same origin.
+      for (const waiter of waiters) {
+        if (isTargetApproval(waiter.request)) {
+          if (!isTargetApproval(request) || !targetActionApprovalSubjectsEqual(waiter.request, request)) throw new ApprovalRequestConflict();
+          continue;
+        }
+        if (isHostApproval(waiter.request)) {
+          if (!isHostApproval(request) || !executionRunHostActionApprovalSubjectsEqual(waiter.request, request)) throw new ApprovalRequestConflict();
+          continue;
+        }
+        if (resolveApprovalExecutor(waiter.request).kind !== 'live_invocation') continue;
+        if ('kind' in request || !decideApprovalRequestTransition(waiter.request, request).ok) {
+          throw new ApprovalRequestConflict();
+        }
+      }
 
       const resolvedDecision = readDecision(request) ?? { decision, request };
       if (resolvedDecision.decision === 'approve' && 'requesterConfirmation' in request

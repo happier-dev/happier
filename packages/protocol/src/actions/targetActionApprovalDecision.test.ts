@@ -4,6 +4,8 @@ import { buildTargetActionApprovalDecisionResult, createTargetActionApprovalDeci
 import { getActionSpec } from './actionSpecs';
 import { admitTargetActionApprovalTransition } from '../approvals/targetActionApprovalRequestTransition';
 import { projectApprovalRequestForPublicRead } from './actionApprovalPresentation';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '../auth/apiTokenGrant';
+import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
 
 function accountApproval() {
   return TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
@@ -14,6 +16,103 @@ function accountApproval() {
 }
 
 describe('target Action approval decision custody', () => {
+  it('executes captured daemon placement independently of the requesting surface', async () => {
+    const { approvalInputCustody: _liveOnly, ...replayable } = accountApproval();
+    let stored = TargetActionApprovalRequestV1Schema.parse({ ...replayable, requestedSurface: 'ui',
+      replayPlacement: { serverId: 'home', machineId: 'machine', defaultSessionId: 'session' } });
+    let effects = 0;
+    const decide = createTargetActionApprovalDecision({
+      read: async () => stored,
+      update: async ({ request }) => {
+        const transition = admitTargetActionApprovalTransition(stored, request);
+        if (transition.ok) stored = TargetActionApprovalRequestV1Schema.parse(request);
+        return transition;
+      },
+      // The target execution host is a boundary; the decision and claim
+      // transitions remain real beneath its effect/receipt response.
+      executeApproved: async ({ request, persist, nextTimestamp }) => {
+        const executing = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'executing' });
+        const claimFailure = await persist(executing);
+        if (claimFailure) return claimFailure;
+        effects += 1;
+        const executed = TargetActionApprovalRequestV1Schema.parse({ ...executing, status: 'executed',
+          execution: { executedAtMs: nextTimestamp(executing), ok: true, result: { written: true } } });
+        return await persist(executed) ?? buildTargetActionApprovalDecisionResult(executed);
+      },
+    });
+    const args = { artifactId: 'captured-placement', decision: 'approve' as const,
+      context: { surface: 'ui' as const, authority: 'present_user' as const, runtimeAccountId: 'alice' },
+      callerGrant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, approve: true,
+        targets: { sessions: ['session'], machines: [] } }) };
+    expect(await decide({ ...args, callerGrant: { ...args.callerGrant,
+      targets: { sessions: ['other-session'], machines: [] } } }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(stored.status).toBe('open');
+    expect(effects).toBe(0);
+    expect(await decide(args)).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(stored).toMatchObject({ status: 'executed', decision: { kind: 'approve', decidingAccountId: 'alice' } });
+    expect(await decide(args)).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(effects).toBe(1);
+  });
+
+  it.each(['approve', 'reject', 'cancel'] as const)('refuses %s on an unknown outcome without changing or re-executing it', async decision => {
+    const stored = TargetActionApprovalRequestV1Schema.parse({ ...accountApproval(), status: 'outcome_unknown',
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: false,
+        effectAttempted: true, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } });
+    const decide = createTargetActionApprovalDecision({ read: async () => stored,
+      update: async () => { throw new Error('A settled approval must not be written'); },
+      executeApproved: async () => { throw new Error('An unknown effect must never execute again'); } });
+    expect(await decide({ artifactId: 'unknown-effect', decision }))
+      .toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+    expect(stored.status).toBe('outcome_unknown');
+  });
+
+  it('requires a separate open approval and fresh person decision for another request', async () => {
+    const previous = TargetActionApprovalRequestV1Schema.parse({ ...accountApproval(), status: 'outcome_unknown',
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: false,
+        effectAttempted: true, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } });
+    const records = new Map([['previous', previous], ['new-request', accountApproval()]]);
+    const decide = createTargetActionApprovalDecision({ read: async id => records.get(id) ?? null,
+      update: async ({ artifactId, request }) => {
+        const existing = records.get(artifactId);
+        if (!existing) throw new Error('Missing request');
+        const admission = admitTargetActionApprovalTransition(existing, request);
+        if (admission.ok) records.set(artifactId, TargetActionApprovalRequestV1Schema.parse(request));
+        return admission;
+      } });
+    expect(records.get('new-request')?.decision).toBeUndefined();
+    expect(await decide({ artifactId: 'previous', decision: 'approve' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+    const live = getSharedBlockingApprovalCoordinator().waitForDecision({ artifactId: 'new-request', request: records.get('new-request')! });
+    expect(await decide({ artifactId: 'new-request', decision: 'approve', context: {
+      authority: 'present_user', surface: 'ui', runtimeAccountId: 'alice',
+    } })).toMatchObject({ ok: true, result: { status: 'approved' } });
+    await live;
+    expect(records.get('new-request')?.decision).toMatchObject({ kind: 'approve', authority: 'present_user', decidingAccountId: 'alice' });
+    expect(records.get('previous')).toEqual(previous);
+  });
+
+  it.each(['open', 'approved'] as const)('settles lost live input custody from %s with a terminal refusal', async status => {
+    let stored = TargetActionApprovalRequestV1Schema.parse({ ...accountApproval(), status,
+      ...(status === 'approved' ? { decision: { kind: 'approve', decidedAtMs: 2 } } : {}) });
+    let effects = 0;
+    const decide = createTargetActionApprovalDecision({ read: async () => stored, hasLiveInvocation: () => false,
+      update: async ({ request }) => {
+        const admission = admitTargetActionApprovalTransition(stored, request);
+        if (!admission.ok) return admission;
+        stored = TargetActionApprovalRequestV1Schema.parse(request);
+        return { ok: true };
+      },
+      executeApproved: async () => { effects += 1; throw new Error('Lost inputs cannot execute'); },
+    });
+    const result = await decide({ artifactId: 'lost-inputs', decision: 'approve' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+    expect(stored).toMatchObject({ status: 'failed', execution: { ok: false, effectAttempted: false,
+      errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } });
+    expect(await decide({ artifactId: 'lost-inputs', decision: 'approve' })).toEqual(result);
+    expect(effects).toBe(0);
+  });
+
   it('retains the target executor receipt through decision settlement', async () => {
     const { approvalInputCustody: _liveOnly, ...replayable } = accountApproval();
     let stored = TargetActionApprovalRequestV1Schema.parse({ ...replayable,
@@ -54,9 +153,12 @@ describe('target Action approval decision custody', () => {
       read: async () => TargetActionApprovalRequestV1Schema.parse(JSON.parse(stored)),
       update: async ({ request }) => { stored = JSON.stringify(TargetActionApprovalRequestV1Schema.parse(request)); return { ok: true }; },
     });
+    const live = decision === 'approve' ? getSharedBlockingApprovalCoordinator().waitForDecision({
+      artifactId: 'voice-target', request: accountApproval() }) : null;
     expect(await decide({ artifactId: 'voice-target', decision, context: {
       surface, authority: 'present_user', runtimeAccountId: 'reviewer', actionCaller: { kind: 'host' },
     } })).toMatchObject({ ok: true });
+    await live;
     const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(stored));
     expect(request).toMatchObject({ createdBy: { surface: 'agent' }, decision: {
       kind: decision, decidingAccountId: 'reviewer', ...(surface === 'voice' ? { decidedVia: 'voice' } : {}),
@@ -144,14 +246,14 @@ describe('target Action approval decision custody', () => {
     }
   });
 
-  it('records an Account decision when the original live invocation belongs to another process', async () => {
+  it('settles a named no-effect refusal when the original live invocation is unreachable in another process', async () => {
     let stored = accountApproval();
     const decide = createTargetActionApprovalDecision({ read: async () => stored,
       update: async ({ request }) => { stored = request; return { ok: true }; } });
     expect(await decide({ artifactId: 'other-process', decision: 'approve' }))
-      .toMatchObject({ ok: true, result: { status: 'approved' } });
-    expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
-    expect(stored).not.toHaveProperty('execution');
+      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(stored).toMatchObject({ status: 'failed', decision: { kind: 'approve' }, execution: {
+      ok: false, effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } });
   });
 
   it('reconciles a live execution claim observed before the decision write response', async () => {

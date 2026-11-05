@@ -9,12 +9,22 @@ import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordina
 import { isPresentUserHostInvocation } from './invocationAuthority.js';
 import { readRpcErrorCode } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { ApprovalStaleFailureDetailsSchema } from '../approvals/approvalStaleReason.js';
+import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 
 export type TargetActionApprovalUpdateResult = Readonly<
   { ok: true } | { ok: false; errorCode: string; error?: string }
 >;
 
 export function buildTargetActionApprovalDecisionResult(request: TargetActionApprovalRequestV1): ActionExecuteResult {
+  if (request.status === 'outcome_unknown') return failure('approval_execution_outcome_unknown');
+  if (resolveApprovalExecutor(request).kind === 'live_invocation' && request.execution?.effectAttempted === false
+    && request.execution.errorCode === 'approval_stale') {
+    const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
+    if (details.success && details.data.reason === 'live_invocation_unavailable') {
+      return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: details.data };
+    }
+  }
   return { ok: true, result: { ok: true, status: request.status,
     ...(request.execution === undefined ? {} : { execution: request.execution }) } };
 }
@@ -60,7 +70,7 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
     const isRequesterSourceCurrent = async (request: TargetActionApprovalRequestV1) =>
       deps.isRequesterSourceCurrent !== undefined
         && await deps.isRequesterSourceCurrent(request, signal).catch(() => false);
-    if (existing.requesterConfirmation && !['executed', 'failed', 'rejected', 'canceled'].includes(existing.status)
+    if (existing.requesterConfirmation && !['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'].includes(existing.status)
       && !await isRequesterSourceCurrent(existing)) return failure('approval_stale');
     const decidingAccountId = context?.expectedAccountId ?? context?.runtimeAccountId;
     const decisionAttribution = {
@@ -74,17 +84,18 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
         ...(context?.requesterApprovalDecision?.decisionSource === 'voice' ? { decidedVia: 'voice' as const } : {}),
       } : {}),
     };
-    if ((!['api', 'cli', 'agent', 'mcp'].includes(existing.requestedSurface) && existing.approvalInputCustody !== 'live_only')
-      || (existing.approvalInputCustody !== 'live_only' && existing.replayPlacement === undefined)) return failure('approval_invalid');
+    const executor = resolveApprovalExecutor(existing);
+    if (executor.kind !== 'daemon' && executor.kind !== 'live_invocation') return failure('approval_invalid');
     const origin = existing.executionOriginV1;
     const target = origin?.target
       ?? (origin?.sessionId ? { kind: 'session' as const, sessionId: origin.sessionId } : null)
       ?? (origin?.machineId ? { kind: 'machine' as const, machineId: origin.machineId } : null);
-    const decisionTarget = target ?? (existing.replayPlacement?.defaultSessionId
-      ? { kind: 'session' as const, sessionId: existing.replayPlacement.defaultSessionId }
-      : existing.replayPlacement ? { kind: 'machine' as const, machineId: existing.replayPlacement.machineId } : null);
+    const decisionTarget = target ?? (executor.kind === 'daemon'
+      ? executor.sessionId ? { kind: 'session' as const, sessionId: executor.sessionId }
+        : { kind: 'machine' as const, machineId: executor.machineId } : null);
     if (callerGrant && !isApiTokenGrantTargetMemberV1(callerGrant, decisionTarget,
-      origin?.machineId ?? existing.replayPlacement?.machineId)) return failure('credential_scope_denied');
+      origin?.machineId ?? (executor.kind === 'daemon' ? executor.machineId : existing.replayPlacement?.machineId))) return failure('credential_scope_denied');
+    if (existing.status === 'outcome_unknown') return failure('approval_execution_outcome_unknown');
     const nextTimestamp = (request: TargetActionApprovalRequestV1) => Math.max((deps.now ?? Date.now)(), request.updatedAtMs);
     const persist = async (request: TargetActionApprovalRequestV1, revalidateDecision = false): Promise<ActionExecuteResult | null> => {
       try {
@@ -129,9 +140,8 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
     if ((existing.status === 'executed' || existing.status === 'failed') && existing.decision?.kind === 'approve') {
       return buildTargetActionApprovalDecisionResult(existing);
     }
-    if (existing.approvalInputCustody === 'live_only' && deps.hasLiveInvocation && !deps.hasLiveInvocation(artifactId)) {
-      return failure('approval_stale');
-    }
+    const liveInputsUnavailable = executor.kind === 'live_invocation'
+      && deps.hasLiveInvocation !== undefined && !deps.hasLiveInvocation(artifactId);
     if (existing.status === 'executing' && existing.decision?.kind === 'approve') return failure('approval_execution_outcome_unknown');
     if (existing.status !== 'open' && (existing.status !== 'approved' || existing.decision?.kind !== 'approve')) return failure('approval_not_open');
     if (resolveApprovalRequestApproveAdmission(existing).status !== 'available') return failure('approval_context_unavailable');
@@ -148,24 +158,34 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       if (!persisted) return persistenceFailure ?? failure('approval_not_found');
       // Account change delivery can resume the original invocation before the
       // decision write returns. Its claim confirms consent without replay.
-      if (persisted.approvalInputCustody === 'live_only' && persisted.status === 'executing'
+      if (resolveApprovalExecutor(persisted).kind === 'live_invocation' && persisted.status === 'executing'
         && persisted.decision?.kind === 'approve') return buildTargetActionApprovalDecisionResult(persisted);
-      if ((persisted.status === 'executed' || persisted.status === 'failed') && persisted.decision?.kind === 'approve') {
+      if ((persisted.status === 'executed' || persisted.status === 'failed' || persisted.status === 'outcome_unknown') && persisted.decision?.kind === 'approve') {
         return buildTargetActionApprovalDecisionResult(persisted);
       }
       if (persisted.status !== 'approved' || persisted.decision?.kind !== 'approve') return persistenceFailure ?? failure('approval_not_open');
       approved = persisted;
     }
-    if (approved.approvalInputCustody === 'live_only') {
-      // The original invocation owns operands, final currentness and execution.
-      // Its existing Account change feed also observes this durable decision.
-      if (approved.requesterConfirmation) {
-        const proof = context?.requesterApprovalDecision;
-        await coordinator.resolveBlockingDecision({ artifactId, request: approved, decision: 'approve', decisionAuthority: 'present_user',
-          ...(proof ? { requesterApprovalDecision: { ...proof,
-            isCurrent: async () => await proof.isCurrent() && await isRequesterSourceCurrent(approved) } } : {}) });
-      } else coordinator.notifyApprovalUpdated({ artifactId, request: approved });
-      return buildTargetActionApprovalDecisionResult(approved);
+    if (resolveApprovalExecutor(approved).kind === 'live_invocation') {
+      const settleUnavailable = async () => {
+        const failedAtMs = nextTimestamp(approved);
+        const failed: TargetActionApprovalRequestV1 = { ...approved, status: 'failed', updatedAtMs: failedAtMs,
+          execution: { executedAtMs: failedAtMs, ok: false, effectAttempted: false,
+            errorCode: 'approval_stale', error: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } };
+        const persistenceFailure = await persist(failed);
+        if (!persistenceFailure) coordinator.notifyApprovalUpdated({ artifactId, request: failed });
+        return persistenceFailure ?? buildTargetActionApprovalDecisionResult(failed);
+      };
+      if (liveInputsUnavailable) return await settleUnavailable();
+      // Only this admitted decision releases the original invocation. The
+      // Artifact feed supplies observations, never a live approval witness.
+      const proof = context?.requesterApprovalDecision;
+      const delivery = await coordinator.resolveBlockingDecision({ artifactId, request: approved, decision: 'approve', decisionAuthority: context?.authority ?? 'account_automation',
+        ...(proof ? { requesterApprovalDecision: { ...proof,
+          isCurrent: async () => await proof.isCurrent() && await isRequesterSourceCurrent(approved) } } : {}) });
+      // Persisted consent cannot wake a different process's private waiter.
+      // Reuse the existing no-effect refusal when no live decision was delivered.
+      return delivery.resolved ? buildTargetActionApprovalDecisionResult(approved) : await settleUnavailable();
     }
     return deps.executeApproved ? await deps.executeApproved({ artifactId, request: approved, persist, nextTimestamp,
       ...(context ? { context } : {}), ...(signal ? { signal } : {}) }) : failure('approval_origin_unavailable');
