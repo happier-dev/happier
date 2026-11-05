@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { MachineResourcesPolicyV1Schema, type MachineResourcesPolicyGetResultV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
@@ -227,19 +228,28 @@ describe('buildSpawnChildProcessEnv', () => {
     expect(explicit.HAPPIER_LOG_LEVEL).toBe('warn');
   });
 
-  it('marks daemon-spawned stack child runners as session processes', () => {
+  it('marks stack runners as session processes without forwarding daemon Stack configuration', () => {
     const env = buildSpawnChildProcessEnv({
       processEnv: {
         PATH: '/bin',
         HAPPIER_STACK_STACK: 'repo-dev',
         HAPPIER_STACK_ENV_FILE: '/tmp/repo-dev/env',
         HAPPIER_STACK_PROCESS_KIND: 'infra',
+        HAPPIER_STACK_REPO_DIR: '/work/daemon-checkout',
+        HAPPIER_STACK_HOME_DIR: '/work/stack-home',
       },
-      extraEnv: {},
+      extraEnv: { HAPPIER_HOME_DIR: '/work/session-home', HAPPIER_STACK_STORAGE_DIR: '/work/stack-storage' },
     });
 
-    expect(env.HAPPIER_STACK_STACK).toBe('repo-dev');
-    expect(env.HAPPIER_STACK_ENV_FILE).toBe('/tmp/repo-dev/env');
-    expect(env.HAPPIER_STACK_PROCESS_KIND).toBe('session');
+    const observed = JSON.parse(execFileSync(process.execPath, ['-e', `
+      process.stdout.write(JSON.stringify({
+        stackEnvironment: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('HAPPIER_STACK_'))),
+        sessionHome: process.env.HAPPIER_HOME_DIR,
+      }));
+    `], { env, encoding: 'utf8' }));
+    expect(observed).toEqual({
+      stackEnvironment: { HAPPIER_STACK_PROCESS_KIND: 'session' },
+      sessionHome: '/work/session-home',
+    });
   });
 });

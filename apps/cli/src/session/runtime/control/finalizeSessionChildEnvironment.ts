@@ -6,6 +6,16 @@ import {
   stripSessionControlEnvOverrides,
 } from './sessionControlEnvironment';
 
+// Session behavior, rather than Stack command routing or daemon configuration.
+// Tool tracing is documented in docs/tool-normalization.md; rescue sessions
+// retain their priority adjustment through applyStackSessionPriority.
+const SESSION_STACK_ENV_KEYS = new Set([
+  'HAPPIER_STACK_RESCUE',
+  'HAPPIER_STACK_TOOL_TRACE',
+  'HAPPIER_STACK_TOOL_TRACE_DIR',
+  'HAPPIER_STACK_TOOL_TRACE_FILE',
+]);
+
 /**
  * Canonical final sanitation for processes launched beneath a Happier session.
  * Callers provide the two launch-mode-specific controls explicitly so regular,
@@ -39,6 +49,14 @@ export function finalizeSessionChildEnvironment(params: Readonly<{
   delete env.HAPPIER_DAEMON_RUNTIME_ID;
   delete env.HAPPIER_DAEMON_STARTUP_SOURCE;
   delete env.HAPPIER_DAEMON_TAKEOVER;
+
+  // Agent tools must resolve their own checkout, not inherit the launching
+  // daemon's Stack. Apply after overlays so all session launch paths agree.
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase().startsWith('HAPPIER_STACK_') && !SESSION_STACK_ENV_KEYS.has(key)) {
+      delete env[key];
+    }
+  }
 
   if (params.stackProcessKind) {
     env.HAPPIER_STACK_PROCESS_KIND = params.stackProcessKind;

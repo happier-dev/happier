@@ -3216,6 +3216,18 @@ lost correlation surfaces the canonical `outcomeUnknown` result with its
 [Pending delivery architecture](pending-delivery.md#execution-run-targets) for
 the queued/blocked lifecycle behind those codes.
 
+## Session child environment (0.3 development)
+
+`finalizeSessionChildEnvironment` removes Stack-internal `HAPPIER_STACK_*`
+configuration after environment overlays for daemon-spawned runners and
+agent/tool children. A session's Stack commands therefore resolve their own
+checkout instead of inheriting the daemon's repository, Stack home or Stack
+name. The finalizer retains the rescue priority flag and the three documented
+tool-tracing controls; launch owners explicitly supply the session process-kind
+marker. Canonical session controls such as `HAPPIER_HOME_DIR` remain unchanged.
+An explicitly configured `HAPPIER_STACK_REPO_DIR` still selects another checkout
+when invoking Stack directly; the Stack launcher contract is unchanged.
+
 ## Automatic session-runner refresh (0.3 development)
 
 Public runner status, model transitions and restart guards identify the executable

@@ -32,7 +32,7 @@ describe('daemon tmux env building', () => {
         const spawnConfigModule = (await import('@/daemon/platform/tmux/spawnConfig')) as typeof import('@/daemon/platform/tmux/spawnConfig');
         const merged = spawnConfigModule.buildTmuxWindowEnv(
             { HOME: '/ambient-home', PATH: '/bin' },
-            { HOME: '/explicit-home', EMPTY: '' },
+            { HOME: '/explicit-home', EMPTY: '', HAPPIER_STACK_REPO_DIR: '/work/daemon-checkout' },
             process.platform,
             ['home'],
         );

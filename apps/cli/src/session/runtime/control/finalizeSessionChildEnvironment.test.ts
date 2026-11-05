@@ -3,6 +3,39 @@ import { describe, expect, it } from 'vitest';
 import { finalizeSessionChildEnvironment } from './finalizeSessionChildEnvironment';
 
 describe('finalizeSessionChildEnvironment', () => {
+  it.each(['session', null] as const)('strips Stack configuration before %s children while retaining session diagnostics', (stackProcessKind) => {
+    const environment = {
+      PATH: '/bin',
+      HAPPIER_STACK_REPO_DIR: '/work/daemon-checkout',
+      HAPPIER_STACK_HOME_DIR: '/work/stack-home',
+      HAPPIER_STACK_STACK: 'daemon-stack',
+      HAPPIER_STACK_ENV_FILE: '/work/daemon-stack/env',
+      HAPPIER_STACK_FUTURE_INTERNAL: 'internal',
+      happier_stack_workspace_dir: '/work/workspace',
+      HAPPIER_STACK_PROCESS_KIND: 'infra',
+      HAPPIER_STACK_RESCUE: '1',
+      HAPPIER_STACK_TOOL_TRACE: '1',
+      HAPPIER_STACK_TOOL_TRACE_DIR: '/work/traces',
+      HAPPIER_STACK_TOOL_TRACE_FILE: '/work/traces/session.jsonl',
+    };
+    const output = finalizeSessionChildEnvironment({
+      environment,
+      explicitEnvironment: environment,
+      enableCgroupSelfMigration: false,
+      stackProcessKind,
+    });
+
+    expect(output).toEqual({
+      PATH: '/bin',
+      HAPPIER_STACK_RESCUE: '1',
+      HAPPIER_STACK_TOOL_TRACE: '1',
+      HAPPIER_STACK_TOOL_TRACE_DIR: '/work/traces',
+      HAPPIER_STACK_TOOL_TRACE_FILE: '/work/traces/session.jsonl',
+      ...(stackProcessKind ? { HAPPIER_STACK_PROCESS_KIND: stackProcessKind, HAPPIER_LOG_LEVEL: 'debug' } : {}),
+    });
+    expect(environment.HAPPIER_STACK_REPO_DIR).toBe('/work/daemon-checkout');
+  });
+
   it('preserves an explicit provider entrypoint while stripping inherited detection and session controls', () => {
     const environment = {
       CLAUDE_CODE_ENTRYPOINT: 'happier', CLAUDECODE: '1', HERDR_ENV: '1',
