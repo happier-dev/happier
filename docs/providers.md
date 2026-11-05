@@ -1378,6 +1378,11 @@ endpoint, policy, and usage controls remain current through their existing owner
 
 ## Model catalogs, visibility, and stale references
 
+In 0.3 development, refreshing the model picker (`providers.models.refresh`) is a read Action: it
+requests current model metadata without changing Provider configuration. It uses
+the shared read approval defaults on every surface; explicit approval preferences
+still apply.
+
 The canonical model catalog merges sources in this order:
 
 1. user-entered manual model metadata;

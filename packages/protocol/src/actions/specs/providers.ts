@@ -211,7 +211,7 @@ export const PROVIDER_ACTION_SPECS_V1 = [
   providerSpec('providers.models.projection', 'Read models in the model picker',
     'See the models the model picker shows for an agent, across its Providers.', { read: true }),
   providerSpec('providers.models.refresh', 'Refresh Provider models',
-    'Ask a Provider for its current list of models.', { danger: true, external: true }),
+    'Ask a Provider for its current list of models.', { read: true }),
   providerSpec('providers.models.manual.add', 'Add Provider models by name',
     'Add or update manual models, optionally declaring their supported reasoning effort tiers.', {}),
   providerSpec('providers.models.manual.remove', 'Remove added Provider model',

@@ -246,7 +246,20 @@ describe('Provider Settings Actions', () => {
     expect(getActionSpec('providers.connections.describe').safety).toBe('safe');
     expect(getActionSpec('providers.models.projection').inputSchema.safeParse({ machineId: 'machine',
       agentTargetKey: 'agent:codex', forceRefresh: true }).success).toBe(false);
-    expect(getActionSpec('providers.models.refresh').safety).toBe('danger');
+    // Refreshing a model catalog only reads Provider metadata.
+    const refreshSpec = getActionSpec('providers.models.refresh');
+    expect(refreshSpec.sideEffectClass).toBe('read');
+    const projection = { status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [] };
+    const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
+      assertCurrent() {}, rpc: async () => projection, setDefault: async () => ({ status: 'unchanged' }),
+    }) });
+    for (const surface of ['ui', 'cli', 'agent', 'mcp'] as const) {
+      expect(resolveActionApprovalRouting({ actionId: refreshSpec.id, spec: refreshSpec,
+        context: { surface, authority: 'account_automation' } })).toMatchObject({ required: false });
+      expect(await executor.execute(refreshSpec.id, { machineId: 'machine',
+        agentTargetKey: projection.agentTargetKey, forceRefresh: true },
+      { surface, authority: 'account_automation' })).toEqual({ ok: true, result: projection });
+    }
   }, 60_000);
 
   it('keeps default intent for an unavailable connection and refuses a different Agent target', async () => {
