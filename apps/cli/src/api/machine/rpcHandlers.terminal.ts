@@ -381,14 +381,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
     if (terminal.sessionId && terminal.sessionId !== params.deps?.requiredSessionId
       && terminal.sessionId !== context.sessionActionOrigin?.caller.sessionId) return false;
-    // A qualified census already admitted this exact Project namespace through
-    // the requester Account owner. Re-reading it per retained PTY repeats the
-    // same remote decision; the list still rechecks admission before disclosure.
-    if (purpose === 'census' && admittedCensusCustody) return sameTerminalCustody(custody, admittedCensusCustody);
-    const current = await resolveTerminalCustody({ workspace: {
-      serverId: custody.serverId, workspaceId: custody.workspaceRefId, machineId: custody.machineId, rootPath: custody.rootPath,
-    } }, context);
-    return current.ok && current.custody?.kind === undefined && current.custody?.projectKey === custody.projectKey;
+    // Retained Project custody is immutable after native birth. Qualified
+    // discovery additionally matches the accepted namespace resolved above.
+    return custody.serverId === params.deps?.serverId && !context.signal.aborted
+      && (!admittedCensusCustody || sameTerminalCustody(custody, admittedCensusCustody));
   };
 
   const settleTerminalClose = async (terminalId: string, signal?: AbortSignal) => {
@@ -574,7 +570,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const runtime = await params.deps?.projectFiniteRuntime?.(context);
       if (!runtime || !params.deps?.projectScriptExecutor) return refused('project_finite_execution_unavailable');
       if (admission.machineId !== runtime.machineId) return refused('target_mismatch');
-      if (admission.actorAccountId !== runtime.accountId || admission.custodianAccountId !== runtime.accountId) {
+      // The accepted Project belongs to the requester Account. Machine custody
+      // must not substitute the custodian's credentials for that Account.
+      if (admission.actorAccountId !== runtime.accountId) {
         return refused('project_requester_credentials_unavailable');
       }
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
