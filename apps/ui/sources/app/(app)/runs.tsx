@@ -261,7 +261,6 @@ export default function RunsScreen() {
                   onSelectTab={onSelectFilter}
                   testIDPrefix="runs.filter"
                   accessibilityLabel={t('detailPages.runs.filterLabel')}
-                  compact
                 />
               </View>
             )}

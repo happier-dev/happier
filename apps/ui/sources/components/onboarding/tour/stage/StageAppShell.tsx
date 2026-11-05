@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { MainAppTabBar } from '@/components/navigation/mobile/chrome/bars/MainAppTabBar';
+import { CockpitTabBarActionView } from '@/components/navigation/mobile/chrome/bars/CockpitTabBar';
+import type { TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
+import { t } from '@/text';
 import { AppRail } from '@/components/navigation/shell/appRail/AppRail';
 import { AppShellColumn } from '@/components/navigation/shell/appRail/AppShellColumn';
 import { builtinAppShellColumn } from '@/components/navigation/shell/appRail/appRailModel';
@@ -14,6 +17,9 @@ import { stageVisualTokens } from './stageVisualTokens';
 // presses are inert. The bar is present for real-app fidelity (spec §3), and
 // the cockpit beat spotlights it.
 function noopTabPress(): void {}
+const renderStageMore = (metrics: TabBarMetrics) => (
+    <CockpitTabBarActionView testID="demo-stage-tab-more" label={t('common.more')} icon="dots-three" metrics={metrics} onPress={noopTabPress} />
+);
 
 const SESSIONS_COLUMN = builtinAppShellColumn('sessions');
 
@@ -83,7 +89,7 @@ export function StageAppShell(props: StageAppShellProps): React.ReactElement {
                     <AppShellColumn column={SESSIONS_COLUMN} />
                 )}
                 <View testID="demo-stage-phone-tab-bar" pointerEvents="none" style={styles.phoneTabBar}>
-                    <MainAppTabBar activeTab="sessions" onTabPress={noopTabPress} />
+                    <MainAppTabBar activeTab="sessions" onTabPress={noopTabPress} more={renderStageMore} />
                 </View>
             </View>
         );
