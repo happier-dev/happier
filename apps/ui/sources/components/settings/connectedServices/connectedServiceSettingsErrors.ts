@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 type ErrorLike = Readonly<{
     code?: unknown;
@@ -76,6 +76,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_daemon_runtime_unavailable':
         case 'connected_account_runtime_unavailable':
         case 'connected_account_peer_operation_admission_unavailable':
+        case RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE:
             return t('connectedServices.errors.accountMachineUnavailable');
         case 'connect_quotas_not_found':
         case 'connected_account_service_unavailable':
@@ -138,6 +139,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_configuration_atomic_service_settlement_unavailable':
         case 'connected_account_request_auth_activation_failed':
         case 'connected_account_session_binding_activation_failed':
+        case RPC_ERROR_CODES.OUTCOME_UNKNOWN:
             return t('connectedServices.errors.accountStateUncertain');
         case 'connect_authentication_mode_mismatch':
         case 'connect_oauth_state_mismatch':

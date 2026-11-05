@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import {
   isConnectedServiceCredentialReferencedByGroupError,
@@ -8,6 +9,12 @@ import {
 } from './connectedServiceSettingsErrors';
 
 describe('connected-service settings errors', () => {
+  it('keeps pre-dispatch discovery failure retryable while an issued effect stays uncertain', () => {
+    expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private transport diagnostics', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE)))
+      .toBe(t('connectedServices.errors.accountMachineUnavailable'));
+    expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private transport diagnostics', RPC_ERROR_CODES.OUTCOME_UNKNOWN)))
+      .toBe(t('connectedServices.errors.accountStateUncertain'));
+  });
     it.each(['plugin_account_execution_unavailable', 'plugin_ui_declaration_pending',
       'plugin_ui_declaration_invalid', 'plugin_release_unavailable'])(
       'explains unavailable sign-in plugin preparation (%s)', code => {
