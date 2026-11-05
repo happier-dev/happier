@@ -8,6 +8,8 @@ import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceCon
 import { buildForkAwareMessageDescriptors } from '@/components/sessions/transcript/forkContext/buildForkAwareMessageDescriptors';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
+import { collapseVoiceContinuationRuns } from '@/voice/transcript/collapseVoiceContinuationRuns';
 
 export function useTranscriptRootMessages(sessionId: string, options?: Readonly<{ liveText?: boolean }>) {
     const source = useSessionTranscriptSource();
@@ -46,7 +48,7 @@ export function useTranscriptRootMessages(sessionId: string, options?: Readonly<
         if (!forkedTranscriptEnabled || !fork) return null;
         return buildForkAwareMessageDescriptors(fork);
     }, [fork, forkedTranscriptEnabled]);
-    const messageIdsOldestFirst = React.useMemo(() => {
+    const sourceMessageIdsOldestFirst = React.useMemo(() => {
         if (forkAwareMessageDescriptors) {
             return forkAwareMessageDescriptors.messageIdsOldestFirst as string[];
         }
@@ -58,6 +60,13 @@ export function useTranscriptRootMessages(sessionId: string, options?: Readonly<
         }
         return childMessagesById;
     }, [forkAwareMessageDescriptors, childMessagesById]);
+    // A run of Voice continuation notes is one event line; a text update that collapses nothing new keeps the list's identity.
+    const collapsedIdsRef = React.useRef<readonly string[] | undefined>(undefined);
+    const messageIdsOldestFirst = React.useMemo(() => {
+        const collapsed = retainShallow(collapsedIdsRef.current, collapseVoiceContinuationRuns(sourceMessageIdsOldestFirst, messagesById));
+        collapsedIdsRef.current = collapsed;
+        return collapsed as string[];
+    }, [sourceMessageIdsOldestFirst, messagesById]);
 
     React.useEffect(() => {
         if (source.kind !== 'app') return;
