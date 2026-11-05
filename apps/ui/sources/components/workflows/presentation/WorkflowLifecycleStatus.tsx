@@ -79,6 +79,8 @@ export function WorkflowLifecycleStatus(props: Readonly<{
             </View>
         );
     }
+    // Healthy state is quiet: only a state that needs the person or failed draws a pill (lab run-A_steps).
+    const chrome = props.chrome ?? (presentation.variant === 'neutral' ? 'plain' : 'pill');
     return (
         <StatusPill
             {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -88,10 +90,10 @@ export function WorkflowLifecycleStatus(props: Readonly<{
             variant={presentation.variant}
             label={presentation.label}
             labelVariant="phrase"
-            chrome={props.chrome ?? 'pill'}
+            chrome={chrome}
             // A plain status beside a title can be a sentence ("Stops when ubuntu-01 reconnects"): it wraps
             // inside the room its slot gives it rather than running past the card's edge (DESIGN-17 live).
-            {...((props.chrome ?? 'pill') === 'plain' ? { labelNumberOfLines: 2, style: PLAIN_STATUS_SHRINKS } : {})}
+            {...(chrome === 'plain' ? { labelNumberOfLines: 2, style: PLAIN_STATUS_SHRINKS } : {})}
             leading={(
                 <WorkflowStatusMarker
                     marker={presentation.marker}
