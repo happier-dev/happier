@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineRetentionDefaultsV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { MachineRetentionDefaultsV1Schema } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { z } from 'zod/mini';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -44,19 +45,17 @@ installSettingsViewCommonModuleMocks({
   storage: 'real',
 });
 
-// Only Metro's lazy loader is substituted; the canonical Action/settings/CAS logic stays real.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
-  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
-  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
-});
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load the real owner after transport setup, outside an individual test's deadline.
+await loadSyncSingletonForTests();
+const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 const settingsWrite = z.object({ expectedVersion: z.number().check(z.int()), content: z.object({
   t: z.literal('plain'), v: z.record(z.string(), z.unknown()),
 }) });
 let home: string;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let concurrentCategoryWrite = false;
 
 // Platform boundary: the device class decides between the in-place rows and the phone push.
@@ -70,7 +69,6 @@ beforeEach(async () => {
   resetScopedHomeActionExecutorsForTests();
   await loadSyncSingletonForTests();
   home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-  await harness.requireUiApproval(home, 'settings.set');
   state.defaults = { v: 1 };
   state.writes = [];
   state.params = {};
@@ -80,19 +78,20 @@ beforeEach(async () => {
   state.creationWrites = [];
   concurrentCategoryWrite = false;
 });
-afterEach(() => standardCleanup());
+afterEach(async () => {
+  await standardCleanup();
+  await connection?.dispose();
+  connection = undefined;
+});
 
 async function render() {
-  const { storage } = await import('@/sync/domains/state/storage');
-  const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-  let current: Record<string, unknown> = { ...storage.getState().settings,
+  const { ActionsSettingsV1Schema, setActionApprovalOverride } = await import('@happier-dev/protocol/actions/actionSettings');
+  // Serve the raw persisted document; settingsParse owns the defaulted local projection.
+  let current: Record<string, unknown> = {
     machineRetentionDefaultsV1: state.defaults, managedMachineCreationEnabled: state.creationEnabled,
-    actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } }),
+    actionsSettingsV1: setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
+      actionId: 'settings.set', surface: 'ui', approvalRequired: false }),
   };
-  const { settingsParse } = await import('@/sync/domains/settings/settings');
-  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(home), accountId: 'owner' };
-  storage.setState({ settings: settingsParse(current), settingsVersion: 1, settingsScope: scope, profileScope: scope });
   let version = 1;
   harness.answer(home, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: current }, version } }) });
   harness.answer(home, 'POST /v2/account/settings', { select: input => {
@@ -116,6 +115,16 @@ async function render() {
     version += 1;
     return { body: { success: true, version } };
   } });
+  if (!connection) {
+    // A credential binding alone is not the restored Account lifetime used by Settings writes.
+    harness.answer(home, '/v1/account/profile', { body: AccountProfileSchema.parse({ id: 'owner' }) });
+    const saved = harness.findByServerUrl('https://build.example');
+    if (!saved?.token) throw new Error('Machine Defaults fixture requires its saved Home credential');
+    connection = await restoreServerAccountForTest({ serverUrl: saved.serverUrl,
+      serverIdentityId: 'srv_build', accountId: 'owner', credentials: { token: saved.token }, request: harness.request });
+    home = connection.serverId;
+    await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
+  }
   const [{ MachineDefaultsView }, { NavigationTitleChromeProvider }] = await Promise.all([
     import('./MachineDefaultsView'),
     import('@/components/ui/layout/navigationTitleChrome'),

@@ -178,7 +178,7 @@ describe('exact invoking-surface continuation', () => {
             for (const profile of listServerProfiles()) {
                 if (!initialProfileIds.has(profile.id)) await removeServerProfile(profile.id);
             }
-            await setAccountServiceEndpoint(initialAccountServiceEndpoint);
+            if (initialAccountServiceEndpoint.url) await setAccountServiceEndpoint(initialAccountServiceEndpoint);
         });
         await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
             source: 'account-directory', descriptorAuthority: 'current_connection_observation', suggestedName: fixture.home.label });
@@ -410,14 +410,10 @@ describe('exact invoking-surface continuation', () => {
             } finally { releaseFocus(); nativeReadGate = null; stopFocusObservation(); }
             if (decision) {
                 const settled = await decision;
-                if (revokeCredential) {
-                    expect(settled, JSON.stringify(settled)).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
-                    expect(JSON.parse(artifacts.readPlainBody(approvalId!) ?? 'null')).toMatchObject({ status: 'executing' });
-                } else {
-                    // A decided outcome settles its Artifact even after the deciding intent's signal ends.
-                    expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { status: 'executed' } });
-                    expect(JSON.parse(artifacts.readPlainBody(approvalId!) ?? 'null')).toMatchObject({ status: 'executed' });
-                }
+                // OWNER-RULINGS 2026-10-29: finite admitted work finishes;
+                // credential replacement applies at the next natural boundary.
+                expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { status: 'executed' } });
+                expect(JSON.parse(artifacts.readPlainBody(approvalId!) ?? 'null')).toMatchObject({ status: 'executed' });
             }
             await vi.waitFor(async () => {
                 await act(async () => {});

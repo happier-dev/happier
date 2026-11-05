@@ -52,7 +52,7 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ settleTransientConfirmations: false }).module;
 });
 
 // Navigation is the router boundary: record where the screen sends the person.
@@ -297,18 +297,9 @@ describe('Settings → Embeds detail (create, real token controller)', () => {
         await until(() => expect(harness.controller.getState().encryptionAvailability).toBe('ready'));
         expect(resumed.findByTestId('settings-embed-e2ee-trust')).toBeTruthy();
 
-        let approveCreate!: (approved: boolean) => void;
-        const pendingConfirmation = new Promise<boolean>((resolve) => { approveCreate = resolve; });
-        const { Modal } = await import('@/modal');
-        const confirmation = vi.spyOn(Modal, 'confirm').mockReturnValue(pendingConfirmation);
         await resumed.pressByTestIdAsync('settings-embed-create');
-        await until(() => expect(confirmation).toHaveBeenCalledTimes(1));
-        // Action confirmation is intentionally pre-transport: while the person reviews it, the
-        // controller is pending and the Home has not received a token-create request.
-        expect(harness.controller.getState()).toMatchObject({ createPending: true, createError: null, reveal: null });
-        expect(createRequests(harness.requests)).toHaveLength(0);
-
-        await act(async () => { approveCreate(true); });
+        // Reversible creation uses the reviewed in-page draft (OWNER-RULINGS 2026-10-16);
+        // the restored encryption context must reach the real Action and Home unchanged.
         await until(() => {
             expect(harness.controller.getState().createError).toBeNull();
             expect(harness.controller.getState().reveal).not.toBeNull();

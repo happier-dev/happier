@@ -1,14 +1,11 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createWelcomeFeaturesResponse } from '../index.testHelpers';
 import { initializeTerminalRouteRuntimeForTests } from '../terminal/terminalRouteTestHelpers';
 import { installRestoreRouteCommonModuleMocks } from './restoreRouteTestHelpers';
-import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
@@ -19,7 +16,13 @@ const native = vi.hoisted(() => ({
     openURL: vi.fn(async () => true),
     replace: vi.fn(),
 }));
+const createNativeBoundary = async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { OS: 'ios', select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default },
+    Linking: { canOpenURL: native.canOpenURL, openURL: native.openURL },
+});
 installTokenStorageWebPlatformMocks({
+    // Both installers own a React Native mock; keep their platform boundary identical.
+    reactNative: createNativeBoundary,
     // Genuine native credential persistence adapter; TokenStorage parsing and custody stay real.
     secureStore: () => ({
         getItemAsync: async (key: string) => native.secureValues.get(key) ?? null,
@@ -28,15 +31,15 @@ installTokenStorageWebPlatformMocks({
     }),
 });
 installRestoreRouteCommonModuleMocks({
-    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-        Platform: { OS: 'ios', select: <T,>(spec: { ios?: T; default?: T }) => spec.ios ?? spec.default },
-        Linking: { canOpenURL: native.canOpenURL, openURL: native.openURL },
-    }),
+    reactNative: createNativeBoundary,
     router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         router: { back: vi.fn(), push: vi.fn(), replace: native.replace, canGoBack: () => false },
     }).module,
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
 });
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+const { getActiveServerSnapshot, upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
 await initializeTerminalRouteRuntimeForTests();
 const Screen = (await import('@/app/(app)/restore/lost-access')).default;
 
@@ -101,8 +104,9 @@ describe('/restore/lost-access', () => {
         expect(oauthRequests[0].url.origin).toBe(capturedHome.serverUrl);
         expect(oauthRequests[0].url.searchParams.get('publicKey')).toBe(publicKey);
         expect(new Headers(oauthRequests[0].init?.headers).has('Authorization')).toBe(false);
-        expect(native.canOpenURL).toHaveBeenCalledWith('https://example.test/oauth');
-        expect(native.openURL).toHaveBeenCalledWith('https://example.test/oauth');
+        // The provider hand-off settles after the press; wait for its outcome rather than a tick count.
+        await vi.waitFor(() => expect(native.canOpenURL).toHaveBeenCalledWith('https://example.test/oauth'));
+        await vi.waitFor(() => expect(native.openURL).toHaveBeenCalledWith('https://example.test/oauth'));
         expect(getActiveServerSnapshot()).toEqual(capturedHome);
     });
 
@@ -112,7 +116,7 @@ describe('/restore/lost-access', () => {
 
         expect(native.canOpenURL).not.toHaveBeenCalled();
         expect(native.openURL).not.toHaveBeenCalled();
-        expect(await TokenStorage.getPendingExternalAuth()).toBeNull();
+        await vi.waitFor(async () => expect(await TokenStorage.getPendingExternalAuth()).toBeNull());
         expect(getActiveServerSnapshot()).toEqual(capturedHome);
     });
 
