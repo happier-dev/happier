@@ -13528,6 +13528,7 @@ class Sync {
         fireAndForget(handleEphemeralSocketUpdate({
             update,
             sourceServerId,
+            sourceAccountId: accountScope?.accountId ?? null,
             shouldContinue,
             addActivityUpdate: (ephemeralUpdate) => {
                 const retirementFence = captureSessionListRetirementFence();

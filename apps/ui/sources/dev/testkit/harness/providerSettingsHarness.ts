@@ -12,6 +12,7 @@ import {
     DaemonProviderModelSettingsMutationResponseV1Schema,
     DaemonProviderModelsResponseV1Schema,
     DaemonProviderProbeResponseV1Schema,
+    DaemonProviderUsageRefreshResponseV1Schema,
     DaemonProviderProfileMigrationPreviewResponseV1Schema,
     DaemonProviderProfileMigrationConfirmResponseV1Schema,
     DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
@@ -26,6 +27,7 @@ import {
     type DaemonProviderModelSettingsMutationResponseV1,
     type DaemonProviderModelsResponseV1,
     type DaemonProviderProbeResponseV1,
+    type DaemonProviderUsageRefreshResponseV1,
     type DaemonProviderProfileMigrationPreviewResponseV1,
     type DaemonProviderProfileMigrationConfirmResponseV1,
     type DaemonProviderProfileMigrationConflictConfirmResponseV1,
@@ -97,6 +99,7 @@ type ProviderRpcResponse =
     | DaemonProviderConnectionMutationResponseV1
     | DaemonProviderBindingStatusResponseV1
     | DaemonProviderProbeResponseV1
+    | DaemonProviderUsageRefreshResponseV1
     | DaemonProviderModelsResponseV1
     | DaemonProviderModelProjectionResponseV1
     | DaemonProviderModelSettingsMutationResponseV1
@@ -296,6 +299,7 @@ export function createExperimentalProviderModelProjectionFixture(input: Readonly
 function defaultResponses(): ProviderRpcResponseByMethod {
     return {
         [RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS]: DaemonProviderBindingStatusResponseV1Schema.parse({ status: 'current' }),
+        [RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH]: DaemonProviderUsageRefreshResponseV1Schema.parse({ status: 'not_supported' }),
         [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE]: createProviderConnectionsDescribeFixture(),
         [RPC_METHODS.DAEMON_PROVIDERS_PROBE]: DaemonProviderProbeResponseV1Schema.parse({
             status: 'success', models: [], requestFingerprint: 'probe-request:v1:test',
@@ -326,6 +330,8 @@ function parseResponse(method: string, response: unknown): ProviderRpcResponse {
             return DaemonProviderConnectionMutationResponseV1Schema.parse(response);
         case RPC_METHODS.DAEMON_PROVIDERS_PROBE:
             return DaemonProviderProbeResponseV1Schema.parse(response);
+        case RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH:
+            return DaemonProviderUsageRefreshResponseV1Schema.parse(response);
         case RPC_METHODS.DAEMON_PROVIDERS_MODELS:
             return DaemonProviderModelsResponseV1Schema.parse(response);
         case RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION:

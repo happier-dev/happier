@@ -61,7 +61,7 @@ import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivityFromUpdate } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { notifyTeamCredentialUsageChanged } from '@/sync/engine/teams/teamCredentialUsageChanges';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { applyUsageSocketUpdate } from './usageUpdates';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import { classifySessionEventDelivery } from '@happier-dev/protocol/sessions';
@@ -2580,6 +2580,7 @@ export function flushMachineActivityUpdates(params: {
 export function handleEphemeralSocketUpdate(params: {
     update: unknown;
     sourceServerId?: string | null;
+    sourceAccountId?: string | null;
     shouldContinue?: () => boolean;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
@@ -2592,6 +2593,7 @@ export function handleEphemeralSocketUpdate(params: {
     const {
         update,
         sourceServerId = null,
+        sourceAccountId = null,
         shouldContinue = () => true,
         addActivityUpdate,
         addMachineActivityUpdate,
@@ -2651,9 +2653,7 @@ export function handleEphemeralSocketUpdate(params: {
         notifyExecutionRunActivityFromUpdate(sourceServerId, updateData);
     } else if (updateData.type === 'usage' || updateData.type === 'usage-sources-invalidated') {
         if (!shouldContinue() || !sourceServerId) return Promise.resolve();
-        // Committed accounting and settled capture both wake canonical readers;
-        // neither payload is admitted as a second accounting/source projection.
-        publishHomeAccountChange(sourceServerId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        applyUsageSocketUpdate(updateData, sourceServerId, sourceAccountId);
     } else if (updateData.type === 'team-credential-usage-changed') {
         if (!shouldContinue() || !sourceServerId) return Promise.resolve();
         notifyTeamCredentialUsageChanged({ serverId: sourceServerId, resourceId: updateData.resourceId });
