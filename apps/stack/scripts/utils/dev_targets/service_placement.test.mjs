@@ -19,7 +19,7 @@ async function withQaPlacementFixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'hstack-qa-owner-'));
   const config = {
     version: 3,
-    targets: ['builder', 'linux1', 'linux2', 'linux3', 'nl1', 'nl2', 'mac-host', 'mac3-linux'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/state/${name}` })),
+    targets: ['builder', 'linux1', 'linux2', 'linux3', 'nl1', 'nl2', 'nl3', 'mac-host', 'mac3-linux'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/state/${name}` })),
     runtimePlacement: { build: { mode: 'prefer-target', targets: ['builder'] }, qa: { mode: 'auto', targets: ['linux2', 'linux3'], fallback: 'local' } },
     commandExecution: { mode: 'auto', targets: ['builder', 'mac-host'] },
   };
@@ -128,19 +128,20 @@ test('local QA daemon browser selects the most unreserved QA pool host without w
           const target = args.find(arg => arg.startsWith('--target='));
           probes.push(target);
           const memory = target === '--target=linux1' ? [24900000, 3500000]
-            : target === '--target=linux2' ? [10900000, 9000000] : [3800000, 3700000];
+            : ['--target=linux2', '--target=nl3'].includes(target) ? [10900000, 9000000] : [3800000, 3700000];
           return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
             availableMemoryKiB: memory[0], unreservedMemoryKiB: memory[1] })}\n`, err: '' };
         }, logger: { warn() {} },
       });
-      assert.equal(result?.target?.name, 'linux2', 'browser must rank native unreserved memory, not raw free memory or the first host');
+      assert.equal(result?.target?.name, explicitDaemon ? 'linux2' : 'nl3', 'browser must rank native unreserved memory within its configured QA pool');
       for (const policy of policies) {
         assert.equal(policy.commandClass, 'host-observation');
         assert.equal(policy.heavyClass, '', 'host observations must not reserve heavyweight capacity');
         assert.equal(policy.bootstrap, '0', 'host observations need no dependencies');
         assert.equal(policy.workspaceSync, '0', 'host observations need no fresh checkout bytes');
       }
-      assert.deepEqual(probes, [...(!explicitDaemon ? ['--target=nl1', '--target=nl2'] : []), '--target=linux3', '--target=linux2', '--target=linux1']);
+      // OWNER-RULINGS 2026-10-29: managed browsers use the nl3/nl1 pool.
+      assert.deepEqual(probes, explicitDaemon ? ['--target=linux3', '--target=linux2', '--target=linux1'] : ['--target=nl3', '--target=nl1']);
       assert.deepEqual(await readFile(path), before, 'browser selection cannot move or initialize a daemon pin');
     }
   });
@@ -149,10 +150,10 @@ test('local QA daemon browser selects the most unreserved QA pool host without w
 test('remote QA daemon browser ranks the pool without moving its fixed Machine', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
     const path = join(root, 'qa', 'dev-targets.json');
-    for (const [daemonHostUnavailable, registeredHosts] of [[false, ['nl1', 'nl2']], [true, ['nl1', 'nl2']], [false, ['nl1']], [false, []]]) {
+    for (const [daemonHostUnavailable, registeredHosts] of [[false, ['nl1', 'nl3']], [true, ['nl1', 'nl3']], [false, ['nl1']], [false, ['nl3']]]) {
       await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config,
-        targets: config.targets.filter(target => !['nl1', 'nl2'].includes(target.name) || registeredHosts.includes(target.name)) });
-      await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => !['nl1', 'nl2'].includes(target.name) || registeredHosts.includes(target.name)),
+        targets: config.targets.filter(target => !['nl1', 'nl3'].includes(target.name) || registeredHosts.includes(target.name)) });
+      await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => !['nl1', 'nl3'].includes(target.name) || registeredHosts.includes(target.name)),
         runtimePlacement: { daemon: { mode: 'prefer-target', target: 'linux3' } } });
       const before = await readFile(path);
       const probes = [];
@@ -161,15 +162,35 @@ test('remote QA daemon browser ranks the pool without moving its fixed Machine',
           const target = args.find(arg => arg.startsWith('--target='));
           probes.push(target);
           if (target === '--target=linux3' && daemonHostUnavailable) return { ok: false, exitCode: 255, err: 'unavailable' };
-          const available = target === '--target=nl2' ? 180000000 : target === '--target=nl1' ? 90000000 : target === '--target=linux1' ? 30000000 : target === '--target=linux2' ? 8500000 : 700000;
+          const available = target === '--target=nl3' ? 180000000 : target === '--target=nl1' ? 90000000 : target === '--target=linux1' ? 30000000 : target === '--target=linux2' ? 8500000 : 700000;
           return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
             availableMemoryKiB: available, unreservedMemoryKiB: available })}\n`, err: '' };
         }, logger: { warn() {} },
       });
-      assert.equal(result.target.name, registeredHosts.at(-1) ?? 'linux1');
-      assert.deepEqual(probes, [...registeredHosts.map(name => `--target=${name}`), '--target=linux3', '--target=linux2', '--target=linux1']);
+      assert.equal(result.target.name, registeredHosts.at(-1));
+      assert.deepEqual(probes, ['nl3', 'nl1'].filter(name => registeredHosts.includes(name)).map(name => `--target=${name}`));
       assert.deepEqual(await readFile(path), before);
     }
+  });
+});
+
+test('default browser pool uses configured approved hosts when nl1 observation is unavailable', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    await writeJsonAtomic(path, { ...config, runtimePlacement: { daemon: { mode: 'local' } } });
+    const before = await readFile(path);
+    const result = await placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, {
+      logger: { warn() {} }, runCaptureResult: async (_command, args) => {
+        const name = args.find(arg => arg.startsWith('--target='));
+        if (name === '--target=nl1') return { ok: false, exitCode: 255, err: 'observation unavailable' };
+        const unreservedMemoryKiB = name === '--target=nl3' ? 9000000 : 90000000;
+        return { ok: true, err: '', out: `HSTACK_QA_HOST=${JSON.stringify({
+          platform: 'linux', arch: 'x64', remote: true, unreservedMemoryKiB,
+        })}\n` };
+      },
+    });
+    assert.equal(result.target.name, 'nl3', 'retired and unapproved hosts cannot outrank the available approved host');
+    assert.deepEqual(await readFile(path), before, 'selection cannot initialize or move the Machine');
   });
 });
 

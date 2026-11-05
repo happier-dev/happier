@@ -589,8 +589,8 @@ command and QA placement owners. Script generation and green unit tests alone do
 live host readiness. These host changes are opt-in, never ordinary dispatch side effects.
 Ordinary unmanaged `add --host` does not apply power policy; explicit `--managed-lima` and
 `--managed-wsl` enrollment still provisions the whole guest and its existing power policy.
-`service_placement.mjs#DEFAULT_QA_TARGET_NAMES` orders the default browser pool and new QA creation
-projection consumed by `stack_commands.mjs` as `nl1`, `nl2`, `linux3`, `linux2`, `linux1`.
+`service_placement.mjs#DEFAULT_QA_TARGET_NAMES` owns the approved default browser pool and new QA creation
+projection consumed by `stack_commands.mjs`; current 0.3 development uses `nl3`, then `nl1`.
 Explicit candidate pools stay exact;
 creation defaults never retrofit existing Machine pins. Browser placement ranks the pool for its
 own lifetime and does not move the daemon. The implicit browser pool includes only candidates

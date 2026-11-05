@@ -10,7 +10,7 @@ import { getServerLightDataDirFromEnvOrDefault } from '../stack/dirs.mjs';
 import { hasRetainedServerData } from './retained_server_data.mjs';
 import { HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 
-export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['nl1', 'nl2', 'linux3', 'linux2', 'linux1']);
+export const DEFAULT_QA_TARGET_NAMES = Object.freeze(['nl3', 'nl1']);
 
 /** Commands follow the service's observed placement, including local fallback. */
 export function resolveObservedDevTargetService({ config, runtimeState, service }) {
