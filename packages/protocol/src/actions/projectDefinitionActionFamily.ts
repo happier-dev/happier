@@ -1,3 +1,5 @@
+import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
+export { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
@@ -6,7 +8,7 @@ import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectSetupReviewV1Schema } from './projectSetupConsentFailure.js';
 
-export const PROJECT_DEFINITION_ACTION_IDS = ['projects.inspect', 'projects.manifest.update'] as const;
+
 export type ProjectDefinitionActionId = typeof PROJECT_DEFINITION_ACTION_IDS[number];
 
 // These public Action roots retain Classic composition/JSON Schema projection;

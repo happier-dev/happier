@@ -1,3 +1,5 @@
+import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
+export { ARTIFACT_ACCESS_ACTION_IDS_V1 } from './artifactAccessActionIdsV1.js';
 import { BotTemplateVersionV1Schema } from '../bots/templates/templateVersionV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -14,9 +16,7 @@ import {
 } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 
 /** Document grant wire epoch V1. Every identity, mutation and nested object is closed. */
-export const ARTIFACT_ACCESS_ACTION_IDS_V1 = [
-  'artifact.access.grants.list', 'artifact.access.grants.set', 'artifact.access.grants.remove',
-] as const;
+
 export const ArtifactAccessActionIdV1Schema = lazyZodSchema(() => z.enum(ARTIFACT_ACCESS_ACTION_IDS_V1));
 export type ArtifactAccessActionIdV1 = z.infer<typeof ArtifactAccessActionIdV1Schema>;
 

@@ -1,3 +1,5 @@
+import { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
+export { REGISTRY_ACTION_IDS_V1 } from './registryActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryKindV1Schema, RegistrySourceDescriptorV1Schema, RegistryFormatV1Schema, RegistrySourceTokenV1Schema } from './registrySourcesV1.js';
@@ -11,8 +13,7 @@ const RegistryTokenBindingV1Schema=lazyZodSchema(()=>RegistrySourceTokenV1Schema
   try{if(parseSavedSecretRefV1(token.secretRef).kind==='shared_resource')return;}catch{}
   context.addIssue({code:'custom',path:['secretRef'],message:'A current private Saved Secret resource reference is required'});
 })));
-export const REGISTRY_ACTION_IDS_V1=['registries.sources.list','registries.sources.detect','registries.sources.create',
-  'registries.sources.update','registries.sources.token.set','registries.sources.delete','registries.items.list','registries.items.read','registries.updates.check'] as const;
+
 export type RegistryActionIdV1=typeof REGISTRY_ACTION_IDS_V1[number];
 const id=()=>z.string().check(z.minLength(1));
 export const REGISTRY_ACTION_INPUT_SCHEMAS_V1={

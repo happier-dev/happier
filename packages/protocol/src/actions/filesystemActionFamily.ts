@@ -1,3 +1,5 @@
+import { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
+export { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { TransferEndpointCandidateSchema } from '../machines/transfer/transferStream.js';
@@ -9,25 +11,9 @@ export function isFilesystemWriteGuardErrorCode(value: unknown): value is Filesy
   return typeof value === 'string' && (FILESYSTEM_WRITE_GUARD_ERROR_CODES as readonly string[]).includes(value);
 }
 
-export const FILESYSTEM_MUTATION_ACTION_IDS = [
-  'daemon.filesystem.createDirectory',
-  'daemon.filesystem.rename',
-  'daemon.filesystem.delete',
-  'daemon.filesystem.copy',
-] as const;
-export const FILESYSTEM_ACTION_IDS = [
-  'daemon.filesystem.readFile',
-  'daemon.filesystem.writeFile',
-  'daemon.filesystem.listDirectory',
-  'daemon.filesystem.getDirectoryTree',
-  ...FILESYSTEM_MUTATION_ACTION_IDS,
-  'daemon.filesystem.upload',
-  'daemon.filesystem.download',
-  'daemon.filesystem.transfer.cancel',
-] as const;
-export const FILESYSTEM_TRANSFER_ACTION_IDS = [
-  'daemon.filesystem.upload', 'daemon.filesystem.download', 'daemon.filesystem.transfer.cancel',
-] as const;
+
+
+
 
 export type FilesystemActionId = typeof FILESYSTEM_ACTION_IDS[number];
 export type FilesystemMutationActionId = typeof FILESYSTEM_MUTATION_ACTION_IDS[number];

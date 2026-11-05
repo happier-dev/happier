@@ -1,3 +1,5 @@
+import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
+export { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -6,7 +8,7 @@ import { VoiceCredentialSlotIdSchema } from '../plugins/contributions/voiceProvi
 import { CollectionSpaceOperationV1Schema } from '../collections/spaces/collectionSpacesV1.js';
 import { PersistedConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
 
-export const SETTINGS_DECLARATION_ACTION_IDS_V1 = ['settings.list', 'settings.get', 'settings.set', 'settings.reset', 'settings.invoke'] as const;
+
 export type SettingsDeclarationActionIdV1 = typeof SETTINGS_DECLARATION_ACTION_IDS_V1[number];
 
 export function isSettingsDeclarationActionIdV1(value: string): value is SettingsDeclarationActionIdV1 {

@@ -1,3 +1,5 @@
+import { DISCUSSION_ACTION_IDS_V1 } from './idsV1.js';
+export { DISCUSSION_ACTION_IDS_V1 } from './idsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
@@ -14,33 +16,7 @@ import { z } from 'zod/mini';
  * This leaf carries only the ids so the canonical Action id registry can import
  * it without pulling the discussion content schemas into that module graph.
  */
-export const DISCUSSION_ACTION_IDS_V1 = [
-  'discussion.list',
-  'discussion.get',
-  'discussion.settings.get',
-  'discussion.settings.set',
-  'discussion.read',
-  'discussion.attachment.read',
-  'discussion.create',
-  'discussion.second_opinion.start',
-  'discussion.post',
-  'discussion.reply',
-  'discussion.pass',
-  'discussion.rename',
-  'discussion.archive',
-  'discussion.restore',
-  'discussion.read_state.set',
-  'discussion.participants.list',
-  'discussion.candidates.list',
-  'discussion.invite',
-  'discussion.participant.remove',
-  'discussion.participant.policy.set',
-  'discussion.leave',
-  'discussion.owner.transfer',
-  'discussion.access.grants.list',
-  'discussion.access.grants.set',
-  'discussion.access.grants.remove',
-] as const;
+
 
 export const DiscussionActionIdV1Schema = lazyZodSchema(() => z.enum(DISCUSSION_ACTION_IDS_V1));
 export type DiscussionActionIdV1 = z.infer<typeof DiscussionActionIdV1Schema>;
