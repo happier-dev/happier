@@ -8,10 +8,6 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
-vi.mock('./ActionInputFormModal', () => ({
-    ActionInputFormModal: () => null,
-}));
-
 function form(): ActionInputForm {
     return {
         presentation: {
@@ -54,6 +50,24 @@ afterEach(() => {
 });
 
 describe('generic Action input form presenter', () => {
+    it.each([true, false])('uses shared anchored chrome with trigger supplied=%s', async (anchored) => {
+        const { Modal } = await import('@/modal');
+        const anchor = { kind: 'rect', rect: { left: 40, top: 80, width: 100, height: 30 } } as const;
+        const actionForm = createActionInputForm({
+            presentation: { title: 'Configure', description: null, inputHints: { fields: [] } },
+            submit: async () => ({ ok: true }),
+        });
+        presentActionInputForm({ form: actionForm, ...(anchored ? { anchor } : {}) });
+        expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+            chrome: expect.objectContaining({ phonePresentation: 'sheet', ...(anchored ? { anchor } : {}) }),
+        }));
+        const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].chrome;
+        expect(chrome?.kind).toBe('card');
+        if (chrome?.kind !== 'card') throw new Error('Expected anchored card chrome');
+        expect(chrome.anchor).toBe(anchored ? anchor : undefined);
+        actionForm.retire();
+    });
+
     it('presents a plugin-only provider descriptor through its owner callback form without a UI target or caller', async () => {
         const actionForm = form();
         const { Modal } = await import('@/modal');

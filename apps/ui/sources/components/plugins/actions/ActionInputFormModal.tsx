@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import {
@@ -9,7 +9,10 @@ import {
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
@@ -28,18 +31,15 @@ type AnyActionInputForm = ActionInputForm<
     string
 >;
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
+    // The card's band and footer own their inset; the fields stand on the same edge.
     content: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
+        paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s4,
+        paddingBottom: theme.space.s8,
     },
     error: {
-        marginTop: 12,
-    },
-    footer: {
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-        gap: 8,
+        marginTop: theme.space.s12,
     },
 }));
 
@@ -57,6 +57,7 @@ export type ActionInputFormModalProps = Readonly<{
     form: AnyActionInputForm;
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
+    anchor?: PopoverAnchor;
     /** Releases the host's modal/currentness binding; idempotent by contract. */
     onRetire?: () => void;
 }> & CustomModalInjectedProps;
@@ -135,22 +136,13 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     }, [close, router]);
 
     const footer = React.useMemo(() => (
-        <View style={styles.footer}>
-            <RoundButton
-                testID="plugin-contributed-action-form-cancel"
-                accessibilityLabel={t('common.cancel')}
-                title={t('common.cancel')}
-                size="normal"
-                display="inverted"
-                onPress={close}
-            />
+        <ModalCardFooterActions cancel={{ onPress: close, testID: 'plugin-contributed-action-form-cancel' }}>
             {hasResolvedEmptyConnectedAccountOptions ? (
                 <RoundButton
                     testID="plugin-contributed-action-form-repair-connected-accounts"
                     accessibilityLabel={t('connectedServices.title')}
                     title={t('connectedServices.title')}
-                    size="normal"
-                    display="inverted"
+                    display="secondary"
                     onPress={repairConnectedAccounts}
                 />
             ) : null}
@@ -158,26 +150,21 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 testID="plugin-contributed-action-form-submit"
                 accessibilityLabel={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
                 title={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
-                size="normal"
                 disabled={pending}
                 loading={pending}
                 onPress={submit}
             />
-        </View>
-    ), [close, hasResolvedEmptyConnectedAccountOptions, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, styles.footer, submit]);
+        </ModalCardFooterActions>
+    ), [close, hasResolvedEmptyConnectedAccountOptions, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit]);
 
     const chrome = React.useMemo(() => ({
-        kind: 'card' as const,
-        title,
-        ...(description ? { subtitle: description } : {}),
+        ...createAnchoredSheetChrome({ title, subtitle: description ?? undefined, anchor: props.anchor }),
         footer,
-        // The card fits its form; a long form scrolls inside the card's own overlay.
-        dimensions: { size: 'md' as const, maxHeightRatio: 0.84 },
-    }), [description, footer, title]);
+    }), [description, footer, props.anchor, title]);
     useModalCardChrome(props.setChrome, chrome);
 
     return (
-        <View style={styles.content}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
             <ActionInputFields
                 fields={fields}
                 input={{ ...input }}
@@ -209,6 +196,6 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                     />
                 </View>
             ) : null}
-        </View>
+        </ScrollView>
     );
 }

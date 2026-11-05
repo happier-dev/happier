@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 import type { ActionInputForm } from './actionInputForm';
+import { ActionInputFormModal } from './ActionInputFormModal';
 
 const routerPush = vi.hoisted(() => vi.fn());
 
@@ -21,14 +22,6 @@ function findSubmitButton(chrome: ChromeWithFooter): React.ReactElement<RoundBut
         ));
 }
 
-function findCancelButton(chrome: ChromeWithFooter): React.ReactElement<RoundButtonProps> | undefined {
-    return React.Children.toArray(chrome.footer.props.children)
-        .find((child): child is React.ReactElement<RoundButtonProps> => (
-            React.isValidElement<RoundButtonProps>(child)
-            && child.props.testID === 'plugin-contributed-action-form-cancel'
-        ));
-}
-
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -42,6 +35,8 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPush }),
@@ -76,7 +71,6 @@ function submittingForm(): ActionInputForm {
 describe('ActionInputFormModal', () => {
     it('renders an external plugin declared default and submits an explicit switch override', async () => {
         const { createActionInputForm } = await import('./actionInputForm');
-        const { ActionInputFormModal } = await import('./ActionInputFormModal');
         const submit = vi.fn(async (_candidate: Readonly<Record<string, unknown>>) => ({ ok: true }));
         const form = createActionInputForm({
             presentation: {
@@ -86,7 +80,10 @@ describe('ActionInputFormModal', () => {
             },
             submit,
         });
-        const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={vi.fn()} />);
+        const setChrome = vi.fn();
+        const anchor = { kind: 'rect', rect: { left: 12, top: 24, width: 100, height: 30 } } as const;
+        const screen = await renderScreen(<ActionInputFormModal form={form} anchor={anchor} onClose={vi.fn()} setChrome={setChrome} />);
+        expect(setChrome.mock.calls.at(-1)?.[0]).toMatchObject({ anchor, phonePresentation: 'sheet' });
         const control = () => screen.findAllByType('Pressable')
             .find((node) => (node.props.role ?? node.props.accessibilityRole) === 'switch');
         expect(control()?.props.accessibilityState?.checked).toBe(true);
@@ -97,7 +94,6 @@ describe('ActionInputFormModal', () => {
     });
 
     it('keeps the cancellation action reachable while its canonical form owner is pending', async () => {
-        const { ActionInputFormModal } = await import('./ActionInputFormModal');
         const setChrome = vi.fn();
         const cancelForm = vi.fn();
         const onClose = vi.fn();
@@ -113,9 +109,14 @@ describe('ActionInputFormModal', () => {
             />,
         );
 
+        // The shared card footer owns where Cancel sits; render it and read the buttons it actually draws.
         const chrome = setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter;
-        const cancel = findCancelButton(chrome);
-        const submit = findSubmitButton(chrome);
+        const footer = await renderScreen(chrome.footer);
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const button = (testID: string) => footer.findAllByType(RoundButton)
+            .find((node) => node.props.testID === testID);
+        const cancel = button('plugin-contributed-action-form-cancel');
+        const submit = button('plugin-contributed-action-form-submit');
         if (!cancel || !submit) throw new Error('expected Action form footer actions');
 
         expect(cancel.props.disabled).not.toBe(true);
@@ -128,7 +129,6 @@ describe('ActionInputFormModal', () => {
     });
 
     it('announces an asynchronous form submission failure through the shared semantic validation feedback', async () => {
-        const { ActionInputFormModal } = await import('./ActionInputFormModal');
         const setChrome = vi.fn();
         const screen = await renderScreen(
             <ActionInputFormModal

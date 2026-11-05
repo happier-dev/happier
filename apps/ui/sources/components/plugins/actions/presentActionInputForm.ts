@@ -1,4 +1,6 @@
 import { Modal } from '@/modal';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { ActionInputFormModal } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
@@ -16,6 +18,7 @@ export function presentActionInputForm(params: Readonly<{
     signal?: AbortSignal;
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
+    anchor?: PopoverAnchor;
 }>): void {
     let modalId = '';
     let retired = false;
@@ -47,11 +50,17 @@ export function presentActionInputForm(params: Readonly<{
             form: params.form,
             pickerContext: params.pickerContext,
             actionId: params.actionId,
+            anchor: params.anchor,
             onRetire: retire,
         },
         onRequestClose: cancel,
         onHostUnmount: retire,
         closeOnBackdrop: true,
+        chrome: createAnchoredSheetChrome({
+            title: params.form.presentation.inputHints.title ?? params.form.presentation.title,
+            subtitle: params.form.presentation.inputHints.description ?? params.form.presentation.description ?? undefined,
+            anchor: params.anchor,
+        }),
     });
     const unsubscribeFormRetirement = params.form.subscribe(() => {
         if (params.form.isRetired()) retire();
