@@ -5,7 +5,7 @@ export type { UsageCalendarArtModel, UsageNinetyPlanetsModel, UsageStreakThreadM
 export type { UsagePlanetSlot, UsagePlanetSpec } from './usagePlanetSlot.js';
 export { UsageDailyChart, type UsageDailyChartProps } from './UsageDailyChart.js';
 export { UsageRhythmChart, USAGE_RHYTHM_MATRIX_MIN_WIDTH_PX, USAGE_RHYTHM_SIDE_BY_SIDE_MIN_WIDTH_PX, type UsageRhythmChartProps } from './UsageRhythmChart.js';
-export { UsagePeriodSummaryBody, UsageFootprintBody, UsageSourceCoverageBody,
+export { USAGE_SUMMARY_STAT_BASIS_PX, UsagePeriodSummaryBody, UsageFootprintBody, UsageSourceCoverageBody,
   type UsageSummaryMetric, type UsagePeriodSummaryBodyProps, type UsageFootprintLabels, type UsageFootprintBodyProps,
   type UsageSourceCoverageRow, type UsageSourceCoverageBodyProps } from './UsageSummaryPanels.js';
 export { UsageBreakdownsBody, type UsageBreakdownBlock, type UsageBreakdownsModel } from './UsageBreakdownsBody.js';

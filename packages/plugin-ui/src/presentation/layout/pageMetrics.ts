@@ -1,6 +1,9 @@
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
 import type { HappierCollectionLayoutMode } from '../collection/collectionLayout.js';
 
+/** What only the owner sees on their own page: a block or figure visitors don't see stays in place, quieted. */
+export const HAPPIER_PUBLIC_PROFILE_OWNER_METRICS = Object.freeze({ quietedOpacity: 0.45 });
+
 /** Shared profile band geometry (lab `pphero`) for measured hosts and cold raster adapters. */
 export const HAPPIER_PUBLIC_PROFILE_HERO_METRICS = Object.freeze({
   bandHeightPx: Object.freeze({ wide: 420, phone: 300 }),
