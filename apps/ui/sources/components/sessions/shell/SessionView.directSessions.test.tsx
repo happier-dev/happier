@@ -5273,6 +5273,58 @@ describe('SessionView (direct sessions)', () => {
     expect(homes.requests.filter(({ input }) => SessionMetadataTuplePatchV1Schema.safeParse(input).success)).toEqual([]);
   });
 
+  describe('model card options in an existing Session', () => {
+    const providerRef = {
+      agentTargetKey: 'agent:happier.agent.codex/codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      modelId: 'provider-model',
+    };
+    const installProviderBoundSession = (extraMetadata: Record<string, unknown> = {}) => {
+      storageState.sessions.s1 = {
+        ...storageState.sessions.s1,
+        metadata: {
+          ...storageState.sessions.s1.metadata,
+          modelSelectionIntentV1: { v: 1, updatedAt: 11, selection: providerRef },
+          ...extraMetadata,
+        },
+      };
+    };
+
+    it('gives the picker the Session\'s editable option intent and routes a Provider card\'s effort to the Action', async () => {
+      featureEnabledState.providers = true;
+      installProviderBoundSession({
+        acpConfigOptionOverridesV1: { v: 1, updatedAt: 12, overrides: { reasoning_effort: { value: 'low', updatedAt: 12 } } },
+      });
+      const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+      const picker = await mountSessionModelPicker(screen);
+
+      expect(picker.props.modelOptionOverrides).toEqual({ reasoning_effort: 'low' });
+      actionExecuteSpy.mockImplementation(() => undefined);
+      const onSelectOptionControlValue = picker.props.onSelectOptionControlValue;
+      if (typeof onSelectOptionControlValue !== 'function') {
+        throw new Error('Expected an editable model option control');
+      }
+      await act(async () => { onSelectOptionControlValue('reasoning_effort', 'medium'); });
+
+      // The Action owner's suite proves it accepts and writes the declared value (defaultActionExecutor.planMode).
+      expect(actionExecuteSpy).toHaveBeenCalledWith('session.config_option.set',
+        { sessionId: 's1', configId: 'reasoning_effort', valueId: 'medium' }, expect.objectContaining({ surface: 'ui' }));
+    });
+
+    it('offers no options to a viewer who may only change the model', async () => {
+      featureEnabledState.providers = true;
+      installProviderBoundSession();
+      storageState.sessions.s1 = { ...storageState.sessions.s1, accessLevel: 'view', access: createSessionAccessFixture('view') };
+      const screen = await renderSessionViewAndSettle({
+        routeServerId: 'server-route-1',
+        presentation: { kind: 'embedded', composer: 'auto', modelPicker: true, modelSelectionGranted: true },
+      });
+      const picker = await mountSessionModelPicker(screen);
+
+      expect(picker.props.modelOptionOverrides).toBeUndefined();
+    });
+  });
+
   it('admits an embed\'s granted model change without Send in a controls-only composer', async () => {
     // Send off, Change model on: the credential grants `session.model.set` on its own, so the
     // model control is reachable and its mutation is admitted without text submission.

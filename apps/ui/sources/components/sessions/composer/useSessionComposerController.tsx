@@ -173,6 +173,7 @@ import { useMountedActionExecution } from "@/components/approvals/useMountedActi
 import { isSessionLocallyAttached } from "@/sync/domains/session/control/sessionLocalControl";
 import { resolveSessionNativeGoalOwner } from "@/sync/domains/session/control/sessionGoalExecutionCapabilities";
 import { buildSessionModelDiscoveryContext } from "@/sync/ops/sessionModelDiscovery";
+import { resolveSessionConfigOptionOverridesFromMetadata } from "@/sync/domains/sessionControl/configOptionsControl";
 import { computeSessionModelConfigOptionControls, findModelOptionForEffectiveModelId, getModelOptionsForSession, isModelSelectableForSession, resolveCanonicalNativeModelSelectionRef, resolveSessionModelLabel } from "@/sync/domains/models/modelOptions";
 import { isArmedModelOnlySessionChange } from "@/providers/session/resolveSessionRoutePresentation";
 import { readArmedRouteContinuationLabel } from "@/components/sessions/agentInput/components/agentContinuationSubmitPresentation";
@@ -4338,6 +4339,15 @@ export function useSessionComposerController({
         });
     }, [sessionActionDefaultBackend, agentId, controlMachineTarget?.machineId, machineId, sessionRouteServerId,
         liveAuthoringContext.snapshot.directory, liveComposerState.profileId, canSelectModel, ownerMetadata, sessionAccountScope]);
+    const existingSessionModelOptionOverrides = React.useMemo(() => {
+        const overrides: Record<string, string> = {};
+        for (const [configId, override] of Object.entries(resolveSessionConfigOptionOverridesFromMetadata({
+            metadata: composerOptionsInput, configOptions: null,
+        }))) {
+            if (typeof override.value === 'string') overrides[configId] = override.value;
+        }
+        return overrides;
+    }, [composerOptionsInput]);
     const existingSessionSourceBrowse = React.useMemo(() => ({
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
@@ -4427,6 +4437,9 @@ export function useSessionComposerController({
                         // Model options (Thinking, effort) are Session settings, not the model grant.
                         selectedOptionControls={hasWriteAccess ? existingSessionSelectedModelOptionControls ?? undefined : undefined}
                         onSelectOptionControlValue={updateAcpConfigOptionOverride}
+                        // The Session's option intent lets the selected card show the values it runs with.
+                        // Writing it needs write access, the same as the selected card's live controls.
+                        modelOptionOverrides={hasWriteAccess ? existingSessionModelOptionOverrides : undefined}
                         probe={mergeOptionPickerProbes([probe, providersFeatureEnabled
                             ? providerModelProjection.loading
                                 ? { phase: 'loading' }
@@ -4485,6 +4498,7 @@ export function useSessionComposerController({
         embedded,
         composerOptionsInput,
         hasWriteAccess,
+        existingSessionModelOptionOverrides,
     ]);
 
     const [directoryRecovery, setDirectoryRecovery] = React.useState<Readonly<{ scopeKey: string; busy: boolean }> | null>(null);
