@@ -127,6 +127,24 @@ describe('review Find context loading', () => {
         expect(hook.getCurrent().diffStateSource.getDiffState('coast.ts')).not.toHaveProperty('context');
     });
 
+    it('keeps an admitted patch read alive when Find closes', async () => {
+        const patch = createDeferred<unknown>();
+        scm.diff.mockReturnValue(patch.promise);
+        let open = true;
+        const hook = await renderHook(() => useChangedFilesReviewDiffLoading({ sessionId: '', isRepo: true, reviewFiles: files,
+            diffArea: 'pending', selectedPath: 'coast.ts', tooLarge: false, normalizeError: String, fallbackError: 'unavailable',
+            fetchUnifiedDiffForPath: fetchDiff, workspaceScope, findContext: open }));
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(scm.diff).toHaveBeenCalled();
+        });
+        open = false;
+        await hook.rerender();
+        await act(async () => { patch.resolve({ success: true, diff }); });
+        await vi.waitFor(() => expect(hook.getCurrent().diffStateSource.getDiffState('coast.ts'))
+            .toMatchObject({ status: 'loaded', diff }));
+    });
+
     it('retires an unfinished revision read when Find closes', async () => {
         scm.diff.mockResolvedValue({ success: true, diff });
         const reading = createDeferred<unknown>();

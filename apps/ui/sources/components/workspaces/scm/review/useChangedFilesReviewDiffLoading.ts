@@ -9,6 +9,7 @@ import { fetchSessionUnifiedDiffForPath } from '@/scm/diff/fetchSessionUnifiedDi
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import {
     createChangedFilesReviewDiffStateSource,
@@ -116,6 +117,13 @@ export function useChangedFilesReviewDiffLoading(input: {
         });
     }, [diffStateSource]);
     const findContext = input.findContext === true;
+    const findContextReadRef = React.useRef<AbortController | null>(null);
+    React.useEffect(() => {
+        if (!findContext) return;
+        const read = new AbortController();
+        findContextReadRef.current = read;
+        return () => read.abort();
+    }, [findContext]);
     const { serverId, machineId, rootPath } = input.workspaceScope ?? {};
     const comparisonFiles = input.comparisonFiles;
 
@@ -220,6 +228,7 @@ export function useChangedFilesReviewDiffLoading(input: {
             const retainCorpus = previous.status === 'loaded' && previous.context?.status === 'loaded';
             if (!retainCorpus) diffStateSource.setDiffState(path, { ...state, context: { status: 'loading' } });
             let baseText: string | null = null;
+            const readCancellation = mergeAbortSignals([contextRead.signal, findContextReadRef.current?.signal]);
             try {
                 if (file?.status === 'added' || file?.status === 'untracked') baseText = '';
                 else if (scope && (!hasScopedDiffs || captured?.beforeBlobId)) {
@@ -227,11 +236,12 @@ export function useChangedFilesReviewDiffLoading(input: {
                     const read = await fetchWorkspaceFileAtRevision({ scope,
                         path: captured?.previousPath ?? (diffArea !== 'pending' ? file?.oldPath : undefined) ?? path,
                         selector: captured?.beforeBlobId ? { blobId: captured.beforeBlobId } : { side: 'before', area: diffArea },
-                        signal: contextRead.signal });
+                        signal: readCancellation.signal });
                     if (read.success && !read.bytes.includes(0)) baseText = new TextDecoder('utf-8', { fatal: true }).decode(read.bytes);
                 }
             } catch { /* The patch remains searchable; unreadable context is partial coverage. */ }
-            if (cancelled || latestRef.current.input.findContext !== true) return;
+            finally { readCancellation.dispose(); }
+            if (cancelled || readCancellation.signal.aborted || latestRef.current.input.findContext !== true) return;
             diffStateSource.updateDiffState(path, current => current.diff !== (retainCorpus ? previous.diff : state.diff) ? current : { ...state,
                 context: baseText === null ? { status: 'unavailable' } : { status: 'loaded', baseText } });
         };
@@ -379,7 +389,7 @@ export function useChangedFilesReviewDiffLoading(input: {
             retryDiffRef.current = null;
             contextRead.abort();
         };
-    }, [diffArea, diffCache, isRepo, hasScopedDiffs, findContext, sessionId, reviewScopeKey, snapshotSignature, refreshToken,
+    }, [diffArea, diffCache, isRepo, hasScopedDiffs, sessionId, reviewScopeKey, snapshotSignature, refreshToken,
         serverId, machineId, rootPath, diffStateSource, setLoadedDiff]);
 
     React.useEffect(() => scheduleRef.current?.(), [
