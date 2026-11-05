@@ -1,7 +1,7 @@
 import type {
   UsageRecapComposeResult,
   UsageRecapField,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/usage/usageRecap';
 import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatUsageCalendarPeriod } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -79,7 +79,6 @@ export type UsageStatCardModel = Readonly<{
 }>;
 
 const HOUR_MS = 3_600_000;
-const DAY_MS = 24 * HOUR_MS;
 const MONEY_ORDER: readonly MoneyKind[] = [
   'invoice',
   'estimated',
@@ -270,11 +269,4 @@ export function buildUsageStatCardModel(
     sourceSelection: result.sourceSelection,
     executionCoverage: result.coverage.execution,
   };
-}
-
-/** Whole days the composed period covers (used by art that lays out a calendar). */
-export function usageRecapPeriodDays(
-  period: UsageRecapComposed['period'],
-): number {
-  return Math.max(1, Math.round((period.endMs - period.startMs) / DAY_MS));
 }

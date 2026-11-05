@@ -95,15 +95,15 @@ describe('private stat card model', () => {
     const cache = buildUsageStatCardModel(composed(['cache'], { cache: { readTokens: 12345, writeTokens: 6789 } }));
     expect(cache.headline).toBeNull();
     expect(cache.stats).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'cacheReadTokens', value: '12.3k' }),
-      expect.objectContaining({ id: 'cacheWriteTokens', value: '6.8k' }),
+      expect.objectContaining({ id: 'cacheReadTokens', value: '12.3K' }),
+      expect.objectContaining({ id: 'cacheWriteTokens', value: '6.8K' }),
     ]));
     const highlights = buildUsageStatCardModel(composed(['highlights'], { highlights: [
       { kind: 'observed_peak', bucketStartMs: periodStart, bucketEndMs: periodStart + 86400000, tokens: 12345 },
       { kind: 'linked_outcomes', count: 7 },
     ] }));
     expect(highlights.stats).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'observedPeak', value: '12.3k' }),
+      expect.objectContaining({ id: 'observedPeak', value: '12.3K' }),
       expect.objectContaining({ id: 'highlightOutcomes', value: '7' }),
     ]));
   });
