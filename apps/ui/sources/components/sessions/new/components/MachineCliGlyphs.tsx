@@ -46,13 +46,12 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
         router.push(machineCollectionHref({ machineId, serverId: resolvedServerId }) as never);
     }, [machineId, resolvedServerId, router]);
 
-    const availableAgentIds = React.useMemo(() => inventory.agents
-        .filter((agent) => agent.installed)
-        .map((agent) => agent.agentId), [inventory.agents]);
+    const availableAgents = React.useMemo(() => inventory.agents
+        .filter((agent) => agent.installed), [inventory.agents]);
 
     // Healthy and unknown states stay quiet (no placeholder mark, no control): the row's presence
     // line already says whether the machine is reachable.
-    if (availableAgentIds.length === 0) return null;
+    if (availableAgents.length === 0) return null;
 
     return (
         <Pressable
@@ -65,7 +64,7 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
                 { opacity: !isOnline ? 0.5 : (pressed ? motionTokens.press.opacity : 1) },
             ]}
         >
-            <MachineCliLogoRow agentIds={availableAgentIds} />
+            <MachineCliLogoRow agents={availableAgents} />
         </Pressable>
     );
 });

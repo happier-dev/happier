@@ -49,6 +49,25 @@ afterEach(() => {
 });
 
 describe('MachineCliGlyphs', () => {
+    it('keeps case-variant configured definitions as distinct glyphs without duplicate React keys', async () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const server = await upsertServerProfile({ serverUrl: 'https://glyph-definition-identity.example.test' });
+        const scope = { serverId: server.id, accountId: 'glyph-account' };
+        const machine = createMachineFixture({ id: 'glyph-definitions', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
+        storage.setState({ machineListByServerId: { [server.id]: [machine] }, profileScope: scope });
+        const item: MachineAgentInventoryItem = {
+            agentId: 'custom-acp', title: 'Goose', installed: true, version: '1', latestVersion: null,
+            update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'status_only' },
+            platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [],
+        };
+        machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), {
+            status: 'ready', items: [{ ...item, definitionId: 'Goose' }, { ...item, definitionId: 'goose', title: 'goose' }], lastCheckedAt: 12,
+        });
+        const tree = await renderScreen(<MachineCliGlyphs machineId={machine.id} serverId={server.id} isOnline autoDetect={false} />);
+        expect(tree.findAllByType('AgentIcon')).toHaveLength(2);
+        expect(errors.mock.calls.filter(args => String(args[0]).includes('Encountered two children with the same key'))).toEqual([]);
+    });
+
     it('stays quiet while no installed Agent is known: no placeholder mark and no control', async () => {
         const server = await upsertServerProfile({ serverUrl: 'https://glyph-empty.example.test' });
         const scope = { serverId: server.id, accountId: 'glyph-account' };

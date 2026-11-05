@@ -413,12 +413,11 @@ function FleetCards(
               style={props.style}
               metrics={props.metrics}
               hasUpdate={updating.has(entry.machine.id)}
-              agentIds={
+              agents={
                 entry.online
                   ? (agents
                       .get(entry.machine.id)
-                      ?.agents.filter((agent) => agent.installed)
-                      .map((agent) => agent.agentId) ?? [])
+                      ?.agents.filter((agent) => agent.installed) ?? [])
                   : []
               }
               onOpen={() =>
@@ -442,7 +441,7 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
     style: MachineSummaryStyle;
     metrics: readonly MachineSummaryMetric[];
     hasUpdate: boolean;
-    agentIds: readonly string[];
+    agents: React.ComponentProps<typeof MachineCliLogoRow>['agents'];
     onOpen: () => void;
     testID: string;
   }>,
@@ -480,10 +479,10 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
       </Text>
     );
   const footerLeft =
-    props.agentIds.length > 0 ? (
+    props.agents.length > 0 ? (
       <MachineCliLogoRow
         testID={`${props.testID}.agents`}
-        agentIds={[...props.agentIds]}
+        agents={props.agents}
       />
     ) : working > 0 ? (
       t('machineDetailPage.work.working', { count: working })
