@@ -433,16 +433,19 @@ describe('DesktopActivityOverlayExpanded', () => {
         }));
     });
 
-    it('renders low-risk always-allow permission actions and high-risk review-only actions', async () => {
+    it('renders the Session permission choices regardless of risk and opens through the asker header', async () => {
         const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+        const onOpenSession = vi.fn();
 
+        // Desktop notch owner rulings 13–14: the asker header opens the Session; its owner decides every choice.
         const screen = await renderScreen(
             <DesktopActivityOverlayExpanded
                 visualMode="floating_overlay"
                 model={createModel({
                     expanded: {
                         title: 'Actions',
-                        rows: [],
+                        rows: [{ sessionId: 'session-1', serverId: 'server-1', title: 'Session One',
+                            subtitle: null, statusText: null, previewText: null }],
                         cards: [
                             createPermissionRequestCard({
                                 requestId: 'permission-low',
@@ -464,6 +467,13 @@ describe('DesktopActivityOverlayExpanded', () => {
                                 toolLabel: 'Bash',
                                 actions: [
                                     {
+                                        id: 'allow',
+                                        label: 'Allow',
+                                        actionIdentifier: 'approve-permission',
+                                        data: { requestId: 'permission-high', sessionId: 'session-1', serverId: 'server-1', decision: 'allow' },
+                                        tone: 'primary',
+                                    },
+                                    {
                                         id: 'deny',
                                         label: 'Deny',
                                         actionIdentifier: 'deny-permission',
@@ -482,7 +492,7 @@ describe('DesktopActivityOverlayExpanded', () => {
                         ],
                     },
                 })}
-                onOpenSession={() => {}}
+                onOpenSession={onOpenSession}
             />,
         );
 
@@ -494,11 +504,17 @@ describe('DesktopActivityOverlayExpanded', () => {
         expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(
             createPermissionRequestCard({ requestId: 'permission-high' }).id,
             'allow',
-        ))).toBeNull();
+        ))).toBeTruthy();
+        expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(
+            createPermissionRequestCard({ requestId: 'permission-high' }).id,
+            'deny',
+        ))).toBeTruthy();
         expect(screen.findByTestId(resolveDesktopActivityOverlayCardActionInstanceTestID(
             createPermissionRequestCard({ requestId: 'permission-high' }).id,
             'open',
-        ))).toBeTruthy();
+        ))).toBeNull();
+        screen.pressByTestId('desktop-activity-overlay-session-row-session-1');
+        expect(onOpenSession).toHaveBeenCalledExactlyOnceWith('session-1', 'server-1');
     });
 
     it('renders direct user-question choices from the card model', async () => {

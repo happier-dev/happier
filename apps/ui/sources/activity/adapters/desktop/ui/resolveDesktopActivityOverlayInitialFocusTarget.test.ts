@@ -66,6 +66,14 @@ const permissionCard: DesktopActivityOverlayExpandedCard = {
     openActionIdentifier: 'open-session:session-2',
     allowActionIdentifier: 'session.permission.respond',
     denyActionIdentifier: 'session.permission.respond',
+    // Focus consumes the rendered choices supplied by the card producer.
+    actions: [{
+        id: 'deny',
+        label: 'No',
+        actionIdentifier: 'session.permission.respond',
+        data: { requestId: 'request-1', sessionId: 'session-2', serverId: 'server-1', decision: 'denied' },
+        tone: 'danger',
+    }],
 };
 
 describe('resolveDesktopActivityOverlayInitialFocusTarget', () => {
