@@ -8,6 +8,7 @@ import { readDeploymentArtifactJsonBodyV1, type DeploymentArtifactContentReferen
   type OpenedDeploymentArtifactV1, type DeploymentArtifactReadFailureV1 } from './deploymentArtifactContentReferenceV1.js';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArtifactKindsV1.js';
 import { ActionInputIssueSchema } from '../actions/executor/actionInputValidation.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 /** Private parser diagnostics contain schema facts, never rejected values or prose. */
 export const DeploymentOutputValidationV1Schema = lazyZodSchema(() => z.strictObject({
@@ -19,6 +20,8 @@ export const DeploymentReceiptFailureV1Schema = lazyZodSchema(() => z.strictObje
   code: id, phase: z.union([DeploymentTargetRoleFailureV1Schema.shape.phase,
     z.enum(['source', 'build', 'activate', 'restore', 'cleanup', 'observe', 'admission'])]),
   validation: z.optional(DeploymentOutputValidationV1Schema),
+  failureCause: z.optional(ActionFailureCauseV1Schema),
+  effectAttempted: z.optional(z.boolean()),
 }));
 export type DeploymentReceiptFailureV1 = z.infer<typeof DeploymentReceiptFailureV1Schema>;
 

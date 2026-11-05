@@ -317,6 +317,12 @@ export const DeploymentRollbackActionInputV1Schema = lazyZodSchema(() => z.union
 ]));
 export const DEPLOYMENT_TEARDOWN_STEPS_V1 = ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] as const;
 export const DeploymentTeardownStepV1Schema = lazyZodSchema(() => z.enum(DEPLOYMENT_TEARDOWN_STEPS_V1));
+/** Native admission may refuse teardown before a receipt exists. */
+export const DeploymentTeardownRefusalDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: DeploymentIdentifierV1Schema,
+  remedy: z.string().check(z.minLength(1)),
+}));
+export type DeploymentTeardownRefusalDetailsV1 = z.infer<typeof DeploymentTeardownRefusalDetailsV1Schema>;
 export const DeploymentTeardownReasonV1Schema = lazyZodSchema(() => z.enum(['manual', 'previewClosed', 'move', 'decommission']));
 export const DeploymentTeardownInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentIntent, ...DeploymentArtifactContentReferenceV1Schema.shape,
