@@ -13,6 +13,12 @@ export const SELECTION_LIST_MODAL_CARD_SCROLL = {
 } as const;
 
 /**
+ * The tallest a card-modal picker grows; shorter lists keep the card to their rows
+ * (`resolveSelectionListModalHeightBehavior`).
+ */
+export const SELECTION_LIST_MODAL_MAX_HEIGHT = 520;
+
+/**
  * Searching narrows the rows, but the centered card keeps its height instead of re-centering with
  * every keystroke; it settles to the new content after typing pauses.
  */

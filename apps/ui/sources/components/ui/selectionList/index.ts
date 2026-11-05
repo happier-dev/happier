@@ -50,6 +50,7 @@ export { renderSelectionListAccessory } from './renderSelectionListAccessory';
 export { resolvePopoverSelectionListHeightBehavior } from './resolvePopoverSelectionListHeightBehavior';
 export {
     SELECTION_LIST_MODAL_CARD_SCROLL,
+    SELECTION_LIST_MODAL_MAX_HEIGHT,
     resolveSelectionListModalHeightBehavior,
 } from './selectionListModalPresentation';
 export {

@@ -7,6 +7,7 @@ import {
     resolveSelectionListModalHeightBehavior,
     type SelectionListSectionDescriptor,
     type SelectionListStep,
+    SELECTION_LIST_MODAL_MAX_HEIGHT,
 } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import { getPreferredLanguage, t } from '@/text';
@@ -26,7 +27,6 @@ import { sourceKindLabel } from './teamCredentialPresentation';
  * Rows carry no credential value and no "a secret is present" claim: what a
  * source *is* is the whole of what this decision needs.
  */
-const PICKER_MAX_HEIGHT = 520;
 
 function PickerContent(props: Readonly<{
     rootStep: SelectionListStep;
@@ -41,7 +41,7 @@ function PickerContent(props: Readonly<{
             rootStep={props.rootStep}
             selectedOptionId={props.selectedOptionId}
             listAccessibilityLabel={props.accessibilityLabel}
-            maxHeight={PICKER_MAX_HEIGHT}
+            maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
             heightBehavior={resolveSelectionListModalHeightBehavior()}
             keyboardHintsEnabled
             onRequestClose={props.onClose}
