@@ -50,6 +50,11 @@ export function useLocalSettings(): LocalSettings {
   return getStorage()(useShallow((state) => state.localSettings));
 }
 
-export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSettings[K] {
-  return getStorage()(useShallow((state) => state.localSettings[name]));
+export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSettings[K];
+export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select: (value: LocalSettings[K]) => T): T;
+export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select?: (value: LocalSettings[K]) => T): LocalSettings[K] | T {
+  return getStorage()(useShallow((state) => {
+    const value = state.localSettings[name];
+    return select ? select(value) : value;
+  }), { localSettings: [name] });
 }
