@@ -259,7 +259,8 @@ export function createTrashStore(deps: TrashStoreDeps) {
                         if (!entry.restorable) {
                             outcomes.push({ entryId: entry.entryId, status: 'refused', reason: entry.reason ?? { code: 'unsupported' } }); continue;
                         }
-                        if (input.actorAccountId !== entry.movedBy.accountId && input.actorAccountId !== input.custodianAccountId) {
+                        if (input.assertEntryAuthority) await input.assertEntryAuthority(entry, record.manifest.ownerData);
+                        else if (input.actorAccountId !== entry.movedBy.accountId && input.actorAccountId !== input.custodianAccountId) {
                             outcomes.push({ entryId: entry.entryId, status: 'refused', reason: { code: 'unauthorized' } }); continue;
                         }
                         const leaf = storagePathLeaf(entry.originalPath);
@@ -281,7 +282,6 @@ export function createTrashStore(deps: TrashStoreDeps) {
                             if (await present(physical)) throw Object.assign(new Error('Restore destination occupied'), { code: 'destination_occupied' });
                             if (await deps.classifyRestorePath(physical)) throw new Error('Restore destination forbidden');
                             await input.assertCurrentAuthority?.();
-                            await input.assertEntryAuthority?.(entry, record.manifest.ownerData);
                         };
                         if (record.manifest.ownerData !== undefined) {
                             if (!deps.resolveOwnerAdapter) throw Object.assign(new Error('Trash owner adapter unavailable'), { code: 'owner_unavailable' });
@@ -303,10 +303,11 @@ export function createTrashStore(deps: TrashStoreDeps) {
                 for (const record of await records(selection)) {
                     const { entry } = record.manifest;
                     if (input.scheduled ? entry.emptiesAt === null || entry.emptiesAt > now()
-                        : input.actorAccountId !== entry.movedBy.accountId && input.actorAccountId !== input.custodianAccountId) {
+                        : !input.assertEntryAuthority && input.actorAccountId !== entry.movedBy.accountId && input.actorAccountId !== input.custodianAccountId) {
                         outcomes.push({ entryId: entry.entryId, status: 'refused', reason: { code: 'unauthorized' } }); continue;
                     }
                     try {
+                        await input.assertEntryAuthority?.(entry, record.manifest.ownerData);
                         await input.assertCurrentAuthority?.();
                         const adapter = record.manifest.ownerData !== undefined ? await (() => {
                             if (!deps.resolveOwnerAdapter) throw Object.assign(new Error('Trash owner adapter unavailable'), { code: 'owner_unavailable' });
@@ -329,7 +330,6 @@ export function createTrashStore(deps: TrashStoreDeps) {
                             }
                             await assertEligible();
                             await input.assertCurrentAuthority?.();
-                            await input.assertEntryAuthority?.(entry, record.manifest.ownerData);
                         };
                         if (adapter) await adapter.discard({ payloadPath: record.payloadPath, beforeEffect });
                         else await removeStoragePath(record.payloadPath, { allowedRoot: record.directory, expectedIdentity: record.manifest.identity, beforeEffect });

@@ -63,7 +63,8 @@ describe('storage protected-folder policy owner', () => {
       onRead = undefined; authorized = true;
       expect(runtime.read()).toMatchObject({ policy: { storage: { protectedFolders: [{ path: folder }], logRetentionDays: 30 } } });
       expect(await owner.remove({ path: alias }, { actor })).toMatchObject({ status: 'applied', policy: { storage: { protectedFolders: [] } } });
-      await expect(owner.add({ path: folder }, { actor: { ...actor, accountId: 'recipient' } })).rejects.toMatchObject({ code: 'unauthorized' });
+      expect(await owner.add({ path: folder }, { actor: { ...actor, accountId: 'manager' } })).toMatchObject({ status: 'applied' });
+      await expect(owner.add({ path: folder }, { actor: { ...actor, accountId: 'recipient', sessionIds: new Set() } })).rejects.toMatchObject({ code: 'unauthorized' });
     } finally { runtime.stop(); await rm(root, { recursive: true, force: true }); }
   });
 });

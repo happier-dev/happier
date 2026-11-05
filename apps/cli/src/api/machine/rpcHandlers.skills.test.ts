@@ -30,17 +30,31 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createMachineSkillActions } from '@/prompts/skills/machineInstall/machineSkillActions';
 import { createMachineSkillActionExecutor } from '@/prompts/skills/machineInstall/machineSkillActionExecutor';
+import { makeShareEligibleForTest } from '../../../../server/sources/testkit/shareEligibility.testkit';
+import { ApiMachineClient } from '../apiMachine';
+import { reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineSkillsRpcHandlers } from './rpcHandlers.skills';
 import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.promptAssetTransfers';
 
 let database: LightSqliteHarness;
+const nativeHome = vi.hoisted(() => ({ path: null as string | null }));
+// Native home lookup is the OS boundary; keep the real host, catalog, Account and install owners.
+vi.mock('node:os', async importOriginal => {
+  const os = await importOriginal<typeof import('node:os')>();
+  return { ...os, homedir: () => nativeHome.path ?? os.homedir() };
+});
 beforeAll(async () => { database = await createLightSqliteHarness({ tempDirPrefix: 'happier-p3f-install-seam-', initAuth: true, initEncrypt: true }); }, 120_000);
 afterAll(async () => { await database?.close(); });
 
 it('scans, reads, adopts and installs through registered Actions and transfers with authenticated HTTP, SQLite and Socket.IO', async () => {
   const account = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 7 } });
+  const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
   for (const key of PromptLibraryCatalogKeyV1Schema.options) await db.userKVStore.create({ data: {
     accountId: account.id, key: buildPromptLibraryPhysicalKeyV1(key), version: 0,
     value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: emptyPromptLibraryRecordV1(key) })),
@@ -65,17 +79,30 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
   observer.on('update', event => { wakes.push(event); });
   await new Promise<void>((resolve, reject) => { observer.once('connect', resolve); observer.once('connect_error', reject); });
   const releaseHome = publishServerHttpRuntimeOrigin(serverUrl, 'https');
+  const home = join(database.baseDir, 'native-home');
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+  env.patch({ HAPPIER_HOME_DIR: join(home, '.happier'), HAPPIER_ACTIVE_SERVER_ID: undefined, HAPPIER_SERVER_URL: undefined });
+  nativeHome.path = home;
+  reloadConfiguration();
+  const profile = await addServerProfile({ name: 'skill-seam', serverUrl, webappUrl: serverUrl });
+  await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact', descriptor: {
+    v: 1, homeServerIdentityId: 'srv_seam', canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
+  } });
+  env.patch({ HAPPIER_ACTIVE_SERVER_ID: profile.id, HAPPIER_SERVER_URL: serverUrl });
+  reloadConfiguration();
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7,
     loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
-  const home = join(database.baseDir, 'native-home');
+  const machineClient = new ApiMachineClient(await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' }), { id: 'machine', encryptionMode: 'plain',
+    metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+  const snapshot = getActiveAccountSettingsSnapshot();
+  if (!snapshot) throw new Error('Requester snapshot missing');
+  const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+    serverHttpBaseUrl: serverUrl, isCurrent: async () => true,
+    machineAdmission: { actorAccountId: account.id, custodianAccountId: custodian.id, role: 'manage' } });
   const agents = [{ agentId: 'codex', nativeRoots: { user: [['.agents', 'skills']],
     plugin: [['.codex', 'plugins', 'cache', '*', '{plugin}', '*', 'skills']] } }];
   const store = createCliApprovalsArtifactStore({ credentials, serverId: 'srv_seam', getAccountEncryptionMode: async () => 'plain' });
-  const service = createMachineSkillActions({ store: store.promptLibraryStore, readPluginSkills: store.readPluginSkills,
-    target: { machineId: 'machine', serverIdentityId: 'srv_seam' },
-    libraryServerIdentityId: 'srv_seam', homeDirectory: home, happierHomeDirectory: join(home, '.happier'),
-    agents, readInstalledAgents: async () => ['codex'] });
-  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), skillMachineActionExecute: createMachineSkillActionExecutor({ machineId: 'machine', service }) });
+  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), skillMachineActionExecute: machineClient.createMachineSkillActionExecutor({ credentials, operationContext }) });
   let confirmation: ActionExecutorContext['presentUserConfirmation'];
   const manager = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain' });
   // Human confirmation is a UI/transport boundary fact, not a public RPC input or a fake policy decision.
@@ -99,15 +126,19 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     return { revision: row.version, links: record.value.links, raw: envelope.v };
   };
   try {
-    await db.machine.create({ data: { id: 'machine', accountId: account.id, installationId: 'install', active: true,
+    await db.machine.create({ data: { id: 'machine', accountId: custodian.id, installationId: 'install', active: true,
       metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test', homeDir: home, happyHomeDir: join(home, '.happier') }),
       daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+    await makeShareEligibleForTest(custodian.id, account.id);
+    expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: 'machine', principal: { kind: 'account', accountId: account.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
     for (const level of ['view', 'admin'] as const) {
       const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
-      await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: account.id, machineId: 'machine', principal: { kind: 'account', accountId: guest.id }, level }));
+      await makeShareEligibleForTest(custodian.id, guest.id);
+      expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: 'machine', principal: { kind: 'account', accountId: guest.id }, level }))).toMatchObject({ kind: 'saved' });
       for (const actionId of ['skills.machine.install', 'skills.machine.uninstall']) {
-        expect(await resolveMachineAdmission({ actorAccountId: guest.id, machineId: 'machine', actionId })).toEqual({ kind: 'denied', code: 'unsupported_operation' });
-        expect(await resolveMachineAdmission({ actorAccountId: account.id, machineId: 'machine', actionId })).toMatchObject({ kind: 'admitted', custodianAccountId: account.id });
+        expect(await resolveMachineAdmission({ actorAccountId: guest.id, machineId: 'machine', actionId })).toMatchObject(level === 'admin'
+          ? { kind: 'admitted', role: 'manage', custodianAccountId: custodian.id } : { kind: 'denied', code: 'access_denied' });
+        expect(await resolveMachineAdmission({ actorAccountId: account.id, machineId: 'machine', actionId })).toMatchObject({ kind: 'admitted', custodianAccountId: custodian.id });
       }
     }
     for (const actionId of ['skills.machine.install', 'skills.machine.uninstall'] as const) {
@@ -115,10 +146,10 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
       if (!method) throw new Error('Machine skill Action has no registered method');
       expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
         serverRequiredReason: 'destructive_or_recovery_mutation', rpcClassification: 'action_spec_bound',
-        actionSpecId: actionId, sharedMachineAccess: 'custodian_only', commandReceiptRequired: false });
+        actionSpecId: actionId, sharedMachineAccess: 'manage', commandReceiptRequired: false });
       expect(resolveMachineRpcExternalActionEffectV1(method)).toBe(actionId);
     }
-    const reply = await manager.invokeLocal('skills.machine.install', { skillId: 'happier:happier', machineId: 'machine' }, context);
+    const reply = await manager.invokeLocal('skills.machine.install', { skillId: 'happier:happier', machineId: 'machine', agents: ['codex'] }, context);
     expect(reply).toHaveProperty('receipts');
     const installed = SkillMachineInstallResultV1Schema.parse(reply);
     expect(installed.receipts).toHaveLength(1);
@@ -126,6 +157,7 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     expect(readFileSync(join(path, 'SKILL.md'), 'utf8')).toContain('happier');
     expect(statSync(path).isDirectory()).toBe(true);
     const receiptRow = await readReceiptRow();
+    expect(await db.userKVStore.count({ where: { accountId: custodian.id } })).toBe(0);
     expect(receiptRow.links).toMatchObject([{ artifactId: 'happier:happier', machineId: 'machine', lastExternalDigest: installed.receipts[0]!.digest }]);
     expect(receiptRow.raw).not.toHaveProperty('value.links.0.syncMode');
     const pluginPath = join(home, '.codex', 'plugins', 'cache', 'market', 'fixture', '1', 'skills', 'happier');
@@ -135,7 +167,7 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     writeFileSync(scriptPath, '#!/bin/sh\nprintf plugin\n');
     chmodSync(scriptPath, 0o755);
     const found = SkillFoundListResultV1Schema.parse(await manager.invokeLocal('skills.found.list', { machineId: 'machine' }, context));
-    expect(found.items).toMatchObject([{ name: 'happier', path, scope: 'user', agents: ['codex'],
+    expect(found.items).toMatchObject([{ name: 'happier', path, scope: 'user', agents: expect.arrayContaining(['codex']),
       inLibrary: null, masksLibrary: true, happierInstalled: true, pluginOwned: null },
       { name: 'happier', path: pluginPath, scope: 'plugin', agents: ['codex'], inLibrary: null,
         masksLibrary: false, happierInstalled: false, pluginOwned: { pluginName: 'fixture' } }]);
@@ -205,5 +237,5 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     expect(readFileSync(join(path, 'SKILL.md'), 'utf8')).toContain('happier');
     expect(readFileSync(join(conflictPath, 'SKILL.md'), 'utf8')).toBe('native owner content');
     expect((await readReceiptRow()).links).toMatchObject([{ lastExternalDigest: acknowledged.receipts[0]!.digest }]);
-  } finally { await transfers.dispose(); resetActiveAccountSettingsSnapshotForTests(); releaseHome(); observer.disconnect(); eventRouter.clearIo(); await sockets.close(); await server.close(); }
+  } finally { await machineClient.shutdown(); await transfers.dispose(); resetActiveAccountSettingsSnapshotForTests(); releaseHome(); observer.disconnect(); eventRouter.clearIo(); await sockets.close(); await server.close(); nativeHome.path = null; env.restore(); reloadConfiguration(); }
 });

@@ -21,7 +21,6 @@ export function readMachineResourcesPolicyReadOnlyReason(machine: Machine | null
     const state: unknown = machine.daemonState;
     const resources = typeof state === 'object' && state !== null && 'resources' in state ? state.resources : null;
     if (!MachinePublishedResourceSummaryV1Schema.safeParse(resources).success) return 'older_happier';
-    // Sync proves custody with isShared=false; Manage alone also includes recipients.
-    if (machine.isShared !== false) return 'not_custodian';
+    if (machine.isShared !== false && machine.access?.role !== 'manage') return 'not_custodian';
     return null;
 }

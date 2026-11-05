@@ -93,7 +93,9 @@ describe('lazy storage Machine RPC', () => {
                 expect(await read(input, context())).toMatchObject({ volumes: [], wholeDisk: { enabled: false } });
                 expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)!({ ...input, categoryId: 'logs' }, context()))
                     .toMatchObject({ items: [] });
-                await expect(handlers.get(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)!({ ...input, categoryId: 'logs' }, context('recipient', 'manage')))
+                expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)!({ ...input, categoryId: 'logs' }, context('recipient', 'manage')))
+                    .toMatchObject({ items: [] });
+                await expect(handlers.get(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST)!({ ...input, categoryId: 'logs' }, context('recipient', 'use')))
                     .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
             } finally { routes.dispose(); }
         } finally { env.restore(); reloadConfiguration(); }
@@ -133,7 +135,7 @@ describe('lazy storage Machine RPC', () => {
             expect(constructions()).toBe(0);
         } finally { routes.dispose(); }
     });
-    it('mutates protected folders through admitted RPC and the real Resources metadata CAS owner', async () => {
+    it.each(['owner', 'manager'])('lets %s mutate protected folders through admitted RPC and the real Resources metadata CAS owner', async actor => {
         const { createMachineResourcesPolicyRuntime } = await import('@/daemon/resources/machineResourcesPolicy');
         const home = join(lazyFixtureDirectory, 'protected-rpc'); const path = join(home, 'personal');
         await mkdir(path, { recursive: true });
@@ -153,13 +155,13 @@ describe('lazy storage Machine RPC', () => {
             readPolicy: () => { const snapshot = policy.read(); if (snapshot.status !== 'ready') throw new Error('Fixture policy unavailable'); return snapshot.policy.storage; },
         }) });
         try {
-            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD)!({ machineId: 'machine', path: '~/personal' }, context()))
+            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD)!({ machineId: 'machine', path: '~/personal' }, context(actor)))
                 .toMatchObject({ status: 'applied', policy: { storage: { protectedFolders: [{ path, addedAt: expect.any(Number) }] } } });
             expect(metadata.neighboringPolicy).toBe('retained');
-            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE)!({ machineId: 'machine', path: join(home, 'Documents') }, context()))
+            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE)!({ machineId: 'machine', path: join(home, 'Documents') }, context(actor)))
                 .toEqual({ status: 'unsupported', reason: 'built_in_protection' });
             expect(policy.read()).toMatchObject({ policy: { storage: { protectedFolders: [{ path }] } } });
-            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE)!({ machineId: 'machine', path }, context()))
+            expect(await handlers.get(RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE)!({ machineId: 'machine', path }, context(actor)))
                 .toMatchObject({ status: 'applied', policy: { storage: { protectedFolders: [] } } });
         } finally { routes.dispose(); policy.stop(); }
     });
@@ -186,12 +188,14 @@ describe('lazy storage Machine RPC', () => {
         expect(constructions()).toBe(1);
         routes.dispose();
     });
-    it('exposes only shared capacity totals to recipients and keeps private categories custodian-only', async () => {
+    it('exposes Machine categories to Manage and only shared capacity totals to Use', async () => {
         const { handlers, routes } = setup();
         try {
             const read = handlers.get(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET)!;
-            expect(await read({ machineId: 'machine' }, context())).toMatchObject({ categories: expect.arrayContaining([{ categoryId: 'ownData',
-                size: expect.any(Object), canGoBytes: 0, count: expect.any(Number), detailFacts: expect.any(Object) }]) });
+            for (const actor of ['owner', 'manager']) {
+                expect(await read({ machineId: 'machine' }, context(actor))).toMatchObject({ categories: expect.arrayContaining([expect.objectContaining({ categoryId: 'ownData',
+                    size: expect.any(Object), canGoBytes: 0, count: expect.any(Number), detailFacts: expect.any(Object) })]) });
+            }
             expect(await read({ machineId: 'machine' }, context('recipient', 'use'))).toMatchObject({ categories: [], suggestionsTop: [],
                 volumes: [{ volume: { volumeId: 'home' }, totalBytes: 1000, freeBytes: 800, happierBytes: expect.any(Number), pileBytes: 0, trashBytes: 0 }],
                 pile: { count: 0, freesBytes: 0, droppedSinceLastView: [] }, trash: { count: 0, allocatedBytes: 0 } });

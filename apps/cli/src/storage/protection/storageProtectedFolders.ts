@@ -14,7 +14,7 @@ export function createStorageProtectedFolders(deps: StorageProtectedFoldersDeps)
   async function mutate(mode: 'add' | 'remove', request: Readonly<{ path: string }>,
     options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>): Promise<MachineResourcesPolicyMutationResultV1> {
     const { actor, signal } = options;
-    if (actor.accountId !== actor.custodianAccountId || actor.sessionIds !== undefined) {
+    if (actor.sessionIds !== undefined) {
       throw Object.assign(new Error('Storage policy access denied'), { code: 'unauthorized' });
     }
     await actor.assertCurrent();

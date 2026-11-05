@@ -347,8 +347,16 @@ describe('Machine storage widgets', () => {
     expect(zero.screen.findByTestId('widget.review')).toBeNull();
   });
 
-  it('Storage: a recipient sees the disk but gets no Review, and a chosen volume that is gone is a dash, never zero', async () => {
-    const recipient = await mount('storage', 'medium', {}, { isShared: true });
+  it('Storage: a Manage grantee can review cleanup', async () => {
+    const manager = await mount('storage', 'medium', {}, { isShared: true });
+    await act(async () => { await vi.waitFor(() => expect(manager.screen.findByTestId('widget.review')).not.toBeNull()); });
+    expect(manager.screen.findByTestId('widget.recipient')).toBeNull();
+  });
+
+  it('Storage: a Use recipient sees the disk but gets no Review, and a chosen volume that is gone is a dash, never zero', async () => {
+    const recipient = await mount('storage', 'medium', {}, { isShared: true, access: {
+      role: 'use', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready',
+    } });
     await act(async () => {
       await vi.waitFor(() =>
         expect(

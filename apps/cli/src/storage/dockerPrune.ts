@@ -79,7 +79,7 @@ export function createStorageDockerPruneForHost(host: Readonly<{
         actor: StorageOperationActor; context: ActionExecutorContext;
     }>): Promise<MachineStorageDockerPruneResultV1> => {
         const { actor, context } = options;
-        if (actor.accountId !== actor.custodianAccountId || actor.sessionIds !== undefined) return refuse('unauthorized');
+        if (actor.sessionIds !== undefined) return refuse('unauthorized');
         const acceptance = context.operationAcceptance;
         if (!acceptance || acceptance.actionId !== 'machines.storage.docker.prune') return refuse('action_operation_unavailable');
         if (input.machineId !== host.machineId || input.serverId && !await isServerProfileHomeIdentity(host.serverId, input.serverId)) return refuse('target_mismatch');

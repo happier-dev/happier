@@ -102,8 +102,8 @@ export function createDaemonStorageRoutes(input: Readonly<{
 }
 
 /** Recipients receive machine capacity and Happier totals, never another Account's paths or work. */
-function projectSummary(summary: HappierStorageSummaryV1, custodian: boolean): HappierStorageSummaryV1 {
-    if (custodian) return summary;
+function projectSummary(summary: HappierStorageSummaryV1, canManage: boolean): HappierStorageSummaryV1 {
+    if (canManage) return summary;
     const { scanShortcuts, ...shared } = summary;
     return { ...shared, categories: [], suggestionsTop: [],
         volumes: summary.volumes.map(volume => ({ ...volume, trashBytes: 0 })),
@@ -127,10 +127,10 @@ async function callStorageOwner<T>(invoke: () => Promise<T>, beforeDisclosure: (
 
 export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, options: DaemonStorageRoutes): void {
     options.reconcileTarget();
-    const admission = (request: Readonly<{ serverId?: string; machineId: string }>, context?: RpcHandlerContext, custodianOnly = false) => {
+    const admission = (request: Readonly<{ serverId?: string; machineId: string }>, context?: RpcHandlerContext, manageOnly = false) => {
         const target = options.target();
         const admitted = context?.machineAdmission;
-        const custodian = !!target && admitted?.role === 'manage' && admitted.actorAccountId === target.custodianAccountId;
+        const canManage = admitted?.role === 'manage';
         const deny = (predicate: RpcAdmissionPredicate) => { context?.reportAdmissionDenial?.(predicate); return false; };
         const matches = async (detached = false) => {
             if (!target || !sameTarget(options.target(), target)) return deny('machine_target');
@@ -138,7 +138,7 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             if (!detached && context?.signal.aborted) return deny('request_cancelled');
             if (admitted.actorAccountId.length === 0) return deny('machine_actor');
             if (admitted.role !== 'use' && admitted.role !== 'manage') return deny('machine_role');
-            if (custodianOnly && !custodian) return deny('machine_custodian');
+            if (manageOnly && !canManage) return deny('machine_role');
             if (!doesMachineRpcTargetMatchAdmission(request, admitted, target, context?.reportAdmissionDenial)) return false;
             if (!sameTarget(options.target(), target)) return deny('machine_target');
             if (!detached && context?.signal.aborted) return deny('request_cancelled');
@@ -164,10 +164,10 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 throw new RpcError('Machine access denied', RPC_ERROR_CODES.FORBIDDEN);
             }
         };
-        return { target, custodian, accountId: admitted?.actorAccountId ?? '', assertCurrent, assertLocalAuthority, verifyCurrent, assertCurrentAuthority };
+        return { target, canManage, accountId: admitted?.actorAccountId ?? '', assertCurrent, assertLocalAuthority, verifyCurrent, assertCurrentAuthority };
     };
     async function readActor(access: ReturnType<typeof admission>, context?: RpcHandlerContext, effect = false): Promise<StorageOperationActor> {
-        const sessionIds = access.custodian ? undefined : new Set(await options.readOwnSessionIds(access.accountId));
+        const sessionIds = access.canManage ? undefined : new Set(await options.readOwnSessionIds(access.accountId));
         await access.assertCurrent();
         const assertLocal = effect ? access.assertLocalAuthority : access.assertCurrent;
         const refreshSessionCustody = async () => {
@@ -205,7 +205,7 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             await timeWebLatencyPhase('storage.rpc.current', access.assertCurrent);
             return timeWebLatencyPhase('storage.service.summary', () => service.summary({ actor, signal: context?.signal }));
         }, access.verifyCurrent);
-        return HappierStorageSummaryV1Schema.parse(projectSummary(summary, access.custodian));
+        return HappierStorageSummaryV1Schema.parse(projectSummary(summary, access.canManage));
     });
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, async (raw: unknown, context) => {
         const request = MachineStorageCategoryListInputV1Schema.parse(raw);
@@ -250,17 +250,17 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
                 signal: context?.signal });
             const summary = parked.changed ? await parked.snapshot : undefined;
             return MachineStorageWatchResultV1Schema.parse(summary
-                ? { changed: true, summary: projectSummary(summary, access.custodian) } : { changed: false });
+                ? { changed: true, summary: projectSummary(summary, access.canManage) } : { changed: false });
         }, access.verifyCurrent);
     });
     function registerOperation<I extends Readonly<{ serverId?: string; machineId: string }>, O>(
         method: string, requestSchema: Readonly<{ parse(raw: unknown): I }>, responseSchema: Readonly<{ parse(raw: unknown): O }>,
         invoke: (service: StorageService, request: I, options: Readonly<{ actor: StorageOperationActor; signal?: AbortSignal }>) => Promise<unknown>,
-        custodianOnly = false, effect = false,
+        manageOnly = false, effect = false,
     ) {
         rpc.registerHandler(method, async (raw: unknown, context) => {
             const request = requestSchema.parse(raw);
-            const access = admission(request, context, custodianOnly);
+            const access = admission(request, context, manageOnly);
             await timeWebLatencyPhase('storage.rpc.admission', access.assertCurrent);
             const result = await callStorageOwner(async () => {
                 const actor = await timeWebLatencyPhase('storage.rpc.actor', () => readActor(access, context, effect));

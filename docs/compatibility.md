@@ -727,6 +727,19 @@ independently updated Home from blocking an older daemon's Session attach on a
 new presentation/read fact, without allowing unknown data to acquire access,
 routing, mutation or persistence meaning.
 
+## Machine Manage storage and native Skills (unreleased 0.3)
+
+Machine Manage grants full control of storage administration, disk scans and native
+skill installation/removal. The Home's existing route policy requires Manage for
+these effects; the daemon consumes the admitted role rather than requiring the
+requester to be the custodian. Use retains its own Session-folder and Trash scope.
+Skill content and installation receipts use the requester's Account library and
+credentials, never the custodian's private Account catalog.
+
+Load the updated Home, daemon and UI together. Older intermediate 0.3 components
+may still refuse a Manage grantee or hide administration controls. This is an
+in-place authorization correction with no wire shape, persistence or epoch change.
+
 ## Machine RPC method absence (0.3 development)
 
 The Home distinguishes unsupported Machine operations from temporary routing

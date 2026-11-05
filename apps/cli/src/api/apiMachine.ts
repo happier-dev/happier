@@ -2485,10 +2485,6 @@ export class ApiMachineClient {
         operationContext?: import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1;
     }>): NonNullable<ActionExecutorDeps['skillMachineActionExecute']> {
         return async request => {
-            const accountId = readAccountIdFromToken(params.credentials.token);
-            if (!accountId || accountId !== readAccountIdFromToken(this.token)) {
-                return { ok: false, errorCode: 'machine_skill_custodian_required', error: 'machine_skill_custodian_required' };
-            }
             if (!request.input || typeof request.input !== 'object' || Reflect.get(request.input, 'machineId') !== this.machine.id) {
                 return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
             }

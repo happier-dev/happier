@@ -5,7 +5,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 
 /**
  * The few machine facts a tab body reads besides its own data: whether the person only uses this
- * machine (sync proves custody with `isShared === false`; anyone else sees totals and rules only), its
+ * machine (Use sees totals and rules; Manage controls the Machine), its
  * home folder (so paths read `~/…`), its platform and when it was last seen.
  */
 export function useMachineTabFacts(serverId: string, machineId: string): Readonly<{
@@ -17,7 +17,7 @@ export function useMachineTabFacts(serverId: string, machineId: string): Readonl
 }> {
     const recipient = storage(React.useCallback((state: ReturnType<typeof storage.getState>) => {
         const machine = resolveServerScopedMachine(state, serverId, machineId);
-        return machine ? machine.isShared !== false : false;
+        return machine ? machine.isShared !== false && machine.access?.role !== 'manage' : false;
     }, [machineId, serverId]));
     const homeDir = storage(React.useCallback((state: ReturnType<typeof storage.getState>) =>
         resolveServerScopedMachine(state, serverId, machineId)?.metadata?.homeDir || undefined, [machineId, serverId]));

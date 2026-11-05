@@ -14,7 +14,7 @@ const summary: HappierStorageSummaryV1 = {
 };
 
 describe('machine storage Action front door', () => {
-  it('admits custodian scan and protection Actions with strict inputs and only ordinary agent-asks removal', () => {
+  it('admits Manage scan and protection Actions with strict inputs and only ordinary agent-asks removal', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const start = getActionSpec(ActionIdSchema.parse('machines.storage.scan.start')).inputSchema;
     expect(start.safeParse({ machineId: 'machine', target: { volumeId: 'volume' }, drawableNodes: 24 }).success).toBe(false);
@@ -32,7 +32,7 @@ describe('machine storage Action front door', () => {
       expect(spec.inputSchema.parse({ machineId: 'machine', ...input })).toEqual({ machineId: 'machine', ...input });
       expect(spec.inputSchema.safeParse({ machineId: 'machine', ...input, actorAccountId: 'forged' }).success).toBe(false);
       expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'agent' })).toBe(id.endsWith('protected.remove'));
-      expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: 'custodian_only', actionSpecId: id });
+      expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: 'manage', actionSpecId: id });
     }
     const get = getActionSpec(ActionIdSchema.parse('machines.storage.scan.get')).inputSchema;
     expect(get.safeParse({ machineId: 'machine', view: { tab: 'folders', depth: 1, pageSize: 500 } }).success).toBe(true);

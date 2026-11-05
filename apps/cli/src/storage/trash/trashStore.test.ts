@@ -162,6 +162,15 @@ describe('Trash with the real filesystem and native measurement', () => {
         expect(await readFile(path, 'utf8')).toBe('occupied exact bytes');
         expect(await readFile(twin, 'utf8')).toBe('untouched twin');
     });
+    it.each(['restore', 'empty'] as const)('consumes admitted Manage entry authority for %s across Accounts', async operation => {
+        const f = await fixture(`manage-${operation}`); const prepared = await f.prepare(); await prepared.commit();
+        const input = { actorAccountId: 'manager', custodianAccountId: 'owner', assertEntryAuthority: async () => {} };
+        const result = operation === 'restore' ? await f.store.restore({}, input) : await f.store.empty({}, input);
+        expect(result.outcomes).toMatchObject([{ status: operation === 'restore' ? 'restored' : 'deleted' }]);
+        if (operation === 'restore') expect(await readFile(join(f.source, 'bytes'))).toEqual(Buffer.alloc(8192, 9));
+        else await expect(lstat(prepared.payloadPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
     it('refuses another Account before restore or early empty; the custodian may empty', async () => {
         const f = await fixture('shared'); const prepared = await f.prepare(); await prepared.commit();
         expect(await f.store.restore({}, { actorAccountId: 'bob', custodianAccountId: 'owner' })).toMatchObject({ outcomes: [{ status: 'refused' }] });

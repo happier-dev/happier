@@ -39,6 +39,7 @@ export type StorageOperationActor = Readonly<{
     accountId: string;
     kind: 'person' | 'agent';
     custodianAccountId: string;
+    /** Absent for admitted Machine Manage; Use is limited to these requester-owned Sessions. */
     sessionIds?: ReadonlySet<string>;
     /** Target/lifetime checks and current Session custody, without Machine admission verification. */
     assertCurrent(): Promise<void>;
@@ -227,7 +228,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     }
     async function assertScanActor(actor: StorageOperationActor, signal?: AbortSignal) {
         assertActive(signal); await actor.assertCurrent(); assertActive(signal);
-        if (actor.accountId !== actor.custodianAccountId || actor.sessionIds !== undefined) {
+        if (actor.sessionIds !== undefined) {
             throw Object.assign(new Error('Storage scan access denied'), { code: 'unauthorized' });
         }
     }

@@ -80,11 +80,13 @@ describe('Machine resources policy synced reads', () => {
         await hook.unmount();
     });
 
-    it('keeps recipients read-only even with Manage, and does not disclose locked metadata', async () => {
+    it('lets Manage recipients edit, keeps Use read-only, and does not disclose locked metadata', async () => {
         const current = machine({ isShared: true });
         setMachine(current);
         const hook = await renderHook(() => useMachineResourcesPolicy({ serverId: HOME, machineId: 'machine' }));
-        await act(async () => { await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', editable: false, readOnlyReason: 'not_custodian' })); });
+        await act(async () => { await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', editable: true, readOnlyReason: null })); });
+        await act(async () => { setMachine({ ...current, access: { ...current.access!, role: 'use' } }); });
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', editable: false, readOnlyReason: 'not_custodian' });
         await act(async () => { setMachine({ ...current, availability: { kind: 'locked', reason: 'decryption_failed' } }); });
         expect(hook.getCurrent()).toMatchObject({ status: 'locked', policy: null, revision: null, editable: false });
         expect(machineResourcesPolicyGet('machine', { serverId: HOME })).toEqual({ status: 'locked' });

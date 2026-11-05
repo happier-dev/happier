@@ -831,7 +831,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         }
     });
 
-    it('owns opted-in native folder scans, exposes folded files to queries and purges indexes when disabled', async () => {
+    it('lets an admitted Manage grantee own opted-in native folder scans, exposes folded files and purges indexes when disabled', async () => {
         const home = join(scratch, 'scan-service-home');
         const fixture = join(scratch, 'scan-service-fixture');
         await mkdir(home, { recursive: true });
@@ -847,7 +847,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         }
         let policy = MachineStoragePolicyV1Schema.parse({});
         let changed = () => {};
-        const actor = { accountId: 'owner', kind: 'person' as const, custodianAccountId: 'owner', assertCurrent: async () => {}, assertCurrentAuthority: async () => {} };
+        const actor = { accountId: 'manager', kind: 'person' as const, custodianAccountId: 'owner', assertCurrent: async () => {}, assertCurrentAuthority: async () => {} };
         const sampler = createMachineVitalsSampler({ readers: { read: async () => ({ state: 'unavailable', reason: 'helper_missing' }) },
             historyStore: await createMinuteHistoryStore({ directory: join(home, 'history') }) });
         const resourceSummary = createMachineResourceSummary({ sampler, readNearlyFull: () => null, onError: error => { throw error; } });

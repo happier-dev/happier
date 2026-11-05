@@ -122,7 +122,7 @@ export function useMachineWidgetMachine(
         ? getMachineDisplayName(machine, inventory ?? undefined)
         : t('machines.widgets.body.common.unknownMachine'),
       online: presence.reachability === 'unknown' ? null : presence.reachability === 'reachable',
-      recipient: machine ? machine.isShared !== false : false,
+      recipient: machine ? machine.isShared !== false && machine.access?.role !== 'manage' : false,
       daemonStateVersion: machine?.daemonStateVersion ?? null,
       lastSeenAt:
         typeof activeAt === 'number' && activeAt > 0 ? activeAt : null,

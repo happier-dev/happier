@@ -44,6 +44,51 @@ describe('Machine current access (real SQLite)', () => {
         return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
     };
 
+    it('admits Machine storage administration and skill installation for Manage, refusing Use and foreign Accounts', async () => {
+        const f = await fixture();
+        const viewer = await account();
+        const manager = await account();
+        const foreign = await account();
+        await grant(f.owner.id, f.machine.id, viewer.id, 'view');
+        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+        // Both the public Action and raw RPC reach the same current grant owner.
+        for (const rpcMethod of [RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_LIST, RPC_METHODS.DAEMON_STORAGE_SUGGESTIONS_DECLINE,
+            RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH, RPC_METHODS.DAEMON_STORAGE_WORKTREES_LIST,
+            RPC_METHODS.DAEMON_STORAGE_SCAN_START, RPC_METHODS.DAEMON_STORAGE_SCAN_GET,
+            RPC_METHODS.DAEMON_STORAGE_SCAN_CANCEL, RPC_METHODS.DAEMON_STORAGE_SCAN_SKIP,
+            RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD, RPC_METHODS.DAEMON_STORAGE_PROTECTED_REMOVE,
+            RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE, RPC_METHODS.SKILLS_MACHINE_INSTALL, RPC_METHODS.SKILLS_MACHINE_UNINSTALL]) {
+            for (const actorAccountId of [f.owner.id, manager.id]) {
+                expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id, rpcMethod }), rpcMethod)
+                    .toMatchObject({ kind: 'admitted', role: 'manage', actorAccountId, custodianAccountId: f.owner.id });
+            }
+            for (const actorAccountId of [viewer.id, foreign.id]) {
+                expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id, rpcMethod }), rpcMethod)
+                    .toEqual({ kind: 'denied', code: 'access_denied' });
+            }
+        }
+        for (const actionId of ['machines.storage.scan.start', 'machines.storage.protected.add', 'machines.storage.docker.prune',
+            'skills.machine.install', 'skills.machine.uninstall']) {
+            expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id, actionId }), actionId)
+                .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
+            expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, actionId }), actionId)
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+        }
+    });
+
+    it('does not carry a Manage grant on one Machine to another Machine', async () => {
+        const granted = await fixture();
+        const other = await fixture();
+        const manager = await account();
+        await grant(granted.owner.id, granted.machine.id, manager.id, 'admin');
+        for (const operation of [{ rpcMethod: RPC_METHODS.SKILLS_MACHINE_INSTALL }, { actionId: 'machines.storage.docker.prune' }]) {
+            expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: granted.machine.id, ...operation }))
+                .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: granted.owner.id });
+            expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: other.machine.id, ...operation }))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+        }
+    });
+
     it('distinguishes custodian-only policy from a daemon upgrade requirement', async () => {
         const f = await fixture();
         const requester = await account();

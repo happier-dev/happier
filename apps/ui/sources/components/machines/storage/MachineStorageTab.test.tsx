@@ -681,8 +681,14 @@ describe('MachineStorageTab', () => {
         expect(at('New session')).toBeLessThan(at('Live session'));
     });
 
-    it('shows a person who only uses the machine its totals, never what is inside or its settings', async () => {
+    it('lets a Manage grantee review Machine storage', async () => {
         const { screen } = await mount({ id: 'storage' }, { isShared: true });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-breakdown')).not.toBeNull()); });
+        expect(screen.findByTestId('machine-storage-recipient')).toBeNull();
+    });
+
+    it('shows a person who only uses the machine its totals, never what is inside or its settings', async () => {
+        const { screen } = await mount({ id: 'storage' }, { isShared: true, access: { role: 'use', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready' } });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-recipient')).not.toBeNull()); });
         const text = screen.getTextContent();
         expect(text).toContain('412 GB free. Happier uses 96 GB of Macintosh HD.');
@@ -692,7 +698,7 @@ describe('MachineStorageTab', () => {
     });
 
     it('gives a person who only uses the machine their own Session folders and Trash, and their own pile on those pages', async () => {
-        const { screen, setParams } = await mount({ id: 'storage' }, { isShared: true });
+        const { screen, setParams } = await mount({ id: 'storage' }, { isShared: true, access: { role: 'use', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready' } });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-storage-category-sessionFolders')).not.toBeNull()); });
         expect(screen.findByTestId('machine-storage-category-trash')).not.toBeNull();
         // Everything else stays with the people who manage the machine.

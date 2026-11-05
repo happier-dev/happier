@@ -173,7 +173,7 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(resolveMachineRpcGovernance(method)).toEqual({ rpcClassification: 'action_spec_bound', actionSpecId: actionId });
       expect(resolveMachineRpcRoutePolicy(method)).toMatchObject({ routeClass: 'server_required',
         serverRequiredReason: 'destructive_or_recovery_mutation', rpcClassification: 'action_spec_bound',
-        actionSpecId: actionId, sharedMachineAccess: 'custodian_only', commandReceiptRequired: false });
+        actionSpecId: actionId, sharedMachineAccess: 'manage', commandReceiptRequired: false });
       expect(resolveMachineRpcExternalActionEffectV1(method)).toBe(actionId);
     }
   });
