@@ -8208,6 +8208,7 @@ const nativePasswordTranslations = { 'zh-Hans': {
         hidePassword: '隐藏密码',
         createTitle: '创建你的账户',
         createAccount: '创建账户',
+        signUpWithEmail: '使用邮箱注册',
         accountProtection: '账户保护',
         protectionPlain: 'Home 可读',
         protectionPlainDetail: '你的Home可以读取你的数据。忘记密码时可通过邮件重置。',

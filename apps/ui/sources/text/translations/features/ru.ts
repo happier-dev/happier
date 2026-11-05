@@ -8245,6 +8245,7 @@ const nativePasswordTranslations = { ru: {
         hidePassword: 'Скрыть пароль',
         createTitle: 'Создайте учётную запись',
         createAccount: 'Создать учётную запись',
+        signUpWithEmail: 'Зарегистрироваться по эл. почте',
         accountProtection: 'Защита учётной записи',
         protectionPlain: 'Доступно Home',
         protectionPlainDetail: 'Ваш Home может читать ваши данные. Если забудете пароль, его можно сбросить по почте.',

@@ -8218,6 +8218,7 @@ const nativePasswordTranslations = { pt: {
         hidePassword: 'Ocultar senha',
         createTitle: 'Crie sua conta',
         createAccount: 'Criar conta',
+        signUpWithEmail: 'Registar com e-mail',
         accountProtection: 'Proteção da conta',
         protectionPlain: 'Legível pelo Home',
         protectionPlainDetail: 'Seu Home pode ler seus dados. Se esquecer a senha, você pode redefini-la por e-mail.',

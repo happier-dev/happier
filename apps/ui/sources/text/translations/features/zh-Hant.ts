@@ -8208,6 +8208,7 @@ const nativePasswordTranslations = { 'zh-Hant': {
         hidePassword: '隱藏密碼',
         createTitle: '建立你的帳戶',
         createAccount: '建立帳戶',
+        signUpWithEmail: '使用電子郵件註冊',
         accountProtection: '帳戶保護',
         protectionPlain: 'Home 可讀',
         protectionPlainDetail: '你的Home可以讀取你的資料。忘記密碼時可透過電子郵件重設。',

@@ -8216,6 +8216,7 @@ const nativePasswordTranslations = { fr: {
         hidePassword: 'Masquer le mot de passe',
         createTitle: 'Crée ton compte',
         createAccount: 'Créer le compte',
+        signUpWithEmail: "S'inscrire par e-mail",
         accountProtection: 'Protection du compte',
         protectionPlain: 'Lisible par le Home',
         protectionPlainDetail: 'Ton Home peut lire tes données. Si tu oublies ton mot de passe, tu peux le réinitialiser par e-mail.',

@@ -8236,6 +8236,7 @@ const nativePasswordTranslations = { pl: {
         hidePassword: 'Ukryj hasło',
         createTitle: 'Utwórz konto',
         createAccount: 'Utwórz konto',
+        signUpWithEmail: 'Zarejestruj się e-mailem',
         accountProtection: 'Ochrona konta',
         protectionPlain: 'Czytelne dla Home',
         protectionPlainDetail: 'Twój Home może odczytywać Twoje dane. Jeśli zapomnisz hasła, zresetujesz je e-mailem.',

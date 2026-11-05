@@ -8210,6 +8210,7 @@ const nativePasswordTranslations = { de: {
         hidePassword: 'Passwort verbergen',
         createTitle: 'Konto erstellen',
         createAccount: 'Konto erstellen',
+        signUpWithEmail: 'Mit E-Mail registrieren',
         accountProtection: 'Kontoschutz',
         protectionPlain: 'Vom Home lesbar',
         protectionPlainDetail: 'Dein Home kann deine Daten lesen. Wenn du dein Passwort vergisst, kannst du es per E-Mail zurücksetzen.',

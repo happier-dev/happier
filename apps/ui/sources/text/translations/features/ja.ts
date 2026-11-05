@@ -8213,6 +8213,7 @@ const nativePasswordTranslations = { ja: {
         hidePassword: 'パスワードを非表示',
         createTitle: 'アカウントを作成',
         createAccount: 'アカウントを作成',
+        signUpWithEmail: 'メールで登録',
         accountProtection: 'アカウントの保護',
         protectionPlain: 'Homeが読み取り可能',
         protectionPlainDetail: 'あなたのHomeがデータを読み取れます。パスワードを忘れた場合はメールで再設定できます。',

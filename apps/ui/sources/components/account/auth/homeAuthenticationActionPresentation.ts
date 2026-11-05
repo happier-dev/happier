@@ -43,7 +43,7 @@ export function describeHomeAuthenticationAction(input: Readonly<{
         return {
             slug: `email-password-${execution.action}`,
             title: execution.action === 'provision'
-                ? t('settingsAccount.nativePassword.createAccount')
+                ? t('settingsAccount.nativePassword.signUpWithEmail')
                 : execution.action === 'connect'
                     ? t('settingsAccount.nativePassword.connectTitle')
                     : t('settingsAccount.nativePassword.title'),

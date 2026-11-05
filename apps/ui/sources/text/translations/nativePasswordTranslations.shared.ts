@@ -38,6 +38,7 @@ export const nativePasswordTranslationsEnglish = { en: {
         hidePassword: 'Hide password',
         createTitle: 'Create your account',
         createAccount: 'Create account',
+        signUpWithEmail: 'Sign up with email',
         accountProtection: 'Account protection',
         protectionPlain: 'Home-readable',
         protectionPlainDetail: 'Your Home can read your data. If you forget your password, you can reset it by email.',
