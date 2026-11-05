@@ -33,7 +33,13 @@ describe('workflowProblemPresentation', () => {
         const failure = WorkflowActionFailureV1Schema.parse(actionStartTargetUnavailableV1(undefined,
             'agent_start_context', 'caller_agent_unavailable'));
         const typed = new WorkflowActionError({ rawCode: failure.errorCode, message: failure.error, failure });
-        expect(resolveWorkflowProblemPresentation(typed)).toEqual(resolveWorkflowProblemPresentation(actionError('target_unavailable')));
+        expect(resolveWorkflowProblemPresentation(typed)).toMatchObject({
+            ...resolveWorkflowProblemPresentation(actionError('target_unavailable')),
+            technicalDetails: [
+                { key: 'code', label: expect.any(String), value: 'target_unavailable' },
+                { key: 'reason', label: expect.any(String), value: 'caller_agent_unavailable' },
+            ],
+        });
     });
     it('explains Account-wide role preparation and offers retry from the real strict failure projection', () => {
         const failure = WorkflowActionFailureV1Schema.parse(normalizeWorkflowActionThrownError(

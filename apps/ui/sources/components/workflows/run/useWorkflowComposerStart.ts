@@ -170,7 +170,7 @@ export function useWorkflowComposerStart(params: Readonly<{
         retainedRequest,
         pending: runNow.isPending(pendingRunIdRef.current ?? ''),
         reconciling: runNow.stateFor(pendingRunIdRef.current ?? '') === 'reconciling',
-        startProblem: runNow.refusal?.message ?? null,
+        startProblem: runNow.refusal,
     }, [admit, cancel, changeRawTextValues, changeValues, pending, retainedRequest, runNow]);
     React.useEffect(() => pending?.lifetime.onRetire(cancel).dispose, [cancel, pending?.lifetime]);
     useWorkflowRunComposerModal({ open: pending !== null, props: modalProps, accountLifetime: pending?.lifetime });

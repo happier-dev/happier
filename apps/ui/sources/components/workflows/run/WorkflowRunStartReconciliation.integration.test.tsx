@@ -20,7 +20,11 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 
+import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
+
 installDisconnectedServerSocketBoundary();
+const { useNewSessionWorkflowStart } = await import('@/components/sessions/new/hooks/useNewSessionWorkflowStart');
+const { createNewSessionPromptStore } = await import('@/components/sessions/new/hooks/screenModel/newSessionPromptStore');
 const { ModalProvider, useModal } = await import('@/modal/ModalProvider');
 const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
 const { useWorkflowInlineRunControls } = await import('./useWorkflowInlineRunControls');
@@ -33,6 +37,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // Native DOM primitives stay at the SDK boundary; Modal custody stays real.
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 // Adapt Metro's synchronous loader to Vitest while retaining the real executor.
@@ -53,7 +58,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed', holdFirstMissingRead = false, anotherRound = false, inlineRound = false) {
+async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' | 'refused', holdFirstMissingRead = false, anotherRound = false, inlineRound = false, newSession = false) {
     vi.stubGlobal('React', React);
     installShippedNativeFrameScheduler();
     await loadSyncSingletonForTests();
@@ -162,6 +167,8 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed',
         const actual = WorkflowRunStartRequestV1Schema.parse(request);
         dispatchedInput = actual;
         if (inlineRound) admittedRunId = actual.runId;
+        if (currentOutcome === 'refused') return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable',
+            details: { reason: 'account_role_overrides_unavailable' } };
         if (currentOutcome === 'not-sent') return { ok: false, errorCode: 'target_unavailable', error: 'offline before dispatch' };
         if (currentOutcome === 'delayed') {
             if (dispatches === 1) {
@@ -192,12 +199,31 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed',
         return <WorkflowRunComposer inputs={[]} definition={definition} values={{}} onChangeValues={() => {}} onCancel={() => {}}
             pending={state === 'submitting' || state === 'reconciling'}
             reconciling={state === 'reconciling'}
-            startProblem={start.refusal?.message ?? null}
+            startProblem={start.refusal}
             onRun={() => { pending = inlineRound ? inline.anotherRound?.()
                 : controller.runNow({ ...input, project: context.externalActionTarget.project, refusal: 'inline' }).then(result => { if (result) opened(result); }); }} />;
     };
+    const panelProps = {
+        popoverBoundaryRef: React.createRef() as NewSessionSimplePanelProps['popoverBoundaryRef'], headerHeight: 0, safeAreaTop: 0, safeAreaBottom: 0,
+        newSessionTopPadding: 0, newSessionSidePadding: 0, newSessionBottomPadding: 0, containerStyle: {},
+        promptStore: createNewSessionPromptStore('Keep this brief'), setSessionPrompt: () => {},
+        handleCreateSession: () => {}, canCreate: true, isCreating: false,
+        emptyAutocompleteKinds: [], emptyAutocompleteSuggestions: async () => [],
+        agentType: 'codex', handleAgentClick: undefined, permissionMode: 'default',
+        handlePermissionModeChange: undefined, modelMode: 'default', setModelMode: undefined,
+        modelOptions: [], connectionStatus: undefined, machineName: undefined,
+        selectedMachineId: 'machine-a', selectedPath: '/repo', targetServerId: account.serverId,
+        useProfiles: false, selectedProfileId: null, showResumePicker: false, resumeSessionId: null,
+        isResumeSupportChecking: false,
+    } satisfies NewSessionSimplePanelProps;
+    let workflowChip: ReturnType<typeof useNewSessionWorkflowStart>['chip'] | undefined;
+    const NewSessionHost = () => {
+        const workflow = useNewSessionWorkflowStart({ panelProps, prompt: 'Keep this brief' });
+        workflowChip = workflow.chip;
+        return workflow.composer;
+    };
     let mount = 0;
-    const renderHost = () => <ModalProvider><Host key={mount} /></ModalProvider>;
+    const renderHost = () => <ModalProvider>{newSession ? <NewSessionHost key={mount} /> : <Host key={mount} />}</ModalProvider>;
     const screen = await renderScreen(renderHost());
     disposals.push(screen.unmount);
     return { screen, opened, owner, input, context, account, readState: () => state, readModals: () => modals,
@@ -206,10 +232,44 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed',
         remount: async () => { mount++; await screen.update(renderHost()); },
         recoverTransport: () => { currentOutcome = 'admitted'; },
         finishOriginal: async () => { releaseOriginal.resolve(); return original; },
-        releaseFirstMissingRead: () => firstMissingRead.resolve() };
+        releaseFirstMissingRead: () => firstMissingRead.resolve(),
+        selectNewSessionWorkflow: async () => {
+            const content = workflowChip?.collapsedContentPopover?.renderContent;
+            if (typeof content !== 'function') throw new Error('Workflow picker content is missing');
+            const node = content({ requestClose: () => {}, maxHeight: 420 });
+            if (!React.isValidElement(node)) throw new Error('Workflow picker is missing');
+            const picker = await renderScreen(node);
+            disposals.push(picker.unmount);
+            await picker.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
+        } };
 }
 
 describe('Run start response-loss through the real composer, authenticated HTTP and Account owner', () => {
+    it('retains typed Start diagnostics through the New Session workflow entry', async () => {
+        const h = await harness('refused', false, false, false, true);
+        await h.selectNewSessionWorkflow();
+        expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await vi.waitFor(() => expect(h.counts().dispatches).toBe(1));
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-start-problem-details.header')).not.toBeNull());
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        expect(h.screen.getTextContent()).toContain('content_unavailable');
+        expect(h.screen.getTextContent()).toContain('account_role_overrides_unavailable');
+        expect(h.counts()).toMatchObject({ admissions: 0, reads: 0, dispatches: 1 });
+    });
+
+
+    it('keeps the typed refusal from authenticated Start through the controller to Technical details', async () => {
+        const h = await harness('refused');
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await h.pending();
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        expect(h.screen.getTextContent()).toContain('content_unavailable');
+        expect(h.screen.getTextContent()).toContain('account_role_overrides_unavailable');
+        expect(h.counts()).toMatchObject({ admissions: 0, reads: 0, dispatches: 1 });
+        expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+    });
+
     it('opens inline continuation detail only on press and reconciles one ordinary new Run', async () => {
         const h = await harness('admitted', false, true, true);
         expect(h.counts()).toMatchObject({ reads: 0, dispatches: 0 });

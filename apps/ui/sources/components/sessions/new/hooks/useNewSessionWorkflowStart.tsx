@@ -123,7 +123,7 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
             || !targetIsCurrent || workflowDecision?.state !== 'enabled'}
         pending={runNow.isPending(pendingRunId.current ?? '')}
         reconciling={runNow.stateFor(pendingRunId.current ?? '') === 'reconciling'}
-        startProblem={runNow.refusal?.message ?? null}
+        startProblem={runNow.refusal}
         // The page's machine, folder and Agent controls describe the next start, so the review of a
         // request already sent shows its own Where instead of them.
         authoringControls={retained ? undefined : { machineName: props.machineName, machinePopover: props.machinePopover,

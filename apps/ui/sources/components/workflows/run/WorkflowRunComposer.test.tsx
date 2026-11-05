@@ -393,9 +393,25 @@ describe('workflow composer admission', () => {
 
     it('keeps a refused Start in the composer with its reason and Start available to retry', async () => {
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}} onRun={() => {}}
-            onCancel={() => {}} startProblem="workflows.problem.targetUnavailable" />);
+            onCancel={() => {}} startProblem={{ message: 'workflows.problem.targetUnavailable' }} />);
         expect(screen.findByTestId('workflow-run-inputs-reason')?.props.accessibilityRole).toBe('alert');
         expect(screen.findByTestId('workflow-run-inputs-reason-text')?.props.children).toBe('workflows.problem.targetUnavailable');
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+    });
+
+    it('discloses the typed Start code and owner reason without exposing the failure payload', async () => {
+        const { resolveWorkflowProblemPresentation } = await import('../presentation/workflowProblemPresentation');
+        const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
+        const failure = { ok: false, errorCode: 'content_unavailable', error: 'private payload must stay hidden',
+            details: { reason: 'account_role_overrides_unavailable' } } as const;
+        const problem = resolveWorkflowProblemPresentation(new WorkflowActionError({ rawCode: failure.errorCode,
+            message: failure.error, failure }));
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}}
+            onRun={() => {}} onCancel={() => {}} startProblem={problem} />);
+        await screen.pressByTestIdAsync('workflow-run-inputs-start-problem-details.header');
+        expect(screen.getTextContent()).toContain('content_unavailable');
+        expect(screen.getTextContent()).toContain('account_role_overrides_unavailable');
+        expect(screen.getTextContent()).not.toContain(failure.error);
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
     });
 
@@ -415,7 +431,7 @@ describe('workflow composer admission', () => {
         } };
         const screen = await renderScreen(<WorkflowRunComposer inputs={inputs} values={{ brief: 'Edited brief', version: 9 }}
             rawTextValues={{ brief: 'Typed after the lost reply' }} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}}
-            startProblem="workflows.problem.unresolvedOutcome" retainedRequest={retainedRequest} />);
+            startProblem={{ message: 'workflows.problem.unresolvedOutcome' }} retainedRequest={retainedRequest} />);
         const input = screen.findByTestId('new-session-composer-input');
         expect(input?.props.value).toBe('Original brief');
         expect(input?.props.editable ?? !input?.props.disabled).toBe(false);

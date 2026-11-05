@@ -138,7 +138,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             testID: `${prefix}:run-where`, testIDPrefix: `${prefix}:run`, controlId: 'path' })],
         onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
         pending: runNow.isPending(runNow.pendingRunId ?? ''),
-        startProblem: runNow.refusal?.message ?? null,
+        startProblem: runNow.refusal,
         reconciling: runNow.stateFor(runNow.pendingRunId ?? '') === 'reconciling',
         startDisabled: target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0,
     } });

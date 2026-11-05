@@ -3,6 +3,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import * as React from 'react';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type {
     WorkflowInvocationRecoveryV1,
@@ -72,6 +73,8 @@ function WorkflowRunPromptSource(props: Readonly<{ runId: string; children: Reac
 export type WorkflowInvocationDetailProps = Readonly<{
     /** The authorized opened progress for the selected row, when it has been read. */
     progress: WorkflowProgressEnvelopeV1 | null;
+    /** Canonical Run final output, projected only onto its producing invocation. */
+    finalResult?: Readonly<{ value: JsonValue }> | null;
     /** Status is the exact index fact, including stopped attempts without execution content. */
     lifecycle?: WorkflowInvocationLifecycleV1 | null;
     recovery: WorkflowInvocationRecoveryPresentation;
@@ -199,6 +202,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const { recovery, testIDPrefix } = props;
     const execution = props.progress?.execution;
     const answeredBy = useAnsweredByLabel(props.progress?.review?.resultSource);
+    const visibleResult = props.finalResult != null ? props.finalResult.value : props.progress?.result;
     const workspace = recovery.workspace;
     const prepared = recovery.preparedRecovery;
     const continuation = useReviewedContinuation(prepared, {
@@ -810,15 +814,16 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                     </ItemGroup>
                 </ListPresentationProvider></View>
             )}
-            {props.progress?.result !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed')) ? (
+            {visibleResult !== undefined || (props.waitPrompt != null && (stopped || props.lifecycle === 'completed')) ? (
                 // The answer reads as the card it was typed in: the Wait's question heads it and the value
                 // sits in the review card's own rows (DESIGN-16 D4, D5). Any other step's own result heads
                 // "Result"; "Final output" is the Run's, and only one step carries it.
                 <View testID={`${testIDPrefix}-invocation-result`}><ListPresentationProvider value="page">
                     <ItemGroup title={props.waitPrompt ?? t('workflows.input.result')}>
-                        {props.progress?.result !== undefined ? (
+                        {visibleResult !== undefined ? (
                             <>
-                                <WorkflowReviewValue value={props.progress.result} contract={resultContract}
+                                <WorkflowReviewValue value={visibleResult}
+                                    contract={props.finalResult != null ? undefined : resultContract}
                                     testIDPrefix={`${testIDPrefix}-invocation-result`} />
                                 {answeredBy === null ? null : (
                                     <SectionContentRow testID={`${testIDPrefix}-invocation-answered-by`}>

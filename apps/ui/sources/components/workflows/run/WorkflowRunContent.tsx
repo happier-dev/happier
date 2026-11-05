@@ -228,6 +228,7 @@ export type WorkflowRunContentProps = Readonly<{
     /** Provider usage, or `null` when the provider supplied none. */
     usageLabel?: string | null;
     resultLabel?: string | null;
+    result?: JsonValue;
     /** Exact final-output producer from the encrypted terminal result owner. */
     finalOutputInvocationId?: string | null;
     /** Earliest failed row from the lifecycle-indexed query owner. */
@@ -1411,6 +1412,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             onChangeReplacementText: (next) => setSelectedRecoveryText('replacement', next),
             onSelectInvocation: selectInvocation,
             progress: props.selectedInvocationProgress ?? null,
+            finalResult: props.selectedInvocationId === props.finalOutputInvocationId && props.result !== undefined
+                ? { value: props.result } : null,
             recovery,
             lifecycle: selectedInvocation?.lifecycle ?? null,
             waitPrompt: selectedDetail.waitPrompt,
@@ -1487,6 +1490,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.renderReviewCard,
         props.selectedInvocationId,
         props.selectedInvocationProgress,
+        props.finalOutputInvocationId,
+        props.result,
         props.uncertaintyAcknowledged,
         recovery,
         selectedDetail.waitPrompt,

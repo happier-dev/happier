@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierInputField } from '@happier-dev/plugin-ui/presentation';
@@ -99,7 +101,7 @@ export type WorkflowRunComposerProps = Readonly<{
      * Why the last Start was refused, from the canonical Workflow problem owner.
      * It stays in the composer beside Start, which remains available to retry.
      */
-    startProblem?: string | null;
+    startProblem?: Pick<WorkflowProblemPresentation, 'message' | 'technicalDetails'> | null;
     startDisabled?: boolean;
     /**
      * The request this surface already sent while its admission is unsettled
@@ -234,7 +236,7 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
     const reason = retained !== null ? retainedLine : blocked === null ? (!acceptedRepeat && roleDraft.status !== 'ready'
         ? roleDraft.status === 'failed' ? t('workflows.start.rolesPrefillFailed') : t('common.loading')
         : definitionIssue !== null ? describeWorkflowCommandBlockedReason({ reason: 'definition_invalid', blockingIssue: definitionIssue })
-        : props.startProblem ?? null) : blocked.errorCode === 'missing_required_input'
+        : props.startProblem?.message ?? null) : blocked.errorCode === 'missing_required_input'
         ? t('workflows.start.addToStart', { name: inputTitle(blocked.definition) }) : t('workflows.issue.invalid_input');
     // 07 §3: an untouched missing value is readiness, not an error. It never interrupts as an alert.
     const readinessOnly = retained !== null || blocked?.errorCode === 'missing_required_input' || (roleDraft.status === 'loading' && blocked === null);
@@ -408,6 +410,10 @@ export function WorkflowRunComposer(props: WorkflowRunComposerProps): React.Reac
                         <Text testID={`${prefix}-reason-text`} style={retained !== null || (readinessOnly && blocked !== null) ? styles.readinessText
                             : readinessOnly ? styles.secondary : styles.required}>{reason}</Text>
                     </View>}
+                    {props.startProblem?.technicalDetails ? (
+                        <TechnicalDetailsDisclosure title={t('workflows.run.technicalDetails')}
+                            testID={`${prefix}-start-problem-details`} lines={props.startProblem.technicalDetails} />
+                    ) : null}
                 </View>
                 {/* Start at the action size, with its key hint quietly beneath it (convo-N7). */}
                 <View style={styles.start}>

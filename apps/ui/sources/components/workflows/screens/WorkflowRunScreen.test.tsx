@@ -1470,6 +1470,7 @@ describe('WorkflowRunScreen', () => {
         });
 
         expect(readContentProps()?.resultLabel).toBe('null');
+        expect(readContentProps()?.result).toBeNull();
         expect(readContentProps()?.finalOutputInvocationId).toBe('final-null');
     });
 

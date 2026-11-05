@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { View } from 'react-native';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useDestinationInstanceKey, useDestinationParams, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -1874,10 +1875,12 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         ? <SurfaceStateCard testID="workflow-run-again-pending" size="line" kind="loading"
             title={t(pageStart.state === 'reconciling' ? 'workflows.start.stillStarting' : 'workflows.start.starting')}
             accessibilitySemantics="status" />
-        : pageStart.refusal ? <SurfaceStateCard testID="workflow-run-again-refused" size="line"
+        : pageStart.refusal ? <><SurfaceStateCard testID="workflow-run-again-refused" size="line"
             kind={pageStart.refusal.accessibilitySemantics === 'status' ? 'unavailable' : 'error'}
             title={pageStart.refusal.title} reason={pageStart.refusal.message}
-            accessibilitySemantics={pageStart.refusal.accessibilitySemantics} /> : null;
+            accessibilitySemantics={pageStart.refusal.accessibilitySemantics} />
+            {pageStart.refusal.technicalDetails ? <TechnicalDetailsDisclosure title={t('workflows.run.technicalDetails')}
+                lines={pageStart.refusal.technicalDetails} /> : null}</> : null;
     // While Run again is unsettled its review is the request it re-sends, including any Agent swap.
     const runAgainRetained = runNow.retainedRequest;
     const retainedReplay = runAgainRetained?.input.source.kind === 'inline' ? runAgainRetained.input.source.replay : undefined;
@@ -1926,7 +1929,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             onCancel: () => setRunAgainInputOpen(false),
             pending: runAgainPending,
             reconciling: runAgainState === 'reconciling',
-            startProblem: runAgainRefusal?.message,
+            startProblem: runAgainRefusal,
         }),
         [activeAccountScope?.serverId, admitRunAgain, runAgainOverrideShown, runAgainPending, runAgainRawTextValues, runAgainRefusal, runAgainRetained, runAgainState, runAgainTarget, runAgainValues, runMachine, sourceRef, visibleAcceptedContext, visibleDefinition],
     );
@@ -2062,6 +2065,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 onCancel={canEdit ? () => { void submitControl('cancel'); } : undefined}
                 usageLabel={visibleUsageLabel}
                 resultLabel={visibleResultLabel}
+                result={visibleResult}
                 finalOutputInvocationId={visibleFinalOutputInvocationId}
                 firstFailedInvocationId={visibleFirstFailedInvocation?.id ?? null}
                 firstFailedInvocationResolution={firstFailedInvocationResolution}

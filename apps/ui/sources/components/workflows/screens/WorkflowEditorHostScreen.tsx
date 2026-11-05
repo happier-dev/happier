@@ -1051,7 +1051,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         onCancel: dismissInputSheet,
         pending: planPending || runNow.isPending(pendingRunId ?? ''),
         reconciling: runNow.stateFor(pendingRunId ?? '') === 'reconciling',
-        startProblem: runNow.refusal?.message ?? null,
+        startProblem: runNow.refusal,
     }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, draft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource]);
 
     const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps,

@@ -9,6 +9,7 @@ import type { WorkflowDefinitionContentUnavailableReasonV1, WorkflowDefinitionMe
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
+import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 
 /**
  * The one place a Workflow failure becomes something a person can read.
@@ -35,6 +36,7 @@ export type WorkflowProblemRepair = 'retry' | 'refresh' | 'settings' | 'none';
 export type WorkflowProblemPresentation = Readonly<{
     /** The closed Protocol code, or `null` for an unrecognized transport failure. */
     code: WorkflowOperationErrorCodeV1 | null;
+    technicalDetails?: readonly TechnicalDetailsLine[];
     title: string;
     /** Localized copy. Never a raw code and never the server's own sentence. */
     message: string;
@@ -217,6 +219,21 @@ const GENERIC_SHAPE: WorkflowProblemShape = {
  * fabricated-code defect rather than the discarded-code one.
  */
 export function resolveWorkflowProblemPresentation(
+    error: unknown,
+    scope?: 'run',
+): WorkflowProblemPresentation {
+    const problem = resolveWorkflowProblemCopy(error, scope);
+    if (problem.code === null) return problem;
+    const failure = error instanceof WorkflowActionError ? error.failure : null;
+    const details = failure && 'details' in failure ? failure.details : null;
+    return { ...problem, technicalDetails: [
+        { key: 'code', label: t('workflows.run.technical.failureCode'), value: problem.code },
+        ...(details && 'reason' in details && typeof details.reason === 'string'
+            ? [{ key: 'reason', label: t('workflows.run.technical.failureCause'), value: details.reason }] : []),
+    ] };
+}
+
+function resolveWorkflowProblemCopy(
     error: unknown,
     /**
      * `run`: a control on a Run (Stop, Pause, a hold's answer). A Run has no local work to keep, so a

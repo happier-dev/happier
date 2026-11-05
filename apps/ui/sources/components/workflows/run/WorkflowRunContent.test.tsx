@@ -3842,6 +3842,29 @@ describe('WorkflowRunContent', () => {
     expect(onSelectInvocation).toHaveBeenCalledWith('inv-implement');
   });
 
+  it.each([{ items: ['alpha', 'beta', 'gamma'] }, null])('opens the canonical final value when its loop producer has only a container result: %j', async (value) => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'loop-result', lifecycle: 'completed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({
+      kind: 'happier.workflow-progress.v1', blockKind: 'loop', attempt: '0',
+      logicalInvocationRecordId: invocation.id, invocationPath: { blockId: 'loop-1', scope: [] },
+      containerResult: { kind: 'container', containerRecordId: invocation.id },
+    });
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'succeeded' }),
+      definition: createWorkflowDefinitionFixture({ finalOutput: {
+        kind: 'result', producer: { blockId: 'loop-1', scope: { kind: 'current' } }, path: [],
+      } }),
+      invocations: [invocation], finalOutputInvocationId: invocation.id,
+      result: value, resultLabel: JSON.stringify(value),
+      selectedInvocationId: invocation.id, selectedInvocationProgress: progress,
+    });
+    expect(screen.findByTestId('workflow-run-invocation-result')).not.toBeNull();
+    expect(screen.getTextContent()).toContain(value === null ? 'null' : 'alpha');
+    // The final value belongs only to its authenticated producer, never a neighboring step.
+    await screen.update(<WorkflowRunContent {...screen.contentProps} finalOutputInvocationId="other" />);
+    expect(screen.findByTestId('workflow-run-invocation-result')).toBeNull();
+  });
+
   it('carries proven skipped step counts into the completed Run outcome', async () => {
     const definition = createWorkflowDefinitionFixture({ blocks: Array.from({ length: 4 }, (_, index) => ({
       kind: 'wait', id: `wait-${index}`, document: { text: `Review ${index + 1}`, references: [], attachments: [] },

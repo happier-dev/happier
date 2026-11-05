@@ -1108,7 +1108,7 @@ describe('editor workflow composer', () => {
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onRun(inputs); });
         expect(startedId).not.toBeNull();
         expect(screen.root.findByType(WorkflowRunComposer).props).toMatchObject({ pending: false, reconciling: false,
-            startProblem: 'workflows.problem.unresolvedOutcome' });
+            startProblem: { message: 'workflows.problem.unresolvedOutcome' } });
         const original = startRequests()[0];
         await act(async () => { screen.root.findByType(WorkflowRunComposer).props.onCancel(); });
         expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(0);
