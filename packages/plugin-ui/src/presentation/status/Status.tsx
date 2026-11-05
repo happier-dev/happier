@@ -8,6 +8,7 @@ import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 import { useHappierTypeRoleStyle } from '../text/typeRole.js';
 import { HappierStatusDot } from './StatusDot.js';
+import { HAPPIER_SMALL_BUTTON_HEIGHT } from '../interaction/buttonChrome.js';
 
 export type HappierStatusProps = Readonly<{
   /** Visible status name. A core adapter may supply its scaled text primitive. */
@@ -80,6 +81,16 @@ export function HappierStatus(props: HappierStatusProps) {
     undefined,
     inline ? 1 : undefined,
   );
+  // With an action, the dot and the action both ride the label's first line, never the middle of a two-line
+  // notice. Beside the words, that line is centred on the action's small control (the action is a small Button),
+  // so the sentence and its press share one baseline and the control never hangs below the text.
+  const labelLineHeightPx = typeof bodyStyle.lineHeight === 'number' ? bodyStyle.lineHeight : undefined;
+  const firstLineSlot = labelLineHeightPx === undefined || props.action === undefined || props.action === null
+    ? { alignSelf: 'center' as const }
+    : { height: labelLineHeightPx, justifyContent: 'center' as const };
+  const besideActionInsetPx = labelLineHeightPx === undefined
+    ? 0
+    : Math.max(0, (HAPPIER_SMALL_BUTTON_HEIGHT - labelLineHeightPx) / 2);
   const value = props.value === undefined
     ? null
     : renderStatusText(
@@ -104,10 +115,11 @@ export function HappierStatus(props: HappierStatusProps) {
         ? { minWidth: 0, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }
         : props.action === undefined || props.action === null
         ? { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }
-        : { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }}
+        : { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small,
+          paddingTop: besideActionInsetPx }}
     >
       {props.leading}
-      {props.indicator === false ? null : <HappierStatusDot
+      {props.indicator === false ? null : <View style={firstLineSlot}><HappierStatusDot
         color={toneColor}
         isPulsing={props.isPulsing}
         animationEnabled={props.animationEnabled}
@@ -115,7 +127,7 @@ export function HappierStatus(props: HappierStatusProps) {
           size: 8,
           style: { borderWidth: 1, borderColor: props.theme.colors.text },
         } : {})}
-      />}
+      /></View>}
       <View style={inline
         ? { flexShrink: 1, minWidth: 0 }
         : { flex: 1, minWidth: 0, gap: props.theme.spacing.xsmall }}>
@@ -126,8 +138,10 @@ export function HappierStatus(props: HappierStatusProps) {
   );
   if (props.action === undefined || props.action === null) return region;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.small }}>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: props.theme.spacing.small }}>
       {region}
+      {/* Beside the words, the action rides the sentence's first line ("acme/ledger could not be read · Manage
+          sources"), never the middle of a two-line notice, where it reads as a line of its own. */}
       {props.action}
     </View>
   );
