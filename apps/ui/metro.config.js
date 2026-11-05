@@ -132,17 +132,17 @@ config.cacheVersion = JSON.stringify([
   config.projectRoot,
 ]);
 
-// Web development's large presentation entries overlap almost entirely with
-// index. Lazy bundling retains another transitive graph (including raw maps)
-// for each entry. Include dynamic imports in the initial web graph instead;
+// Development's large presentation entries overlap almost entirely with
+// index. Lazy bundling retains another transitive graph (including code and maps)
+// for each entry. Include dynamic imports in the initial graph instead;
 // inlineRequires still defers their evaluation. HTTP, source maps and HMR all
-// consume this canonical rewrite hook. Native and production keep Expo's mode.
+// consume this canonical rewrite hook. Production keeps Expo's mode.
 const rewriteExpoRequestUrl = config.server.rewriteRequestUrl;
 config.server.rewriteRequestUrl = (requestUrl) => {
   const rewritten = rewriteExpoRequestUrl(requestUrl);
   const url = new URL(rewritten, 'http://localhost');
   const isDev = !url.searchParams.has('dev') || ['true', '1'].includes(url.searchParams.get('dev'));
-  if (url.searchParams.get('platform') !== 'web' || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
+  if (!['web', 'ios', 'android'].includes(url.searchParams.get('platform')) || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
     return rewritten;
   }
   url.searchParams.set('lazy', 'false');

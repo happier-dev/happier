@@ -1157,6 +1157,12 @@ Start the canonical source UI preparation and Metro in one retained terminal:
   --host lan --port "$METRO_PORT" --scheme happier-dev
 ```
 
+Development bundles on web, iOS and Android include dynamic imports in the initial
+Metro graph, so opening optional surfaces does not retain overlapping lazy graphs.
+Those imports still evaluate on demand; production keeps Expo's lazy bundling.
+For stable native profiling, disable Fast Refresh in the React Native Dev Menu.
+That pauses update application; explicit reloads remain separate.
+
 Install the matching builds without removing device data, then open the explicit
 development-client URL. `IOS_APP`, `IOS_BUNDLE_ID`, `ANDROID_APK` and
 `ANDROID_PACKAGE` identify those builds; `IOS_UDID` and `ANDROID_SERIAL` identify
