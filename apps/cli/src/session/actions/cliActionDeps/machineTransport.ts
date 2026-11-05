@@ -274,7 +274,11 @@ export function createCliMachineActionTransport(
           ...(input.signal ? { signal: input.signal } : {}),
           ...(hasLocalActionContext ? { localActionContext } : {}),
           ...(rpcContext ? { rpcContext } : {}),
-          ...(admittedLocalAction ? { admissionResult: { ok: true as const } } : {}),
+          // SCM has no native requester identity owner. Keep its exact local
+          // custody, but let the receiving authorizer select or refuse that
+          // identity instead of treating Action admission as execution identity.
+          ...(admittedLocalAction && !input.method.startsWith('scm.')
+            ? { admissionResult: { ok: true as const } } : {}),
         } : undefined,
       ));
     }
