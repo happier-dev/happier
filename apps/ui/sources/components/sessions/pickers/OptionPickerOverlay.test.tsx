@@ -588,7 +588,24 @@ describe('OptionPickerOverlay', () => {
             )).toBeTruthy();
         });
 
-        it('leaves rows flush — no card — when the caller has not opted in', async () => {
+        it('recomposes to one column of flush rows on a phone, even where the pane would fit two cards', async () => {
+      // A large phone's sheet measures ~416pt, which clears two 200pt cards; their descriptions
+      // then truncate to the words that tell models apart. Phones recompose to one column.
+      mockEnv.windowWidth = 440;
+      const screen = await renderPicker(true);
+      // A single-column list need not measure itself; when it does, give it the phone sheet's width.
+      const onLayout = (screen.findByTestId('model-picker-overlay-selection-list') as any)?.props?.onLayout;
+      if (typeof onLayout === 'function') await measureSelectionList(screen, 416);
+
+      expect(countColumnRows(screen)).toBe(0);
+      expect(
+        screen.findAllByTestId(
+          'model-picker-overlay-selection-list:options:option-card-accessory:default',
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('leaves rows flush — no card — when the caller has not opted in', async () => {
             mockEnv.windowWidth = 1280;
             const screen = await renderPicker(false);
 

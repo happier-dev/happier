@@ -1,11 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Switch } from '@/components/ui/forms/Switch';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import {
     SELECTION_LIST_CARD_COLUMN_GAP_PX,
@@ -13,7 +11,6 @@ import {
     type SelectionListColumnsLayout,
     type SelectionListHeightBehavior,
     type SelectionListOption,
-    type SelectionListSectionDescriptor,
 } from '@/components/ui/selectionList';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -22,14 +19,13 @@ import type {
     SessionConfigOptionControl,
     SessionConfigOptionValueId,
 } from '@/sync/domains/sessionControl/configOptionsControl';
-import {
-    isBooleanConfigOptionType,
-    resolveBooleanConfigOptionNextValue,
-    resolveBooleanConfigOptionValue,
-} from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useOptionPickerSections } from './optionPickerSections';
+import { OptionPickerSelectedControls } from './OptionPickerSelectedControls';
+import { OptionPickerSelectedControlsContext } from './optionPickerSelectedControlsState';
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
@@ -38,11 +34,7 @@ type WebHoverablePressableState = Readonly<{
 
 const CUSTOM_EDITOR_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.modal + 1;
 
-/**
- * No config option value normalizes to the empty string, so this highlights nothing — used when
- * an override forces a value this option has no segment for.
- */
-const NO_SEGMENT_HIGHLIGHTED = '';
+const SELECTED_OPTION_CONTROLS = <OptionPickerSelectedControls />;
 
 /**
  * Glyph square for the favourite star, in list rows and in a card's corner
@@ -102,8 +94,12 @@ export type OptionPickerOption<TValue = string> = Readonly<{
     /** Search aliases that need not be displayed, such as a model's exact native id. */
     searchText?: string;
     icon?: React.ReactNode;
+    /** Informational content beside the title, through SelectionList's measured title slot. */
+    titleAccessory?: React.ReactNode;
     trailingStatusIcon?: React.ReactNode;
     description?: string;
+    /** Item's existing text allowance; 0 shows the complete description. */
+    descriptionLines?: number;
     /**
      * A richer rendering of `description` (a purpose line over an engine line with its mark).
      * `description` stays the searchable plain text.
@@ -211,100 +207,6 @@ function defaultValueKey<TValue>(value: TValue): string {
     return value;
 }
 
-function SelectedOptionControls(props: Readonly<{
-    controls: ReadonlyArray<SessionConfigOptionControl>;
-    onSelect?: (configId: string, valueId: SessionConfigOptionValueId) => void;
-}>) {
-    if (props.controls.length === 0) return null;
-    return (
-        <View style={styles.inlineSelectedControls}>
-            {props.controls.map((control) => {
-                const option = control.option;
-                const controlAccessibilityLabel = t('modelPickerOverlay.optionControlA11y', {
-                    name: option.name,
-                });
-                const overriddenBy = control.disabled === true ? control.disabledByOptionName : undefined;
-                // The override note REPLACES the description: it is the operative fact about the
-                // control right now, and stacking both in a 9pt block just buries it.
-                const secondaryText = overriddenBy
-                    ? t('agentInput.acp.optionOverriddenBy', { name: overriddenBy })
-                    : option.description;
-                const secondaryTestID = overriddenBy
-                    ? `model-picker-overlay-selected-option-control-overridden:${option.id}`
-                    : undefined;
-                const secondary = secondaryText ? (
-                    <Text testID={secondaryTestID} style={styles.selectedControlDescription}>{secondaryText}</Text>
-                ) : null;
-
-                if (isBooleanConfigOptionType(option.type)) {
-                    const boolValue = resolveBooleanConfigOptionValue(
-                        option,
-                        String(control.effectiveValue) as SessionConfigOptionValueId,
-                    );
-                    return (
-                        <View
-                            key={option.id}
-                            testID={`model-picker-overlay-selected-option-control:${option.id}`}
-                            style={styles.selectedControlRow}
-                        >
-                            <View style={styles.selectedControlTextBlock}>
-                                <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                                {secondary}
-                            </View>
-                            <Switch
-                                testID={`model-picker-overlay-selected-option-control-switch:${option.id}`}
-                                accessibilityLabel={controlAccessibilityLabel}
-                                value={boolValue}
-                                disabled={control.disabled === true}
-                                onValueChange={(next) => {
-                                    if (control.disabled === true) return;
-                                    props.onSelect?.(
-                                        option.id,
-                                        resolveBooleanConfigOptionNextValue(option, next),
-                                    );
-                                }}
-                                compact
-                            />
-                        </View>
-                    );
-                }
-
-                // While overridden, show what the agent is ACTUALLY running — not the stored
-                // value, which is the lie. When the forced value is not one of this option's
-                // choices the control dims with nothing highlighted rather than pointing at a
-                // segment that does not exist.
-                const highlightedValue = control.disabled === true
-                    ? control.overriddenEffectiveValue ?? NO_SEGMENT_HIGHLIGHTED
-                    : control.effectiveValue;
-                return (
-                    <View
-                        key={option.id}
-                        testID={`model-picker-overlay-selected-option-control:${option.id}`}
-                        style={styles.selectedControlGroup}
-                    >
-                        <Text style={styles.selectedControlTitle}>{option.name}</Text>
-                        {secondary}
-                        <SegmentedTabBar
-                            role="radiogroup"
-                            tabs={(option.options ?? []).map((choice) => ({ id: choice.value, label: choice.name }))}
-                            activeTabId={highlightedValue}
-                            disabled={control.disabled === true}
-                            onSelectTab={(tabId) => {
-                                if (control.disabled === true) return;
-                                props.onSelect?.(option.id, tabId as SessionConfigOptionValueId);
-                            }}
-                            testIDPrefix={`model-picker-overlay-selected-option-control-option:${option.id}`}
-                            accessibilityLabel={controlAccessibilityLabel}
-                            compact
-                            activeLabelStyle={Typography.default('semiBold')}
-                        />
-                    </View>
-                );
-            })}
-        </View>
-    );
-}
-
 function OptionTrailingAccessory<TValue>(props: Readonly<{
     option: OptionPickerOption<TValue>;
     valueKey: string;
@@ -391,7 +293,14 @@ function OptionTrailingAccessory<TValue>(props: Readonly<{
 }
 
 export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayProps<TValue>) {
+    if (props.selectedValues !== undefined && (props.selectedOptionControls?.length ?? 0) > 0) {
+        throw new Error('SelectionList multiple selection cannot be combined with expandedContent');
+    }
     const { theme } = useUnistyles();
+    // Phones recompose: a two-up grid on a phone sheet cuts the descriptions that tell models apart,
+    // so the grid is a wide-surface layout only, whatever a phone's measured pane would fit.
+    const { width: windowWidth } = useWindowDimensions();
+    const multiColumn = props.multiColumn === true && !isMobileLayoutWidth(windowWidth);
     const getValueKey = props.getValueKey ?? defaultValueKey<TValue>;
     const selectedValueKey = getValueKey(props.selectedValue);
     const selectedValueKeys = React.useMemo(
@@ -403,7 +312,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     const notes = props.probe?.failed
         ? [...(props.notes ?? []), t('agentInput.model.unavailable')]
         : props.notes ?? [];
-    const headerNotes = props.multiColumn ? [] : notes;
+    const headerNotes = multiColumn ? [] : notes;
     const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
     const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
     // SelectionList treats root identity changes as scope replacement. Keep
@@ -523,99 +432,41 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     // than in a detached panel below the list — the same at every width, so narrow surfaces
     // get it without a second layout. Built lazily: `SelectionList` only resolves
     // `expandedContent` for the selected row, so the other rows never construct it.
-    const selectedControlsExpandedContent = React.useMemo(() => {
-        const controls = props.selectedOptionControls ?? [];
-        if (controls.length === 0) return undefined;
-        return () => (
-            <View
-                testID="model-picker-overlay-selected-controls"
-                style={[
-                    styles.selectedControlsPanel,
-                    // In card mode the card is the single owner of the selected
-                    // fill and clips this panel to its own corners, so the panel
-                    // contributes padding only. Continuing the fill here as well
-                    // would be a second decision-maker for one surface.
-                    props.multiColumn ? null : styles.selectedControlsPanelFill,
-                ]}
-            >
-                <SelectedOptionControls
-                    controls={controls}
-                    onSelect={props.onSelectOptionControlValue}
-                />
-            </View>
-        );
-    }, [props.multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls]);
+    const selectedControlsExpandedContent = props.selectedValues === undefined ? SELECTED_OPTION_CONTROLS : undefined;
 
-    const selectionSections = React.useMemo<ReadonlyArray<SelectionListSectionDescriptor>>(() => {
-        const seen = new Set<string>();
-        return sourceSections.map((section) => ({
-            kind: 'static' as const,
-            id: section.id,
-            title: section.title,
-            virtualization: 'auto' as const,
-            options: section.options.flatMap((option): SelectionListOption[] => {
-                const valueKey = getValueKey(option.value);
-                if (seen.has(valueKey)) return [];
-                seen.add(valueKey);
-                const selected = selectedValueKeys?.has(valueKey) ?? valueKey === selectedValueKey;
-                const favorite = props.favoriteOptions?.values.has(valueKey) === true;
-                const canToggleFavorite = (
-                    props.favoriteActionVisibility === 'all'
-                    || selected
-                    || favorite
-                )
-                    && Boolean(props.favoriteOptions)
-                    && (props.favoriteOptions?.isFavoritable?.(option) ?? true);
-                return [{
-                    id: valueKey,
-                    testID: `${optionTestIDPrefix}:${valueKey}`,
-                    label: option.label,
-                    ...(option.labelSuffix ? { titleQualifier: option.labelSuffix } : {}),
-                    searchText: [option.searchText, option.labelSuffix].filter(Boolean).join(' '),
-                    onPressIn: () => {
-                        selectionPressPendingRef.current = true;
-                    },
-                    subtitle: option.description,
-                    subtitleContent: option.descriptionContent,
-                    accessibilityLabel: option.accessibilityLabel,
-                    disabled: option.disabled,
-                    icon: option.icon ? (
-                        <View
-                            testID={`${optionTestIDPrefix}-icon:${valueKey}`}
-                            style={styles.optionCardIconSlot}
-                        >
-                            {normalizeNodeForView(option.icon)}
-                        </View>
-                    ) : undefined,
-                    rightAccessory: selected || option.trailingStatusIcon || canToggleFavorite ? (
-                        <OptionTrailingAccessory
-                            option={option}
-                            valueKey={valueKey}
-                            selected={selected}
-                            drawsSelectionMark={props.multiColumn === true}
-                            favorite={favorite}
-                            canToggleFavorite={canToggleFavorite}
-                            optionTestIDPrefix={optionTestIDPrefix}
-                            favoriteOptions={props.favoriteOptions}
-                            card={props.multiColumn === true}
-                        />
-                    ) : undefined,
-                    rightAccessoryOutsidePressable: canToggleFavorite,
-                    expandedContent: selected ? selectedControlsExpandedContent : undefined,
-                }];
-            }),
-        }));
+    const renderOptionVisuals = React.useCallback((option: OptionPickerOption<TValue>, valueKey: string) => {
+        const favorite = props.favoriteOptions?.values.has(valueKey) === true;
+        const favoritable = Boolean(props.favoriteOptions)
+            && (props.favoriteOptions?.isFavoritable?.(option) ?? true);
+        const canToggleFavorite = (selected: boolean) => favoritable && (props.favoriteActionVisibility === 'all' || selected || favorite);
+        const rightAccessory: SelectionListOption['rightAccessory'] = row => {
+            const selected = row?.selected === true;
+            const canToggle = canToggleFavorite(selected);
+            if (!selected && !option.trailingStatusIcon && !canToggle) return null;
+            return <OptionTrailingAccessory option={option} valueKey={valueKey} selected={selected}
+                drawsSelectionMark={multiColumn} favorite={favorite} canToggleFavorite={canToggle}
+                optionTestIDPrefix={optionTestIDPrefix} favoriteOptions={props.favoriteOptions} card={multiColumn} />;
+        };
+        const rightAccessoryOutsidePressable: SelectionListOption['rightAccessoryOutsidePressable'] = row => canToggleFavorite(row?.selected === true);
+        return {
+            icon: option.icon ? (
+                <View testID={`${optionTestIDPrefix}-icon:${valueKey}`} style={styles.optionCardIconSlot}>
+                    {normalizeNodeForView(option.icon)}
+                </View>
+            ) : undefined,
+            rightAccessory,
+            rightAccessoryOutsidePressable,
+        };
     }, [
-        getValueKey,
         optionTestIDPrefix,
         props.favoriteActionVisibility,
         props.favoriteOptions,
-        props.multiColumn,
-        selectedControlsExpandedContent,
-        selectedValueKey,
-        selectedValueKeys,
-        sourceSections,
+        multiColumn,
     ]);
+    const onOptionPressIn = React.useCallback(() => { selectionPressPendingRef.current = true; }, []);
+    const selectionSections = useOptionPickerSections({ sourceSections, getValueKey,
+        optionTestIDPrefix, selectedControlsExpandedContent,
+        renderVisuals: renderOptionVisuals, onPressIn: onOptionPressIn });
     const optionByKey = React.useMemo(() => new Map(
         sourceSections.flatMap((section) => section.options.map((option) => [getValueKey(option.value), option] as const)),
     ), [getValueKey, sourceSections]);
@@ -628,6 +479,12 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         // list's own "No matches", never `emptyText`, which describes an empty catalog (DESIGN-9 N50).
         sections: selectionSections,
     }), [props.searchPlaceholder, selectionSections, totalOptionCount]);
+
+    const controlsContextValue = React.useMemo(() => ({
+        controls: props.selectedOptionControls,
+        onSelect: props.onSelectOptionControlValue,
+        multiColumn,
+    }), [multiColumn, props.onSelectOptionControlValue, props.selectedOptionControls]);
 
     const probe = props.probe;
     const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
@@ -790,7 +647,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     // A grid shows its status line below the scroll area only while it has something to say. Notices can
     // wrap without moving the cards' starting position or clipping the message; with none, the rows
     // fill the pane down to its edge instead of stopping above an empty reserved band.
-    const hasFooterStatus = (props.multiColumn && notes.length > 0) || Boolean(props.footerContent);
+    const hasFooterStatus = (multiColumn && notes.length > 0) || Boolean(props.footerContent);
     const notesNode = hasFooterStatus ? (
         <View
             testID="model-picker-overlay-notes"
@@ -798,13 +655,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             accessibilityLiveRegion="polite"
         >
             <View style={styles.notesFooterBody}>
-                {props.multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+                {multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
                 {props.footerContent}
             </View>
         </View>
     ) : null;
 
     return (
+        <OptionPickerSelectedControlsContext.Provider value={controlsContextValue}>
         <View
             testID="model-picker-overlay"
             style={[styles.section, props.fillAvailableSpace ? styles.sectionFill : null]}
@@ -843,12 +701,12 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     fillAvailableSpace={props.fillAvailableSpace}
                     maxHeight={props.maxHeight}
                     heightBehavior={props.heightBehavior}
-                    columns={props.multiColumn ? ENGINE_PANE_COLUMNS : undefined}
+                    columns={multiColumn ? ENGINE_PANE_COLUMNS : undefined}
                     // The card and the grid arrive together: a card is what
                     // gives a grid cell an edge, and the grid is the only
                     // layout where a per-option surface reads as a card rather
                     // than as a full-width band.
-                    optionPresentation={props.multiColumn ? 'card' : undefined}
+                    optionPresentation={multiColumn ? 'card' : undefined}
                     // A picker WIRED for inline option controls puts interactive
                     // segmented bars and switches inside the selected row, which
                     // makes the popup a grid rather than a listbox.
@@ -884,6 +742,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             )}
             {notesNode}
         </View>
+        </OptionPickerSelectedControlsContext.Provider>
     );
 }
 
@@ -933,21 +792,6 @@ const styles = StyleSheet.create((theme) => ({
      * overlay rather than in the row's flow.
      */
     optionCardIndicatorStacked: { alignItems: 'flex-end', justifyContent: 'flex-start', gap: theme.space.s6 },
-    /**
-     * Continues the selected row's fill downward so the row and its controls read as one
-     * card. `Item` keeps its per-density horizontal inset private; the three selectable
-     * densities span 12–16px, so this matches the shipped default (`cozy`, 14) and is at
-     * worst 2px off the row text. No top padding — the row's own bottom inset is the gap.
-     */
-    selectedControlsPanel: { paddingHorizontal: 14, paddingBottom: theme.space.s10 },
-    selectedControlsPanelFill: { backgroundColor: theme.colors.surface.selected },
-    inlineSelectedControls: { gap: theme.space.s10 },
-    selectedControlGroup: { gap: 3 },
-    selectedControlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s8 },
-    selectedControlTextBlock: { flex: 1, gap: 1 },
-    /** A model option's name ("Thinking", "Speed") above its segmented control: sentence case, medium. */
-    selectedControlTitle: { ...Typography.variant('meta', 'medium'),   color: theme.colors.text.secondary },
-    selectedControlDescription: { fontSize: 11, lineHeight: 14, color: theme.colors.text.tertiary },
     customEntryRow: { borderRadius: 12, paddingHorizontal: theme.space.s6, paddingVertical: theme.space.s6, backgroundColor: theme.colors.surface.base },
     customEntrySelected: { backgroundColor: theme.colors.surface.selected },
     customEntryHovered: { backgroundColor: theme.colors.surface.pressed },
