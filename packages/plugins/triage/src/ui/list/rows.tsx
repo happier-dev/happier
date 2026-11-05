@@ -623,8 +623,10 @@ export function useTriageListAnatomyV1(input: Readonly<{
         );
         return <Icon name={mark.name} size="small" tone={mark.tone} />;
       },
+      // A task row says its agent at the end of its line (`listFact`, lab `tasks-list`); a badge there would sit on
+      // the status control and collide with the source mark under it.
       glyphBadge: (item) => {
-        const badge = item.agent === null ? null : readTriageAgentBadgeV1(item.agent);
+        const badge = item.agent === null || tasks ? null : readTriageAgentBadgeV1(item.agent);
         if (badge === null) return null;
         const brand = item.agent?.agent?.brand;
         if (brand !== undefined) return {
@@ -691,7 +693,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           return <Text variant="meta" tone={due.tone ?? 'secondary'} value={due.label} numberOfLines={1} />;
         },
       }] } : {}),
-      ...(tasks ? { listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent }) } : {}),
+      ...(tasks ? { listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent, agentSpeaks: (state) => readTriageAgentBadgeV1(state) !== null }) } : {}),
       ...(withReason ? { reason: (item: TriageListItemV1) => {
         const { row } = item;
         // The group's header already says the one suggestion all its rows share; the row does not repeat it.

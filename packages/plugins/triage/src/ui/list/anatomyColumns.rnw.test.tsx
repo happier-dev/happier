@@ -81,6 +81,35 @@ describe('PRs & Issues table columns', () => {
     await expect(fixture.getByText('Blocked')).resolves.toBeDefined();
     await expect(fixture.getByText('Working')).resolves.toBeDefined();
   });
+  it('says a task row\'s agent at the end of its line (lab tasks-list), and keeps the glyph badge to PRs & Issues (lab merged-detail)', async () => {
+    const base = testkitObservation();
+    const window = foldTriageListWindow({ observations: [{ ...base, entryRef: testkitEntryRef({ kindId: 'issue', entryId: 'task' }), outcome: testkitPresentOutcome() }],
+      lanes: [], configuredSourcesStatus: 'complete', activeSourceInstanceIds: [base.sourceInstanceId], lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: base.observedAtMs });
+    const [planned] = planTriageListItemsV1({ rows: window.rows, pins: [], workflowSubjectOf: () => 'issue',
+      tasks: { audience: 'everyone', isTask: () => true, hasSessions: () => false } });
+    const ready = { kind: 'ready' as const, labelKey: 'x.ready', label: 'Ready', tone: 'neutral' as const, live: false };
+    const item: TriageListItemV1 = { ...planned!, agent: ready };
+    const seen: { taskBadge?: unknown; prBadge?: unknown } = {};
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-agent', mountNonce: 'task-agent' },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => {
+          const tasks = useTriageListAnatomyV1({ withSignal: false, tasks: true });
+          const prs = useTriageListAnatomyV1({ withSignal: true });
+          seen.taskBadge = tasks.glyphBadge?.(item) ?? null;
+          seen.prBadge = prs.glyphBadge?.(item) ?? null;
+          return <>{tasks.listFact?.(item)}</>;
+        }),
+        surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {},
+      });
+    });
+    mounted.push(fixture);
+    await expect(fixture.getByText('Ready')).resolves.toBeDefined();
+    expect(seen.taskBadge).toBeNull();
+    expect(seen.prBadge).not.toBeNull();
+  });
+
   it('draws the Agent column only when some listed entry has a linked agent, like Signal', async () => {
     const without = await readAnatomy({ withSignal: false, withAgent: false });
     expect(without.agent).toBeUndefined();

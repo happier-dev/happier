@@ -11,6 +11,8 @@ export function createTriageTaskListFactV1(input: Readonly<{
   locale: string;
   text: PluginTranslate;
   renderAgent: NonNullable<CollectionAnatomy<TriageListItemV1>['agent']>;
+  /** Whether the agent has a state to say, from the row badge's owner (`readTriageAgentBadgeV1`); history does not. */
+  agentSpeaks: (agent: NonNullable<TriageListItemV1['agent']>) => boolean;
 }>): (item: TriageListItemV1) => React.ReactNode {
   const { locale, text } = input;
   return (item) => {
@@ -20,7 +22,9 @@ export function createTriageTaskListFactV1(input: Readonly<{
     if ((item.task?.relations?.blockedBy?.length ?? 0) > 0) {
       return <Text variant="meta" tone="secondary" value={text('plugins.triage.tasks.progress.blocked', 'Blocked')} numberOfLines={1} />;
     }
-    return item.agent?.live === true ? input.renderAgent(item) : null;
+    // Otherwise the agent's state, as the lab ends a task's line ("Working", "Ready"); history (offline, archived)
+    // says nothing.
+    return item.agent !== null && input.agentSpeaks(item.agent) ? input.renderAgent(item) : null;
   };
 }
 
