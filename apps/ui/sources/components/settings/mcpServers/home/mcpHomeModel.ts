@@ -6,15 +6,16 @@ import type {
 } from '@/components/atmosphere/orbit/homeOrbitScene';
 
 import type { McpServerCollectionRow } from '../collection/mcpServerCollectionModel';
-import type { CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
+import { presentCapabilityStatus, type CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 
-import { mcpServerAttentionStatus, type McpSavedSecretAvailability } from '../status/mcpServerStatus';
+import { mcpServerAttentionStatus, mcpServerMissingKeyNames, type McpSavedSecretAvailability, type McpServerSignInFact } from '../status/mcpServerStatus';
 import { mcpSignInFact, type McpSignInView } from '../signIn/mcpSignInGrantView';
 
 export type McpHomeServer = Readonly<{
   id: string;
   title: string;
   server: McpServerCatalogEntryV1;
+  brandMark?: McpServerCollectionRow['brandMark'];
   /** The reach rules that put it on machines: the legend says where a local server runs from them. */
   bindings: McpServerCollectionRow['bindings'];
   /** Legend group: held by the Account (remote, signed in or keyed once) or run on the machines (stdio). */
@@ -22,6 +23,10 @@ export type McpHomeServer = Readonly<{
   tether: HomeOrbitTether;
   /** What the server needs from the person before it reaches anyone (the status vocabulary every list shares). */
   status: CapabilityStatus | null;
+  /** The sign-in fact behind a sign-in status: why it needs the person ("didn't finish", "no machine online"). */
+  signIn: McpServerSignInFact;
+  /** The env/header names whose saved key is missing ("DATABASE_URL"): what a key status asks for. */
+  missingKeys: readonly string[];
   /** OAuth identity the Account signed in as ("leeroy@acme.dev"). */
   identity: string | null;
   /** Tools and their per-turn tokens from the last Test; null until a machine has answered. */
@@ -39,6 +44,8 @@ export type McpHomeSuggestionMark = Readonly<{
 
 export type McpHome = Readonly<{
   servers: readonly McpHomeServer[];
+  /** Same admitted server rows, ordered by the shared status owner's blocking rank. No reads or tests. */
+  attention: readonly McpHomeServer[];
   legend: Readonly<{
     account: readonly McpHomeServer[];
     machine: readonly McpHomeServer[];
@@ -57,6 +64,7 @@ export type McpHome = Readonly<{
 
 /** The ring holds this many marks; past it, the first `RING_ROOM - 1` and a "+N" mark (lab hm-A spec). */
 export const MCP_RING_ROOM = 12;
+const NO_KEYS: readonly string[] = Object.freeze([]);
 export const MCP_RING_MORE_KEY = 'more';
 const SUGGESTION_MARKS = 5;
 
@@ -77,23 +85,28 @@ export function buildMcpHome(
     const { server } = row;
     const signIn = mcpServerSignsIn(server) ? input.signInOf(server.id) : null;
     const off = row.unbound;
+    const signInFact = mcpSignInFact(signIn);
     const status = off
       ? null
       : mcpServerAttentionStatus({
           entry: server,
-          signIn: mcpSignInFact(signIn),
+          signIn: signInFact,
           savedSecretCatalog: input.savedSecretCatalog,
         });
     const group = server.transport === 'stdio' ? 'machine' : 'account';
     const tools = server.toolsSnapshot?.tools;
+    const missingKeys = status?.kind === 'key' ? [...mcpServerMissingKeyNames(server, input.savedSecretCatalog)] : NO_KEYS;
     return {
       id: server.id,
       title: row.title,
       server,
+      ...(row.brandMark ? { brandMark: row.brandMark } : {}),
       bindings: row.bindings,
       group,
       tether: off ? 'none' : status ? 'attention' : group,
       status,
+      signIn: signInFact,
+      missingKeys,
       identity: signIn?.state === 'connected' ? signIn.identity : null,
       toolCount: tools ? tools.length : null,
       tokens: tools ? tools.reduce((sum, tool) => sum + tool.tokens, 0) : null,
@@ -103,6 +116,9 @@ export function buildMcpHome(
   const byName = (a: McpHomeServer, b: McpHomeServer) =>
     a.title.localeCompare(b.title);
   const inUse = servers.filter((server) => !server.off);
+  const attention = inUse.filter(server => server.status !== null).sort((a, b) =>
+    presentCapabilityStatus(b.status!, 'row').blockingRank - presentCapabilityStatus(a.status!, 'row').blockingRank
+      || byName(a, b));
   // No usage producer exists for MCP servers: the ring leads with what needs the person, then what is in use.
   const ordered = [
     ...inUse.filter((server) => server.status).sort(byName),
@@ -127,6 +143,7 @@ export function buildMcpHome(
   const legendOrder = [...inUse].sort(byName);
   return {
     servers,
+    attention,
     legend: {
       account: legendOrder.filter((server) => server.group === 'account'),
       machine: legendOrder.filter((server) => server.group === 'machine'),
@@ -138,7 +155,7 @@ export function buildMcpHome(
       tokens: inUse.reduce((sum, server) => sum + (server.tokens ?? 0), 0),
       toolsKnown: inUse.some((server) => server.toolCount !== null),
     },
-    needsYou: inUse.filter((server) => server.status).length,
+    needsYou: attention.length,
     firstVisitLine:
       !input.firstVisitDismissed &&
       servers.length > 0 &&

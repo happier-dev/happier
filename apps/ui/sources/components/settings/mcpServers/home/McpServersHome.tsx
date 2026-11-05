@@ -14,12 +14,14 @@ import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/Round
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { joinList } from '@/utils/text/joinList';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -27,6 +29,7 @@ import {
   mcpServerRoute,
 } from '../collection/mcpServerCollectionModel';
 import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import {
   MCP_RING_MORE_KEY,
   type McpHome,
@@ -84,22 +87,16 @@ export const McpServersHomeView = React.memo(function McpServersHomeView(
   return (
     <ItemList pageColumn="wide">
       <PageContentColumn>
-        <McpServersHomeBody home={props.home} phone={false} />
+        <McpServersHomeBody home={props.home} />
       </PageContentColumn>
     </ItemList>
   );
 });
 
-/** The phone's list page leads with the same map as its hero (lab hm-A2p), then the list follows. */
-export const McpServersHomeHero = React.memo(function McpServersHomeHero() {
-  const home = useMcpHome();
-  return <McpServersHomeBody home={home} phone />;
-});
-
 export type McpHomeData = ReturnType<typeof useMcpHome>;
 
 const McpServersHomeBody = React.memo(function McpServersHomeBody(
-  props: Readonly<{ home: McpHomeData; phone: boolean }>,
+  props: Readonly<{ home: McpHomeData }>,
 ) {
   const { home } = props;
   const go = useGo();
@@ -118,22 +115,6 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
     : firstVisit
       ? t('capabilities.mcpHome.firstPurpose')
       : t('capabilities.mcpHome.purpose');
-  if (props.phone) {
-    // The phone list page draws its own header; the hero is the map and the present line.
-    if (home.unavailable || brandNew) return null;
-    return (
-      <View style={styles.inset}>
-        <ReachBlock
-          home={model}
-          phone
-          loading={home.loading}
-          brandNew={false}
-          suggestions={home.suggestions}
-        />
-        {home.loading ? null : <PresentLine home={model} />}
-      </View>
-    );
-  }
   return (
     <>
       <PageHeader
@@ -157,6 +138,10 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
             }
           : {})}
       />
+      {/* What needs the person leads; the map says how the rest reaches the agents. */}
+      {home.loading || home.unavailable ? null : (
+        <NeedsYou attention={model.attention} onOpen={(serverId) => go(mcpServerRoute(serverId))} />
+      )}
       <View style={styles.inset}>
         {home.unavailable ? (
           <SurfaceStateCard
@@ -219,6 +204,36 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
 });
 
 /**
+ * A phone's root (lab np:home): the homepage's map with its legend beneath, its one line of the present and
+ * Needs you with each fix, above the server list.
+ */
+export const McpServersHomeSummary = React.memo(function McpServersHomeSummary() {
+  const home = useMcpHome();
+  const go = useGo();
+  if (home.unavailable) return null;
+  return (
+    <>
+      <View testID="mcp.home.summary" style={styles.inset}>
+        <ReachBlock
+          home={home.model}
+          loading={home.loading}
+          brandNew={false}
+          phone
+          suggestions={home.suggestions}
+        />
+        {home.loading ? null : <PresentLine home={home.model} />}
+      </View>
+      {home.loading || home.model.attention.length === 0 ? null : (
+        // The section ends at the page rhythm before the list's view switch (lab np:home).
+        <View style={styles.summaryEnd}>
+          <NeedsYou attention={home.model.attention} onOpen={(serverId) => go(mcpServerRoute(serverId))} />
+        </View>
+      )}
+    </>
+  );
+});
+
+/**
  * No servers where no homepage stands beside a rail (a phone's list page, a narrow pane): the page-level
  * empty state with its built-in scene (lab mp-E), then what is already on the machines and the registry's
  * suggestions, so the first add is one press away.
@@ -270,6 +285,110 @@ export const McpServersEmpty = React.memo(function McpServersEmpty() {
     </>
   );
 });
+
+/**
+ * Needs you (lab n:home, S30-R05): below the map and its line, above the suggestions. Each server that needs the
+ * person says its status, what fixing it gives back, and carries its one fix; the fix and the row both lead to
+ * the server's page, where the fix lives (its Sign-in section, its key row, its Test).
+ */
+const NeedsYou = React.memo(function NeedsYou(
+  props: Readonly<{
+    attention: readonly McpHomeServer[];
+    onOpen: (serverId: string) => void;
+  }>,
+) {
+  if (props.attention.length === 0) return null;
+  return (
+    <ItemGroup
+      testID="mcp.home.needs"
+      title={t('capabilities.mcpHome.needsTitle')}
+      titleAccessory={
+        <Text variant="meta" style={styles.groupCount}>
+          {String(props.attention.length)}
+        </Text>
+      }
+    >
+      {props.attention.map((server) => (
+        <NeedsYouRow key={server.id} server={server} onOpen={props.onOpen} />
+      ))}
+    </ItemGroup>
+  );
+});
+
+const NeedsYouRow = React.memo(function NeedsYouRow(
+  props: Readonly<{ server: McpHomeServer; onOpen: (serverId: string) => void }>,
+) {
+  const { server, onOpen } = props;
+  const open = React.useCallback(() => onOpen(server.id), [onOpen, server.id]);
+  const fixLabel = server.status ? presentCapabilityStatus(server.status, 'row').fixLabel : undefined;
+  return (
+    <CapabilityRow
+      testID={`mcp.home.needs.${server.id}`}
+      title={server.title}
+      description={needsConsequence(server)}
+      mark={<HappierBrandMark brand={server.brandMark ?? { displayName: server.title }} pixelSize={20} externallyLabelled />}
+      status={server.status}
+      {...(fixLabel
+        ? {
+            action: (
+              <RoundButton
+                testID={`mcp.home.needs.${server.id}.fix`}
+                size="small"
+                display="secondary"
+                title={fixLabel}
+                onPress={open}
+              />
+            ),
+          }
+        : {})}
+      onPress={open}
+      onPreviewChange={(active) => setPreviewedMcpServer(active ? server.id : null)}
+    />
+  );
+});
+
+/**
+ * Each row's own reason after the status word, from that server's facts: why its sign-in stopped (the sign-in
+ * section's own words), the key it is missing, or what fixing it gives back (its tools, else what it is for).
+ * Never one sentence repeated down the section. A run that failed keeps its reason under the status instead.
+ */
+function needsConsequence(server: McpHomeServer): string | null {
+  const name = server.title;
+  switch (server.status?.kind) {
+    case 'signin':
+      switch (server.signIn?.state) {
+        case 'did_not_finish':
+          return t('capabilities.mcpSignIn.didNotFinishBody');
+        case 'no_machine_online':
+          return t('capabilities.mcpSignIn.noMachineBody');
+        case 'client_refused':
+          return t('capabilities.mcpSignIn.clientRefusedBody');
+        case 'invalid_client':
+          return t('capabilities.mcpSignIn.invalidClientBody');
+      }
+      return givesBack(server);
+    case 'expired':
+      return server.signIn?.state === 'expired' && server.signIn.reason === 'address_changed'
+        ? t('capabilities.mcpSignIn.addressChangedBody')
+        : givesBack(server) ?? t('capabilities.mcpSignIn.expiredBody', { name });
+    case 'revoked':
+      return t('capabilities.mcpSignIn.revokedBody', { name });
+    case 'more_access':
+      return t('capabilities.mcpSignIn.moreAccessBody', { name });
+    case 'key':
+      return server.missingKeys.length > 0
+        ? t('capabilities.mcpHome.needsKeyNamed', { names: joinList(server.missingKeys) })
+        : t('capabilities.mcpHome.needsKey');
+    default:
+      return server.server.description ?? null;
+  }
+}
+
+/** What signing in gives back: its tools when a Test counted them, else what the server is for. */
+function givesBack(server: McpHomeServer): string | null {
+  if (server.toolCount) return t('capabilities.mcpHome.needsAccountTools', { count: server.toolCount });
+  return server.server.description?.trim() || t('capabilities.mcpHome.needsAccount');
+}
 
 /** The tether map and its legend. */
 const ReachBlock = React.memo(function ReachBlock(
@@ -502,28 +621,16 @@ const LegendRow = React.memo(function LegendRow(
   }>,
 ) {
   const { server, names, onPreview, onOpen } = props;
-  // Each fix lives on the server's page (its Sign-in section, its key row): the homepage leads there.
-  const fix = React.useCallback(() => onOpen(server.id), [onOpen, server.id]);
+  const open = React.useCallback(() => onOpen(server.id), [onOpen, server.id]);
   const { status } = server;
-  const fixLabel = status ? presentCapabilityStatus(status, 'row').fixLabel : undefined;
-  // Healthy and untested is quiet: only a known tool count speaks. A problem keeps its chip and its one fix together
-  // in the action column, on the name's line (lab hm-A2): the legend column is sized so the pair fits beside the name.
+  // Healthy and untested is quiet: only a known tool count speaks. A problem says only its amber word on the name's
+  // line (lab n:home): its fix is the Needs you row, on wide and phone alike (RETAIN M4).
   const action = status ? (
-    <View style={styles.fix}>
-      <CapabilityStatusChip
-        status={status}
-        testID={`mcp.home.legend.${server.id}:status`}
-      />
-      {fixLabel ? (
-        <RoundButton
-          testID={`mcp.home.legend.${server.id}.fix`}
-          size="small"
-          display="secondary"
-          title={fixLabel}
-          onPress={fix}
-        />
-      ) : null}
-    </View>
+    <CapabilityStatusChip
+      status={status}
+      placement="catalog"
+      testID={`mcp.home.legend.${server.id}:status`}
+    />
   ) : server.toolCount === null ? undefined : (
     <Text variant="meta" style={styles.tools}>
       {toolCountText(server.toolCount)}
@@ -539,8 +646,7 @@ const LegendRow = React.memo(function LegendRow(
       {...(action ? { action } : {})}
       density="rail"
       divider={false}
-      // A problem's fix is the row's one button (a pressable row cannot hold a button); a healthy row opens its page.
-      {...(status ? {} : { onPress: fix })}
+      onPress={open}
       onPreviewChange={(active) => onPreview(active ? server.id : null)}
     />
   );
@@ -667,7 +773,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   keyDotted: { borderStyle: 'dotted' },
   newBody: { color: theme.colors.text.secondary, paddingLeft: theme.space.s24 },
-  fix: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  groupCount: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
+  summaryEnd: { marginBottom: theme.space.s16 },
   tools: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   more: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   ringImage: { width: RING_MARK_PX - 2, height: RING_MARK_PX - 2 },

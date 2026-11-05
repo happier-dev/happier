@@ -1,6 +1,7 @@
 import type { McpServerRuleV1, McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol';
 
 import { t } from '@/text';
+import type { HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 /** The collection's own route; its detail routes resolve beneath it. */
@@ -16,6 +17,7 @@ export type McpServerCollectionRow = Readonly<{
     server: McpServerCatalogEntryV1;
     bindings: readonly McpServerRuleV1[];
     title: string;
+    brandMark?: HostCatalogMark;
     /** Applies nowhere: no enabled rule. Only this gets the rail's trouble dot. */
     unbound: boolean;
 }>;

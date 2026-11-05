@@ -22,6 +22,11 @@ export type McpHomeTranslation = Readonly<{
   presentNoTools: (params: Count) => string;
   presentNone: string;
   needYou: (params: Count) => string;
+  needsTitle: string;
+  needsAccount: string;
+  needsAccountTools: (params: Count) => string;
+  needsKey: string;
+  needsKeyNamed: (params: Readonly<{ names: string }>) => string;
   previewSignedInAs: (params: Readonly<{ identity: string }>) => string;
   previewSignedIn: string;
   previewKey: string;
@@ -75,6 +80,12 @@ const en: McpHomeTranslation = {
     `${count} ${plural(count, 'server is', 'servers are')} on for your agents.`,
   presentNone: 'No server is on yet.',
   needYou: ({ count }) => ` ${count} ${plural(count, 'needs', 'need')} you.`,
+  needsTitle: 'Needs you',
+  needsAccount: 'Fix it once, from any device, and every machine can use it',
+  needsAccountTools: ({ count }) =>
+    `Fix it once, from any device, and every machine gets its ${count} ${plural(count, 'tool', 'tools')} back`,
+  needsKey: 'Add the key once as a saved secret, and every machine can use it',
+  needsKeyNamed: ({ names }) => `Add ${names} once as a saved secret, and every machine can use it`,
   previewSignedInAs: ({ identity }) =>
     `Signed in as ${identity}, for every machine`,
   previewSignedIn: 'Signed in once, for every machine',
@@ -155,6 +166,12 @@ const ca: McpHomeTranslation = {
   presentNone: 'Encara no hi ha cap servidor activat.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'et necessita', 'et necessiten')}.`,
+  needsTitle: 'Et necessita',
+  needsAccount: 'Arregla-ho una vegada, des de qualsevol dispositiu, i totes les màquines el podran fer servir',
+  needsAccountTools: ({ count }) =>
+    `Arregla-ho una vegada, des de qualsevol dispositiu, i totes les màquines recuperen les seves ${count} ${plural(count, 'eina', 'eines')}`,
+  needsKey: 'Afegeix la clau una vegada com a secret desat i totes les màquines el podran fer servir',
+  needsKeyNamed: ({ names }) => `Afegeix ${names} una vegada com a secret desat i totes les màquines el podran fer servir`,
   previewSignedInAs: ({ identity }) =>
     `Sessió iniciada com a ${identity}, per a totes les màquines`,
   previewSignedIn: 'Sessió iniciada una vegada, per a totes les màquines',
@@ -215,6 +232,12 @@ const de: McpHomeTranslation = {
   presentNone: 'Noch ist kein Server aktiv.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'braucht', 'brauchen')} dich.`,
+  needsTitle: 'Braucht dich',
+  needsAccount: 'Einmal beheben, von jedem Gerät aus, und jede Maschine kann ihn nutzen',
+  needsAccountTools: ({ count }) =>
+    `Einmal beheben, von jedem Gerät aus, und jede Maschine bekommt ihre ${count} ${plural(count, 'Tool', 'Tools')} zurück`,
+  needsKey: 'Füge den Schlüssel einmal als gespeichertes Secret hinzu, und jede Maschine kann ihn nutzen',
+  needsKeyNamed: ({ names }) => `Füge ${names} einmal als gespeichertes Secret hinzu, und jede Maschine kann ihn nutzen`,
   previewSignedInAs: ({ identity }) =>
     `Angemeldet als ${identity}, für jede Maschine`,
   previewSignedIn: 'Einmal angemeldet, für jede Maschine',
@@ -276,6 +299,12 @@ const es: McpHomeTranslation = {
   presentNone: 'Aún no hay ningún servidor activado.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'te necesita', 'te necesitan')}.`,
+  needsTitle: 'Te necesita',
+  needsAccount: 'Arréglalo una vez, desde cualquier dispositivo, y todas las máquinas podrán usarlo',
+  needsAccountTools: ({ count }) =>
+    `Arréglalo una vez, desde cualquier dispositivo, y todas las máquinas recuperan sus ${count} ${plural(count, 'herramienta', 'herramientas')}`,
+  needsKey: 'Añade la clave una vez como secreto guardado y todas las máquinas podrán usarlo',
+  needsKeyNamed: ({ names }) => `Añade ${names} una vez como secreto guardado y todas las máquinas podrán usarlo`,
   previewSignedInAs: ({ identity }) =>
     `Sesión iniciada como ${identity}, para todas las máquinas`,
   previewSignedIn: 'Sesión iniciada una vez, para todas las máquinas',
@@ -336,6 +365,12 @@ const fr: McpHomeTranslation = {
   presentNone: 'Aucun serveur n’est encore activé.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'a besoin de vous', 'ont besoin de vous')}.`,
+  needsTitle: 'A besoin de vous',
+  needsAccount: 'Réglez-le une fois, depuis n’importe quel appareil, et chaque machine peut l’utiliser',
+  needsAccountTools: ({ count }) =>
+    `Réglez-le une fois, depuis n’importe quel appareil, et chaque machine retrouve ses ${count} ${plural(count, 'outil', 'outils')}`,
+  needsKey: 'Ajoutez la clé une fois comme secret enregistré, et chaque machine peut l’utiliser',
+  needsKeyNamed: ({ names }) => `Ajoutez ${names} une fois comme secret enregistré, et chaque machine peut l’utiliser`,
   previewSignedInAs: ({ identity }) =>
     `Connecté en tant que ${identity}, pour toutes les machines`,
   previewSignedIn: 'Connecté une fois, pour toutes les machines',
@@ -397,6 +432,12 @@ const it: McpHomeTranslation = {
   presentNone: 'Nessun server è ancora attivo.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'ha bisogno di te', 'hanno bisogno di te')}.`,
+  needsTitle: 'Ha bisogno di te',
+  needsAccount: 'Sistemalo una volta, da qualsiasi dispositivo, e ogni macchina potrà usarlo',
+  needsAccountTools: ({ count }) =>
+    `Sistemalo una volta, da qualsiasi dispositivo, e ogni macchina riavrà i suoi ${count} ${plural(count, 'strumento', 'strumenti')}`,
+  needsKey: 'Aggiungi la chiave una volta come segreto salvato e ogni macchina potrà usarlo',
+  needsKeyNamed: ({ names }) => `Aggiungi ${names} una volta come segreto salvato e ogni macchina potrà usarlo`,
   previewSignedInAs: ({ identity }) =>
     `Accesso come ${identity}, per ogni macchina`,
   previewSignedIn: 'Accesso fatto una volta, per ogni macchina',
@@ -456,6 +497,12 @@ const ja: McpHomeTranslation = {
     `${count} 台のサーバーがエージェント向けにオンです。`,
   presentNone: 'オンのサーバーはまだありません。',
   needYou: ({ count }) => ` ${count} 台は対応が必要です。`,
+  needsTitle: '対応が必要',
+  needsAccount: 'どのデバイスからでも一度直せば、すべてのマシンで使えます',
+  needsAccountTools: ({ count }) =>
+    `どのデバイスからでも一度直せば、すべてのマシンで ${count} 個のツールが戻ります`,
+  needsKey: 'キーを保存したシークレットとして一度追加すれば、すべてのマシンで使えます',
+  needsKeyNamed: ({ names }) => `${names} を保存したシークレットとして一度追加すれば、すべてのマシンで使えます`,
   previewSignedInAs: ({ identity }) =>
     `${identity} としてサインイン済み、すべてのマシンで利用可`,
   previewSignedIn: '一度のサインインで、すべてのマシンで利用可',
@@ -515,6 +562,12 @@ const pl: McpHomeTranslation = {
   presentNone: 'Żaden serwer nie jest jeszcze włączony.',
   needYou: ({ count }) =>
     ` ${count} ${pluralSlavic(count, 'potrzebuje', 'potrzebują', 'potrzebuje')} Ciebie.`,
+  needsTitle: 'Potrzebuje Ciebie',
+  needsAccount: 'Napraw to raz, z dowolnego urządzenia, a każda maszyna będzie mogła go używać',
+  needsAccountTools: ({ count }) =>
+    `Napraw to raz, z dowolnego urządzenia, a każda maszyna odzyska ${count} ${pluralSlavic(count, 'narzędzie', 'narzędzia', 'narzędzi')}`,
+  needsKey: 'Dodaj klucz raz jako zapisany sekret, a każda maszyna będzie mogła go używać',
+  needsKeyNamed: ({ names }) => `Dodaj ${names} raz jako zapisany sekret, a każda maszyna będzie mogła go używać`,
   previewSignedInAs: ({ identity }) =>
     `Zalogowano jako ${identity}, dla każdej maszyny`,
   previewSignedIn: 'Zalogowano raz, dla każdej maszyny',
@@ -575,6 +628,12 @@ const pt: McpHomeTranslation = {
   presentNone: 'Nenhum servidor está ativado ainda.',
   needYou: ({ count }) =>
     ` ${count} ${plural(count, 'precisa de você', 'precisam de você')}.`,
+  needsTitle: 'Precisa de você',
+  needsAccount: 'Resolva uma vez, de qualquer dispositivo, e todas as máquinas podem usá-lo',
+  needsAccountTools: ({ count }) =>
+    `Resolva uma vez, de qualquer dispositivo, e todas as máquinas recuperam suas ${count} ${plural(count, 'ferramenta', 'ferramentas')}`,
+  needsKey: 'Adicione a chave uma vez como segredo salvo, e todas as máquinas podem usá-lo',
+  needsKeyNamed: ({ names }) => `Adicione ${names} uma vez como segredo salvo, e todas as máquinas podem usá-lo`,
   previewSignedInAs: ({ identity }) =>
     `Conectado como ${identity}, para todas as máquinas`,
   previewSignedIn: 'Login feito uma vez, para todas as máquinas',
@@ -635,6 +694,12 @@ const ru: McpHomeTranslation = {
   presentNone: 'Ни один сервер пока не включён.',
   needYou: ({ count }) =>
     ` ${count} ${pluralRu(count, 'ждёт', 'ждут', 'ждут')} вас.`,
+  needsTitle: 'Ждут вас',
+  needsAccount: 'Исправьте один раз с любого устройства, и каждая машина сможет им пользоваться',
+  needsAccountTools: ({ count }) =>
+    `Исправьте один раз с любого устройства, и каждая машина вернёт свои ${count} ${pluralRu(count, 'инструмент', 'инструмента', 'инструментов')}`,
+  needsKey: 'Добавьте ключ один раз как сохранённый секрет, и каждая машина сможет им пользоваться',
+  needsKeyNamed: ({ names }) => `Добавьте ${names} один раз как сохранённый секрет, и каждая машина сможет им пользоваться`,
   previewSignedInAs: ({ identity }) =>
     `Вход выполнен как ${identity}, для всех машин`,
   previewSignedIn: 'Вход выполнен один раз, для всех машин',
@@ -691,6 +756,11 @@ const zhHans: McpHomeTranslation = {
   presentNoTools: ({ count }) => `已为你的智能体开启 ${count} 个服务器。`,
   presentNone: '还没有开启任何服务器。',
   needYou: ({ count }) => ` ${count} 个需要你处理。`,
+  needsTitle: '需要你处理',
+  needsAccount: '从任意设备修复一次，每台机器都能使用',
+  needsAccountTools: ({ count }) => `从任意设备修复一次，每台机器都会找回 ${count} 个工具`,
+  needsKey: '把密钥作为已保存的机密添加一次，每台机器都能使用',
+  needsKeyNamed: ({ names }) => `把 ${names} 作为已保存的机密添加一次，每台机器都能使用`,
   previewSignedInAs: ({ identity }) =>
     `已以 ${identity} 身份登录，所有机器通用`,
   previewSignedIn: '登录一次，所有机器通用',
@@ -740,6 +810,11 @@ const zhHant: McpHomeTranslation = {
   presentNoTools: ({ count }) => `已為你的代理開啟 ${count} 個伺服器。`,
   presentNone: '還沒有開啟任何伺服器。',
   needYou: ({ count }) => ` ${count} 個需要你處理。`,
+  needsTitle: '需要你處理',
+  needsAccount: '從任何裝置修復一次，每台機器都能使用',
+  needsAccountTools: ({ count }) => `從任何裝置修復一次，每台機器都會找回 ${count} 個工具`,
+  needsKey: '把金鑰作為已儲存的機密新增一次，每台機器都能使用',
+  needsKeyNamed: ({ names }) => `把 ${names} 作為已儲存的機密新增一次，每台機器都能使用`,
   previewSignedInAs: ({ identity }) =>
     `已以 ${identity} 身分登入，所有機器通用`,
   previewSignedIn: '登入一次，所有機器通用',

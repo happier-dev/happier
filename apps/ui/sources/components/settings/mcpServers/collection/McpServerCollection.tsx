@@ -44,7 +44,7 @@ import { AskHappierMark } from '@/components/sessions/bots/AskHappierOfferCard';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
 import { setPreviewedMcpServer } from '../home/mcpServerPreview';
-import { McpServersEmpty, McpServersHomeHero } from '../home/McpServersHome';
+import { McpServersEmpty, McpServersHomeSummary } from '../home/McpServersHome';
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
@@ -62,7 +62,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
     const { theme } = useUnistyles();
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
-    const { settings, scope } = useMcpServersSettings();
+    const { settings, scope, snapshot } = useMcpServersSettings();
     const [query, setQuery] = React.useState('');
     const rows = React.useMemo(() => buildMcpServerCollection(settings, query), [query, settings]);
     const inUse = React.useMemo(() => rows.filter((row) => !row.unbound), [rows]);
@@ -82,6 +82,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             .sort((a, b) => (a.title ?? a.name).localeCompare(b.title ?? b.name));
     }, [pluginItems, query]);
     const total = settings.servers.length;
+    const loading = snapshot.status === 'loading' && total === 0;
     const rail = props.variant === 'rail';
 
     const navigate = React.useCallback((href: string) => {
@@ -245,7 +246,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                 actionsPlacement="page"
                 actions={total > 0 ? addMenu : undefined}
             />
-            {total > 0 ? <McpServersHomeHero /> : null}
+            {total > 0 || loading ? <McpServersHomeSummary /> : null}
             {searchable ? (
                 <CompactSearchField
                     testID={search.testID}
