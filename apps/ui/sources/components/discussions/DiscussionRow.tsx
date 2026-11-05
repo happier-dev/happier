@@ -10,6 +10,8 @@ import type { DiscussionListAttention } from '@/activity/attention/buildDiscussi
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { Item } from '@/components/ui/lists/Item';
+import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
@@ -100,9 +102,21 @@ function readLatestAuthorName(discussion: DiscussionOpenedSummaryV1): string | n
     return formatAccountDisplayName(actor.profile) ?? t('message.accountActorUnnamedMember');
 }
 
-function readAuthorImage(discussion: DiscussionOpenedSummaryV1, accountId: string): string | null {
-    const actor = discussion.latestMessage.accountActor;
-    return actor?.accountId === accountId ? actor.profile?.avatarUrl ?? null : null;
+export function readDiscussionRowAccountAvatar(
+    actor: DiscussionOpenedSummaryV1['latestMessage']['accountActor'],
+    accountId: string,
+    viewerAccountId: string,
+) {
+    if (actor?.accountId !== accountId) return { id: accountId, imageUrl: null };
+    const isFormer = classifyAccountActorLabelV1(actor, actor.accountId === viewerAccountId).kind === 'former';
+    return {
+        id: isFormer ? 'former-member' : accountId,
+        imageUrl: isFormer ? null : actor.profile?.avatarUrl ?? null,
+    };
+}
+
+export function readDiscussionRowAccountAvatarUrl(discussion: DiscussionOpenedSummaryV1, accountId: string, viewerAccountId: string): string | null {
+    return readDiscussionRowAccountAvatar(discussion.latestMessage.accountActor, accountId, viewerAccountId).imageUrl;
 }
 
 /** The last message as one quiet line, "Mei: let's ask the bot…" (lab T2-A); null when it can't be opened. */
@@ -131,6 +145,22 @@ function attentionLabel(reason: DiscussionListAttention['attentionReason']): str
     }
 }
 
+/**
+ * A Discussion with nobody else in it (a second opinion, a talk with agents about a Doc) is marked by what it
+ * is about, not by the viewer's own face (lab T2-L). Null keeps the faces, including when who is in it is
+ * unknown.
+ */
+export function resolveDiscussionRowGlyph(
+    discussion: Pick<DiscussionOpenedSummaryV1, 'anchor' | 'participantAccounts'>,
+    viewerAccountId: string,
+): IconName | null {
+    const accounts = discussion.participantAccounts;
+    if (!accounts || accounts.some(actor => actor.accountId !== viewerAccountId)) return null;
+    if (discussion.anchor?.kind === 'session' && discussion.anchor.messageId) return 'scales';
+    if (discussion.anchor?.kind === 'doc') return 'file-text';
+    return 'robot';
+}
+
 const rowLabels: RowLabels = {
     get you() { return t('session.collaboration.pane.you'); },
     get viaAgent() { return t('session.collaboration.discussion.viaAgent'); },
@@ -156,6 +186,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     attentionReason?: DiscussionListAttention['attentionReason'];
 }>): React.ReactElement {
     const { discussion } = props;
+    const { theme } = useUnistyles();
     const title = discussion.title ?? t('session.collaboration.discussion.encryptedTitle');
     const unread = discussion.unreadCount > 0;
     const mentioned = unread && discussion.unreadMentionCount > 0;
@@ -168,8 +199,10 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
         labels: rowLabels,
     });
     const column = props.geometry === 'column';
-    // The column's leading cluster holds two faces (lab T2-A) so titles keep the column's text rhythm.
-    const authorSlots = column ? 2 : 3;
+    // The column shows up to two faces in one leading slot, so a row with nobody else in it reserves nothing extra
+    // and every title keeps one edge (owner 2026-11-05). In a pane the row leads with one mark, its latest author, in
+    // the pane's icon column, so the title shares the text edge of every other row there; the second line says who wrote.
+    const authorSlots = column ? 2 : 1;
     // The column's faces are who is in it (owner and invited people, others first), not who wrote last.
     const participants = column && discussion.participantAccounts?.length
         ? [...discussion.participantAccounts.filter(actor => actor.accountId !== props.viewerAccountId),
@@ -178,8 +211,12 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     const authors = participants
         ? participants.slice(0, authorSlots).map(actor => actor.accountId)
         : discussion.recentAuthorAccountIds.slice(0, authorSlots);
-    const faceImage = (accountId: string) => participants?.find(actor => actor.accountId === accountId)?.profile?.avatarUrl
-        ?? readAuthorImage(discussion, accountId);
+    const glyph = column ? resolveDiscussionRowGlyph(discussion, props.viewerAccountId) : null;
+    const faceAvatar = (accountId: string) => readDiscussionRowAccountAvatar(
+        participants?.find(candidate => candidate.accountId === accountId) ?? discussion.latestMessage.accountActor,
+        accountId,
+        props.viewerAccountId,
+    );
     const selected = props.selected ?? false;
     // In the column, what needs you replaces the second line (lab T2-A); the pane keeps its dot badge.
     const attentionLine = column
@@ -207,16 +244,29 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
             density="compact"
             showChevron={false}
             showDivider={false}
-            leftElement={<AvatarStack
+            {...(column ? { leftElement: <AvatarStack
                 testID={`session-discussion-row-recent-authors-${discussion.id}`}
                 size={AUTHOR_AVATAR_PX}
-                reservedCount={authorSlots}
-                entries={authors.map((accountId) => ({
-                    key: accountId,
-                    testID: `session-discussion-row-recent-author-${discussion.id}-${accountId}`,
-                    content: <Avatar id={accountId} imageUrl={faceImage(accountId)} size={AUTHOR_AVATAR_PX} />,
-                }))}
-            />}
+                slot
+                entries={glyph ? [{ key: 'glyph', avatar: false, testID: `session-discussion-row-glyph-${discussion.id}`,
+                    content: <Icon name={glyph} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> }]
+                    : authors.map((accountId) => {
+                    const avatar = faceAvatar(accountId);
+                    return {
+                        key: accountId,
+                        testID: `session-discussion-row-recent-author-${discussion.id}-${accountId}`,
+                        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={AUTHOR_AVATAR_PX} />,
+                    };
+                })}
+            /> } : {
+                // A pane row's one face takes the pane's icon slot itself, so its title starts on the same
+                // text edge as Followers and Following beneath it.
+                icon: authors[0] ? <View testID={`session-discussion-row-recent-authors-${discussion.id}`}>
+                    <View testID={`session-discussion-row-recent-author-${discussion.id}-${authors[0]}`}>
+                        <Avatar id={faceAvatar(authors[0]).id} imageUrl={faceAvatar(authors[0]).imageUrl} size={AUTHOR_AVATAR_PX} />
+                    </View>
+                </View> : undefined,
+            })}
             title={<Text
                     testID={`session-discussion-row-title-${discussion.id}`}
                     style={[styles.title, unread ? styles.titleUnread : null, column && selected ? collectionListStyles.rowTitleSelectedOnPlane : null]}
@@ -246,7 +296,7 @@ const SKELETON_TITLE_WIDTHS = ['62%', '78%', '54%'] as const;
  * A conversation row's reserved shape while the first page is read: the author mark, the title and
  * the second line, at the row's own geometry so the list does not move when the rows arrive.
  */
-export function DiscussionRowSkeleton(props: Readonly<{ index: number; testID?: string }>): React.ReactElement {
+export function DiscussionRowSkeleton(props: Readonly<{ index: number; column?: boolean; testID?: string }>): React.ReactElement {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const color = theme.colors.surface.skeleton;
@@ -254,10 +304,13 @@ export function DiscussionRowSkeleton(props: Readonly<{ index: number; testID?: 
         <View testID={props.testID} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <Item
                 mode="info" density="compact" showChevron={false} showDivider={false}
-                leftElement={<AvatarStack size={AUTHOR_AVATAR_PX} reservedCount={3} entries={[{
+                {...(props.column ? { pressableStyle: collectionListStyles.row, style: resolveHappierCollectionListRowPadding(0), leftElement: <AvatarStack size={AUTHOR_AVATAR_PX} slot entries={[{
                     key: 'author', avatar: false,
                     content: <HappierSkeletonBlock color={color} width={AUTHOR_AVATAR_PX} height={AUTHOR_AVATAR_PX} radius={AUTHOR_AVATAR_PX / 2} reducedMotion={reducedMotion} />,
-                }]} />}
+                }]} /> } : {
+                    // The row's face slot, where its one author arrives.
+                    icon: <HappierSkeletonBlock color={color} width={AUTHOR_AVATAR_PX} height={AUTHOR_AVATAR_PX} radius={AUTHOR_AVATAR_PX / 2} reducedMotion={reducedMotion} />,
+                })}
                 title={<HappierSkeletonBlock color={color} width={SKELETON_TITLE_WIDTHS[props.index % SKELETON_TITLE_WIDTHS.length]} height={10} reducedMotion={reducedMotion} />}
                 subtitle={<HappierSkeletonBlock color={color} width="36%" height={8} reducedMotion={reducedMotion} />}
             />
