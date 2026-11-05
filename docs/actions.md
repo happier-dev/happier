@@ -7804,3 +7804,14 @@ Agent, MCP and raw plugin defaults, while explicit Settings Ask and setup consen
 continue to apply. Allowing a Project preference does not run its command. Settlement
 returns the existing Action envelope to the preparing controller; an uncertain
 acceptance is never retried automatically. See [mounted host Action controls](plugin-platform.md#mounted-host-action-controls-03-development).
+
+### Deployment Prepare Session handoff (unreleased 0.3)
+
+Deployment Prepare uses the existing reviewed-child port for its Session handoff.
+The admitted workspace installation issues the derived spawn or message; the
+original Session or Workflow remains the caller's provenance. A new Session uses
+the existing Session-creation body proof, bound to Prepare's exact child,
+workspace and brief. Its existing creation tag rejoins the same child on retry;
+it does not authorize a second Session. The original source installation is never
+impersonated. Workflow-origin integration remains pending with the existing
+Workflow admission and protected-input owners.
