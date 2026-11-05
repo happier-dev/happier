@@ -81,6 +81,7 @@ export const en = {
     flowSubtitle: 'This draft as a map',
     settings: 'Workflow settings',
     settingsSubtitle: 'Every step uses these unless it changes them.',
+    workflowActions: 'Workflow actions',
     deleteWorkflow: 'Delete workflow',
     deleteBody: 'Past runs are kept.',
     discardChangesBody: 'Goes back to the last saved version. Undo brings your edits back.',

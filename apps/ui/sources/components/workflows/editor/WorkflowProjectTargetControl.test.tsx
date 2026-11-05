@@ -332,6 +332,18 @@ describe('workflow project target control', () => {
     });
 });
 
+describe('read-only Machine and project field', () => {
+    it('tells someone who cannot edit what is, never to choose (FIN-DESIGN-REVIEW M7)', async () => {
+        const unset = await renderControl({ presentation: 'field', target: null, machines: undefined, machineName: null });
+        expect(unset.getTextContent()).toContain('workflows.editor.targetNotChosen');
+        expect(unset.getTextContent()).not.toContain('workflows.editor.targetRequired');
+        await unset.unmount();
+        const foreign = await renderControl({ presentation: 'field', target: { machineId: 'machine-x', directory: '/srv/app' },
+            machines: undefined, machineName: null });
+        expect(foreign.getTextContent()).toContain('workflows.editor.targetOtherMachine');
+    });
+});
+
 describe('workflow where summary', () => {
     it('keeps the Machine and its folder apart even when the folder is the root', async () => {
         const { formatWorkflowWhereSummary } = await import('./WorkflowProjectTargetControl');

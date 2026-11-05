@@ -11,6 +11,7 @@ import {
     type SessionAuthoringControlFacts,
     type SessionAuthoringFieldId,
 } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
@@ -195,7 +196,13 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                         testIDPrefix={testIDPrefix}
                     />
                 </View>
-                {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : (
+                {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : readOnly ? (
+                    // A read-only value, not a disabled choice with a reason that asks to choose (M7).
+                    <Item testID={`${testIDPrefix}-run-as-readonly`} title={t('workflows.page.sections.eachStepRunsIn')}
+                        showChevron={false} subtitleLines={0}
+                        subtitle={executionTarget === 'detached_run'
+                            ? t('workflows.page.sections.aBackgroundRun') : t('workflows.page.sections.aSession')} />
+                ) : (
                     <SegmentedChoiceItem<WorkflowRunAsTargetKind>
                         accessoryLayout="stacked"
                         labelSize="field"

@@ -15108,6 +15108,7 @@ const pl: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Ten szkic jako mapa',
     settings: 'Ustawienia przepływu',
     settingsSubtitle: 'Każdy krok ich używa, chyba że je zmieni.',
+    workflowActions: 'Akcje przepływu pracy',
     deleteWorkflow: 'Usuń przepływ',
     deleteBody: 'Wcześniejsze uruchomienia zostają zachowane.',
     discardChangesBody: 'Przywraca ostatnią zapisaną wersję. Cofnij przywraca zmiany.',
@@ -15983,6 +15984,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         evaluator: 'Zdecyduj, czy kontynuować',
         loopBody: 'Powtarzaj te kroki',
         continuation: 'Po każdej rundzie',
+        targetOtherMachine: 'Maszyna innej osoby',
+        targetNotChosen: 'Nie wybrano jeszcze maszyny',
     },
 
     input: {

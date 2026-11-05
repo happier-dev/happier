@@ -14582,6 +14582,7 @@ const de: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Dieser Entwurf als Karte',
     settings: 'Workflow-Einstellungen',
     settingsSubtitle: 'Jeder Schritt nutzt diese, außer er ändert sie.',
+    workflowActions: 'Workflow-Aktionen',
     deleteWorkflow: 'Workflow löschen',
     deleteBody: 'Frühere Läufe bleiben erhalten.',
     discardChangesBody: 'Kehrt zur zuletzt gespeicherten Version zurück. Rückgängig holt deine Änderungen zurück.',
@@ -15457,6 +15458,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         evaluator: 'Entscheiden, ob es weitergeht',
         loopBody: 'Diese Schritte wiederholen',
         continuation: 'Nach jeder Runde',
+        targetOtherMachine: 'Die Maschine einer anderen Person',
+        targetNotChosen: 'Noch keine Maschine gewählt',
     },
 
     input: {

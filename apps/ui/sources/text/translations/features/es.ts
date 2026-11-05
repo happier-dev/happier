@@ -15139,6 +15139,7 @@ const es: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Este borrador como mapa',
     settings: 'Ajustes del flujo',
     settingsSubtitle: 'Cada paso los usa salvo que los cambie.',
+    workflowActions: 'Acciones del flujo de trabajo',
     deleteWorkflow: 'Eliminar flujo',
     deleteBody: 'Las ejecuciones anteriores se conservan.',
     discardChangesBody: 'Vuelve a la última versión guardada. Deshacer recupera tus cambios.',
@@ -16014,6 +16015,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         evaluator: 'Decidir si continuar',
         loopBody: 'Repetir estos pasos',
         continuation: 'Después de cada ronda',
+        targetOtherMachine: 'La máquina de otra persona',
+        targetNotChosen: 'Aún no se ha elegido ninguna máquina',
     },
 
     input: {

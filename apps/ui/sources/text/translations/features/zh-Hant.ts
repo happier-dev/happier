@@ -15072,6 +15072,7 @@ const zhHant: WorkflowEditorPageTranslations = {
     flowSubtitle: '以地圖顯示此草稿',
     settings: '工作流程設定',
     settingsSubtitle: '除非步驟自行變更，否則都使用這些設定。',
+    workflowActions: '工作流程操作',
     deleteWorkflow: '刪除工作流程',
     deleteBody: '過去的執行會保留。',
     discardChangesBody: '回到上次儲存的版本。復原可找回你的變更。',
@@ -15947,6 +15948,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         evaluator: '判斷是否繼續',
         loopBody: '重複這些步驟',
         continuation: '每一輪之後',
+        targetOtherMachine: '他人的機器',
+        targetNotChosen: '尚未選擇機器',
     },
 
     input: {

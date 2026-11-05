@@ -15120,6 +15120,7 @@ const ru: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Этот черновик в виде схемы',
     settings: 'Настройки сценария',
     settingsSubtitle: 'Каждый шаг использует их, если не меняет.',
+    workflowActions: 'Действия рабочего процесса',
     deleteWorkflow: 'Удалить сценарий',
     deleteBody: 'Прошлые запуски сохраняются.',
     discardChangesBody: 'Возвращает последнюю сохранённую версию. Отмена вернёт ваши изменения.',
@@ -15995,6 +15996,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         evaluator: 'Решить, продолжать ли',
         loopBody: 'Повторять эти шаги',
         continuation: 'После каждого круга',
+        targetOtherMachine: 'Машина другого человека',
+        targetNotChosen: 'Машина ещё не выбрана',
     },
 
     input: {

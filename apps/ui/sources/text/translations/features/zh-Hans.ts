@@ -15072,6 +15072,7 @@ const zhHans: WorkflowEditorPageTranslations = {
     flowSubtitle: '以地图显示此草稿',
     settings: '工作流设置',
     settingsSubtitle: '除非步骤自行更改，否则都使用这些设置。',
+    workflowActions: '工作流操作',
     deleteWorkflow: '删除工作流',
     deleteBody: '过去的运行会保留。',
     discardChangesBody: '回到上次保存的版本。撤销可恢复你的更改。',
@@ -15947,6 +15948,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         evaluator: '判断是否继续',
         loopBody: '重复这些步骤',
         continuation: '每一轮之后',
+        targetOtherMachine: '他人的机器',
+        targetNotChosen: '尚未选择机器',
     },
 
     input: {

@@ -327,6 +327,36 @@ const OPEN_SETTINGS_GROUPS: ReadonlyMap<string, boolean> = new Map([
     ['where', true], ['agent', true], ['conversation', true], ['inputs', true],
 ]);
 
+
+it.each(['session', 'detached_run'] as const)('shows the read-only execution target %s as a value and keeps the writable chooser (M7)', async executionTarget => {
+    const harness = await loadHarness();
+    const { WorkflowInspector } = await import('../editor/WorkflowInspector');
+    const { resolveWorkflowRunAsTargets } = await import('../run/workflowRunAsTargets');
+    const onChangeExecutionTarget = vi.fn();
+    const props: React.ComponentProps<typeof WorkflowInspector> = {
+        subject: { kind: 'workflow' }, presentation: 'pane', draft: buildDraft(harness), onChange: () => {},
+        machineName: 'Studio', groupDisclosure: OPEN_SETTINGS_GROUPS, executionTarget,
+        runAsTargets: resolveWorkflowRunAsTargets({ detachedExecutionRun: 'supported' }),
+        onChangeExecutionTarget, testIDPrefix: 'execution-target',
+    };
+    const screen = await renderScreen(<WorkflowInspector {...props} documentEditable={false} />);
+    expect(screen.findByTestId('execution-target-run-as-readonly')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.page.sections.eachStepRunsIn');
+    expect(screen.getTextContent()).toContain(executionTarget === 'session'
+        ? 'workflows.page.sections.aSession' : 'workflows.page.sections.aBackgroundRun');
+    expect(screen.findByTestId('execution-target-run-as:session')).toBeNull();
+    expect(screen.findByTestId('execution-target-run-as:detached_run')).toBeNull();
+    expect(onChangeExecutionTarget).not.toHaveBeenCalled();
+
+    await screen.update(<WorkflowInspector {...props} documentEditable />);
+    expect(screen.findByTestId('execution-target-run-as-readonly')).toBeNull();
+    expect(screen.findByTestId('execution-target-run-as:session')).not.toBeNull();
+    expect(screen.findByTestId('execution-target-run-as:detached_run')).not.toBeNull();
+    const nextTarget = executionTarget === 'session' ? 'detached_run' : 'session';
+    await screen.pressByTestIdAsync(`execution-target-run-as:${nextTarget}`);
+    expect(onChangeExecutionTarget).toHaveBeenCalledWith(nextTarget);
+});
+
 it('keeps closed workflow and step summaries on the exact admitted Home name without chooser options', async () => {
     const harness = await loadHarness();
     const { WorkflowInspector } = await import('../editor/WorkflowInspector');
@@ -1291,6 +1321,7 @@ describe('workflow editor body', () => {
         paneState.detailsAvailable = false;
         const harness = await loadHarness();
         const screen = await renderBody(harness, { onRunNow: () => {} });
+        await screen.pressByTestIdAsync('workflow-editor-phone-more');
         await screen.pressByTestIdAsync('workflow-editor-phone-settings');
         expect(screen.visibleModals()).toEqual([expect.objectContaining({
             chrome: expect.objectContaining({ phonePresentation: 'sheet', material: 'solid' }),

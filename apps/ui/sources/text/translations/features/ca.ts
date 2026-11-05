@@ -15112,6 +15112,7 @@ const ca: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Aquest esborrany com a mapa',
     settings: 'Configuració del flux',
     settingsSubtitle: 'Cada pas les fa servir tret que les canviï.',
+    workflowActions: 'Accions del flux de treball',
     deleteWorkflow: 'Suprimeix el flux',
     deleteBody: 'Les execucions anteriors es conserven.',
     discardChangesBody: 'Torna a la darrera versió desada. Desfés recupera els canvis.',
@@ -15987,6 +15988,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         evaluator: 'Decidir si continuar',
         loopBody: 'Repeteix aquests passos',
         continuation: 'Després de cada ronda',
+        targetOtherMachine: 'La màquina d’una altra persona',
+        targetNotChosen: 'Encara no s’ha triat cap màquina',
     },
 
     input: {

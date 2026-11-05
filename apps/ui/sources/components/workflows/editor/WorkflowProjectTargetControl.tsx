@@ -251,8 +251,10 @@ export const WorkflowProjectTargetControl = React.forwardRef<
             onOpenChange={setPickerOpen}
             readOnlyValue={editable ? null : (
                 target === undefined || target === null || props.machineName === null ? (
+                    // Someone who can't edit is never told to choose: they read what is (FIN-DESIGN-REVIEW M7).
                     <Text testID={`${testIDPrefix}-machine`} style={styles.unresolved}>
-                        {props.machineName ?? t('workflows.editor.targetRequired')}
+                        {props.machineName ?? (target === undefined || target === null
+                            ? t('workflows.editor.targetNotChosen') : t('workflows.editor.targetOtherMachine'))}
                     </Text>
                 ) : (
                     <Text testID={`${testIDPrefix}-project-directory-readonly`} style={styles.value}>{summary}</Text>

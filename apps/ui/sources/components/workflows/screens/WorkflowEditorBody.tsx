@@ -13,6 +13,7 @@ import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/det
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import type { PaneBuiltinAdapter } from '@/components/appShell/panes/types';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -140,6 +141,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
  */
 export const WORKFLOW_EDITOR_PANE_SCOPE_ID = 'workflow-editor';
 const WORKFLOW_FLOW_PANE_DESTINATION_ID = 'workflow-flow';
+const PHONE_BAR_SHEET = Object.freeze({});
 
 /** The Agent & model chips the header shows; every field is in Workflow settings. */
 const HEADER_ENGINE_FIELDS = ['agentTarget', 'modelSelection'] as const;
@@ -1439,15 +1441,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     if (insertion.block.kind === 'step' || insertion.block.kind === 'wait') requestPromptFocus(insertion.block.id);
                 }}
             />}
-            {!canOpenSettings ? null : <HappierPressable
-                testID={`${testIDPrefix}-phone-settings`}
-                accessibilityRole="button"
-                accessibilityLabel={t('workflows.page.settings')}
-                onPress={openSettings}
-                style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-            >
-                <Icon name="sidebar-right-open" size={20} color={theme.colors.text.secondary} />
-            </HappierPressable>}
             <View style={styles.phoneBarSpacer} />
             {duplicateButton}
             {onSave === undefined || !documentEditable || (props.saveStatus !== undefined && !['notSaved', 'unsaved', 'failed'].includes(props.saveStatus.kind)) ? null : (
@@ -1459,6 +1452,17 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 />
             )}
             {runNowButton}
+            {/* The bar's own ⋯ holds the editor's actions (07 §S8: Add · Save · Run now + ⋯). The header ⋯ stays
+                the detail navigation's More, which holds navigation items only. */}
+            {!canOpenSettings ? null : <ItemRowActions
+                title={t('workflows.page.workflowActions')}
+                overflowOnly
+                overflowTriggerTestID={`${testIDPrefix}-phone-more`}
+                overflowTriggerAccessibilityLabel={t('workflows.page.workflowActions')}
+                overflowPhoneSheet={PHONE_BAR_SHEET}
+                actions={[{ id: `${testIDPrefix}-phone-settings`, title: t('workflows.page.settings'),
+                    icon: 'sliders-horizontal', onPress: openSettings }]}
+            />}
         </PagePinnedBar></RoundButtonSizeScope>
     );
 

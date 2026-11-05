@@ -318,6 +318,8 @@ export const en = {
         evaluator: 'Decide whether to continue',
         loopBody: 'Repeat these steps',
         continuation: 'After each round',
+        targetOtherMachine: 'Someone else’s machine',
+        targetNotChosen: 'No machine chosen yet',
     },
 
     input: {

@@ -15076,6 +15076,7 @@ const ja: WorkflowEditorPageTranslations = {
     flowSubtitle: 'この下書きをマップで表示',
     settings: 'ワークフローの設定',
     settingsSubtitle: '各ステップは変更しない限りこれを使います。',
+    workflowActions: 'ワークフローの操作',
     deleteWorkflow: 'ワークフローを削除',
     deleteBody: '過去の実行は保持されます。',
     discardChangesBody: '最後に保存したバージョンに戻ります。元に戻すで変更を復元できます。',
@@ -15951,6 +15952,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         evaluator: '続けるかどうかを判断',
         loopBody: 'これらのステップを繰り返す',
         continuation: '各ラウンドのあとで',
+        targetOtherMachine: 'ほかの人のマシン',
+        targetNotChosen: 'マシンはまだ選ばれていません',
     },
 
     input: {

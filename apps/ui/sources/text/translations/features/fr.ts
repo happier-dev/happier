@@ -15137,6 +15137,7 @@ const fr: WorkflowEditorPageTranslations = {
     flowSubtitle: 'Ce brouillon sous forme de carte',
     settings: 'Réglages du workflow',
     settingsSubtitle: 'Chaque étape les utilise sauf si elle les change.',
+    workflowActions: 'Actions du workflow',
     deleteWorkflow: 'Supprimer le workflow',
     deleteBody: 'Les exécutions passées sont conservées.',
     discardChangesBody: 'Revient à la dernière version enregistrée. Annuler rétablit tes modifications.',
@@ -16012,6 +16013,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         evaluator: 'Décider s’il faut continuer',
         loopBody: 'Répéter ces étapes',
         continuation: 'Après chaque tour',
+        targetOtherMachine: 'La machine d’une autre personne',
+        targetNotChosen: 'Aucune machine choisie pour l’instant',
     },
 
     input: {
