@@ -240,10 +240,12 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
             const expected = candidates.some(candidate => candidate.binding.role === 'rollback')
                 ? header.rollbackOfDeploymentId : header.promotedFromDeploymentId;
             if (expected !== prior.deploymentId) return refuse('target_mismatch');
-            const source = await host.readEnvironment({ environmentId: prior.environmentId, context: request.context });
-            if (source.environment.id !== prior.environmentId || source.environment.deletedAtMs !== undefined
-                || !source.environment.capabilities.deploy)
-                return refuse('deployment_access_denied', 'deployment.target.admission.prior_environment');
+            if (!candidates.some(({ binding }) => binding.role === admittedOperation)) {
+                const source = await host.readEnvironment({ environmentId: prior.environmentId, context: request.context });
+                if (source.environment.id !== prior.environmentId || source.environment.deletedAtMs !== undefined
+                    || !source.environment.capabilities.deploy)
+                    return refuse('deployment_access_denied', 'deployment.target.admission.prior_environment');
+            }
             const previous = await host.readReceipt({ environmentId: prior.environmentId, deploymentId: prior.deploymentId, context: request.context });
             if (previous.deployment.id !== prior.deploymentId || previous.deployment.environmentId !== prior.environmentId
                 || previous.deployment.revision !== prior.expectedRevision
