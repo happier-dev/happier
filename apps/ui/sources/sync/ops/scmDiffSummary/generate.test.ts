@@ -4,6 +4,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getScmDiffSummaryOperationState, type ScmDiffSummaryGenerateRpc } from './generate';
 import { createScmDiffSummaryOperationsWithTransport as createScmDiffSummaryOperations } from '@/dev/testkit/harness/scmActionTransport';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { getPreferredLanguage } from '@/text';
 import { createUiScmAction } from '@/sync/ops/actions/scmActionDeps';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -284,6 +285,43 @@ describe('SCM diff summary operations', () => {
             unsubscribe();
         }
     });
+    it('notifies only the changed Account and host while preserving deletion, retirement and global consumers', () => {
+        const ops = createScmDiffSummaryOperations();
+        const scope = { serverId: 'home', accountId: 'account' };
+        const otherScope = { serverId: 'home', accountId: 'other-account' };
+        const result = { resultId: complete.resultId, revision: 0, canUndo: false, output: complete };
+        const firstKey = ops.loadSavedResult({ machineId: 'machine', scope, result })!;
+        const secondResult = { ...result, resultId: 'other-checkout', output: { ...complete, resultId: 'other-checkout',
+            comparison: { ...comparison, repository: { rootPath: '/other-repo' } } } };
+        const secondKey = ops.loadSavedResult({ machineId: 'machine', scope, result: secondResult })!;
+        const otherKey = ops.loadSavedResult({ machineId: 'machine', scope: otherScope, result })!;
+        const first = vi.fn();
+        const second = vi.fn();
+        const other = vi.fn();
+        const global = vi.fn();
+        const unbind = [ops.subscribeHost({ machineId: 'machine', cwd: '/repo' }, serverAccountScopeKeySuffix(scope), first),
+            ops.subscribeHost({ machineId: 'machine', cwd: '/other-repo' }, serverAccountScopeKeySuffix(scope), second),
+            ops.subscribeHost({ machineId: 'machine', cwd: '/repo' }, serverAccountScopeKeySuffix(otherScope), other), ops.subscribe(global)];
+        try {
+            ops.applySavedResult(firstKey, { ...result, canUndo: true });
+            expect(first).toHaveBeenCalledTimes(1);
+            expect(second).not.toHaveBeenCalled();
+            expect(other).not.toHaveBeenCalled();
+            ops.applySavedResult(secondKey, { ...secondResult, canUndo: true });
+            expect(second).toHaveBeenCalledTimes(1);
+            ops.applySavedResult(otherKey, { ...result, canUndo: true });
+            expect(other).toHaveBeenCalledTimes(1);
+            ops.deleteSavedResults(scope, [result.resultId]);
+            expect(first).toHaveBeenCalledTimes(2);
+            expect(ops.getState().entriesByKey[firstKey]).toBeUndefined();
+            ops.retireScope(scope);
+            expect(second).toHaveBeenCalledTimes(2);
+            expect(other).toHaveBeenCalledTimes(1);
+            expect(ops.getState().entriesByKey[otherKey]).toBeDefined();
+            expect(global).toHaveBeenCalledTimes(5);
+        } finally { for (const unsubscribe of unbind) unsubscribe(); }
+    });
+
     it('publishes only changed Run facts and retains unchanged captured evidence and output identities', async () => {
         let clock = 100;
         const output = { ...complete, requestedOutputs: ['summary', 'walkthrough'], outputs: { ...complete.outputs, walkthrough: { state: 'complete', value: {

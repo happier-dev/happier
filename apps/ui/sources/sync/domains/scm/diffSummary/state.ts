@@ -6,7 +6,7 @@ import type {
     ScmDiffSummaryGenerationState,
     ScmDiffSummaryCostMetadata,
     ScmDiffSummaryTruncation,
-    ScmComparison,
+    ScmComparison, ScmComparisonFile,
     ScmDiffSummaryOutputs,
     ScmDiffSummaryOutputKind,
     ScmDiffSummaryAnalysisCoverage,
@@ -14,6 +14,8 @@ import type {
 } from '@happier-dev/protocol';
 import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
 import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+
+import type { ScmReviewComparisonSelector } from './selection';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
 
@@ -66,8 +68,21 @@ export type ScmDiffSummaryEntry = Readonly<{
     retryAttempt: number;
 }>;
 
+/** Captured reads follow the same Account/host owner as generated readings, across view lifetimes. */
+export type CapturedScmRead = Readonly<{
+    key: string;
+    comparison: ScmComparison | null;
+    error: ScmDiffSummaryEntry['error'];
+    loading: boolean;
+    page: Readonly<{ totalFiles: number; nextCursor: number | null }> | null;
+}>;
+
 export type ScmDiffSummaryState = Readonly<{
     entriesByKey: Readonly<Record<string, ScmDiffSummaryEntry>>;
+    capturedReadsByKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; value: CapturedScmRead }>>>;
+    capturedFilesByKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; files: ReadonlyMap<string, ScmComparisonFile> }>>>;
+    reviewComparisonsByHostKey?: Readonly<Record<string, Readonly<{ scopeKey: string; hostKey: string; comparison: ScmReviewComparisonSelector }>>>;
+
 }>;
 
 export type ScmDiffSummaryEvent =
@@ -310,6 +325,7 @@ function writeEntry(state: ScmDiffSummaryState, entry: Omit<ScmDiffSummaryEntry,
         : output?.outputs ?? summary?.output.outputs ?? null;
     const displayOutputs = reconcileSnapshotFacts(state.entriesByKey[entry.key]?.displayOutputs, outputs);
     return {
+        ...state,
         entriesByKey: {
             ...state.entriesByKey,
             [entry.key]: { ...entry, displayOutputs },

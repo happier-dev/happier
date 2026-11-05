@@ -25,6 +25,7 @@ import {
     buildScmDiffSummaryRequestKey,
     createInitialScmDiffSummaryState,
     selectScmDiffSummaryViewModel,
+    type ScmDiffSummaryEntry,
     type ScmDiffSummaryOperationIntent,
     type ScmDiffSummaryState,
     type ScmDiffSummaryViewModel,
@@ -275,11 +276,28 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
     const checkpointRefByRequestKey = new Map<string, string>();
     const prefetchByRequestKey = new Map<string, Promise<ScmDiffSummaryOperationResult>>();
     const listeners = new Set<() => void>();
+    const hostListeners = new Map<string, Set<() => void>>();
 
-    const setState = (next: ScmDiffSummaryState) => {
+    const hostSubscriptionKey = (scopeKey: string | undefined, host: Readonly<{ sessionId: string | null; machineId?: string; cwd?: string }>) =>
+        JSON.stringify(host.sessionId !== null ? [scopeKey, 'session', host.sessionId]
+            : [scopeKey, 'machine', host.machineId, host.cwd]);
+    const entrySubscriptionKey = (entry: ScmDiffSummaryEntry) => hostSubscriptionKey(entry.scopeKey,
+        { sessionId: entry.sessionId, machineId: entry.machineId, cwd: entry.input.cwd });
+
+    const setState = (next: ScmDiffSummaryState, changedKeys: readonly string[], capturedHosts: readonly string[] = []) => {
         if (Object.is(next, state)) return;
+        const previous = state;
         state = next;
+        const changedHosts = new Set(capturedHosts);
+        if (hostListeners.size > 0) for (const key of changedKeys) {
+            const before = previous.entriesByKey[key];
+            const after = next.entriesByKey[key];
+            if (before === after) continue;
+            if (before) changedHosts.add(entrySubscriptionKey(before));
+            if (after) changedHosts.add(entrySubscriptionKey(after));
+        }
         for (const listener of listeners) listener();
+        for (const host of changedHosts) for (const listener of hostListeners.get(host) ?? []) listener();
     };
 
     const getState = () => state;
@@ -287,6 +305,18 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         listeners.add(listener);
         return () => {
             listeners.delete(listener);
+        };
+    };
+
+    const subscribeHost = (host: Readonly<{ sessionId: string }> | Readonly<{ machineId: string; cwd: string }>,
+        scopeKey: string, listener: () => void) => {
+        const key = hostSubscriptionKey(scopeKey, 'sessionId' in host ? host : { ...host, sessionId: null });
+        let subscriptions = hostListeners.get(key);
+        if (!subscriptions) { subscriptions = new Set(); hostListeners.set(key, subscriptions); }
+        subscriptions.add(listener);
+        return () => {
+            subscriptions.delete(listener);
+            if (subscriptions.size === 0) hostListeners.delete(key);
         };
     };
 
@@ -389,7 +419,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
                 scopeKey: params.scope ? serverAccountScopeKeySuffix(params.scope) : undefined,
                 actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID, input: params.input,
                 error, errorCode, failedAtMs: nowMs(), intent,
-            }));
+            }), [key]);
             return { ok: false, key, error, errorCode, state, viewModel: selectScmDiffSummaryViewModel(state, key) };
         }
         applyCheckpointCleanupReceiptsFromTurnChangeSet(params.turnChangeSet);
@@ -400,7 +430,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             scopeKey: params.scope ? serverAccountScopeKeySuffix(params.scope) : undefined,
             actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID, input: params.input,
             runId: null, requestedAtMs, intent,
-        }));
+        }), [key]);
         const generated = await invokeUiScmAction({ actionId: params.input.pullRequestDraft ? 'scm.diffSummary.draftPullRequest' : 'scm.diffSummary.generate', input: buildGenerateRequest(params),
             schema: ScmDiffSummaryGenerateOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
@@ -427,7 +457,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
                 ...(error.errorCode ? { errorCode: error.errorCode } : {}),
                 failedAtMs: nowMs(),
                 intent,
-            }));
+            }), [key]);
             return {
                 ok: false,
                 key,
@@ -461,7 +491,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             structuredOutput: output,
             requestedAtMs,
             intent,
-        }));
+        }), [key]);
         if (cacheKeyInput && output.success && hasCompletedRequestedOutputs(output, params.input)) {
             cacheState = putScmDiffSummaryCacheEntry(cacheState, {
                 keyInput: cacheKeyInput, checkpointRef: checkpointRefByRequestKey.get(key), entry: output,
@@ -575,7 +605,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             structuredOutput,
             progressMarkdown: params.progressMarkdown ?? null,
             observedAtMs: nowMs(),
-        }));
+        }), [params.key]);
         const entry = state.entriesByKey[params.key];
         const selector = selectorByRequestKey.get(params.key);
         const cacheKeyInput = entry && selector && structuredOutput?.success
@@ -596,24 +626,31 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         };
     };
 
-    const recordCopyIntent = (key: string): ScmDiffSummaryViewModel => {
-        setState(applyScmDiffSummaryEvent(state, {
-            type: 'copy_requested',
-            key,
-            requestedAtMs: nowMs(),
-        }));
-        return selectScmDiffSummaryViewModel(state, key);
-    };
-
     const applyCheckpointCleanupReceipt = (receipt: CheckpointCleanupReceiptLike): Readonly<{ prunedEntries: number }> => {
         const pruned = pruneScmDiffSummaryCacheByCheckpointCleanupReceipt(cacheState, receipt);
         cacheState = pruned.state;
         return { prunedEntries: pruned.prunedEntries };
     };
 
+    const retireScope = (scope: ServerAccountScope) => {
+        const scopeKey = serverAccountScopeKeySuffix(scope);
+        const removedKeys = Object.keys(state.entriesByKey).filter(key => state.entriesByKey[key]?.scopeKey === scopeKey);
+        const captured = [...Object.values(state.capturedReadsByKey ?? {}), ...Object.values(state.capturedFilesByKey ?? {}),
+            ...Object.values(state.reviewComparisonsByHostKey ?? {})]
+            .filter(entry => entry.scopeKey === scopeKey);
+        if (removedKeys.length === 0 && captured.length === 0) return;
+        setState({ ...state,
+            entriesByKey: Object.fromEntries(Object.entries(state.entriesByKey).filter(([, entry]) => entry.scopeKey !== scopeKey)),
+            capturedReadsByKey: Object.fromEntries(Object.entries(state.capturedReadsByKey ?? {}).filter(([, entry]) => entry.scopeKey !== scopeKey)),
+            capturedFilesByKey: Object.fromEntries(Object.entries(state.capturedFilesByKey ?? {}).filter(([, entry]) => entry.scopeKey !== scopeKey)),
+            reviewComparisonsByHostKey: Object.fromEntries(Object.entries(state.reviewComparisonsByHostKey ?? {}).filter(([, entry]) => entry.scopeKey !== scopeKey)),
+        }, removedKeys, captured.map(entry => entry.hostKey));
+    };
+
     return {
         getState,
         subscribe,
+        subscribeHost,
         captureComparison,
         readCapturedFile,
         generateFromUserAction,
@@ -633,32 +670,28 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
                 sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}), actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
                 input: { cwd: output.comparison.repository.rootPath, source: output.comparison.source, outputs: output.requestedOutputs ?? ['walkthrough'] },
                 runId: output.runId ?? null, structuredOutput: output, requestedAtMs: params.savedAtMs ?? nowMs(), intent: 'generate' });
-            setState(applyScmDiffSummaryEvent(next, { type: 'saved_result', key, result: params.result, observedAtMs: nowMs() }));
+            setState(applyScmDiffSummaryEvent(next, { type: 'saved_result', key, result: params.result, observedAtMs: nowMs() }), [key]);
             return key;
         },
         applySavedResult: (key: string, result: ScmDiffSummaryResult) => {
-            setState(applyScmDiffSummaryEvent(state, { type: 'saved_result', key, result, observedAtMs: nowMs() }));
+            setState(applyScmDiffSummaryEvent(state, { type: 'saved_result', key, result, observedAtMs: nowMs() }), [key]);
         },
         deleteSavedResults: (scope: ServerAccountScope, resultIds: readonly string[]) => {
             const scopeKey = serverAccountScopeKeySuffix(scope);
             const ids = new Set(resultIds);
+            const removedKeys: string[] = [];
             const entries = Object.entries(state.entriesByKey).filter(([key, entry]) => {
                 const resultId = entry.savedResult?.resultId ?? (entry.latestOutput?.success ? entry.latestOutput.resultId : null);
                 if (entry.scopeKey !== scopeKey || !resultId || !ids.has(resultId)) return true;
+                removedKeys.push(key);
                 selectorByRequestKey.delete(key);
                 checkpointRefByRequestKey.delete(key);
                 return false;
             });
-            if (entries.length !== Object.keys(state.entriesByKey).length) setState({ entriesByKey: Object.fromEntries(entries) });
+            if (removedKeys.length > 0) setState({ ...state, entriesByKey: Object.fromEntries(entries) }, removedKeys);
         },
-        retireScope: (scope: ServerAccountScope) => {
-            const scopeKey = serverAccountScopeKeySuffix(scope);
-            const entries = Object.entries(state.entriesByKey).filter(([, entry]) => entry.scopeKey !== scopeKey);
-            if (entries.length === Object.keys(state.entriesByKey).length) return;
-            setState({ entriesByKey: Object.fromEntries(entries) });
-        },
+        retireScope,
         applyCheckpointCleanupReceipt,
-        recordCopyIntent,
     } as const;
 }
 
@@ -674,9 +707,9 @@ export const deleteSavedScmDiffSummaryResults = defaultOperations.deleteSavedRes
 export const retireScmDiffSummaryScope = defaultOperations.retireScope;
 export const prefetchScmDiffSummary = defaultOperations.prefetch;
 export const applyScmDiffSummaryCheckpointCleanupReceipt = defaultOperations.applyCheckpointCleanupReceipt;
-export const recordScmDiffSummaryCopyIntent = defaultOperations.recordCopyIntent;
 export const getScmDiffSummaryState = defaultOperations.getState;
 export const subscribeScmDiffSummaryState = defaultOperations.subscribe;
+export const subscribeScmDiffSummaryHostState = defaultOperations.subscribeHost;
 
 export function getScmDiffSummaryOperationState(state: ScmDiffSummaryState, key: string, output?: ScmDiffSummaryOutputKind): ScmDiffSummaryViewModel {
     return selectScmDiffSummaryViewModel(state, key, output);
