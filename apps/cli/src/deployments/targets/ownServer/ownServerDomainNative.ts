@@ -40,6 +40,7 @@ import type { getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { runElevatedMachineSetupIntent, resolveInstalledMachineEffectCli,
     type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 
 /** Captured by the ApiMachine metadata owner, never a synthetic Machine RPC. */
 export type DomainNativeSetupForHost = Readonly<{
@@ -405,10 +406,12 @@ export function createOwnServerDomainNative(host: Readonly<{
     return async (job: DomainJob, context: ActionExecutorContext) => {
         try { return job.kind === 'domainDiscover' ? await discover(job, context) : await execute(job, context); }
         catch (error) {
+            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
+                : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
+                error, 'deployment.domain.native_execution');
             const failureCause = ActionFailureCauseV1Schema.safeParse(error instanceof Error && 'failureCause' in error ? error.failureCause : undefined);
-            return failure(job, context.signal?.aborted ? 'cancelled'
-            : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
-            error instanceof Error && 'details' in error ? error.details : undefined,
-            failureCause.success ? failureCause.data : projectActionFailureCauseV1(error, 'deployment.domain.native_execution')); }
+            return { ...failure(job, projected.errorCode,
+                projected.details ?? (error instanceof Error && 'details' in error ? error.details : undefined),
+                failureCause.success ? failureCause.data : projected.failureCause), error: projected.error }; }
     };
 }

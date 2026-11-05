@@ -8,6 +8,7 @@ import { afterEach, expect, it, vi, type MockInstance } from 'vitest';
 import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainListResultV1Schema, DeploymentDomainObservationV1Schema, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -86,11 +87,13 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: true, cutover: false, connectorRetirement: 'none' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: true, connectorRetirement: 'none' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'exact' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', artifactRefusal: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement)', async scenario => withSocketTempDir(async directory => {
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
+    const artifactRefusal = 'artifactRefusal' in scenario && scenario.artifactRefusal;
     const socketPath = join(directory, 'admin.sock');
     const configPath = join(directory, 'initial.json');
     const domain = { hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 },
@@ -219,6 +222,8 @@ it.each([
                     { status: 404, statusText: 'Not Found', data: { error: 'not_found' }, headers: {}, config: { headers: new axios.AxiosHeaders() } });
             }
             const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+            if (artifactRefusal && id === 'domain-content') return { status: 401,
+                data: ExternalActionHttpErrorSchema.parse({ error: 'invalid_token', authorizationRefusal: 'deployment_preparation' }) };
             const document = content.get(id);
             if (!document) throw new Error('Unexpected private resource read');
             return { status: 200, data: { id, ownerAccountId: 'bob', access: 'owner', publicAudience: 'none', encryptionMode,
@@ -366,6 +371,14 @@ it.each([
             machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'ann', machineId: placement.machineId,
                 installationId: placement.installationId, role: 'manage', encryptionMode },
             verifyMachineAdmissionCurrent: async () => { admissionReads++; return true; } });
+        if (artifactRefusal) {
+            expect(rawResult).toMatchObject({ ok: false, errorCode: 'action_forbidden',
+                error: 'action_forbidden (home_signed_authorization_rejected:deployment_preparation)',
+                failureCause: { phase: 'home.authorization.deployment_preparation', httpStatus: 401 } });
+            expect(mutations).toEqual([]);
+            expect(JSON.stringify({ rawResult, rootEvents, rootLaunches })).not.toContain(token);
+            return;
+        }
         if (verifying) {
             const observation = DeploymentDomainObservationV1Schema.parse(rawResult);
             expect(observation).toMatchObject({ state: 'active', networkExposure: { kind: 'ready',
