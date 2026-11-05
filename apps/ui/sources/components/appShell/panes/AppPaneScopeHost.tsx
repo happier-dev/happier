@@ -28,9 +28,10 @@ import { AppPaneContext } from './AppPaneContext';
 import { PaneColumnsHost } from './PaneColumnsHost';
 import { usePaneArrangement } from './arrangement/usePaneArrangement';
 import { useOptionalAppPaneScopeLayout } from './hooks/useAppPaneScopeLayout';
+import { usePresentedDetailNavigationChrome, type DetailNavigationMainColumnControls } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import { PaneMainColumnContext, type PaneMainColumnDescriptor, type PaneMainColumnState } from './mainColumn/usePaneMainColumn';
 import { RightSidebarActionsContext, type RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
-import { RightPanePlacementReporterContext, type RightPanePlacement } from './rightPanePlacement';
+import { RightPanePlacementReporterContext, type RightPanePresentation } from './rightPanePlacement';
 import { registerShellColumnActionOwner, notifyShellColumnActionOwnersChanged, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import type { ResolvedPaneLayout } from '@/components/ui/panels/paneBreakpoints';
@@ -141,6 +142,7 @@ function AppPaneScopeControls(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const layout = useOptionalAppPaneScopeLayout();
+    const detailNavigation = usePresentedDetailNavigationChrome();
     const folded = layout?.layout.main === 'overlay';
     const hidden = layout?.mainHidden === true || (folded && !layout?.mainDrawerOpen);
     const canHide = props.descriptor !== undefined && layout != null
@@ -156,8 +158,32 @@ function AppPaneScopeControls(props: Readonly<{
     const value = React.useMemo<PaneMainColumnState | null>(() => props.descriptor === undefined ? null : ({
         hidden, canHide, folded, labels, identity: props.descriptor.identity, setHidden, toggle,
     }), [canHide, folded, hidden, labels, props.descriptor?.identity, setHidden, toggle]);
-    const current = React.useRef({ value, props, layout });
-    current.current = { value, props, layout };
+    const current = React.useRef({ props, layout, hidden, canHide, labels, detailNavigation });
+    current.current = { props, layout, hidden, canHide, labels, detailNavigation };
+    const readPhysicalMain = React.useCallback((): DetailNavigationMainColumnControls => {
+        const { props, layout, hidden, canHide, labels } = current.current;
+        return {
+            present: true, visible: props.descriptor === undefined || !hidden,
+            available: canHide || props.sideActions.current?.main !== undefined,
+            label: props.descriptor === undefined ? undefined : hidden ? labels.showLabel : labels.hideLabel,
+            arrangementAvailable: props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
+            setVisible: visible => props.setHidden(!visible),
+        };
+    }, []);
+    const readMain = React.useCallback((): ShellColumnActionOwner => {
+        const { props, detailNavigation } = current.current;
+        return detailNavigation ? detailNavigation.readColumn('main')
+            : { ...(props.sideActions.current?.main ?? {}), ...readPhysicalMain() };
+    }, [readPhysicalMain]);
+    const readSide = React.useCallback((): ShellColumnActionOwner => {
+        const { props, layout, detailNavigation } = current.current;
+        if (detailNavigation && detailNavigation.registerSide !== false) return detailNavigation.readColumn('side');
+        return {
+            present: true, visible: props.rightOpen,
+            available: props.sideAvailable && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
+            ...(props.sideActions.current ?? {}), setVisible: props.setSideVisible,
+        };
+    }, []);
     React.useLayoutEffect(() => {
         props.onControlsChange?.(value);
         return () => props.onControlsChange?.(null);
@@ -167,30 +193,14 @@ function AppPaneScopeControls(props: Readonly<{
         if (props.focused) notifyShellColumnActionOwnersChanged();
     }, [arrangementAvailable, props.focused]);
     React.useEffect(() => {
-        if (!props.focused) return;
-        const unregisterMain = registerShellColumnActionOwner('main', (): ShellColumnActionOwner => {
-            const { value, props, layout } = current.current;
-            return {
-                present: true,
-                visible: value?.hidden !== true,
-                available: value?.canHide === true,
-                label: value?.hidden ? value.labels.showLabel : value?.labels.hideLabel,
-                arrangementAvailable: props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
-                setVisible: visible => value?.setHidden(!visible),
-            };
-        });
-        const unregisterSide = registerShellColumnActionOwner('side', (): ShellColumnActionOwner => {
-            const { props, layout } = current.current;
-            return {
-                present: true,
-                visible: props.rightOpen,
-                available: props.sideAvailable && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
-                ...(props.sideActions.current ?? {}),
-                setVisible: props.setSideVisible,
-            };
-        });
+        if (!props.focused || layout?.deviceType === 'phone') return;
+        const unregisterMain = detailNavigation ? detailNavigation.bindMainColumn(readPhysicalMain)
+            : registerShellColumnActionOwner('main', readMain);
+        const unregisterSide = !detailNavigation || detailNavigation.registerSide === false
+            ? registerShellColumnActionOwner('side', readSide) : () => {};
         return () => { unregisterMain(); unregisterSide(); };
-    }, [props.focused, props.scopeId]);
+    }, [layout?.deviceType, props.focused, props.scopeId, readMain, readPhysicalMain, readSide,
+        detailNavigation?.bindMainColumn, detailNavigation?.registerSide]);
     useKeyboardShortcutHandlers(React.useMemo(() => !props.focused ? {} : ({
         'panes.main.toggle': () => { if (!canHide) return false; toggle(); return true; },
         'panes.side.toggle': () => {
@@ -388,7 +398,10 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     }, [dispatch, props.scopeId]);
     const sideActions = React.useRef<RightSidebarActions | null>(null);
     // The open tab's catalog owner reports where it presents (lab AR1 EFv); the columns follow it.
-    const [rightPlacement, setRightPlacement] = React.useState<RightPanePlacement>('side');
+    const [rightPresentation, setRightPresentation] = React.useState<RightPanePresentation>('side');
+    const rightPlacement = typeof rightPresentation === 'string' ? rightPresentation : 'side';
+    const rightSurfaces = typeof rightPresentation === 'string' ? undefined : rightPresentation.surfaces;
+    const presentedRightOpen = rightOpen && (typeof rightPresentation === 'string' || rightPresentation.sideVisible);
     const setSideVisible = React.useCallback((visible: boolean) => {
         dispatch({ type: visible ? 'openRight' : 'closeRight', scopeId: props.scopeId });
     }, [dispatch, props.scopeId]);
@@ -751,12 +764,12 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         // A scope without a target of its own (the App's pages) keeps the enclosing app-target binding.
         <PluginSurfaceDestinationNavigationBindingProvider binding={paneNavigationBinding ?? enclosingNavigationBinding}>
             <RightSidebarActionsContext.Provider value={sideActions}>
-            <RightPanePlacementReporterContext.Provider value={setRightPlacement}>
+            <RightPanePlacementReporterContext.Provider value={setRightPresentation}>
                 <AppPaneScopeControls
                     scopeId={props.scopeId}
                     focused={screenFocused}
                     descriptor={props.mainColumn}
-                    rightOpen={rightOpen}
+                    rightOpen={presentedRightOpen}
                     detailsOpen={effectiveDetailsOpen}
                     sideAvailable={(rightSidebarAdapter !== null && rightSidebarAdapter.available !== false) || rightPaneBuiltinAdapter !== null}
                     arrangementHonoured={props.arrangement === 'honour'}
@@ -771,7 +784,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             </RightSidebarActionsContext.Provider>
         </PluginSurfaceDestinationNavigationBindingProvider>
     ), [effectiveDetailsOpen, enclosingNavigationBinding, paneNavigationBinding, props.arrangement, props.mainColumn, props.onMainColumnControlsChange, props.scopeId,
-        rightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, screenFocused, setMainHidden, setSideVisible, wrapScopeContent]);
+        presentedRightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, screenFocused, setMainHidden, setSideVisible, wrapScopeContent]);
 
     if (props.selectedPaneTabKey !== undefined) {
         const selectedSlot = readSelectedPaneDestinationSlot(props.selectedPaneTabKey);
@@ -789,10 +802,12 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             main={props.main}
             mainAccessibilityLabel={props.mainColumn?.showLabel}
             mainMinWidthPx={props.mainMinWidthPx}
-            rightPane={rightPane}
+            rightPane={presentedRightOpen ? rightPane : null}
+            rightSurfaces={rightSurfaces}
+            onCloseMainSurface={typeof rightPresentation === 'string' ? undefined : rightPresentation.onCloseMainSurface}
             detailsPane={detailsPane}
             bottomPane={bottomPane}
-            rightOpen={rightOpen}
+            rightOpen={presentedRightOpen}
             rightPlacement={rightOpen ? rightPlacement : 'side'}
             detailsOpen={effectiveDetailsOpen}
             destinationOwnsDetails={destinationOwnsDetails}

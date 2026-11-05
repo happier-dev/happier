@@ -6,9 +6,17 @@ import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import { PROJECT_PAGES, type ProjectPageSelection, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { projectPageGlyph, projectPageLabel } from '@/components/projects/navigation/projectPageDisplay';
-import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+
+import { resolveDetailNavigationItems, type ProjectDetailNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
+import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 
 const OVERVIEW_PLACEMENTS: readonly NavigationPlacement[] = Object.freeze(['pinned']);
+/**
+ * The header's six page tabs (plan 12 D44): Overview · Code · Changes · Scripts · Services · Context. Pages
+ * added after them start behind More until the person pins them through Customize.
+ */
+const HEADER_PAGES: ReadonlySet<string> = new Set(['overview', 'code', 'changes', 'scripts', 'services', 'context']);
 
 /** The descriptive Project catalog; renderer activation and invocation admission stay with their owners. */
 export type ProjectPageDescriptor = Readonly<{
@@ -26,9 +34,12 @@ export type ProjectPageDescriptor = Readonly<{
     /** The admitted shared descriptor, retained for the body and catalog baseline. */
     pluginPage?: PluginPage;
     allowedPlacements?: readonly NavigationPlacement[];
+    defaultPlacement?: NavigationDefaultPlacement;
 }>;
 
 type ProjectPageCatalogInput = Readonly<{
+    sidebar?: Omit<ResolveRightSidebarTabsInput, 'scope' | 'activePage'>;
+    activePage?: import('@/components/workspaceCockpit/project/projectCockpitState').ProjectPageV1;
     target: Extract<PluginPageTarget, { kind: 'project' }>;
     placements?: readonly PluginUiSurfacePlacementProjection[];
     policyContext?: PluginUiPolicyEvaluationContext;
@@ -37,6 +48,7 @@ type ProjectPageCatalogInput = Readonly<{
 export type ProjectPageCatalogState = Readonly<{
     pages: readonly ProjectPageDescriptor[];
     routePages: readonly ProjectPageDescriptor[];
+    items: readonly ProjectDetailNavigationItem[];
 }>;
 
 /** One policy/catalog pass supplies descriptive navigation and exact-route refusal. */
@@ -55,6 +67,7 @@ export function resolveProjectPageCatalogState(input: ProjectPageCatalogInput & 
         return prior?.kind === 'builtin' && prior.title === title && prior.icon === icon && prior.href === href ? prior
             : Object.freeze({ id: page, title, icon, href, kind: 'builtin' as const, disabledReason: null, visible: true,
                 ...(page === 'overview' ? { allowedPlacements: OVERVIEW_PLACEMENTS } : {}),
+                ...(HEADER_PAGES.has(page) ? {} : { defaultPlacement: 'overflow' as const }),
                 selection: Object.freeze({ kind: 'builtin' as const, page }) });
     });
     for (const page of pluginPages) {
@@ -72,8 +85,26 @@ export function resolveProjectPageCatalogState(input: ProjectPageCatalogInput & 
     const visible = routePages.filter(page => page.visible);
     const visiblePages = input.baseline?.pages.length === visible.length
         && visible.every((page, index) => page === input.baseline?.pages[index]) ? input.baseline.pages : Object.freeze(visible);
-    return input.baseline?.routePages === routePages && input.baseline.pages === visiblePages
-        ? input.baseline : Object.freeze({ pages: visiblePages, routePages });
+    const resolvedItems = resolveDetailNavigationItems({ ...input.sidebar, scope: 'project', activePage: input.activePage, projectPages: visiblePages });
+    // Resolution owns descriptors; a refresh preserves every unchanged row for all presenters.
+    const priorItems = new Map(input.baseline?.items?.map(item => [item.id, item]));
+    const rows = resolvedItems.map(item => {
+        const prior = priorItems.get(item.id);
+        const companion = item.companion;
+        const previousCompanion = prior?.companion;
+        const sameCompanion = companion === previousCompanion || Boolean(companion && previousCompanion
+            && Object.keys(companion).length === Object.keys(previousCompanion).length
+            && Object.entries(companion).every(([key, value]) => key === 'navigation'
+                ? Object.entries(companion.navigation).every(([name, field]) => Reflect.get(previousCompanion.navigation, name) === field)
+                : Reflect.get(previousCompanion, key) === value));
+        return prior && prior.page === item.page && prior.title === item.title && prior.icon === item.icon
+            && prior.disabledReason === item.disabledReason && prior.phonePlacement === item.phonePlacement
+            && sameCompanion ? prior : item;
+    });
+    const items = input.baseline?.items?.length === rows.length && rows.every((item, index) => item === input.baseline?.items[index])
+        ? input.baseline.items : Object.freeze(rows);
+    return input.baseline?.routePages === routePages && input.baseline.pages === visiblePages && input.baseline.items === items
+        ? input.baseline : Object.freeze({ pages: visiblePages, routePages, items });
 }
 
 /** Public descriptive projection; the same state owner also supplies the exact-route body. */
@@ -81,5 +112,5 @@ export function resolveProjectPageCatalog(input: ProjectPageCatalogInput & Reado
     baseline?: readonly ProjectPageDescriptor[];
 }>): readonly ProjectPageDescriptor[] {
     return resolveProjectPageCatalogState({ ...input, baseline: input.baseline
-        ? { pages: input.baseline, routePages: input.baseline } : undefined }).pages;
+        ? { pages: input.baseline, routePages: input.baseline, items: [] } : undefined }).pages;
 }

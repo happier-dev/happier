@@ -34,7 +34,7 @@ const DISCUSSION_RIGHT_SIDEBAR_TAB_IDS: readonly DiscussionRightSidebarTabId[] =
 
 function useDiscussionRightSidebarSelection(scopeId: string) {
     const pane = useAppPaneScope(scopeId);
-    const tabs = React.useMemo(() => resolveRightSidebarTabs({ scope: 'discussion' }), []);
+    const tabs = React.useMemo(() => resolveRightSidebarTabs({ scope: 'discussion' }).filter(item => item.navigation.kind !== 'page'), []);
     const selection = resolveRightSidebarTabSelection<DiscussionRightSidebarTabId>({
         activeTabId: pane.scopeState?.right.activeTabId,
         selectedDestination: pane.scopeState?.right.selectedDestination ?? null,

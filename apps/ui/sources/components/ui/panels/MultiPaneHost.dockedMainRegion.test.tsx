@@ -6,6 +6,8 @@ import { renderScreen } from '@/dev/testkit';
 
 import { MultiPaneHost } from './MultiPaneHost';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
+import { PaneMainBodyPresentationContext } from './paneMainComposerAnchor';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 
 declare global {
@@ -15,6 +17,63 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('MultiPaneHost (docked main region)', () => {
+    it('keeps one stateful body while main and side selections change independently', async () => {
+        const tracker = createMountTracker();
+        const tree = (info: 'main' | 'side' | 'hidden', files: 'side' | 'hidden', directPlugin = false, drawer = false) => <MultiPaneHost
+            main={<Main />}
+            detailsPane={null}
+            rightPane={directPlugin ? <DraftEditor tracker={tracker} name="plugin" /> : info === 'side' || files === 'side' ? <Right /> : null}
+            rightSurfaces={[
+                { id: 'info', placement: info, content: <DraftEditor tracker={tracker} name="info" /> },
+                { id: 'files', placement: files, content: <DraftEditor tracker={tracker} name="files" /> },
+            ]}
+            mirrored
+            mainDrawerOpen={drawer}
+            layout={{ main: drawer ? 'overlay' : 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' }}
+            rightDockWidthPx={360}
+            detailsDockWidthPx={520}
+            onCloseRight={() => {}}
+            onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}}
+            onCommitDetailsDockWidthPx={() => {}}
+        />;
+        const screen = await renderScreen(tree('main', 'side'));
+        const editor = (name: string) => screen.root.findAllByType('DraftEditor').find(node => node.props.name === name)!;
+        expect(screen.root.findAllByType(Right)).toHaveLength(0);
+        expect(screen.root.findAllByType('DraftEditor')).toHaveLength(2);
+        expect(screen.root.findByType('Main').props.bodyPresented).toBe(false);
+        for (const name of ['info', 'files']) {
+            expect(editor(name).props.presented).toBe(true);
+            await act(async () => { editor(name).props.onChangeText(`${name} draft`); });
+        }
+        await screen.update(tree('main', 'side', false, true));
+        for (let node = editor('info').parent; node; node = node.parent) {
+            expect(node.props.pointerEvents).not.toBe('none');
+            expect(node.props.accessibilityElementsHidden).not.toBe(true);
+        }
+        await screen.update(tree('main', 'hidden'));
+        expect(editor('info').props.presented).toBe(true);
+        expect(editor('files').props.presented).toBe(false);
+        expect(screen.root.findByType('Main').props.bodyPresented).toBe(false);
+        await screen.update(tree('side', 'hidden'));
+        expect(screen.root.findByType('Main').props.bodyPresented).toBe(true);
+        expect(editor('info').props.presented).toBe(true);
+        await screen.update(tree('hidden', 'side'));
+        expect(editor('info').props.presented).toBe(false);
+        expect(editor('files').props.presented).toBe(true);
+        for (const name of ['info', 'files']) {
+            expect(editor(name).props.value).toBe(`${name} draft`);
+            expect(tracker.mounts[name]).toBe(1);
+            expect(tracker.unmounts[name] ?? 0).toBe(0);
+        }
+        expect(screen.root.findAllByType('DraftEditor')).toHaveLength(2);
+        await screen.update(tree('main', 'hidden', true));
+        expect(editor('plugin').props.presented).toBe(true);
+        expect(editor('info').props.value).toBe('info draft');
+        expect(editor('info').props.presented).toBe(true);
+        expect(tracker.mounts.info).toBe(1);
+        expect(tracker.mounts.plugin).toBe(1);
+    });
     it('allows the main region to shrink beside a docked right pane on web', async () => {
         const screen = await renderScreen(
             <MultiPaneHost
@@ -142,7 +201,7 @@ describe('MultiPaneHost (docked main region)', () => {
 });
 
 function Main() {
-    return React.createElement('Main');
+    return React.createElement('Main', { bodyPresented: React.useContext(PaneMainBodyPresentationContext) });
 }
 
 function Right() {
@@ -170,11 +229,12 @@ function Tracked(props: Readonly<{ tracker: MountTracker; name: string }>) {
 
 function DraftEditor(props: Readonly<{ tracker: MountTracker; name: string }>) {
     const [value, onChangeText] = React.useState('');
+    const presented = useLayoutPresentationActive();
     React.useEffect(() => {
         props.tracker.mounts[props.name] = (props.tracker.mounts[props.name] ?? 0) + 1;
         return () => {
             props.tracker.unmounts[props.name] = (props.tracker.unmounts[props.name] ?? 0) + 1;
         };
     }, [props.name, props.tracker]);
-    return React.createElement('DraftEditor', { name: props.name, value, onChangeText });
+    return React.createElement('DraftEditor', { name: props.name, value, onChangeText, presented });
 }

@@ -5,14 +5,21 @@ import { ScopeActionOutputSchemas } from '@happier-dev/protocol/actions/scopeAct
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { invokeScopeAction, registerShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { RightSidebarActionsContext, openRightSidebarBuiltinTab, toggleRightSidebarTab, usePublishRightSidebarActions, type RightSidebarActions } from './rightSidebarActions';
-import { getRightSidebarBuiltinTab } from './rightSidebarTabRegistry';
+import { getRightSidebarBuiltinTab, resolveSessionRightSidebarTabs } from './rightSidebarTabRegistry';
 import { appPaneReduce, createAppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
-import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 
 afterEach(standardCleanup);
 
 describe('catalog-directed tab opening', () => {
-  it('keeps one selection while routing session context to main and preserving normal side presentation', () => {
+  it('honors an explicit companion request for a resolved both destination', () => {
+    const tab = resolveSessionRightSidebarTabs({ arrangement: 'editor' }).find(tab => tab.id === 'agents');
+    if (!tab || tab.owner !== 'builtin') throw new Error('Work must be admitted');
+    let presentation: boolean | undefined;
+    openRightSidebarBuiltinTab({ openRight: options => { presentation = options?.present !== false; }, setMainTab: () => { throw new Error('Companion request selected main'); } },
+      tab, { scope: 'session', arrangement: 'editor' }, () => {}, 'side');
+    expect(presentation).toBe(true);
+  });
+  it('keeps main selection independent while opening and closing a companion', () => {
     const scopeId = 'session:placement';
     let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 12 }), { type: 'activateScope', scopeId });
     state = appPaneReduce(state, { type: 'setMainHidden', scopeId, hidden: true });
@@ -20,15 +27,19 @@ describe('catalog-directed tab opening', () => {
     const pane = { openRight: (options?: { tabId?: string; present?: boolean }) => {
       state = appPaneReduce(state, { type: 'openRight', scopeId, tabId: options?.tabId });
       presented = options?.present !== false;
+    }, setMainTab: (tabId: string | null) => {
+      state = appPaneReduce(state, { type: 'setMainTab', scopeId, tabId });
     } };
     const showMain = () => { state = appPaneReduce(state, { type: 'setMainHidden', scopeId, hidden: false }); };
-    openRightSidebarBuiltinTab(pane, getRightSidebarBuiltinTab('agents'), { scope: 'session', arrangement: 'editor' }, showMain);
-    expect(state.scopes[scopeId]).toMatchObject({ mainHidden: false, right: { isOpen: true, activeTabId: 'agents' } });
-    expect(presented).toBe(false);
+    const agents = resolveSessionRightSidebarTabs({ arrangement: 'editor' }).find(tab => tab.id === 'agents');
+    if (!agents || agents.owner !== 'builtin') throw new Error('Work must be admitted');
+    openRightSidebarBuiltinTab(pane, agents, { scope: 'session', arrangement: 'editor' }, showMain);
+    expect(state.scopes[scopeId]).toMatchObject({ mainHidden: false, mainTabId: 'agents', right: { isOpen: false } });
     state = appPaneReduce(state, { type: 'closeRight', scopeId });
-    expect(state.scopes[scopeId]?.right).toMatchObject({ isOpen: false, activeTabId: 'agents' });
+    expect(state.scopes[scopeId]).toMatchObject({ mainTabId: 'agents', right: { isOpen: false } });
     openRightSidebarBuiltinTab(pane, getRightSidebarBuiltinTab('files'), { scope: 'session', arrangement: 'editor' }, showMain);
     expect(state.scopes[scopeId]?.right).toMatchObject({ isOpen: true, activeTabId: 'files' });
+    expect(state.scopes[scopeId]?.mainTabId).toBe('agents');
     expect(presented).toBe(true);
   });
 
@@ -40,7 +51,7 @@ describe('catalog-directed tab opening', () => {
     } });
     const details = state.scopes[scopeId]!.details;
     toggleRightSidebarTab({
-      scopeState: { ...state.scopes[scopeId]!, details: buildDetailsWorkspaceStateView(details) },
+      scopeState: { right: state.scopes[scopeId]!.right },
       closeRight: () => { state = appPaneReduce(state, { type: 'closeRight', scopeId }); },
       closeDetails: () => { state = appPaneReduce(state, { type: 'closeDetails', scopeId }); },
     }, 'agents', 'agents', tabId => { state = appPaneReduce(state, { type: 'openRight', scopeId, tabId }); }, true, 'main');

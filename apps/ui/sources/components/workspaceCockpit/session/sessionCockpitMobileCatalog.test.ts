@@ -47,17 +47,46 @@ function createMobilePluginPlacement(input: Readonly<{
 }
 
 describe('sessionCockpitMobileCatalog', () => {
+    it('honors a destination placement policy instead of pinning a tool that only belongs in More', () => {
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true }).map(entry => entry.id === 'git'
+            ? { ...entry, tab: { ...entry.tab, allowedPlacements: ['overflow'] as const } }
+            : entry);
+        const visibility = resolveSessionCockpitMobileTabVisibility({ catalog,
+            preferences: { orderedIds: [], placements: { git: 'pinned' } }, slotCount: 7, alwaysSwipe: false });
+        expect(visibility.visible.map(entry => entry.id)).not.toContain('git');
+        expect(visibility.overflow.map(entry => entry.id)).toContain('git');
+    });
+    it('moves only pinned pages to the top and leaves one shared bottom More projection for either presenter', () => {
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true });
+        const visibility = resolveSessionCockpitMobileTabVisibility({
+            catalog, preferences: { orderedIds: [], placements: { tabs: 'pinned' } },
+            pageTabs: 'top', slotCount: 7, alwaysSwipe: false,
+        });
+        expect(visibility.top.map(entry => entry.id)).toEqual(['chat', 'tabs']);
+        expect(visibility.visible.map(entry => entry.id)).toEqual(['browse', 'git', 'companion', 'terminal']);
+        expect(visibility.overflow.map(entry => entry.id)).not.toContain('tabs');
+        expect(resolveSessionCockpitMobileTabVisibility({ catalog, pageTabs: 'bottom', preferences: null,
+            slotCount: 7, alwaysSwipe: false }).visible.map(entry => entry.id)[0]).toBe('chat');
+    });
+    it('draws no top strip for Chat alone: the primary page keeps its reserved bottom slot until another page is on the bar', () => {
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true });
+        const visibility = resolveSessionCockpitMobileTabVisibility({
+            catalog, preferences: null, pageTabs: 'top', slotCount: 7, alwaysSwipe: false,
+        });
+        expect(visibility.top).toEqual([]);
+        expect(visibility.visible.map(entry => entry.id)).toEqual(['chat', 'browse', 'git', 'companion', 'terminal']);
+    });
     it('includes admitted App panels in the same phone destination catalog as Session panels', () => {
         const original = createMobilePluginPlacement({ pluginId: 'acme.triage', destinationId: 'triage', label: 'PRs & Issues' });
         const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.triage', destinationId: 'triage',
             rendererId: 'triage-panel', container: 'rightSidebarTab', target: { kind: 'app' } });
         if (!binding) throw new Error('App panel fixture must be admitted');
         const placement = { ...original, binding, target: binding.target };
-        const catalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false, appPluginPlacements: [placement] });
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: false, appPluginPlacements: [placement] });
         expect(resolveSessionCockpitMobileNavigatorSurfaces({ catalog })).toContain('plugin:acme.triage:triage');
     });
     it('uses shared placement order and hides tools from both the bar and More while reserving Chat', () => {
-        const catalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true });
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true });
         const visibility = resolveSessionCockpitMobileTabVisibility({
             catalog,
             preferences: {
@@ -86,7 +115,7 @@ describe('sessionCockpitMobileCatalog', () => {
                 .toContain('companion');
         }
 
-        const enabledCatalog = resolveSessionCockpitMobileCatalog({
+        const enabledCatalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true,
             terminalTabAvailable: false,
             boardFeatureEnabled: true,
         });
@@ -102,9 +131,10 @@ describe('sessionCockpitMobileCatalog', () => {
             destinationId: 'session-review',
             label: 'Review',
         });
-        const catalog = resolveSessionCockpitMobileCatalog({
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true,
             terminalTabAvailable: true,
             boardFeatureEnabled: true,
+            sessionSharingAvailable: true,
             pluginPlacements: [plugin],
         });
 
@@ -118,6 +148,7 @@ describe('sessionCockpitMobileCatalog', () => {
             'collaboration',
             'navigation',
             'board',
+            'skills',
             'browser',
             'services',
             'plugin:acme.review:session-review',
@@ -153,7 +184,7 @@ describe('sessionCockpitMobileCatalog', () => {
     });
 
     it('lets the bar width be the cap: more pins than fit scroll, or wait in More while Always swipe is on', () => {
-        const catalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true, boardFeatureEnabled: true });
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true, boardFeatureEnabled: true });
         const pins = ['browse', 'git', 'companion', 'terminal', 'tabs', 'navigation', 'board'];
         // 390 pt holds 7 slots: Chat, More and five tools. Seven pinned tools do not fit.
         const scrolling = resolveSessionCockpitMobileTabVisibility({ catalog, preferences: navigationPlacementsFromLegacyPins(pins), slotCount: 7, alwaysSwipe: false });
@@ -169,7 +200,7 @@ describe('sessionCockpitMobileCatalog', () => {
     });
 
     it('never turns unavailable or unknown pinned values into a visible catalog entry', () => {
-        const catalog = resolveSessionCockpitMobileCatalog({
+        const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true,
             terminalTabAvailable: false,
         });
 

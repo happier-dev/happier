@@ -24,7 +24,7 @@ import { useReportSessionCockpitActionRailRect } from '@/components/workspaceCoc
 import { PaneActionRailContext, PANE_ACTION_RAIL_WIDTH, type RightPaneHiddenByDetails } from './PaneActionRailContext';
 import { captureArrangementTravelStart, playArrangementTravel, type ArrangementTravelStart } from './arrangement/arrangementTravel';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import type { RightPanePlacement } from './rightPanePlacement';
+import type { RightPanePlacement, RightPaneSurface } from './rightPanePlacement';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { AppShellTailContext, AppShellTailSlot, useAppShellTail } from '@/components/navigation/shell/appShellTail';
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
@@ -42,6 +42,8 @@ export type PaneColumnsHostProps = Readonly<{
     main: React.ReactNode;
     /** The rendered right sidebar, or null when it has nothing to show. */
     rightPane?: React.ReactNode | null;
+    rightSurfaces?: readonly RightPaneSurface[];
+    onCloseMainSurface?: () => void;
     /** The rendered details pane, or null when it has nothing to show. */
     detailsPane?: React.ReactNode | null;
     bottomPane?: React.ReactNode | null;
@@ -182,7 +184,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const detailsPane = props.detailsPane ?? (mirrored ? props.emptyEditorPane ?? EMPTY_EDITOR : null);
     const bottomPane = props.bottomPane ?? null;
     // A pane presented over the session column takes no column of its own.
-    const rightInMain = props.rightPlacement === 'main' && mirrored && rightPane !== null;
+    const rightInMain = props.rightSurfaces === undefined && props.rightPlacement === 'main' && mirrored && rightPane !== null;
     const rightOpen = (props.rightOpen ?? rightPane !== null) && !rightInMain;
     const detailsOpen = mirrored || (props.detailsOpen ?? detailsPane !== null);
     const bottomOpen = props.bottomOpen ?? bottomPane !== null;
@@ -574,6 +576,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         () => (rightPane ? <PaneRegionProvider region={rightInMain ? 'main' : 'side'}>{rightPane}</PaneRegionProvider> : null),
         [rightInMain, rightPane],
     );
+    const regionRightSurfaces = React.useMemo(() => props.rightSurfaces?.map(surface => ({
+        ...surface,
+        content: <PaneRegionProvider region={surface.placement === 'main' ? 'main' : 'side'}>{surface.content}</PaneRegionProvider>,
+    })), [props.rightSurfaces]);
     const regionDetailsPane = React.useMemo(
         () => (detailsPane ? <PaneRegionProvider region="details">{detailsPane}</PaneRegionProvider> : null),
         [detailsPane],
@@ -599,6 +605,8 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 onResetBottomDockHeightPx={onResetBottomDockHeightPx}
                 onCloseMain={onCloseMain}
                 rightPane={regionRightPane}
+                rightSurfaces={regionRightSurfaces}
+                onCloseMainSurface={props.onCloseMainSurface}
                 rightInMain={rightInMain}
                 detailsPane={regionDetailsPane}
                 // A drawer beside the docked side column only quiets main (lab FB1), however Details was opened

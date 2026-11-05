@@ -5,7 +5,8 @@ import type { RightSidebarTabDefinition } from '@/components/appShell/rightSideb
 import type { RightSidebarPluginTabRuntimeAdmission } from '@/components/appShell/rightSidebar/rightSidebarPluginTabs';
 import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
-import { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS, resolveNavigationPlacements, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveDetailPhoneBarFit, resolveDetailPhonePlacement } from '@/components/navigation/mobile/chrome/bars/detailPhoneNavigationProjection';
 
 export { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS } from '@/sync/domains/settings/mobileSurfacePinning';
 
@@ -17,10 +18,9 @@ import {
 
 /**
  * The `rightSidebar` registry remains the source of plugin admission, labels,
- * icons, and availability. This host adapter only adds the two Session-owned
- * cockpit entries and applies host/user ordering before the mobile bar renders.
+ * icons, and availability. This adapter projects resolved Session destinations without adding items, defaults or order.
  */
-export type SessionCockpitMobileCatalogEntry = Readonly<{ defaultPlacement: NavigationPlacement }> & (
+export type SessionCockpitMobileCatalogEntry = Readonly<{ defaultPlacement: NavigationPlacement; tab: RightSidebarTabDefinition }> & (
     | Readonly<{
         id: 'chat' | 'tabs' | 'companion';
         owner: 'host';
@@ -38,19 +38,19 @@ export type SessionCockpitMobileCatalogEntry = Readonly<{ defaultPlacement: Navi
  */
 export type SessionCockpitBarMode = 'fit' | 'scroll' | 'more';
 
-/** Chat and More each take one slot; everything else is a tool. */
-const RESERVED_BAR_SLOTS = 2;
-
 function entryForProjection(
     entry: RightSidebarMobileProjectionEntry,
 ): SessionCockpitMobileCatalogEntry | null {
+    if (entry.tab.owner === 'builtin' && (entry.tab.id === 'chat' || entry.tab.id === 'tabs' || entry.tab.id === 'companion')) {
+        return Object.freeze({ id: entry.tab.id, owner: 'host' as const, tab: entry.tab, defaultPlacement: entry.tab.phonePlacement === 'bar' ? 'pinned' as const : 'overflow' as const });
+    }
     if (entry.owner === 'plugin') {
         return isSessionPluginMobileSurface(entry.tabId)
             ? Object.freeze({
                 id: entry.tabId,
                 owner: 'rightSidebar' as const,
                 tab: entry.tab,
-                defaultPlacement: 'overflow' as const,
+                defaultPlacement: entry.tab.phonePlacement === 'bar' ? 'pinned' as const : 'overflow' as const,
             })
             : null;
     }
@@ -61,49 +61,35 @@ function entryForProjection(
             id: surface,
             owner: 'rightSidebar' as const,
             tab: entry.tab,
-            defaultPlacement: SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS.some((id) => id === surface) ? 'pinned' as const : 'overflow' as const,
+            defaultPlacement: entry.tab.phonePlacement === 'bar' ? 'pinned' as const : 'overflow' as const,
         })
         : null;
-}
-
-function compareCatalogEntries(
-    first: SessionCockpitMobileCatalogEntry,
-    second: SessionCockpitMobileCatalogEntry,
-): number {
-    const firstOrder = first.owner === 'rightSidebar' ? first.tab.order : Number.MIN_SAFE_INTEGER;
-    const secondOrder = second.owner === 'rightSidebar' ? second.tab.order : Number.MIN_SAFE_INTEGER;
-    return firstOrder - secondOrder || first.id.localeCompare(second.id);
-}
-
-function addCatalogEntry(
-    result: SessionCockpitMobileCatalogEntry[],
-    entry: SessionCockpitMobileCatalogEntry | null | undefined,
-): void {
-    if (!entry || result.some((candidate) => candidate.id === entry.id)) return;
-    result.push(entry);
 }
 
 export function resolveSessionCockpitMobileCatalog(input: Readonly<Pick<ResolveRightSidebarTabsInput,
     'appPluginPlacements' | 'appLocalize'> & {
     terminalTabAvailable: boolean;
+    tabs?: readonly RightSidebarTabDefinition[];
     /**
      * The exact Home's `sessions.board` decision; omitted means disabled. It
      * admits the Board surface itself. The host-owned Companion destination is
      * not a Board placement gate and is published on every Home.
      */
     boardFeatureEnabled?: boolean;
+    browserFeatureEnabled?: boolean;
     sessionSharingAvailable?: boolean;
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
     runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
 }>): readonly SessionCockpitMobileCatalogEntry[] {
     const projectedEntries = resolveRightSidebarMobileProjection({
         scope: 'session',
-        tabs: resolveSessionRightSidebarTabs({
+        tabs: input.tabs ?? resolveSessionRightSidebarTabs({
             appPluginPlacements: input.appPluginPlacements,
             appLocalize: input.appLocalize,
             presentation: 'mobile',
             terminalTabAvailable: input.terminalTabAvailable,
             boardFeatureEnabled: input.boardFeatureEnabled === true,
+            browserFeatureEnabled: input.browserFeatureEnabled === true,
             sessionSharingAvailable: input.sessionSharingAvailable === true,
             pluginPlacements: input.pluginPlacements,
             ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
@@ -112,40 +98,8 @@ export function resolveSessionCockpitMobileCatalog(input: Readonly<Pick<ResolveR
         const catalogEntry = entryForProjection(entry);
         return catalogEntry ? [catalogEntry] : [];
     });
-    const entryForBuiltinTab = (tabId: string): SessionCockpitMobileCatalogEntry | null => (
-        projectedEntries.find((entry) => (
-            entry.owner === 'rightSidebar'
-            && entry.tab.owner === 'builtin'
-            && entry.tab.id === tabId
-        )) ?? null
-    );
-    const remainingBuiltIns = projectedEntries
-        .filter((entry) => (
-            entry.owner === 'rightSidebar'
-            && entry.tab.owner === 'builtin'
-            && !['files', 'git', 'terminal'].includes(entry.tab.id)
-        ))
-        .sort(compareCatalogEntries);
-    const pluginEntries = projectedEntries
-        .filter((entry) => entry.owner === 'rightSidebar' && entry.tab.owner === 'plugin')
-        .sort(compareCatalogEntries);
+    return Object.freeze(projectedEntries);
 
-    const result: SessionCockpitMobileCatalogEntry[] = [];
-    addCatalogEntry(result, Object.freeze({ id: 'chat', owner: 'host' as const, defaultPlacement: 'pinned' as const }));
-    // These positions are host policy. A binding cannot displace built-in
-    // cockpit affordances without an explicit user pin.
-    addCatalogEntry(result, entryForBuiltinTab('files'));
-    addCatalogEntry(result, entryForBuiltinTab('git'));
-    addCatalogEntry(result, Object.freeze({ id: 'tabs', owner: 'host' as const, defaultPlacement: 'overflow' as const }));
-    // Companion is host-owned like Chat and Details. Its first-party Session
-    // Summary is composed from Session facts alone, so it is published on every
-    // Home; only the Board content it can present follows `sessions.board`.
-    addCatalogEntry(result, Object.freeze({ id: 'companion', owner: 'host' as const, defaultPlacement: 'pinned' as const }));
-    for (const entry of remainingBuiltIns) addCatalogEntry(result, entry);
-    for (const entry of pluginEntries) addCatalogEntry(result, entry);
-    addCatalogEntry(result, entryForBuiltinTab('terminal'));
-
-    return Object.freeze(result);
 }
 
 /**
@@ -169,6 +123,18 @@ export function resolveSessionCockpitMobileNavigatorSurfaces(input: Readonly<{
     return Object.freeze(result);
 }
 
+/** Adapt the Session catalog to the phone owner; admission still belongs to the sidebar registry. */
+export function resolveSessionCockpitPhoneItems(catalog: readonly SessionCockpitMobileCatalogEntry[]) {
+    return catalog.map(entry => ({ ...entry,
+        navigation: entry.tab.navigation ?? { kind: 'companion' as const },
+        phonePlacement: entry.tab.phonePlacement ?? (entry.defaultPlacement === 'pinned' ? 'bar' as const : 'more' as const),
+        ...(entry.tab.allowedPlacements ? { allowedPlacements: entry.tab.allowedPlacements } : {}),
+        // Chat is the host's fixed primary destination, not a configurable tool.
+        ...(entry.id === 'chat' ? { allowedPlacements: ['pinned'] as const } : {}),
+    }));
+}
+
+/** Captured previews use exactly the same placement and fit owner as the live bar. */
 export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     catalog: readonly SessionCockpitMobileCatalogEntry[];
     preferences: NavigationPlacementPreferences | null | undefined;
@@ -176,8 +142,10 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     slotCount: number;
     /** "Always swipe between sessions" is on (and the sideways swipe with it). */
     alwaysSwipe: boolean;
+    pageTabs?: 'bottom' | 'top';
 }>): Readonly<{
     mode: SessionCockpitBarMode;
+    top: readonly SessionCockpitMobileCatalogEntry[];
     /** Chat, then the bar's tools as rendered. */
     visible: readonly SessionCockpitMobileCatalogEntry[];
     /** Pinned tools that wait in More only because "Always swipe" keeps the bar to what fits. */
@@ -185,25 +153,7 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     /** Every admitted tool that is not pinned to the bar. */
     overflow: readonly SessionCockpitMobileCatalogEntry[];
 }> {
-    const catalogById = new Map<string, SessionCockpitMobileCatalogEntry>(
-        input.catalog.map((entry) => [entry.id, entry]),
-    );
-    const placements = resolveNavigationPlacements(input.catalog.filter((entry) => entry.id !== 'chat'), input.preferences ?? undefined);
-    const barTools = placements.pinned;
-    const toolSlots = Math.max(1, Math.floor(input.slotCount) - RESERVED_BAR_SLOTS);
-    const mode: SessionCockpitBarMode = barTools.length <= toolSlots
-        ? 'fit'
-        : input.alwaysSwipe ? 'more' : 'scroll';
-    const shown = mode === 'more' ? barTools.slice(0, toolSlots) : barTools;
-    const held = mode === 'more' ? barTools.slice(toolSlots) : [];
-
-    const visible: SessionCockpitMobileCatalogEntry[] = [];
-    addCatalogEntry(visible, catalogById.get('chat'));
-    for (const entry of shown) addCatalogEntry(visible, entry);
-    return Object.freeze({
-        mode,
-        visible: Object.freeze(visible),
-        held: Object.freeze(held),
-        overflow: Object.freeze(placements.overflow),
-    });
+    const placement = resolveDetailPhonePlacement(resolveSessionCockpitPhoneItems(input.catalog), input.preferences ?? undefined, input.pageTabs ?? 'bottom');
+    const fit = resolveDetailPhoneBarFit(placement, input.slotCount, input.alwaysSwipe ? 'more' : 'scroll');
+    return { mode: fit.mode, top: placement.topPages, visible: fit.shown, held: fit.held, overflow: placement.placements.overflow };
 }

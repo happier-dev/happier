@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type { IconName } from '@/components/ui/icons/Icon';
 import { HappierStorageCategoryIdV1Schema } from '@happier-dev/protocol/storage/storageV1';
 
 import { GuardBarAccessory } from '@/components/machines/guard/GuardBarAccessory';
@@ -19,9 +20,14 @@ import type { MachinePageTabId, MachinePageTabParams, MachinePageTabBodyProps, M
  * by the plan that lands a tab body: no registry, no contribution family. A tab is listed only once its
  * body exists; with Overview alone the page draws no tab bar.
  */
-export type MachinePageTabEntry = Readonly<{
+export type MachinePageTabEntry = (Readonly<{ titleKey: TranslationKeyNoParams; label?: undefined }>
+    /** A plugin page carries its declaration's resolved title. */
+    | Readonly<{ label: string; titleKey?: undefined }>) & Readonly<{
     id: MachinePageTabId;
-    titleKey: TranslationKeyNoParams;
+    /** Set when one id names several tabs (each plugin page); otherwise the id is the tab's key. */
+    key?: string;
+    icon?: IconName;
+    disabledReason?: string | null;
     Body: React.ComponentType<MachinePageTabBodyProps>;
     /** Drawn at the end of the tab bar on wide layouts while this tab is open; phones keep it in the body. */
     BarAccessory?: React.ComponentType<MachinePageTabBarAccessoryProps>;

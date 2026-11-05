@@ -98,8 +98,8 @@ import { EmbeddedSessionPartClaimsScope, EmbeddedSessionPartsProvider, EmbeddedS
 import { EmbeddedSessionUnavailable } from "./embedded/EmbeddedSessionUnavailable";
 import { PluginSurfaceNestingBoundary } from "@/components/plugins/surfaces/pluginSurfaceNesting";
 import { Text } from "@/components/ui/text/Text";
-import { SessionRightSidebarProvider } from "@/components/sessions/panes/SessionRightPanel";
-import { PaneMainBody, PaneMainComposerAnchor } from '@/components/ui/panels/paneMainComposerAnchor';
+import { SessionPageTabs, SessionRightSidebarProvider } from "@/components/sessions/panes/SessionRightPanel";
+import { PaneMainBody, PaneMainComposerAnchor, PaneMainTopAnchor } from '@/components/ui/panels/paneMainComposerAnchor';
 import { createSessionPaneSurfaceScope } from "@/components/sessions/plugins/useSessionPluginRuntime";
 import { PaneMainHideButton } from "@/components/appShell/panes/mainColumn/PaneMainColumnControls";
 import { AppPaneScopeHost } from "@/components/appShell/panes/AppPaneScopeHost";
@@ -2680,7 +2680,8 @@ function SessionViewLoadedContent({
 
     const main = (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-            {embedded ? null : header}
+            {/* The header and the desktop page tabs under it stay put: a page in this column starts below them. */}
+            {embedded ? null : <PaneMainTopAnchor>{header}<SessionPageTabs /></PaneMainTopAnchor>}
             {/* The transcript's own positioning context: its floating notices anchor below the header. */}
             <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
             {requesterRecoveryBanner || startFailureBanner ? <PaneMainBody>{requesterRecoveryBanner}{startFailureBanner}</PaneMainBody> : null}

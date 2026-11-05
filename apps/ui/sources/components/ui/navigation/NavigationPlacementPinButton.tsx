@@ -3,13 +3,13 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { updateNavigationPlacement, type NavigationPlacementPreferences, type NavigationSurfaceId } from '@/sync/domains/settings/mobileSurfacePinning';
+import { updateNavigationPlacement, type NavigationPlacementPreferences, type NavigationPlacementAddress } from '@/sync/domains/settings/mobileSurfacePinning';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useNavigationSurfacePlacementActionWriter } from './useNavigationSurfacePlacement';
 
 /** More menus mount this editor only while open; both cockpit bars use the same Settings Action. */
 export function NavigationPlacementPinButton(props: Readonly<{
-    surfaceId: NavigationSurfaceId;
+    surfaceId: NavigationPlacementAddress;
     entryId: string;
     pinned: boolean;
     label: string;

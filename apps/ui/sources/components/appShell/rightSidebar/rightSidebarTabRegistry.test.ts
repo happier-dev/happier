@@ -11,16 +11,52 @@ import {
   resolveRightSidebarTabPlacement,
 } from './rightSidebarTabRegistry';
 import { resolveRightSidebarMobileProjection } from './rightSidebarMobileProjection';
+import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
+import { createPluginProjectContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+
+describe('right-sidebar catalog defaults', () => {
+  it('keeps Skills in More while hidden placement still permits opening the same destination', () => {
+    const tabs = resolveRightSidebarTabs({ scope: 'session', browserFeatureEnabled: true });
+    expect(tabs.find(tab => tab.id === 'skills')).toMatchObject({ defaultPlacement: 'overflow', railGroup: 'session' });
+    const placement = resolveNavigationPlacements(tabs, { orderedIds: [], placements: { skills: 'hidden' } });
+    expect([...placement.pinned, ...placement.overflow].some(tab => tab.id === 'skills')).toBe(false);
+    expect(resolveRightSidebarTabSelection({ activeTabId: 'skills', tabs, projectionPhase: 'current', scope: 'session' }))
+      .toMatchObject({ kind: 'available', tab: { id: 'skills' } });
+    expect(resolveRightSidebarTabs({ scope: 'project', browserFeatureEnabled: true }).some(tab => tab.id === 'skills')).toBe(false);
+  });
+  it('pins the Session essentials before code and machine groups without changing Git-first selection', () => {
+    const tabs = resolveRightSidebarTabs({ scope: 'session', browserFeatureEnabled: true, terminalTabAvailable: true, boardFeatureEnabled: true, sessionSharingAvailable: true, sessionProjectCheckoutAvailable: true, codeIntelligenceAvailable: true });
+    expect(resolveNavigationPlacements(tabs.map(({ id, defaultPlacement, allowedPlacements }) => ({ id, defaultPlacement, allowedPlacements }))).pinned.map(tab => tab.id)).toEqual(['info', 'agents', 'collaboration', 'git', 'files', 'terminal']);
+    expect(getRightSidebarBuiltinTab('info').allowedPlacements).toEqual(['pinned', 'overflow']);
+    expect(resolveRightSidebarTabSelection({ activeTabId: null, tabs, projectionPhase: 'current', scope: 'session' })).toMatchObject({ kind: 'available', tab: { id: 'git' } });
+    expect(resolveRightSidebarTabSelection({ activeTabId: 'removed', tabs, projectionPhase: 'current', scope: 'session' })).toMatchObject({ kind: 'available', tab: { id: 'git' } });
+  });
+
+  it('uses only explicit held content for automatic candidates and retains Discussion defaults', () => {
+    const empty = { runningServices: false, problems: false, references: false, runningScripts: false, boardItems: false };
+    const unknown = { runningServices: null, problems: null, references: null, runningScripts: null, boardItems: null };
+    const full = { runningServices: true, problems: true, references: true, runningScripts: true, boardItems: true };
+    for (const id of ['services', 'problems', 'references', 'scripts', 'board'] as const) {
+      const tab = getRightSidebarBuiltinTab(id);
+      expect(tab.defaultPlacement).toBe('auto');
+      expect(tab.readContent?.(empty)).toBe(false);
+      expect(tab.readContent?.(unknown)).toBeNull();
+      expect(tab.readContent?.(full)).toBe(true);
+    }
+    expect(resolveNavigationPlacements(resolveRightSidebarTabs({ scope: 'discussion' }).map(({ id, defaultPlacement, allowedPlacements }) => ({ id, defaultPlacement, allowedPlacements }))).pinned.map(tab => tab.id))
+      .toEqual(['discussionParticipants', 'discussionAgents', 'discussionDetails']);
+    expect(resolveRightSidebarTabs({ scope: 'project', browserFeatureEnabled: true }).some(tab => tab.id === 'info')).toBe(false);
+  });
+});
 
 describe('right-sidebar tab placement', () => {
   it('presents the session catalog group beside the composer only in Editor first', () => {
-    const tabs = resolveRightSidebarTabs({ scope: 'session', boardFeatureEnabled: true, sessionSharingAvailable: true });
-    const placements = tabs.map(tab => [tab.id, resolveRightSidebarTabPlacement(tab, { scope: 'session', arrangement: 'editor' })]);
-    expect(placements.filter(([, placement]) => placement === 'main').map(([id]) => id).sort()).toEqual(['agents', 'board', 'collaboration', 'navigation']);
-    for (const tab of tabs) {
-      expect(resolveRightSidebarTabPlacement(tab, { scope: 'session', arrangement: 'session' })).toBe('side');
-      expect(resolveRightSidebarTabPlacement(tab, { scope: 'session', arrangement: 'editor', presentation: 'mobile' })).toBe('side');
-      expect(resolveRightSidebarTabPlacement(tab, { scope: 'project', arrangement: 'editor' })).toBe('side');
+    const context = { scope: 'session', browserFeatureEnabled: true, arrangement: 'editor' } as const;
+    const tabs = resolveRightSidebarTabs({ ...context, boardFeatureEnabled: true, sessionSharingAvailable: true });
+    const placements = tabs.map(tab => [tab.id, resolveRightSidebarTabPlacement(tab, context)]);
+    expect(placements.filter(([, placement]) => placement === 'main').map(([id]) => id).sort()).toEqual(['agents', 'board', 'collaboration', 'info', 'navigation']);
+    for (const input of [{ scope: 'session', browserFeatureEnabled: true, arrangement: 'session' }, { scope: 'session', browserFeatureEnabled: true, arrangement: 'editor', presentation: 'mobile' }, { scope: 'project', browserFeatureEnabled: true, arrangement: 'editor' }] as const) {
+      for (const tab of resolveRightSidebarTabs(input)) expect(resolveRightSidebarTabPlacement(tab, input)).toBe('side');
     }
   });
 });
@@ -79,6 +115,17 @@ const reviewSidebarPlacement = {
   headerActions: [],
 } satisfies PluginUiSurfacePlacementProjection;
 
+it('uses the canonical Project facts when resolving companion tabs', () => {
+  const binding = rightSidebarBinding(REVIEW_PLUGIN_ID, 'project-review', 'project');
+  const placement = { ...reviewSidebarPlacement, binding, target: binding.target,
+    availability: { ...reviewSidebarPlacement.availability, when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } } };
+  const context = createPluginProjectContextFixture({ repositoryIdentity: { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' } });
+  expect(resolveRightSidebarTabs({ scope: 'project', browserFeatureEnabled: true, pluginPlacements: [placement], policyContext: context.policyContext })
+    .some(tab => tab.owner === 'plugin')).toBe(true);
+  expect(resolveRightSidebarTabs({ scope: 'project', browserFeatureEnabled: true, pluginPlacements: [placement], policyContext: createPluginProjectContextFixture().policyContext })
+    .some(tab => tab.owner === 'plugin')).toBe(false);
+});
+
 const disabledReviewSidebarPlacement = {
   ...reviewSidebarPlacement,
   id: `surfacePlacement:${REVIEW_PLUGIN_ID}:blocked-review`,
@@ -127,48 +174,59 @@ describe('rightSidebarTabRegistry', () => {
     // The Session viewer docks its retained Browser source into this desktop destination.
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: true,
+        sessionSharingAvailable: true,
       }).map((tab) => tab.id),
-    ).toEqual(['git', 'files', 'agents', 'collaboration', 'navigation', 'terminal', 'browser', 'services']);
+    ).toEqual(['chat', 'tabs', 'companion', 'info', 'agents', 'collaboration', 'navigation', 'skills', 'git', 'review', 'files', 'terminal', 'browser', 'services']);
 
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
+        sessionSharingAvailable: true,
       }).map((tab) => tab.id),
-    ).toEqual(['git', 'files', 'agents', 'collaboration', 'navigation', 'browser', 'services']);
+    ).toEqual(['chat', 'tabs', 'companion', 'info', 'agents', 'collaboration', 'navigation', 'skills', 'git', 'review', 'files', 'browser', 'services']);
 
     // Mobile keeps the full-screen Browser surface tab.
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: true,
         presentation: 'mobile',
+        sessionSharingAvailable: true,
       }).map((tab) => tab.id),
     ).toEqual([
-      'git',
-      'files',
+      'chat', 'tabs', 'companion',
+      'info',
       'agents',
       'collaboration',
       'navigation',
+      'skills',
+      'git',
+      'review',
+      'files',
       'terminal',
       'browser',
       'services',
     ]);
+
+    expect(resolveRightSidebarTabs({ scope: 'session', browserFeatureEnabled: true }).map((tab) => tab.id)).not.toContain('collaboration');
+    expect(resolveRightSidebarTabs({ scope: 'session', browserFeatureEnabled: true, sessionSharingAvailable: false }).map((tab) => tab.id)).not.toContain('collaboration');
   });
 
   it('offers Scripts beside a Session only when it works in an accepted Project checkout', () => {
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
         sessionProjectCheckoutAvailable: true,
+        sessionSharingAvailable: true,
       }).map((tab) => tab.id),
-    ).toEqual(['git', 'files', 'scripts', 'agents', 'collaboration', 'navigation', 'browser', 'services']);
+    ).toEqual(['chat', 'tabs', 'companion', 'info', 'agents', 'collaboration', 'navigation', 'skills', 'git', 'review', 'files', 'scripts', 'browser', 'services']);
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
       }).map((tab) => tab.id),
     ).not.toContain('scripts');
@@ -177,7 +235,7 @@ describe('rightSidebarTabRegistry', () => {
   it('publishes the Board destination only from the exact-Home feature decision, including an empty Board', () => {
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
         boardFeatureEnabled: false,
       }).map((tab) => tab.id),
@@ -185,18 +243,19 @@ describe('rightSidebarTabRegistry', () => {
 
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
         boardFeatureEnabled: true,
+        sessionSharingAvailable: true,
       }).map((tab) => tab.id),
-    ).toEqual(['git', 'files', 'agents', 'collaboration', 'navigation', 'board', 'browser', 'services']);
+    ).toEqual(['chat', 'tabs', 'companion', 'info', 'agents', 'collaboration', 'navigation', 'board', 'skills', 'git', 'review', 'files', 'browser', 'services']);
   });
 
   it('orders project built-in tabs without session-only entries', () => {
     // Project Browser has a real workspace producer on desktop and mobile.
     expect(
       resolveRightSidebarTabs({
-        scope: 'project',
+        scope: 'project', browserFeatureEnabled: true,
         terminalTabAvailable: true,
       }).map((tab) => tab.id),
     ).toEqual([
@@ -212,16 +271,29 @@ describe('rightSidebarTabRegistry', () => {
     // A phone reads the Project's widgets on its Project page, below the checkout.
     expect(
       resolveRightSidebarTabs({
-        scope: 'project',
+        scope: 'project', browserFeatureEnabled: true,
         terminalTabAvailable: true,
         presentation: 'mobile',
       }).map((tab) => tab.id),
     ).toEqual(['git', 'files', 'scripts', 'terminal', 'browser', 'services']);
   });
 
+  it('gives a Discussion Chat and its three companions, keeping Discussion companions out of Session and Project rails', () => {
+    expect(resolveRightSidebarTabs({ scope: 'discussion' }).map((tab) => tab.id))
+      .toEqual(['chat', 'discussionParticipants', 'discussionAgents', 'discussionDetails']);
+    expect(resolveRightSidebarTabs({ scope: 'discussion', presentation: 'mobile' }).map((tab) => tab.id))
+      .toEqual(['chat', 'discussionParticipants', 'discussionAgents', 'discussionDetails']);
+    const sessionIds = resolveRightSidebarTabs({ scope: 'session', browserFeatureEnabled: true, boardFeatureEnabled: true, terminalTabAvailable: true }).map((tab) => tab.id);
+    const projectIds = resolveRightSidebarTabs({ scope: 'project', browserFeatureEnabled: true, terminalTabAvailable: true }).map((tab) => tab.id);
+    for (const id of ['discussionParticipants', 'discussionAgents', 'discussionDetails']) {
+      expect(sessionIds).not.toContain(id);
+      expect(projectIds).not.toContain(id);
+    }
+  });
+
   it('launches Project Terminal only for an accepted checkout without replacing its retained destination', () => {
     const tabs = resolveRightSidebarTabs({
-      scope: 'project',
+      scope: 'project', browserFeatureEnabled: true,
       presentation: 'mobile',
       terminalTabAvailable: true,
     });
@@ -231,7 +303,7 @@ describe('rightSidebarTabRegistry', () => {
       ),
     ).toContain('terminal');
     const unavailable = resolveRightSidebarTabs({
-      scope: 'project',
+      scope: 'project', browserFeatureEnabled: true,
       presentation: 'mobile',
       terminalTabAvailable: false,
     });
@@ -253,7 +325,7 @@ describe('rightSidebarTabRegistry', () => {
     ).toMatchObject({ kind: 'available', tab: { id: 'terminal' } });
     expect(
       resolveRightSidebarTabs({
-        scope: 'session',
+        scope: 'session', browserFeatureEnabled: true,
         terminalTabAvailable: false,
       }).some((tab) => tab.id === 'terminal'),
     ).toBe(false);
@@ -261,7 +333,7 @@ describe('rightSidebarTabRegistry', () => {
 
   it('falls back to the first available built-in tab when persisted state is stale', () => {
     const tabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
     });
 
@@ -271,7 +343,7 @@ describe('rightSidebarTabRegistry', () => {
 
     // On mobile the Browser surface tab is still selectable.
     const mobileTabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
       presentation: 'mobile',
     });
@@ -280,7 +352,7 @@ describe('rightSidebarTabRegistry', () => {
 
   it('keeps a restored plugin selection unresolved until its projection is current, then tombstones it when absent', () => {
     const tabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
     });
 
@@ -349,12 +421,12 @@ describe('rightSidebarTabRegistry', () => {
 
   it('admits Browser alongside Services for Session and Project on both presentations', () => {
     const desktopSession = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: true,
       presentation: 'desktop',
     }).map((tab) => tab.id);
     const desktopProject = resolveRightSidebarTabs({
-      scope: 'project',
+      scope: 'project', browserFeatureEnabled: true,
       presentation: 'desktop',
     }).map((tab) => tab.id);
     expect(desktopSession).toContain('browser');
@@ -364,12 +436,12 @@ describe('rightSidebarTabRegistry', () => {
     expect(desktopProject).toContain('services');
 
     const mobileSession = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: true,
       presentation: 'mobile',
     }).map((tab) => tab.id);
     const mobileProject = resolveRightSidebarTabs({
-      scope: 'project',
+      scope: 'project', browserFeatureEnabled: true,
       presentation: 'mobile',
     }).map((tab) => tab.id);
     expect(mobileSession).toContain('browser');
@@ -384,7 +456,7 @@ describe('rightSidebarTabRegistry', () => {
       ['services', 'services'],
     ] as const) {
       const tabs = resolveRightSidebarTabs({
-        scope: 'project',
+        scope: 'project', browserFeatureEnabled: true,
         activePage,
         presentation: 'mobile',
       });
@@ -410,7 +482,7 @@ describe('rightSidebarTabRegistry', () => {
     }
     for (const activePage of ['overview', 'context'] as const) {
       const tabs = resolveRightSidebarTabs({
-        scope: 'project',
+        scope: 'project', browserFeatureEnabled: true,
         activePage,
         presentation: 'mobile',
       });
@@ -484,17 +556,22 @@ describe('rightSidebarTabRegistry', () => {
 
   it('merges validated plugin tabs into host-owned ordering without shadowing built-ins', () => {
     const tabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
+      sessionSharingAvailable: true,
       pluginPlacements: [reviewSidebarPlacement],
     });
 
     expect(tabs.map((tab) => tab.id)).toEqual([
-      'git',
-      'files',
+      'chat', 'tabs', 'companion',
+      'info',
       'agents',
       'collaboration',
       'navigation',
+      'skills',
+      'git',
+      'review',
+      'files',
       'browser',
       'services',
       `plugin:${REVIEW_PLUGIN_ID}:review-panel`,
@@ -513,7 +590,7 @@ describe('rightSidebarTabRegistry', () => {
 
   it('falls back away from disabled plugin tabs that the current host policy hides', () => {
     const tabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
       pluginPlacements: [disabledReviewSidebarPlacement],
     });
@@ -533,7 +610,7 @@ describe('rightSidebarTabRegistry', () => {
 
   it("lists the App's tabs after scoped tabs and admits them in the phone Session cockpit", () => {
     const sessionTabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       pluginPlacements: [reviewSidebarPlacement],
       appPluginPlacements: [appSidebarPlacement],
     });
@@ -552,7 +629,7 @@ describe('rightSidebarTabRegistry', () => {
     ).toBe('plugin');
 
     const projectTabs = resolveRightSidebarTabs({
-      scope: 'project',
+      scope: 'project', browserFeatureEnabled: true,
       pluginPlacements: [],
       appPluginPlacements: [appSidebarPlacement],
     });
@@ -621,7 +698,7 @@ describe('rightSidebarTabRegistry', () => {
     } satisfies PluginUiSurfacePlacementProjection;
 
     const tabs = resolveRightSidebarTabs({
-      scope: 'session',
+      scope: 'session', browserFeatureEnabled: true,
       terminalTabAvailable: false,
       // Plugin and built-in Browser destinations retain distinct qualified identities.
       // so both ids are live at once here.

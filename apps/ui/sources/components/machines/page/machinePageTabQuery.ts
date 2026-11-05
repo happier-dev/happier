@@ -3,6 +3,10 @@ import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/s
 /** Pure route types: core callers do not depend on the visual tab table and its component graph. */
 export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard';
 
+export function machinePageTabEntryKey(entry: Readonly<{ id: MachinePageTabId; key?: string }>): string {
+    return entry.key ?? entry.id;
+}
+
 /** A tab and the params it owns (one arm per tab; each tab's plan adds its params with its row). */
 export type MachinePageTabParams =
     | Readonly<{ id: 'overview' }>

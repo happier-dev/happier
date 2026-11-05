@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import type { RightPaneHiddenByDetails } from '@/components/appShell/panes/PaneActionRailContext';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { resolveRightSidebarTabPlacement, type RightSidebarBuiltinTabDefinition, type RightSidebarTabPlacementContext } from './rightSidebarTabRegistry';
@@ -7,17 +8,20 @@ export type RightSidebarActions = Readonly<{
     tabs: readonly string[];
     activeTab?: string;
     selectTab(tab: string): void;
+    items?: ShellColumnActionOwner['items'];
+    main?: RightSidebarActions;
 }>;
 
-/** Select through the same pane state while presenting session context beside its composer. */
+/** The pane owner keeps page selection independent from its companion destination. */
 export function openRightSidebarBuiltinTab(
-    pane: Pick<AppPaneScopeApi, 'openRight'>,
+    pane: Pick<AppPaneScopeApi, 'openRight' | 'setMainTab'>,
     tab: RightSidebarBuiltinTabDefinition,
     context: RightSidebarTabPlacementContext,
     showMain: () => void,
+    placement = resolveRightSidebarTabPlacement(tab, context),
 ): void {
-    if (resolveRightSidebarTabPlacement(tab, context) === 'main') {
-        pane.openRight({ tabId: tab.id, present: false });
+    if (placement === 'main') {
+        pane.setMainTab(tab.id);
         showMain();
     } else {
         pane.openRight({ tabId: tab.id });
@@ -56,6 +60,8 @@ export function usePublishRightSidebarActions(actions: RightSidebarActions): voi
         const publication: RightSidebarActions = {
             get tabs() { return latest.current.tabs; },
             get activeTab() { return latest.current.activeTab; },
+            get items() { return latest.current.items; },
+            get main() { return latest.current.main; },
             selectTab: tab => latest.current.selectTab(tab),
         };
         owner.current = publication;
@@ -69,7 +75,9 @@ export function usePublishRightSidebarActions(actions: RightSidebarActions): voi
 }
 
 export function toggleRightSidebarTab(
-    pane: Pick<AppPaneScopeApi, 'scopeState' | 'closeRight' | 'closeDetails'>,
+    pane: Pick<AppPaneScopeApi, 'closeRight' | 'closeDetails'> & Readonly<{
+        scopeState: Readonly<{ right: Readonly<{ isOpen: boolean }> }> | null;
+    }>,
     tabId: string,
     activeTabId: string | null,
     onSelectTab: (tabId: string) => void,

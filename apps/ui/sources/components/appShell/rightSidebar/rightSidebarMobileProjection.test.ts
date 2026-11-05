@@ -49,15 +49,18 @@ describe('rightSidebarMobileProjection', () => {
             surface: entry.surface,
             owner: entry.owner,
         }))).toEqual([
-            { tabId: 'git', surface: 'git', owner: 'builtin' },
+            { tabId: 'chat', surface: 'chat', owner: 'builtin' },
             { tabId: 'files', surface: 'browse', owner: 'builtin' },
+            { tabId: 'git', surface: 'git', owner: 'builtin' },
+            { tabId: 'tabs', surface: 'tabs', owner: 'builtin' },
+            { tabId: 'companion', surface: 'companion', owner: 'builtin' },
             { tabId: 'agents', surface: 'agents', owner: 'builtin' },
-            { tabId: 'collaboration', surface: 'collaboration', owner: 'builtin' },
             { tabId: 'navigation', surface: 'navigation', owner: 'builtin' },
-            { tabId: 'terminal', surface: 'terminal', owner: 'builtin' },
+            { tabId: 'skills', surface: 'skills', owner: 'builtin' },
             { tabId: 'browser', surface: 'browser', owner: 'builtin' },
             { tabId: 'services', surface: 'services', owner: 'builtin' },
             { tabId: `plugin:${REVIEW_PLUGIN_ID}:review-panel`, surface: 'plugin', owner: 'plugin' },
+            { tabId: 'terminal', surface: 'terminal', owner: 'builtin' },
         ]);
 
         expect(resolveRightSidebarTabIdForMobileSurface({ scope: 'session', surface: 'browser', tabs })).toBe('browser');

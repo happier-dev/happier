@@ -1,3 +1,10 @@
+import { DetailNavigationItemsContext, useDetailNavigationItems } from '@/components/appShell/rightSidebar/useDetailNavigationItems';
+import { isSessionRailCompanion, resolveSessionNavigationCustomizerProps, sessionPageDefaultPlacement } from './sessionNavigationCustomizer';
+import type { DetailPageNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
+import { usePresentedDetailNavigation } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { SessionTerminalRailBadge } from '@/components/sessions/terminal/strip/SessionTerminalRailBadge';
 import { SessionGitActionRailBadge, SessionGitActionRailTooltip } from './SessionGitActionRailBadge';
 import { SessionCollaborationRailBadge, useSessionConversationMentioned } from '@/components/sessions/collaboration/sessionConversationAttention';
@@ -16,12 +23,13 @@ import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/la
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useOptionalAppPaneScopeLayout } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
 import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
-import { useReportRightPanePlacement } from '@/components/appShell/panes/rightPanePlacement';
+import { useReportRightPanePlacement, type RightPaneSurface } from '@/components/appShell/panes/rightPanePlacement';
 import { usePaneActionRail, usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell/panes/PaneActionRailContext';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { RightSidebarActionRail, type RightSidebarRailAction } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
-import { openRightSidebarBuiltinTab, toggleRightSidebarTab, usePublishRightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
+import { openRightSidebarBuiltinTab, usePublishRightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { getRightSidebarTabLabel } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { useSessionTerminalAction } from '@/components/sessions/terminal/useSessionTerminalAction';
 import { toggleSessionReview } from './sessionPaneActions';
@@ -33,11 +41,9 @@ import { PaneHeaderSlotProvider, PaneHeaderSlotScope } from '@/components/appShe
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { AppRightSidebarTabSurface, useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
 import {
-    resolveSessionRightSidebarTabs,
     resolveRightSidebarTabSelection,
     resolveRightSidebarTabPlacement,
 } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
-import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import {
@@ -90,6 +96,8 @@ import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/bo
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { CodeIntelligencePaneTab } from '@/components/workspaces/files/intelligence/CodeIntelligencePaneTab';
 import { useCodeIntelligencePaneProducer } from '@/components/workspaces/files/intelligence/codeIntelligencePaneStore';
+import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 const loadSessionCollaborationSurface = async () => (await import('@/components/sessions/collaboration/SessionCollaborationSurface')).SessionCollaborationSurface;
 
@@ -146,7 +154,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+const SessionBodyTabContext = React.createContext<string | null>(null);
+
 function SessionRetainedPane({ tabId, ...props }: React.ComponentProps<typeof RetainedPanelSurface> & Readonly<{ tabId: string }>) {
+    const bodyTabId = React.useContext(SessionBodyTabContext);
+    if (bodyTabId !== null && bodyTabId !== tabId) return null;
     return (
         <RetainedPanelSurface {...props}>
             <SessionPaneErrorBoundary testID={props.testID ?? 'session-rightpanel-pane'}>
@@ -195,8 +207,25 @@ type SessionRightSidebarRuntimeProps = Readonly<{
 
 function SessionRightSidebarModelProvider(props: SessionRightPanelProps & SessionRightSidebarRuntimeProps & Readonly<{ children: React.ReactNode }>) {
     const model = useSessionRightSidebarModel(props);
-    // The columns follow the open tab's catalog placement (lab AR1 EFv): session context beside its composer.
-    useReportRightPanePlacement(model.scopeState?.right.isOpen ? model.activeTabPlacement : 'side');
+    // Each keyed body stays under one PaneColumn when its presentation moves. The pane reducer owns
+    // both selections; neither changing a companion nor adapting the layout replaces the main page.
+    const surfaces = React.useMemo<readonly RightPaneSurface[]>(() => model.bodyTabs.map(tab => {
+        const placement = tab.id === model.mainTabId ? 'main' as const
+            : model.scopeState?.right.isOpen && tab.id === model.activeTab ? 'side' as const : 'hidden' as const;
+        return { id: tab.id, placement, content: (
+            <RetainedPanelSurface isActive={placement !== 'hidden'}>
+                <SessionRightPanelContent sessionId={props.sessionId} scopeId={props.scopeId}
+                    paneSurfaceScope={props.paneSurfaceScope} bodyTabId={tab.id} surfacePlacement={placement} />
+            </RetainedPanelSurface>
+        ) };
+    }), [model.activeTab, model.bodyTabs, model.mainTabId, model.scopeState?.right.isOpen,
+        props.paneSurfaceScope, props.scopeId, props.sessionId]);
+    const presentation = React.useMemo(() => model.hasMainPages ? {
+        surfaces,
+        sideVisible: model.scopeState?.right.isOpen === true && model.activeTab !== model.mainTabId,
+        onCloseMainSurface: model.backToTranscript,
+    } : 'side' as const, [model.activeTab, model.backToTranscript, model.hasMainPages, model.mainTabId, model.scopeState?.right.isOpen, surfaces]);
+    useReportRightPanePlacement(presentation);
     return <SessionRightSidebarContext.Provider value={model}>{props.children}</SessionRightSidebarContext.Provider>;
 }
 
@@ -206,11 +235,20 @@ function useSessionRightSidebar() {
     return model;
 }
 
+/** A bundle of stable members keeps one identity until a member changes, so context consumers wake only for real changes. */
+function useRetainedShallow<T extends object>(value: T): T {
+    const ref = React.useRef<T | undefined>(undefined);
+    const retained = retainShallow(ref.current, value);
+    ref.current = retained;
+    return retained;
+}
+
 function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRightSidebarRuntimeProps) {
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(props.scopeId);
     const layout = useOptionalAppPaneScopeLayout();
     const mainColumn = usePaneMainColumn();
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     const placementContext = React.useMemo(() => ({
         scope: 'session' as const,
         arrangement: layout?.arrangement ?? 'session',
@@ -255,49 +293,48 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
     const sourceControlTabAvailable = useSessionSourceControlAvailability(props.sessionId, pluginRuntime.serverId);
     // The Session's accepted Project checkout, when it works in one: Scripts beside the transcript (lab `s-agent` PANE).
     const projectCheckout = useSessionProjectCheckout(session, pluginRuntime.serverId);
+    const terminal = useSessionTerminalAction({ sessionId: props.sessionId, scopeId: props.scopeId, serverId: pluginRuntime.serverId });
+    const computer = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: pluginRuntime.serverId });
     const codeIntelligenceAvailable = useCodeIntelligencePaneProducer(props.scopeId) !== null;
-    const rightPanelTabs = React.useMemo(() => resolveSessionRightSidebarTabs({
+    const enclosingNavigation = React.useContext(DetailNavigationItemsContext);
+    const detailInput = useRetainedShallow({
+        scope: 'session' as const,
         ...appTabInputs,
         codeIntelligenceAvailable,
         sessionSharingAvailable,
         sourceControlTabAvailable,
         sessionProjectCheckoutAvailable: projectCheckout !== null,
-        terminalTabAvailable,
+        terminalTabAvailable: placementContext.presentation === 'mobile' ? terminalTabAvailable : terminal.available,
+        computerAvailable: computer !== null,
+        computerDisabledReason: computer?.disabledReason ?? undefined,
+        arrangement: placementContext.arrangement,
         boardFeatureEnabled,
-        presentation: props.presentation === 'screen' ? 'mobile' : 'desktop',
+        presentation: placementContext.presentation,
         pluginPlacements: pluginRightSidebarPlacements,
         runtimeAdmission,
         localize: localizePluginText,
-    }), [
-        appTabInputs,
-        sessionSharingAvailable,
-        boardFeatureEnabled,
-        localizePluginText,
-        pluginRightSidebarPlacements,
-        props.presentation,
-        runtimeAdmission,
-        sourceControlTabAvailable,
-        projectCheckout,
-        terminalTabAvailable,
-        codeIntelligenceAvailable,
-    ]);
+    });
+    const rightPanelTabs = useDetailNavigationItems(detailInput, enclosingNavigation?.scopeId === props.scopeId ? enclosingNavigation : undefined);
+    // Page-only entries and external presenters never select this retained sidebar body.
+    const bodyTabs = React.useMemo(() => rightPanelTabs.filter(tab => tab.navigation.kind !== 'page'
+        && tab.id !== 'companion' && tab.id !== 'review' && tab.id !== 'computer'), [rightPanelTabs]);
     const rightTabSelection = React.useMemo(() => resolveRightSidebarTabSelection<RightTabId>({
         activeTabId: scopeState?.right.activeTabId,
         selectedDestination: scopeState?.right.selectedDestination,
-        tabs: rightPanelTabs,
+        tabs: bodyTabs,
         projectionPhase: pluginRuntime.phase,
     }), [
         pluginRuntime.phase,
-        rightPanelTabs,
+        bodyTabs,
         scopeState?.right.activeTabId,
         scopeState?.right.selectedDestination,
     ]);
     const activeTab = rightTabSelection.kind === 'available'
         ? rightTabSelection.tab.id
         : null;
-    const activeTabPlacement = rightTabSelection.kind === 'available'
-        ? resolveRightSidebarTabPlacement(rightTabSelection.tab, placementContext)
-        : 'side';
+    const hasMainPages = placementContext.presentation === 'desktop' && placementContext.arrangement === 'editor';
+    const mainTabId = hasMainPages ? scopeState?.mainTabId ?? null : null;
+    const backToTranscript = React.useCallback(() => pane.setMainTab(null), [pane.setMainTab]);
     const setMainHidden = mainColumn?.setHidden;
     const showMain = React.useCallback(() => setMainHidden?.(false), [setMainHidden]);
     const resolveBoardPrimaryHost = props.resolveBoardPrimaryHost ?? NO_BOARD_PRIMARY_MOUNT;
@@ -338,11 +375,22 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         ...(activeInstanceKey === undefined ? {} : { instanceKey: activeInstanceKey }),
     });
 
-    const setActiveTab = React.useCallback((tabId: RightTabId) => {
+    const setActiveTab = React.useCallback((tabId: RightTabId, column?: 'main' | 'side') => {
         const tab = rightPanelTabs.find((candidate) => candidate.id === tabId) ?? null;
         if (!tab || tab.disabledReason) {
             return;
         }
+        const placement = column ?? resolveRightSidebarTabPlacement(tab, placementContext);
+        if (placement === 'main') {
+            if (tab.id === 'chat') { pane.setMainTab(null); return; }
+            if (tab.navigation.kind !== 'companion' && tab.navigation.desktop !== 'none') {
+                if (tab.owner === 'builtin') openRightSidebarBuiltinTab(pane, tab, placementContext, showMain, placement);
+            }
+            return;
+        }
+        if (tab.id === 'review') { toggleSessionReview(pane); return; }
+        if (tab.id === 'terminal') { terminal.onPress(); return; }
+        if (tab.id === 'computer') { computer?.open(); return; }
         if (tab.owner === 'plugin') {
             pane.selectRightDestination({
                 kind: 'plugin',
@@ -351,9 +399,9 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
             paneLaunchStore.retire();
             return;
         }
-        openRightSidebarBuiltinTab(pane, tab, placementContext, showMain);
+        openRightSidebarBuiltinTab(pane, tab, placementContext, showMain, placement);
         paneLaunchStore.retire();
-    }, [pane, paneLaunchStore, placementContext, rightPanelTabs, showMain]);
+    }, [pane, paneLaunchStore, placementContext, rightPanelTabs, showMain, terminal.onPress, computer]);
 
     const openRightSidebarTab = React.useCallback((resolution: Parameters<typeof stagePluginSurfacePaneLaunch>[0]['resolution']) => {
         if (!stagePluginSurfacePaneLaunch({ store: paneLaunchStore, resolution })) {
@@ -423,15 +471,57 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         sessionId: props.sessionId,
     });
 
-    return {
+    const navigationItems = React.useMemo<readonly DetailPageNavigationItem[]>(() => rightPanelTabs.map(tab => ({
+        id: tab.id, title: getRightSidebarTabLabel(tab), icon: tab.icon, disabledReason: tab.disabledReason ?? null,
+        navigation: tab.navigation, phonePlacement: tab.phonePlacement, phoneOrder: tab.phoneOrder,
+        defaultPlacement: sessionPageDefaultPlacement(tab), allowedPlacements: tab.allowedPlacements,
+    })), [rightPanelTabs]);
+    const companionItems = React.useMemo(() => navigationItems.filter(item => {
+        const tab = rightPanelTabs.find(tab => tab.id === item.id)!;
+        return isSessionRailCompanion(tab) && !tab.hiddenInLauncher;
+    }), [navigationItems, rightPanelTabs]);
+    const mainControls = React.useRef(mainColumn);
+    mainControls.current = mainColumn;
+    const navigationScope = useActiveServerAccountScope(sessionAddress?.serverId ?? null);
+    const chromeRevision = React.useMemo(() => ({ hidden: mainColumn?.hidden, mainTabId, activeTab,
+        rightOpen: scopeState?.right.isOpen, rightPaneHiddenByDetails }),
+    [mainColumn?.hidden, mainTabId, activeTab, scopeState?.right.isOpen, rightPaneHiddenByDetails]);
+    const navigation = useRetainedShallow(usePresentedDetailNavigation({ pageKind: 'session',
+        identity: sessionAddress ? sessionAddressKey(sessionAddress) : props.scopeId,
+        sessionId: props.sessionId, scope: navigationScope, title: t('navigationPlacement.contextSession'),
+        items: navigationItems, activeId: mainTabId ?? 'chat', phone: false,
+        presented: placementContext.presentation === 'desktop', mainControls, chromeRevision,
+        selectPage: id => setActiveTab(id, 'main'),
+        companion: { items: companionItems, activeId: activeTab,
+            select: id => {
+                if (rightPaneHiddenByDetails === true && id !== 'review' && id !== 'terminal' && id !== 'computer') pane.closeDetails();
+                setActiveTab(id, 'side');
+            }, close: () => pane.closeRight() },
+        columnState: column => column === 'main'
+            ? { visible: !mainColumn?.hidden, activeTab: mainTabId ?? 'chat', setVisible: visible => mainColumn?.setHidden(!visible) }
+            : { visible: scopeState?.right.isOpen === true && activeTab !== mainTabId,
+                activeTab: activeTab ?? undefined, setVisible: visible => { if (visible) pane.openRight(); else pane.closeRight(); } },
+        customizer: device => resolveSessionNavigationCustomizerProps({ device, detailInput,
+            arrangement: placementContext.arrangement, desktopItems: rightPanelTabs,
+            phonePageTabs: storage.getState().settings.mobileWorkspaceExperienceV1 !== 'classic' }),
+    }));
+
+    return useRetainedShallow({
         scopeId: props.scopeId,
         sessionId: props.sessionId,
         pane,
+        terminal,
+        computer,
         scopeState,
         rightPanelTabs,
+        /** Read when Customize opens: each device's list resolves through the same owner. */
+        detailInput,
+        bodyTabs,
         rightTabSelection,
         activeTab,
-        activeTabPlacement,
+        mainTabId,
+        hasMainPages,
+        backToTranscript,
         placementContext,
         collaborationAddress,
         pluginRuntime,
@@ -449,21 +539,84 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         openFileInDetails,
         openFileInDetailsPinned,
         setActiveTab,
-    };
+        navigation,
+    });
 }
 
 /** UI consumes the canonical selected tab; Back closes its presentation without replacing selection. */
 export function useSessionRightSidebarPresentation() {
     const model = useSessionRightSidebar();
     return {
-        placement: model.activeTabPlacement,
-        sessionColumnTab: model.scopeState?.right.isOpen && model.activeTabPlacement === 'main'
-            ? model.rightTabSelection.kind === 'available' ? model.rightTabSelection.tab : null
-            : null,
-        backToTranscript: model.pane.closeRight,
+        placement: model.mainTabId ? 'main' as const : 'side' as const,
+        sessionColumnTab: model.rightPanelTabs.find(tab => tab.id === model.mainTabId) ?? null,
+        backToTranscript: model.backToTranscript,
         selectTab: model.setActiveTab,
     };
 }
+
+/**
+ * The Session column's page tabs (desktop Editor first, plan T U1): Chat, then the pages kept on the
+ * strip. Null when Chat is the only page, so a single-view Session draws no strip.
+ */
+function useSessionPageStrip(model: ReturnType<typeof useSessionRightSidebarModel> | null) {
+    const placements = model?.navigation.desktop;
+    return React.useMemo(() => {
+        if (!model?.hasMainPages || !placements) return null;
+        const pinned = placements.pinned.filter(item => item.id !== 'chat');
+        const overflow = placements.overflow.filter(item => item.id !== 'chat');
+        return pinned.length + overflow.length > 0
+            ? { ...placements, pinned, overflow, ordered: placements.ordered.filter(item => item.id !== 'chat') } : null;
+    }, [model?.hasMainPages, placements]);
+}
+
+/** Desktop top tabs: they switch the Session column between Chat and its pages; the rail opens companions beside it. */
+export const SessionPageTabs = React.memo(function SessionPageTabs() {
+    const model = React.useContext(SessionRightSidebarContext);
+    const strip = useSessionPageStrip(model);
+    const { theme } = useUnistyles();
+    if (!model || !strip) return null;
+    const glyphColor = theme.colors.text.secondary;
+    const toTab = (tab: DetailPageNavigationItem) => ({
+        id: tab.id, label: tab.title, icon: <Icon name={tab.icon} size={ICON_SIZE.sm} color={glyphColor} />,
+        disabled: Boolean(tab.disabledReason), ...(tab.disabledReason ? { unavailableReason: tab.disabledReason } : {}),
+    });
+    const activeTabId = model.mainTabId ?? 'chat';
+    // A page opened from elsewhere (an Action, a link) while hidden from the strip still shows as the selected tab.
+    const activeHidden = model.mainTabId !== null && !strip.ordered.some(entry => entry.id === model.mainTabId && strip.effectivePlacements[entry.id] !== 'hidden')
+        ? model.navigation.model.items.find(tab => tab.id === model.mainTabId) ?? null : null;
+    const chat = { id: 'chat', label: t('phoneNav.rail.chatPane'), icon: <Icon name="chat-circle" size={ICON_SIZE.sm} color={glyphColor} /> };
+    const customize = () => { void model.navigation.openNavigationCustomizer(); };
+    return <View testID="session-page-tabs" style={[pageTabStyles.strip, { borderBottomColor: theme.colors.border.subtle }]}>
+        <SegmentedTabBar
+            presentation="plain"
+            iconPlacement="leading"
+            segmentSizing="content"
+            tabs={[chat, ...strip.pinned.filter(entry => entry.id !== 'chat').map(toTab)]}
+            overflow={{ label: t('common.more'), testID: 'session-page-tabs.more',
+                items: [...strip.overflow.filter(entry => entry.id !== 'chat'), ...(activeHidden ? [activeHidden] : [])].map(toTab),
+                orderedIds: ['chat', ...strip.ordered.map(tab => tab.id)],
+                actions: [{ id: 'customize', label: t('navigationPlacement.customizeTabs'),
+                    icon: <Icon name="sliders-horizontal" size={ICON_SIZE.sm} color={glyphColor} />,
+                    testID: 'session-page-tabs.more.customize', onPress: customize }] }}
+            activeTabId={activeTabId}
+            onSelectTab={id => model.setActiveTab(id, 'main')}
+            accessibilityLabel={t('navigationPlacement.topTabs')}
+            testIDPrefix="session-page-tabs"
+        />
+    </View>;
+});
+
+const pageTabStyles = StyleSheet.create(theme => ({
+    // The Session header's second row (as the Project header's two-row band): the tabs on the band's
+    // edge, one hairline under them where the page or the transcript begins.
+    strip: {
+        flexDirection: 'row',
+        minWidth: 0,
+        paddingHorizontal: theme.space.s12,
+        paddingBottom: theme.space.s4,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+}));
 
 export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => (
     <SessionRightSidebarProvider {...props}>
@@ -471,7 +624,10 @@ export const SessionRightPanel = React.memo((props: SessionRightPanelProps) => (
     </SessionRightSidebarProvider>
 ));
 
-const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
+const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Readonly<{
+    bodyTabId?: string;
+    surfacePlacement?: RightPaneSurface['placement'];
+}>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     // The pane (header and body) is the boundary its menus and Add surfaces float inside.
@@ -484,13 +640,18 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
     const headerSafeAreaTop = closeButtonAtStart ? 0 : insets.top;
     const deviceType = useDeviceType();
     const stateSize = props.presentation === 'screen' && deviceType === 'phone' ? 'phone' : 'pane';
-    const { pane, scopeState, rightPanelTabs, rightTabSelection, activeTab, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, resolveBoardPrimaryHost, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned, setActiveTab } = useSessionRightSidebar();
-    const closeNavigationPane = props.onRequestClose ?? pane.closeRight;
+    const model = useSessionRightSidebar();
+    const { pane, scopeState, rightPanelTabs, bodyTabs, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, resolveBoardPrimaryHost, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned } = model;
+    const bodyTab = props.bodyTabId ? bodyTabs.find(tab => tab.id === props.bodyTabId) : null;
+    const rightTabSelection = bodyTab ? { kind: 'available' as const, tab: bodyTab } : model.rightTabSelection;
+    const activeTab = props.bodyTabId ? props.surfacePlacement === 'hidden' ? null : props.bodyTabId : model.activeTab;
+    const inSessionColumn = props.surfacePlacement === 'main';
+    const closeNavigationPane = props.onRequestClose ?? (inSessionColumn ? model.backToTranscript : pane.closeRight);
+    const setActiveTab = (tabId: string) => model.setActiveTab(tabId, inSessionColumn ? 'main' : 'side');
     // Presented inside the session column (Editor first, lab AR1 EFv): a sub-page of the session, with
     // Back to its transcript and the session's own mark and name in the band it covers.
     const presentation = useSessionRightSidebarPresentation();
-    const inSessionColumn = presentation.placement === 'main' && props.presentation !== 'screen';
-    const sessionIdentity = usePaneMainColumn()?.identity;
+    const pageStrip = useSessionPageStrip(inSessionColumn ? model : null);
     // A pane can be kept in the Companion as one link row (lab WC3); the header's ⋯ offers it.
     const paneCompanionActions = usePaneCompanionActions({
         sessionId: props.sessionId,
@@ -508,7 +669,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
     const closeButton = (
         <IconButton
             testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-close')}
-            onPress={props.onRequestClose ?? pane.closeRight}
+            onPress={closeNavigationPane}
             accessibilityLabel={closeButtonAtStart ? t('common.back') : t('common.close')}
             variant="plain"
             size={36}
@@ -519,6 +680,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
     );
 
     return (
+        <SessionBodyTabContext.Provider value={props.bodyTabId ?? null}>
         <PaneHeaderSlotProvider>
         <View ref={paneBoundaryRef} testID="session-right-panel-root" style={styles.container}>
         <PopoverScope boundaryRef={paneBoundaryRef}>
@@ -526,7 +688,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
                 {closeButtonAtStart ? closeButton : null}
                 <View style={styles.tabBarContainer}>
                     <RightSidebarIconTabBar
-                        tabs={rightPanelTabs}
+                        tabs={bodyTabs}
                         activeTabId={activeTab ?? ''}
                         onSelectTab={setActiveTab}
                         testIDPrefix={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-tab') ?? undefined}
@@ -536,12 +698,12 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
             </View> : null}
             <RightSidebarPaneHeader
                 scopeId={props.scopeId}
-                tabs={rightPanelTabs}
+                tabs={bodyTabs}
                 activeTabId={activeTab}
                 menuActions={paneCompanionActions}
-                onBack={inSessionColumn ? presentation.backToTranscript : undefined}
-                leading={inSessionColumn ? sessionIdentity?.mark : undefined}
-                context={inSessionColumn ? sessionIdentity?.name : undefined}
+                // The Session header and its page tabs stay above a page in the column (plan T U1): Chat
+                // is the way back when the strip is drawn; without it, Back returns to the transcript.
+                onBack={inSessionColumn && !pageStrip ? presentation.backToTranscript : undefined}
                 testID="session-rightpanel-header"
             />
             <View style={styles.body}>
@@ -717,7 +879,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
                             </SessionRetainedPane>
                         )}
                         {rightPanelTabs
-                            .filter((tab): tab is RightSidebarPluginTabDefinition => tab.owner === 'plugin')
+                            .filter((tab) => tab.owner === 'plugin')
                             .map((tab) => tab.disabledReason ? null : (
                                 <SessionRetainedPane
                                     key={tab.id}
@@ -758,17 +920,24 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
         </PopoverScope>
         </View>
         </PaneHeaderSlotProvider>
+        </SessionBodyTabContext.Provider>
     );
 });
 
 export const SessionActionRail = React.memo(() => {
     const model = useSessionRightSidebar();
-    usePublishRightSidebarActions({
-        tabs: model.rightPanelTabs.filter(tab => !tab.disabledReason).map(tab => tab.id),
-        activeTab: model.activeTab ?? undefined,
-        selectTab: model.setActiveTab,
-    });
-    const terminal = useSessionTerminalAction({ sessionId: model.sessionId, scopeId: model.scopeId, serverId: model.pluginRuntime.serverId });
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
+    const side = model.navigation.readColumn('side');
+    const main = model.navigation.readColumn('main');
+    const sideActions = {
+        tabs: side.tabs ?? [], items: side.items, activeTab: side.activeTab,
+        selectTab: (id: string) => side.selectTab?.(id),
+        main: { tabs: main.tabs ?? [], items: main.items, activeTab: main.activeTab,
+            selectTab: (id: string) => main.selectTab?.(id) },
+    };
+    usePublishRightSidebarActions(sideActions);
+    const executeNavigation = useMountedScopeActionCommand(model.collaborationAddress?.serverId ?? null);
+    const { terminal, computer } = model;
     // The Work tab's badge is the Work projection's outstanding count (D-S4): the same number the
     // header strip shows, read from the one owner the Session host mounted — never a second count.
     const workProjection = useSessionWorkSources()?.projection;
@@ -781,15 +950,13 @@ export const SessionActionRail = React.memo(() => {
     }) : t('sessionWork.title');
     // Scripts counts this Session's own finite runs that are still working (the same Work operations).
     const runningScripts = workProjection?.projectCommands.filter((item) => item.status.bucket === 'working').length ?? 0;
-    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     // The rail reads only the one summary bit; the dot itself subscribes in its own leaf.
     const collaborationMentioned = useSessionConversationMentioned(model.collaborationAddress);
     const actions: RightSidebarRailAction[] = [];
     for (const tab of model.rightPanelTabs) {
-        // One terminal action owns all dock locations; the catalog retains its sidebar admission.
-        if (tab.id === 'terminal') continue;
-        const placement = resolveRightSidebarTabPlacement(tab, model.placementContext);
+        if (tab.navigation?.kind === 'page' || tab.id === 'companion' || tab.hiddenInLauncher || tab.id === model.mainTabId) continue;
         const badgeCount = tab.id === 'agents' ? outstandingCount : tab.id === 'scripts' ? runningScripts : undefined;
+        const active = Boolean(model.scopeState?.right.isOpen && !rightPaneHiddenByDetails && model.activeTab === tab.id);
         actions.push({
             id: tab.id,
             label: tab.id === 'agents' ? workLabel : badgeCount && badgeCount > 0
@@ -800,28 +967,27 @@ export const SessionActionRail = React.memo(() => {
             icon: tab.icon,
             // Plugin tabs sit after the built-in groups, behind their own hairline.
             group: tab.owner === 'builtin' ? tab.railGroup : 'plugins',
-            active: Boolean(model.scopeState?.right.isOpen && (placement === 'main' || !rightPaneHiddenByDetails) && model.activeTab === tab.id),
+            active: tab.id === 'review' ? Boolean(model.scopeState?.details.isOpen && model.scopeState.details.activeTabKey === SESSION_DETAILS_SCM_REVIEW_TAB_KEY)
+                : tab.id === 'terminal' ? terminal.active : active,
             disabled: Boolean(tab.disabledReason),
+            disabledReason: tab.disabledReason,
+            ...(tab.id === 'computer' && computer?.machineName && !computer.disabledReason ? { detail: computer.machineName } : {}),
+            defaultPlacement: tab.defaultPlacement ?? (tab.owner === 'plugin' ? 'overflow' : undefined),
+            allowedPlacements: tab.allowedPlacements,
             badgeCount,
             badge: tab.id === 'git' ? <SessionGitActionRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} />
                 : tab.id === 'collaboration' && model.collaborationAddress ? <SessionCollaborationRailBadge target={model.collaborationAddress} />
                     : undefined,
             tooltipContent: tab.id === 'git' ? <SessionGitActionRailTooltip sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} /> : undefined,
-            onPress: () => toggleRightSidebarTab(model.pane, tab.id, model.activeTab, model.setActiveTab, rightPaneHiddenByDetails, placement),
-        });
-        if (tab.id === 'git') actions.push({
-            id: 'review', label: t('files.toolbar.review'), icon: 'file-diff', group: 'code',
-            active: Boolean(model.scopeState?.details.isOpen && model.scopeState.details.activeTabKey === SESSION_DETAILS_SCM_REVIEW_TAB_KEY),
-            onPress: () => toggleSessionReview(model.pane),
-        });
-    }
-    if (terminal.available) {
-        // The terminal closes the machine group, ahead of any plugin tabs.
-        const firstPlugin = actions.findIndex((action) => action.group === 'plugins');
-        actions.splice(firstPlugin === -1 ? actions.length : firstPlugin, 0, {
-            id: 'terminal', label: t('settings.terminal'), icon: 'terminal', group: 'machine', active: terminal.active, onPress: terminal.onPress,
-            badge: terminal.active ? undefined : <SessionTerminalRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId ?? null} />,
+            onPress: () => {
+                const togglesPresenter = tab.id === 'terminal' || tab.id === 'review' || tab.id === 'computer';
+                void executeNavigation('shell.column.set', { column: 'side', visible: !active,
+                    ...(!active || togglesPresenter ? { tab: tab.id } : {}),
+                }, { kind: 'shell.column', column: 'side', read: () => model.navigation.readColumn('side') });
+            },
         });
     }
-    return <RightSidebarActionRail surfaceId="sessionRail" actions={actions} testID="session-action-rail" testIDPrefix="session-action-rail" />;
+    const openCustomizer = () => { void model.navigation.openNavigationCustomizer(); };
+    return <RightSidebarActionRail surfaceId="sessionRail" actions={actions} testID="session-action-rail" testIDPrefix="session-action-rail"
+        onOpenCustomizer={openCustomizer} />;
 });

@@ -16,7 +16,7 @@ import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationDefaultPlacement, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { resolveNavigationOverflow, resolveNavigationPlacements, type DetailNavigationAddress, type NavigationDefaultPlacement, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { PluginRightSidebarCountState, PluginRightSidebarCountsState, pluginRightSidebarCountHasContent, formatPluginRightSidebarCount,
@@ -114,9 +114,11 @@ const styles = StyleSheet.create((theme) => ({
 
 type RightSidebarActionRailProps = Readonly<{
     actions: readonly RightSidebarRailAction[];
-    surfaceId: 'sessionRail' | 'workspaceRail';
+    surfaceId: 'sessionRail' | 'workspaceRail' | DetailNavigationAddress;
     testID?: string;
     testIDPrefix?: string;
+    /** A detail page kind with its own Customize screen (Desktop / Phone, every list) opens it here. */
+    onOpenCustomizer?: () => void;
 }>;
 
 function PluginCountActions(props: Readonly<{ actions: readonly RightSidebarRailAction[];
@@ -270,17 +272,20 @@ function OverflowTrigger(props: Readonly<{ actions: readonly RightSidebarRailAct
 export function RightSidebarActionRail(props: RightSidebarActionRailProps): React.ReactElement {
     const { preferences } = useNavigationSurfacePlacement(props.surfaceId);
     const customize = (resolvedActions: readonly RightSidebarRailAction[]) => {
+        if (props.onOpenCustomizer) { props.onOpenCustomizer(); return; }
         const staticActions = resolvedActions.map(({ pluginCount, badge: _badge, tooltipContent: _tooltip, renderBadgeSignal: _signal, ...action }) => ({ ...action,
             badge: pluginCount?.tab.badge ? <PluginDestinationBadge badge={pluginCount.tab.badge} /> : undefined,
             badgeSignal: staticBadgeSignal({ ...action, pluginCount }) ?? undefined,
             onPress: () => {} }));
+        const renderPreview = (previewPreferences: NavigationPlacementPreferences) => <RightSidebarActionRailView
+            {...props} actions={staticActions} preferences={previewPreferences} onCustomize={() => {}} />;
         fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
             Modal.show({ component: NavigationPlacementCustomizer, props: {
-                surfaceId: props.surfaceId,
+                surfaceId: typeof props.surfaceId === 'string' ? props.surfaceId : 'workspaceRail',
+                address: props.surfaceId,
                 items: resolvedActions.map((action) => ({ id: action.id, title: action.label, icon: action.icon, group: action.group,
                     defaultPlacement: action.defaultPlacement, hasContent: action.hasContent, allowedPlacements: action.allowedPlacements })),
-                renderPreview: (previewPreferences: NavigationPlacementPreferences) => <RightSidebarActionRailView
-                    {...props} actions={staticActions} preferences={previewPreferences} onCustomize={() => {}} />,
+                renderPreview,
                 testID: `${props.testIDPrefix ?? 'right-sidebar-action-rail'}:customizer`,
             } });
         }), { tag: 'RightSidebarActionRail.customize' });

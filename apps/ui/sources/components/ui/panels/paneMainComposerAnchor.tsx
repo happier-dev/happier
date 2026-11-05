@@ -10,6 +10,12 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
  */
 export const PaneMainComposerReporterContext = React.createContext<((node: View | null) => void) | null>(null);
 
+/**
+ * The main column's top chrome (a Session's header and its page tabs): a page presented inside the
+ * column starts under it, so switching pages never moves the identity or the tabs.
+ */
+export const PaneMainTopReporterContext = React.createContext<((node: View | null) => void) | null>(null);
+
 /** The pane owner withdraws the covered body, not the composer's still-visible band. */
 export const PaneMainBodyPresentationContext = React.createContext<boolean | null>(null);
 
@@ -31,6 +37,15 @@ export function PaneMainBody(props: React.ComponentProps<typeof ModalPaneBoundar
     return <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
         {body}
     </PluginSurfaceFocusEligibilityProvider>;
+}
+
+/** The main column's top chrome; reports itself to the enclosing pane host on every layout. */
+export function PaneMainTopAnchor(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+    const report = React.useContext(PaneMainTopReporterContext);
+    const ref = React.useRef<View | null>(null);
+    const onLayout = React.useCallback(() => report?.(ref.current), [report]);
+    React.useEffect(() => () => report?.(null), [report]);
+    return <View ref={ref} onLayout={onLayout}>{props.children}</View>;
 }
 
 /** The main column's composer band; reports itself to the enclosing pane host on every layout. */

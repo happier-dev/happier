@@ -1,4 +1,6 @@
 import { t } from '@/text';
+import { resolveDetailNavigationItems, type DetailNavigationItem } from './detailNavigationItems';
+export { resolveDetailNavigationItems, resolveDetailNavigationProjection, type DetailNavigationItem } from './detailNavigationItems';
 import {
     RIGHT_SIDEBAR_BUILTIN_TABS,
     type RightSidebarAvailabilityInput,
@@ -15,12 +17,10 @@ import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
-import {
-    resolveRightSidebarPluginTabs,
-    type RightSidebarPluginTabRuntimeAdmission,
-} from './rightSidebarPluginTabs';
+import type { RightSidebarPluginTabRuntimeAdmission } from './rightSidebarPluginTabs';
 import { resolveRightSidebarMobileSurface as resolveProjectedRightSidebarMobileSurface } from './rightSidebarMobileProjection';
 import type { ProjectPageV1 } from '@/components/projects/detail/projectRouteState';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 
 export type {
     RightSidebarAvailabilityInput,
@@ -34,11 +34,16 @@ export type {
 
 export type ResolveRightSidebarTabsInput = Readonly<{
     scope: RightSidebarScope;
+    arrangement?: 'session' | 'editor';
+    computerAvailable?: boolean;
+    computerDisabledReason?: string;
     /** Suppresses only the matching Project launcher; the selection catalog is retained. */
     activePage?: ProjectPageV1;
     terminalTabAvailable?: boolean;
     /** The exact Home's `sessions.board` decision; omitted means disabled. */
     boardFeatureEnabled?: boolean;
+    /** The exact Home's Browser decision; omitted means disabled. */
+    browserFeatureEnabled?: boolean;
     sessionSharingAvailable?: boolean;
     /** Omitted means available; see `RightSidebarAvailabilityInput.sourceControlTabAvailable`. */
     sourceControlTabAvailable?: boolean;
@@ -48,6 +53,7 @@ export type ResolveRightSidebarTabsInput = Readonly<{
     codeIntelligenceAvailable?: boolean;
     presentation?: RightSidebarPresentation;
     pluginPlacements?: readonly PluginUiSurfacePlacementProjection[];
+    policyContext?: PluginUiPolicyEvaluationContext;
     runtimeAdmission?: RightSidebarPluginTabRuntimeAdmission;
     localize?: PluginLocalizedTextResolver;
     /**
@@ -60,7 +66,7 @@ export type ResolveRightSidebarTabsInput = Readonly<{
 }>;
 
 export type SessionRightSidebarTabId =
-    | Extract<RightSidebarBuiltInTabId, 'git' | 'files' | 'problems' | 'references' | 'scripts' | 'navigation' | 'agents' | 'collaboration' | 'board' | 'terminal' | 'browser' | 'services'>
+    | Extract<RightSidebarBuiltInTabId, 'chat' | 'tabs' | 'companion' | 'review' | 'computer' | 'info' | 'git' | 'files' | 'problems' | 'references' | 'scripts' | 'navigation' | 'agents' | 'collaboration' | 'skills' | 'board' | 'terminal' | 'browser' | 'services'>
     | `plugin:${string}`;
 
 export type ProjectRightSidebarTabId =
@@ -78,12 +84,9 @@ export type RightSidebarTabPlacementContext = Readonly<{
 /** The existing session group follows its composer in Editor first; selection remains pane-owned. */
 export function resolveRightSidebarTabPlacement(
     tab: RightSidebarTabDefinition,
-    context: RightSidebarTabPlacementContext,
+    _context: RightSidebarTabPlacementContext,
 ): 'main' | 'side' {
-    return context.scope === 'session' && context.arrangement === 'editor'
-        && context.presentation !== 'mobile' && tab.owner === 'builtin' && tab.railGroup === 'session'
-        ? 'main'
-        : 'side';
+    return tab.navigation?.kind === 'both' ? 'main' : 'side';
 }
 
 export function getRightSidebarBuiltinTab(id: RightSidebarBuiltInTabId): RightSidebarBuiltinTabDefinition {
@@ -94,55 +97,9 @@ export function getRightSidebarBuiltinTab(id: RightSidebarBuiltInTabId): RightSi
     return tab;
 }
 
-function isTabAvailable(
-    tab: RightSidebarBuiltinTabDefinition,
-    input: RightSidebarAvailabilityInput,
-): boolean {
-    if (!tab.scopes.includes(input.scope)) {
-        return false;
-    }
-    return tab.available ? tab.available(input) : true;
-}
-
-export function resolveRightSidebarTabs(
-    input: ResolveRightSidebarTabsInput,
-): readonly RightSidebarTabDefinition[] {
-    const availabilityInput: RightSidebarAvailabilityInput = {
-        scope: input.scope,
-        terminalTabAvailable: input.terminalTabAvailable === true,
-        presentation: input.presentation ?? 'desktop',
-        boardFeatureEnabled: input.boardFeatureEnabled === true,
-        sessionSharingAvailable: input.sessionSharingAvailable === true,
-        sourceControlTabAvailable: input.sourceControlTabAvailable !== false,
-        sessionProjectCheckoutAvailable: input.sessionProjectCheckoutAvailable === true,
-        codeIntelligenceAvailable: input.codeIntelligenceAvailable === true,
-    };
-    const builtInTabs = RIGHT_SIDEBAR_BUILTIN_TABS
-        .filter((tab) => isTabAvailable(tab, availabilityInput))
-        .map((tab) => input.scope === 'project' && (
-            input.activePage !== undefined && tab.projectPage === input.activePage
-            || tab.id === 'terminal' && !availabilityInput.terminalTabAvailable
-        )
-            ? Object.freeze({ ...tab, hiddenInLauncher: true })
-            : tab);
-    const pluginTabs = resolveRightSidebarPluginTabs({
-        scope: input.scope,
-        placements: input.pluginPlacements,
-        ...(input.localize ? { localize: input.localize } : {}),
-        ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
-    });
-    const appTabs = input.scope === 'app' || !input.appPluginPlacements
-        ? []
-        : resolveRightSidebarPluginTabs({
-            scope: 'app',
-            placements: input.appPluginPlacements,
-            ...(input.appLocalize ? { localize: input.appLocalize } : {}),
-            ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
-        });
-    return Object.freeze([
-        ...[...builtInTabs, ...pluginTabs].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)),
-        ...appTabs,
-    ]);
+/** Delegating compatibility entry for App, Project and Discussion while their units migrate. */
+export function resolveRightSidebarTabs(input: ResolveRightSidebarTabsInput): readonly DetailNavigationItem[] {
+    return resolveDetailNavigationItems(input);
 }
 
 export function resolveSessionRightSidebarTabs(
@@ -255,7 +212,9 @@ export function resolveRightSidebarTabSelection<TTab extends string>(input: Read
         };
     }
 
-    const fallback = input.tabs.find((tab) => !tab.disabledReason) ?? null;
+    // Catalog presentation order is independent of the incumbent initial content selection.
+    const fallback = input.tabs.find(tab => tab.id === 'git' && !tab.disabledReason)
+        ?? input.tabs.find((tab) => !tab.disabledReason) ?? null;
     if (fallback) {
         return { kind: 'available', tab: fallback as RightSidebarTabDefinitionFor<TTab> };
     }
@@ -282,11 +241,11 @@ export function resolveRightSidebarActiveTab<TTab extends string>(
     // This compatibility helper predates the persisted-selection result. Its
     // callers only need an in-memory display default, while the panels above
     // retain a selected plugin tombstone through `resolveRightSidebarTabSelection`.
-    const fallback = tabs.find((tab) => !tab.disabledReason);
-    if (!fallback) {
+    const fallback = resolveRightSidebarTabSelection<TTab>({ activeTabId: null, tabs, projectionPhase: 'current' });
+    if (fallback.kind !== 'available') {
         throw new Error('Right sidebar has no available tabs');
     }
-    return fallback.id as TTab;
+    return fallback.tab.id;
 }
 
 export function resolveRightSidebarMobileSurface(

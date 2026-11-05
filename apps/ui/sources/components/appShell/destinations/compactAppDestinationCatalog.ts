@@ -662,7 +662,7 @@ export function commitCompactAppDestinationSources(source: CompactAppDestination
             rightSidebarTabs: projection ? resolveRightSidebarTabs({ scope: 'app',
                 pluginPlacements: selectPluginRightSidebarTabPlacements(projection, 'app'),
                 localize,
-            }).filter((tab): tab is RightSidebarPluginTabDefinition => tab.owner === 'plugin') : [],
+            }).filter(tab => tab.owner === 'plugin') : [],
         };
     }
     const previous = variant.destinations;

@@ -23,8 +23,11 @@ export function resolveRightSidebarMobileProjection(input: Readonly<{
     scope: RightSidebarScope;
     tabs: readonly RightSidebarTabDefinition[];
 }>): readonly RightSidebarMobileProjectionEntry[] {
-    return Object.freeze(input.tabs.flatMap((tab): readonly RightSidebarMobileProjectionEntry[] => {
-        if (tab.disabledReason || tab.hiddenInLauncher) {
+    const tabs = input.scope === 'session'
+        ? [...input.tabs].sort((a, b) => (a.phoneOrder ?? a.order) - (b.phoneOrder ?? b.order) || a.id.localeCompare(b.id))
+        : input.tabs;
+    return Object.freeze(tabs.flatMap((tab): readonly RightSidebarMobileProjectionEntry[] => {
+        if (tab.disabledReason || tab.hiddenInLauncher || tab.phonePlacement === 'none') {
             return [];
         }
         const surface = resolveRightSidebarMobileSurface(tab, input.scope);

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { RightPaneSurface } from '@/components/appShell/panes/rightPanePlacement';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
@@ -19,7 +20,7 @@ import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { RetainedPanelSurface } from './RetainedPanelSurface';
 import { DEFAULT_DETAILS_MIN_PX, DEFAULT_RIGHT_MIN_PX, DEFAULT_SESSION_MIN_PX, DEFAULT_SESSION_WIDTH_PX } from './paneBreakpoints';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
-import { PaneMainBodyPresentationContext, PaneMainComposerReporterContext } from './paneMainComposerAnchor';
+import { PaneMainBodyPresentationContext, PaneMainComposerReporterContext, PaneMainTopReporterContext } from './paneMainComposerAnchor';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { AppShellTailSlot } from '@/components/navigation/shell/appShellTail';
@@ -57,6 +58,10 @@ export type MultiPaneHostProps = Readonly<{
     onResetRightDockWidthPx?: () => void;
     onResetDetailsDockWidthPx?: () => void;
     rightPane: React.ReactNode | null;
+    /** Each retained body keeps its key and parent as its column changes. */
+    rightSurfaces?: readonly RightPaneSurface[];
+    onCloseMainSurface?: () => void;
+
     /** The right pane presents inside the main column, above its composer (lab AR1 EFv). */
     rightInMain?: boolean;
     detailsPane: React.ReactNode | null;
@@ -134,6 +139,9 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         onClose: onCloseRight,
     });
     const rightInMain = props.rightInMain === true;
+    const hasMainSurface = props.rightSurfaces?.some(surface => surface.placement === 'main') === true;
+    const sharedMainModal = mainModalActive && hasMainSurface;
+    const settledMainProgress = React.useRef(new Animated.Value(1)).current;
     const rightModalActive = !rightInMain && layout.right === 'overlay' && rightPresence.present && !mainModalActive;
     const detailsModalActive = layout.details === 'overlay' && detailsPresence.present && !rightModalActive && !mainModalActive;
     const rightModalLabel = t('ui.modalPane.right');
@@ -153,11 +161,12 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const rightModalBoundary = useModalPaneBoundary({
         active: rightModalActive,
         label: rightModalLabel,
-        onRequestClose: rightPresence.requestClose,
+        onRequestClose: rightPresence.present ? rightPresence.requestClose : props.onCloseMainSurface ?? onCloseRight,
         focusReturnRef: props.rightOverlayFocusReturnRef,
         discardPendingFocusReturn: Boolean(rightPane) && (rightInMain || layout.right !== 'overlay'),
         // Escape leaves a pane presented in the session column for the transcript, as Back does.
-        escapeEnabled: rightModalActive || ((rightInMain || layout.right === 'docked') && rightPresence.present),
+        escapeEnabled: rightModalActive || ((rightInMain || layout.right === 'docked') && rightPresence.present)
+            || (hasMainSurface && hideMain !== true),
         escapePriority: rightModalActive
             ? ESCAPE_LAYER_PRIORITIES.overlay
             : ESCAPE_LAYER_PRIORITIES.pane,
@@ -189,7 +198,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     // Presented is not focusable: a docked column under another pane's overlay is still on screen.
     const mainPresented = hideMain !== true && (layout.main !== 'overlay' || mainModalActive);
     const mainRegionVisible = mainFocusEligible && mainPresented;
-    const mainRegionFocus = usePaneRegionFocusBoundary('main', mainRegionVisible);
+    const mainColumnNodeRef = React.useRef<View | null>(null);
+    const mainRegionFocus = usePaneRegionFocusBoundary('main', mainRegionVisible, mainColumnNodeRef);
     const detailsOverlayFocusEligible = detailsModalActive && !detailsPresence.closing;
     const rightOverlayFocusEligible = rightModalActive && !rightPresence.closing;
 
@@ -251,7 +261,6 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     };
     // A pane presented in the main column covers it down to the composer's top edge. The composer
     // reports itself (`PaneMainComposerAnchor`); the inset is measured against this column.
-    const mainColumnNodeRef = React.useRef<View | null>(null);
     const mainComposerNodeRef = React.useRef<View | null>(null);
     const [mainComposerInsetPx, setMainComposerInsetPx] = React.useState(0);
     const measureMainComposerInset = React.useCallback(() => {
@@ -274,17 +283,45 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         mainComposerNodeRef.current = node;
         measureMainComposerInset();
     }, [measureMainComposerInset]);
-    const rightInMainVisible = rightInMain && !shouldHideDockedMainRegion && (layout.main !== 'overlay' || mainModalActive);
+    // The same for the column's top chrome (`PaneMainTopAnchor`): a page in the column starts under it.
+    const mainTopNodeRef = React.useRef<View | null>(null);
+    const [mainTopInsetPx, setMainTopInsetPx] = React.useState(0);
+    const measureMainTopInset = React.useCallback(() => {
+        const column = mainColumnNodeRef.current;
+        const top = mainTopNodeRef.current;
+        if (!column || !top || typeof column.measureInWindow !== 'function' || typeof top.measureInWindow !== 'function') {
+            setMainTopInsetPx(0);
+            return;
+        }
+        column.measureInWindow((_x, columnY, _width, columnHeight) => {
+            top.measureInWindow((_tx, topY, _tw, topHeight) => {
+                if (!(columnHeight > 0)) return;
+                const next = topHeight > 0 ? Math.max(0, Math.round(topY + topHeight - columnY)) : 0;
+                setMainTopInsetPx((current) => (Math.abs(current - next) > 1 ? next : current));
+            });
+        });
+    }, []);
+    const reportMainTop = React.useCallback((node: View | null) => {
+        mainTopNodeRef.current = node;
+        measureMainTopInset();
+    }, [measureMainTopInset]);
+    const measureMainInsets = React.useCallback(() => {
+        measureMainComposerInset();
+        measureMainTopInset();
+    }, [measureMainComposerInset, measureMainTopInset]);
     const mainFocusRef = React.useCallback((node: unknown) => {
         mainColumnNodeRef.current = node as View | null;
-        mainRegionFocus.ref(node);
-        if (mainModalActive) mainModalBoundary.setOverlayFocusRef(node as HTMLElement | null);
-    }, [mainModalActive, mainModalBoundary.setOverlayFocusRef, mainRegionFocus.ref]);
+        if (!hasMainSurface) mainRegionFocus.ref(node);
+        if (mainModalActive && !hasMainSurface) mainModalBoundary.setOverlayFocusRef(node as HTMLElement | null);
+    }, [hasMainSurface, mainModalActive, mainModalBoundary.setOverlayFocusRef, mainRegionFocus.ref]);
 
     return (
-        <View style={{ flex: 1, flexDirection: mirrored ? 'row-reverse' : 'row', position: 'relative' }}>
+        <ModalPaneBoundaryView
+            ref={sharedMainModal ? mainModalBoundary.setOverlayFocusRef : undefined}
+            {...(sharedMainModal ? mainModalBoundary.overlayProps : {})}
+            style={{ flex: 1, flexDirection: mirrored ? 'row-reverse' : 'row', position: 'relative' }}>
                 <View key="main" ref={mainFocusRef} testID="multi-pane-main-column"
-                    onFocus={mainRegionFocus.onFocus} onLayout={measureMainComposerInset} role={Platform.OS === 'web' ? 'region' : undefined}
+                    onFocus={mainRegionFocus.onFocus} onLayout={measureMainInsets} role={Platform.OS === 'web' ? 'region' : undefined}
                     tabIndex={Platform.OS === 'web' && mainRegionVisible ? -1 : undefined}
                     focusable={mainRegionVisible}
                     accessibilityLabel={mainLabel}
@@ -313,13 +350,15 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         ref={setMainUnderlayFocusRef}
                         testID="multi-pane-main-underlay"
                         style={{ flex: 1, minWidth: 0, minHeight: 0 }}
-                        {...(mainModalActive ? mainModalBoundary.overlayProps : activeMainBoundary?.underlayProps ?? {})}
+                        {...(mainModalActive && !sharedMainModal ? mainModalBoundary.overlayProps : activeMainBoundary?.underlayProps ?? {})}
                     >
                         <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible} presentationActive={mainPresented}>
                             <PaneMainComposerReporterContext.Provider value={reportMainComposer}>
-                                <PaneMainBodyPresentationContext.Provider value={mainPresented && !(rightInMain && rightPresence.present)}>
+                            <PaneMainTopReporterContext.Provider value={reportMainTop}>
+                                <PaneMainBodyPresentationContext.Provider value={mainPresented && !(rightInMain && rightPresence.present) && !hasMainSurface}>
                                 {main}
                                 </PaneMainBodyPresentationContext.Provider>
+                            </PaneMainTopReporterContext.Provider>
                             </PaneMainComposerReporterContext.Provider>
                         </PluginSurfaceFocusEligibilityProvider>
                     </ModalPaneBoundaryView>
@@ -394,19 +433,30 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             {rightPresence.present && rightDocked && !rightOnCanvas && !mirrored && props.rightDivider === 'shadow' ? (
                 <JoinedPanelShade key="right-shade" progress={rightPresence.progress} />
             ) : null}
-            {rightPresence.present ? (
-                <MaybeTailSlot key="right" tail={props.rightTail} host={rightOnCanvas ? props.rightTail?.host ?? null : null}>
+            {[
+                ...(props.rightSurfaces ?? []).map(surface => ({ ...surface, key: `surface:${surface.id}` })),
+                // A direct plugin rightPane has no sidebar descriptor and keeps its existing owner.
+                ...(rightPresence.present && (props.rightSurfaces === undefined
+                    || (rightPane != null && !props.rightSurfaces.some(surface => surface.placement === 'side')))
+                    ? [{ key: 'right', id: 'right', content: rightPresence.node, placement: rightInMain ? 'main' as const : 'side' as const }]
+                    : []),
+            ].map(surface => {
+                const inMain = surface.placement === 'main';
+                const side = surface.placement === 'side';
+                const mainVisible = !shouldHideDockedMainRegion && (layout.main !== 'overlay' || mainModalActive);
+                return (
+                <MaybeTailSlot key={surface.key} tail={side ? props.rightTail : undefined} host={side && rightOnCanvas ? props.rightTail?.host ?? null : null}>
                 <PaneColumn
                     name="right"
                     mirrored={mirrored}
-                    onCanvas={rightOnCanvas}
+                    onCanvas={side && rightOnCanvas}
                     divider={props.rightDivider ?? 'line'}
-                    joinsTopTab={rightOnCanvas && props.rightJoinsTopTab === true}
-                    presentation={rightInMain ? (rightInMainVisible ? 'main' : 'hidden') : layout.right}
-                    modalActive={rightModalActive}
-                    progress={rightPresence.progress}
+                    joinsTopTab={side && rightOnCanvas && props.rightJoinsTopTab === true}
+                    presentation={inMain ? (mainVisible ? 'main' : 'hidden') : side ? layout.right : 'hidden'}
+                    modalActive={side && rightModalActive}
+                    progress={inMain && props.rightSurfaces !== undefined ? settledMainProgress : rightPresence.progress}
                     // Over the session column the pane takes the column's width, and its edge resizes the column.
-                    {...(rightInMain ? {
+                    {...(inMain ? {
                         widthPx: mainWidthPx,
                         minWidthPx: mirrored && layout.main !== 'overlay' ? DEFAULT_SESSION_MIN_PX : mainWidthPx,
                         maxWidthPx: mirrored && layout.main !== 'overlay' ? props.mainDockMaxWidthPx ?? mainWidthPx : mainWidthPx,
@@ -414,6 +464,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         onDragWidthPx: props.onDragMainDockWidthPx,
                         onResetWidthPx: props.onResetMainDockWidthPx,
                         mainBottomInsetPx: mainComposerInsetPx,
+                        mainTopInsetPx,
                         mainZIndex: overlayZIndexBase + 6,
                     } : {
                         widthPx: rightDockWidthPx,
@@ -427,17 +478,20 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     overlayZIndex={overlayZIndexBase + 3}
                     overlayFocusRef={rightModalBoundary.setOverlayFocusRef}
                     overlayProps={rightModalOverlayProps}
-                    underlayProps={mainModalActive ? mainModalBoundary.underlayProps : rightUnderDetailsOverlay ? detailsModalBoundary.underlayProps : undefined}
-                    nativeAccessibilityFocusAnchor={rightNativeAccessibilityFocusAnchor}
-                    nativeBackLayer={rightNativeBackLayer}
-                    focusEligible={rightInMain ? rightInMainVisible && mainFocusEligible
-                        : layout.right === 'docked' ? !rightUnderDetailsOverlay && !mainModalActive : rightOverlayFocusEligible}
+                    underlayProps={!inMain && mainModalActive ? mainModalBoundary.underlayProps : inMain && rightModalActive ? rightModalBoundary.underlayProps
+                        : (inMain && detailsModalActive) || rightUnderDetailsOverlay ? detailsModalBoundary.underlayProps : undefined}
+                    nativeAccessibilityFocusAnchor={side ? rightNativeAccessibilityFocusAnchor : undefined}
+                    nativeBackLayer={side ? rightNativeBackLayer : undefined}
+                    focusEligible={inMain ? mainVisible && mainFocusEligible
+                        : side && (layout.right === 'docked' ? !rightUnderDetailsOverlay && !mainModalActive : rightOverlayFocusEligible)}
+                    regionFocus={inMain ? mainRegionFocus : undefined}
                 >
-                    {rightPresence.node}
+                    {surface.content}
                 </PaneColumn>
                 </MaybeTailSlot>
-            ) : null}
-        </View>
+                );
+            })}
+        </ModalPaneBoundaryView>
     );
 });
 
@@ -450,8 +504,7 @@ function MaybeTailSlot(props: Readonly<{
     host: HTMLElement | null;
     children: React.ReactElement;
 }>): React.ReactNode {
-    if (!props.tail) return props.children;
-    return <AppShellTailSlot host={props.host} hidden={props.tail.hidden}>{props.children}</AppShellTailSlot>;
+    return <AppShellTailSlot host={props.host} hidden={props.tail?.hidden}>{props.children}</AppShellTailSlot>;
 }
 
 const JOINED_TOP_CORNER = ['tr'] as const;
@@ -514,6 +567,8 @@ function PaneColumn(props: Readonly<{
     /** `main`: laid over the main column down to its composer (lab AR1 EFv). */
     presentation: ResolvedPaneLayout['details'] | 'main';
     mainBottomInsetPx?: number;
+    /** `main`: starts under the column's top chrome (its header and page tabs). */
+    mainTopInsetPx?: number;
     mainZIndex?: number;
     modalActive: boolean;
     progress: Animated.Value;
@@ -532,6 +587,7 @@ function PaneColumn(props: Readonly<{
     nativeAccessibilityFocusAnchor: ReturnType<typeof useModalPaneBoundary>['overlayProps']['nativeAccessibilityFocusAnchor'];
     nativeBackLayer: ReturnType<typeof useModalPaneBoundary>['overlayProps']['nativeBackLayer'];
     focusEligible: boolean;
+    regionFocus?: ReturnType<typeof usePaneRegionFocusBoundary>;
     children: React.ReactNode;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -539,7 +595,8 @@ function PaneColumn(props: Readonly<{
     const overlay = props.presentation === 'overlay';
     const hidden = props.presentation === 'hidden';
     const inMain = props.presentation === 'main';
-    const regionFocus = usePaneRegionFocusBoundary(props.name, !hidden && props.focusEligible);
+    const ownRegionFocus = usePaneRegionFocusBoundary(props.name, !hidden && props.focusEligible && props.regionFocus === undefined);
+    const regionFocus = props.regionFocus ?? ownRegionFocus;
     const setFocusRef = React.useCallback((node: unknown) => {
         regionFocus.ref(node);
         props.underlayFocusRef?.(node as HTMLElement | null);
@@ -556,7 +613,7 @@ function PaneColumn(props: Readonly<{
             style={inMain ? {
                 // The session column's own sub-page: its place and width, above the composer, no edge of its own.
                 position: 'absolute',
-                top: 0,
+                top: props.mainTopInsetPx ?? 0,
                 ...(props.mirrored ? { right: 0 } : { left: 0 }),
                 bottom: props.mainBottomInsetPx ?? 0,
                 width: props.widthPx,
