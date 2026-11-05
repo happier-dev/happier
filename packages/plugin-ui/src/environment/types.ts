@@ -140,6 +140,12 @@ export type HappierUiPalette = Readonly<{
   navigationSelected: string;
   navigationHover: string;
   /**
+   * The ink fill under a destination's chosen page tab: the one page-tab presentation built-in and plugin
+   * detail pages share (no track, glyph beside label). In-body Tabs keep their underline. Absent, the
+   * snapshot's control fill.
+   */
+  pageTabSelected?: string;
+  /**
    * The host's quiet inset surface, a hair off the page: a dense collection's group band and the
    * retained-content freshness line.
    */

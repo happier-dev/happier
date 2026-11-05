@@ -309,6 +309,8 @@ export function projectPluginUiHostPalette(theme: Pick<Theme, 'colors' | 'dark'>
         // (`HAPPIER_COLLECTION_LIST_ROW_STYLE` over `Item`).
         navigationSelected: colors.surface.elevated,
         navigationHover: colors.surface.pressed,
+        // The page-tab selection core's plain SegmentedTabBar draws (`surface.selected`).
+        pageTabSelected: colors.surface.selected,
         inset: colors.surface.inset,
         skeleton: colors.surface.skeleton,
         versionControlAdded: colors.versionControl.added.foreground,

@@ -17,8 +17,10 @@ import { I18nManager, View, type ViewStyle } from 'react-native';
 import {
   HappierUiAnimationActivityProviderInternal,
   useOptionalHappierUiLocalization,
+  useOptionalHappierUiPalette,
   useOptionalHappierUiTypography,
 } from '../../environment/context.js';
+import { HAPPIER_SEGMENTED_METRICS } from '../form/SegmentedChoice.js';
 import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
@@ -264,6 +266,16 @@ export function HappierTabs(props: Readonly<{
    * tablist of its own.
    */
   tabList?: 'shown' | 'host';
+  /** Host-resolved trigger order; panel membership and retention remain author-owned. */
+  stripValues?: readonly string[];
+  /** Hide host-placed chrome without replacing the mounted panel tree. */
+  hideStrip?: boolean;
+  /**
+   * `page`: a destination's page tabs in the host's page-tab presentation (no track, glyph beside label,
+   * the chosen tab on the ink selection fill), the same strip built-in detail pages draw. `underline`
+   * (default): in-body tabs over one hairline.
+   */
+  strip?: 'underline' | 'page';
   layout?: HappierTabsLayout;
   sharedPanel?: ReactNode;
   /** `none`: each tab as its glyph alone when every tab has one ({@link resolveHappierTabGlyphOnly}). */
@@ -279,8 +291,14 @@ export function HappierTabs(props: Readonly<{
    * do not fit, by measurement rather than by device class.
    */
   onStripLayout?: (metrics: Readonly<{ contentWidth: number; viewportWidth: number }>) => void;
+  /** Where each tab sits in the strip, for a host that scrolls the strip and keeps the chosen tab in view. */
+  onTabLayout?: (value: string, place: Readonly<{ x: number; width: number }>) => void;
 }>) {
   const fill = props.layout === 'fill';
+  const pageStrip = props.strip === 'page';
+  const plain = HAPPIER_SEGMENTED_METRICS.plain;
+  const pageTabSelected = useOptionalHappierUiPalette(props.theme)?.pageTabSelected ?? props.theme.colors.control;
+  const stripGap = pageStrip ? plain.gapPx : props.theme.spacing.large;
   const stripWidths = useRef<{ content: number | null; viewport: number | null }>({ content: null, viewport: null });
   const reportStrip = (part: 'content' | 'viewport', width: number): void => {
     stripWidths.current[part] = width;
@@ -316,7 +334,9 @@ export function HappierTabs(props: Readonly<{
     reportedDuplicates.current = duplicateTabValues;
   });
   const selected = tabs.find((tab) => tab.value === props.value) ?? tabs.find((tab) => !tab.disabled);
-  const glyphOnly = resolveHappierTabGlyphOnly({ labels: props.labels, tabs });
+  const stripTabs = props.stripValues === undefined ? tabs
+    : props.stripValues.flatMap(value => { const tab = tabs.find(candidate => candidate.value === value); return tab ? [tab] : []; });
+  const glyphOnly = resolveHappierTabGlyphOnly({ labels: props.labels, tabs: stripTabs });
   const tabRefs = useRef(new Map<string, View>());
   // Which TAB currently holds focus — its trigger or anything inside its panel —
   // published by the part that holds it while that part still exists. A removed
@@ -378,8 +398,8 @@ export function HappierTabs(props: Readonly<{
   // collection uses, so a tablist whose controlled value names a disabled tab
   // still offers exactly one Tab-reachable trigger instead of none.
   const tabStopIndex = resolveHappierRovingTabStop({
-    entries: tabs.map((tab) => ({ disabled: isHappierTabDisabled(tab) })),
-    selectedIndex: selected === undefined ? -1 : tabs.indexOf(selected),
+    entries: stripTabs.map((tab) => ({ disabled: isHappierTabDisabled(tab) })),
+    selectedIndex: selected === undefined ? -1 : stripTabs.indexOf(selected),
   });
 
   // A source withdraws a tab while a reader is standing on its trigger, or on a
@@ -390,7 +410,7 @@ export function HappierTabs(props: Readonly<{
   // single roving tab stop. Only a reader whose focus was still inside the
   // removed trigger or panel is moved — a reader who had already left keeps
   // their place.
-  const fallbackTabValue = tabStopIndex === null ? undefined : tabs[tabStopIndex]?.value;
+  const fallbackTabValue = tabStopIndex === null ? undefined : stripTabs[tabStopIndex]?.value;
   useEffect(() => {
     const previouslyFocused = focusedTabValue.current;
     if (previouslyFocused === null) return;
@@ -403,25 +423,12 @@ export function HappierTabs(props: Readonly<{
     tabRefs.current.get(fallbackTabValue)?.focus?.();
   }, [fallbackTabValue, tabs]);
 
-  if (props.tabList === 'host') {
-    return (
-      <View testID={props.testID} style={{ flex: 1, minHeight: 0 }}>
-        {selected === undefined ? null : props.sharedPanel !== undefined ? (
-          <HappierTabPanel active fill={fill}>{props.sharedPanel}</HappierTabPanel>
-        ) : tabs.map((tab) => mountedPanels.includes(tab.value) ? (
-          <HappierTabPanel key={tab.value} active={tab.value === selectedValue} fill={fill}>
-            {tab.children}
-          </HappierTabPanel>
-        ) : null)}
-      </View>
-    );
-  }
-
+  const hideStrip = props.tabList === 'host' || props.hideStrip === true;
   return (
     <View testID={props.testID} style={fill ? { ...fillStyle, gap: props.theme.spacing.medium } : { gap: props.theme.spacing.medium }}>
-      <View style={props.trailing === undefined ? undefined : { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
+      {hideStrip ? null : <View style={props.trailing === undefined ? undefined : { flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
       {/* The strip's one hairline across the full width; the selected tab's underline lands on it (lab `.tabs`). */}
-      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
+      {pageStrip ? null : <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 1, backgroundColor: props.theme.colors.divider }} />}
       <View style={props.trailing === undefined ? undefined : { flex: 1, minWidth: 0 }}>
       <HappierScrollArea horizontal testID={`${props.testID ?? 'tabs'}:viewport`}
         onLayout={(event) => { reportStrip('viewport', event.nativeEvent.layout.width); }}>
@@ -434,22 +441,23 @@ export function HappierTabs(props: Readonly<{
           // The strip scrolls rather than wraps: a wrapped tablist reflows the
           // panel below it every time a source adds or withdraws a tab.
           // The tabs are spaced, not boxed: each underline is its label's own width.
-          style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: props.theme.spacing.large }}
+          style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: stripGap }}
         >
-          {tabs.map((tab, tabIndex) => {
+          {stripTabs.map((tab, stripIndex) => {
+            const tabIndex = tabs.indexOf(tab);
             const isSelected = isHappierTabSelected(selected?.value ?? '', tab.value);
             // Values are opaque product keys and may contain whitespace. Indexes
             // keep ARIA token identities valid without normalizing author data.
             const tabId = `${instanceId}-tab-${tabIndex}`;
             const panelId = `${instanceId}-panel-${tabIndex}`;
-            return (
+            const trigger = (
               <HappierPressable
                 key={tab.value}
                 accessibilityRole="tab"
                 accessibilityLabel={[tab.title, tab.marker].filter(Boolean).join(' ')}
                 selected={isSelected}
                 disabled={tab.disabled}
-                tabIndex={tabIndex === tabStopIndex ? 0 : -1}
+                tabIndex={stripIndex === tabStopIndex ? 0 : -1}
                 nativeID={tabId}
                 controls={panelId}
                 controlRef={(node) => {
@@ -458,23 +466,23 @@ export function HappierTabs(props: Readonly<{
                 }}
                 onKeyDown={(key) => {
                   const nextIndex = resolveHappierTabKeySelection({
-                    tabs,
-                    currentIndex: tabIndex,
+                    tabs: stripTabs,
+                    currentIndex: stripIndex,
                     key,
                     rtl,
                   });
                   if (nextIndex === null) return false;
-                  const next = tabs[nextIndex];
+                  const next = stripTabs[nextIndex];
                   if (!next) return false;
                   props.onValueChange(next.value);
-                  if (nextIndex !== tabIndex) tabRefs.current.get(next.value)?.focus?.();
+                  if (nextIndex !== stripIndex) tabRefs.current.get(next.value)?.focus?.();
                   return true;
                 }}
                 onPress={() => props.onValueChange(tab.value)}
                 onFocusChange={(isFocused) => { recordFocusWithin(tab.value, isFocused); }}
                 testID={`${props.testID ?? 'tabs'}:${tab.value}`}
                 // The strip's scroller clips above and below; sideways each tab reaches half the gap.
-                hitReach={{ top: 0, bottom: 0, left: props.theme.spacing.large / 2, right: props.theme.spacing.large / 2 }}
+                hitReach={{ top: 0, bottom: 0, left: stripGap / 2, right: stripGap / 2 }}
                 style={(state) => ({
                   flexDirection: 'row',
                   alignItems: 'center',
@@ -482,18 +490,25 @@ export function HappierTabs(props: Readonly<{
                   // instead compress until its own label is unreadable.
                   flexShrink: 0,
                   gap: props.theme.spacing.xsmall,
-                  minHeight: TAB_STRIP_HEIGHT,
-                  borderBottomWidth: 2,
-                  borderBottomColor: isSelected ? props.theme.colors.accent : 'transparent',
+                  ...(pageStrip ? {
+                    paddingVertical: plain.paddingVerticalPx,
+                    paddingHorizontal: plain.paddingHorizontalPx,
+                    borderRadius: plain.radiusPx,
+                    backgroundColor: isSelected ? pageTabSelected : 'transparent',
+                  } : {
+                    minHeight: TAB_STRIP_HEIGHT,
+                    borderBottomWidth: 2,
+                    borderBottomColor: isSelected ? props.theme.colors.accent : 'transparent',
+                  }),
                   // Inset: the strip scrolls, and its scroller clips anything drawn outside a tab.
                   ...happierFocusRingStyle({ visible: state.focused, color: props.theme.colors.focus, placement: 'inset' }),
                   opacity: state.disabled ? 0.4 : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
                 })}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.theme.spacing.xsmall }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: pageStrip ? plain.iconGapPx : props.theme.spacing.xsmall }}>
                   {tab.icon}
                   {glyphOnly ? null : (
-                    <HappierText style={{ ...labelStyle, color: isSelected ? props.theme.colors.accent : props.theme.colors.secondaryText }} tabularNumbers={readHappierTypeRoleTabular('label', typography)}>{tab.title}</HappierText>
+                    <HappierText style={{ ...labelStyle, color: isSelected ? pageStrip ? props.theme.colors.text : props.theme.colors.accent : props.theme.colors.secondaryText }} tabularNumbers={readHappierTypeRoleTabular('label', typography)}>{tab.title}</HappierText>
                   )}
                   {tab.badge ? <HappierText style={{ ...badgeStyle, color: props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[tab.badgeTone ?? 'secondary']] }} tabularNumbers>{tab.badge}</HappierText> : null}
                   {tab.marker ? <HappierTabMarker color={props.theme.colors.mutedText}
@@ -501,18 +516,21 @@ export function HappierTabs(props: Readonly<{
                 </View>
               </HappierPressable>
             );
+            if (props.onTabLayout === undefined) return trigger;
+            const onTabLayout = props.onTabLayout;
+            return <View key={tab.value} style={{ flexShrink: 0 }} onLayout={(event) => { onTabLayout(tab.value, event.nativeEvent.layout); }}>{trigger}</View>;
           })}
         </View>
       </HappierScrollArea>
       </View>
       {props.trailing}
-      </View>
+      </View>}
       {/* `null`: the strip selects something its host draws elsewhere (a page's widget area), so no empty panel or gap follows it. */}
       {props.sharedPanel === null ? null : props.sharedPanel !== undefined && selected !== undefined ? (
         <HappierTabPanel
           active
           nativeID={`${instanceId}-panel-${tabs.indexOf(selected)}`}
-          labelledBy={`${instanceId}-tab-${tabs.indexOf(selected)}`}
+          labelledBy={hideStrip ? undefined : `${instanceId}-tab-${tabs.indexOf(selected)}`}
           onFocusWithinChange={(focused) => { recordFocusWithin(selected.value, focused); }}
           fill={fill}
         >
@@ -523,7 +541,7 @@ export function HappierTabs(props: Readonly<{
           key={tab.value}
           active={tab.value === selectedValue}
           nativeID={`${instanceId}-panel-${tabIndex}`}
-          labelledBy={`${instanceId}-tab-${tabIndex}`}
+          labelledBy={hideStrip ? undefined : `${instanceId}-tab-${tabIndex}`}
           onFocusWithinChange={(focused) => { recordFocusWithin(tab.value, focused); }}
           fill={fill}
         >
