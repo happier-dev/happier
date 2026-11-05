@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { ScmComparisonSchema, ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ScmComparison } from '@happier-dev/protocol/scm';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import type { DiscardChangeMessages } from '@/components/sessions/files/review/discardChange';
@@ -31,7 +32,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     const rpc = async (request: { method: string; payload: unknown; accountId?: string | null }) => {
         boundary.calls.push(request);
-        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return boundary.response;
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+            if (boundary.response instanceof Error) throw boundary.response;
+            return boundary.response;
+        }
         if (request.method === RPC_METHODS.SCM_CHANGE_DISCARD) return boundary.response;
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) return boundary.savedInventory ?? { success: true,
             results: [], count: 0, bytes: 0, sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 0 } };
@@ -70,15 +74,16 @@ afterEach(async () => { standardCleanup(); for (const scope of scopes.splice(0))
     await homes.reset();
     getStorage().setState(initialStorage, true); boundary.calls = []; boundary.response = null; boundary.savedResponse = null; boundary.savedResponses = null; boundary.savedInventory = null; });
 
-async function mount(comparison: SessionScmReviewComparison) {
+async function mount(comparison: SessionScmReviewComparison, active = true) {
     const sessionId = `capture-${comparison.kind}`;
     const serverId = await homes.addHome({ name: sessionId, serverUrl: `https://${sessionId}.example.test`, accountId: 'captured-account' });
+    scopes.push({ serverId, accountId: 'captured-account' });
     const machine = createMachineFixture({ id: `machine:${sessionId}`, activeAt: Date.now() });
     const session = createSessionFixture({ id: sessionId, serverId, active: true,
         metadata: { path: '/repo/exact', host: 'tester.local', machineId: machine.id, flavor: 'codex' } });
     getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
     return renderHook<ReturnType<typeof useSessionCapturedScmComparison>, ScmComparison | null>(
-        (knownComparison) => useSessionCapturedScmComparison({ sessionId, serverId, comparison, knownComparison }), { initialProps: null });
+        (knownComparison) => useSessionCapturedScmComparison({ sessionId, serverId, comparison, knownComparison, active }), { initialProps: null });
 }
 
 // Review is only offered for a comparison that changed something.
@@ -86,13 +91,170 @@ const changedFile = { path: 'src/changed.ts', changeKind: 'modified', binary: fa
     evidence: { state: 'available', unifiedDiff: 'diff --git a/src/changed.ts b/src/changed.ts\n--- a/src/changed.ts\n+++ b/src/changed.ts\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] } as const;
 
 describe('Files reads the canonical captured comparison through authenticated RPC', () => {
+    it.each(['phone resize', 'Home return'] as const)('retains paged evidence and recovery across %s', async (transition) => {
+        const source = { kind: 'session' as const };
+        const comparison = ScmComparisonSchema.parse({ id: '1'.repeat(64), source: { ...source, sessionId: 'capture-session' },
+            repository: { rootPath: '/repo/exact' }, endpoints: {},
+            inventory: { state: 'complete', reasons: [], files: [{ ...changedFile, occurrences: [{
+                id: 'phone-recovery:hunk', alias: 'phone-recovery:hunk', path: changedFile.path, position: 0,
+                before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 },
+            }] }] } });
+        boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
+            page: { totalFiles: 2, nextCursor: 1 } };
+        const hook = await mount(source, false);
+        await hook.unmount();
+        boundary.calls = [];
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const { SessionViewerDestinationScope } = await import('@/components/sessions/viewer/SessionViewerDestinationScope');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://capture-session.example.test', { serverId });
+        const destination = (layout: string) => <InjectedAuthProvider credentials={credentials}><SessionViewerDestinationScope sessionId={sessionId} serverId={serverId}>
+            <AppPaneProvider><SessionScmReviewDetailsView key={layout} sessionId={sessionId} serverId={serverId}
+                scopeId={`session:${sessionId}`} target={{ comparison: source, view: 'files' }} /></AppPaneProvider>
+        </SessionViewerDestinationScope></InjectedAuthProvider>;
+        const screen = await renderScreen(destination('desktop'));
+        await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-pagination')).toBeTruthy());
+        boundary.response = new RpcError('RPC target disconnected after request submission', 'RPC_OUTCOME_UNKNOWN');
+        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-refresh-error-action')).toBeTruthy());
+        const readsBeforeResize = comparisonCalls().length;
+        const { getScmDiffSummaryState } = await import('@/sync/ops/scmDiffSummary/generate');
+        const retainedError = () => Object.values(getScmDiffSummaryState().capturedReadsByKey ?? {})
+            .find(entry => entry.value.comparison?.id === comparison.id)?.value.error;
+        // The real SCM read adapter preserves transport identity through the Action and captured owner.
+        const failedRead = retainedError();
+        expect(failedRead).toMatchObject({ code: 'RPC_OUTCOME_UNKNOWN', message: expect.any(String) });
+        for (const layout of ['phone', 'desktop-again']) {
+            if (transition === 'Home return') await screen.update(<React.Fragment />);
+            await screen.update(destination(layout));
+            const { SessionCapturedScmReviewDetailsView } = await import('@/components/sessions/files/views/SessionCapturedScmReviewDetailsView');
+            await act(async () => screen.findByType(SessionCapturedScmReviewDetailsView)
+                .findAll(node => typeof node.props.onLayout === 'function')[0]!
+                .props.onLayout({ nativeEvent: { layout: { width: layout === 'phone' ? 390 : 1440 } } }));
+            await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-files')).toBeTruthy());
+            expect(screen.findByTestId('captured-comparison-refresh-error-action')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('new');
+            expect(screen.findHostByTestId('captured-comparison-pagination')).toBeTruthy();
+            expect(comparisonCalls()).toHaveLength(readsBeforeResize);
+            expect(retainedError()).toEqual(failedRead);
+        }
+        boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
+            page: { totalFiles: 2, nextCursor: 1 } };
+        await screen.pressByTestIdAsync('captured-comparison-refresh-error-action');
+        await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-refresh-error')).toBeNull());
+        expect(screen.findHostByTestId('captured-comparison-files')).toBeTruthy();
+        expect(comparisonCalls()).toHaveLength(readsBeforeResize + 1);
+    });
+    it('restores the selected Review scope and loaded pages when Home reopens an untargeted Review', async () => {
+        const source = { kind: 'session' as const };
+        const file = (path: string) => ({ ...changedFile, path, occurrences: [{
+            id: `selected-scope:${path}`, alias: path, path, position: 0,
+            before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 },
+        }] });
+        const comparison = ScmComparisonSchema.parse({ id: '3'.repeat(64), source: { ...source, sessionId: 'capture-session' },
+            repository: { rootPath: '/repo/exact' }, endpoints: {},
+            inventory: { state: 'complete', reasons: [], files: [file(changedFile.path)] } });
+        boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
+            page: { totalFiles: 3, nextCursor: 1 } };
+        const setup = await mount(source, false);
+        await setup.unmount();
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        getStorage().setState({ sessions: { ...getStorage().getState().sessions,
+            [sessionId]: { ...getStorage().getState().sessions[sessionId]!, latestTurnId: 'latest-turn' } } });
+        const { SessionViewerDestinationScope } = await import('@/components/sessions/viewer/SessionViewerDestinationScope');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { CapturedComparisonFilesView } = await import('./CapturedComparisonFilesView');
+        const { ScmComparisonScopePicker } = await import('./ScmComparisonScopePicker');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://capture-session.example.test', { serverId });
+        const destination = (target: import('@/components/sessions/panes/details/sessionDetailsTabBuilders').SessionScmReviewTarget) =>
+            <InjectedAuthProvider credentials={credentials}><SessionViewerDestinationScope sessionId={sessionId} serverId={serverId}>
+                <AppPaneProvider><SessionScmReviewDetailsView sessionId={sessionId} serverId={serverId}
+                    scopeId={`session:${sessionId}`} target={target} /></AppPaneProvider>
+            </SessionViewerDestinationScope></InjectedAuthProvider>;
+        const screen = await renderScreen(destination({ comparison: source, view: 'files' }));
+        await vi.waitFor(() => expect(screen.findAllByType(CapturedComparisonFilesView)).toHaveLength(1));
+        boundary.response = { success: true,
+            comparison: { ...comparison, inventory: { ...comparison.inventory, files: [file('src/second.ts')] } },
+            metadata: { sourceKey: comparison.id, source: comparison.source }, page: { totalFiles: 3, nextCursor: 2 } };
+        await screen.pressByTestIdAsync('captured-comparison-load-more');
+        await vi.waitFor(() => expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files).toHaveLength(2));
+        const reads = comparisonCalls().length;
+        await screen.update(<React.Fragment />);
+        await screen.update(destination({ view: 'files' }));
+        expect(screen.findByType(ScmComparisonScopePicker).props.current).toMatchObject(source);
+        expect(screen.findByType(CapturedComparisonFilesView).props.comparison.inventory.files.map((file: { path: string }) => file.path))
+            .toEqual(['src/changed.ts', 'src/second.ts']);
+        expect(screen.findByType(CapturedComparisonFilesView).props.page).toEqual({ totalFiles: 3, nextCursor: 2 });
+        expect(comparisonCalls()).toHaveLength(reads);
+        // An explicit destination remains authoritative over the retained default.
+        await screen.update(destination({ comparison: { kind: 'turnCheckpoint', turnId: 'explicit-turn' }, view: 'files' }));
+        expect(screen.findByType(ScmComparisonScopePicker).props.current).toMatchObject({ kind: 'turnCheckpoint', turnId: 'explicit-turn' });
+        await screen.unmount();
+        const { getScmReviewComparison } = await import('@/sync/ops/scmDiffSummary/generate');
+        const scope = { serverId, accountId: 'captured-account' };
+        expect(getScmReviewComparison(scope, sessionId)).toMatchObject({ kind: 'turnCheckpoint', turnId: 'explicit-turn' });
+        await TokenStorage.removeCredentialsForServerUrl('https://capture-session.example.test', { serverId });
+        expect(getScmReviewComparison(scope, sessionId)).toBeNull();
+    });
+    it('restores successful pages on Home return and continues from the retained cursor', async () => {
+        const source = { kind: 'session' as const };
+        const comparison = ScmComparisonSchema.parse({ id: '2'.repeat(64), source: { ...source, sessionId: 'capture-session' },
+            repository: { rootPath: '/repo/exact' }, endpoints: {},
+            inventory: { state: 'complete', reasons: [], files: [changedFile] } });
+        boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source },
+            page: { totalFiles: 3, nextCursor: 1 } };
+        const first = await mount(source);
+        await vi.waitFor(() => expect(first.getCurrent().comparison).toEqual(comparison));
+        const secondPage = { ...comparison, inventory: { ...comparison.inventory, files: [{ ...changedFile, path: 'src/second.ts' }] } };
+        boundary.response = { success: true, comparison: secondPage, metadata: { sourceKey: comparison.id, source: comparison.source },
+            page: { totalFiles: 3, nextCursor: 2 } };
+        await act(async () => first.getCurrent().loadMore());
+        const sessionId = 'capture-session';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const result = ScmDiffSummaryResultSchema.parse({ resultId: 'warm-reading', revision: 0, canUndo: false,
+            output: { success: true, resultId: 'warm-reading', revision: 0, sourceKey: comparison.id,
+                metadata: { sourceKey: comparison.id, source: comparison.source }, comparison,
+                requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'pending' } },
+                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
+        await act(async () => { loadSavedScmDiffSummaryResult({ sessionId, scope: { serverId, accountId: 'captured-account' }, result }); });
+        await first.unmount();
+        const readsBeforeReturn = comparisonCalls().length;
+        const returned = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source, knownComparison: comparison }));
+        await vi.waitFor(() => expect(returned.getCurrent().comparison?.inventory.files.map(file => file.path))
+            .toEqual(['src/changed.ts', 'src/second.ts']));
+        expect(returned.getCurrent()).toMatchObject({ loading: false, page: { totalFiles: 3, nextCursor: 2 },
+            comparison: { freshness: 'unknown' } });
+        expect(comparisonCalls()).toHaveLength(readsBeforeReturn);
+        boundary.response = { success: true, comparison: { ...comparison, inventory: { ...comparison.inventory, files: [] } },
+            metadata: { sourceKey: comparison.id, source: comparison.source }, page: { totalFiles: 3, nextCursor: null } };
+        await act(async () => returned.getCurrent().loadMore());
+        expect(comparisonCalls().at(-1)?.payload).toMatchObject({ comparisonId: comparison.id, projection: { kind: 'index', cursor: 2 } });
+        await returned.unmount();
+        // The credential-owned lifetime, rather than any mounted reader, releases retained evidence.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const url = 'https://capture-session.example.test';
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(url, { serverId }))!;
+        const sessionState = getStorage().getState();
+        await TokenStorage.removeCredentialsForServerUrl(url, { serverId });
+        await TokenStorage.setCredentialsForServerUrl(url, { serverId }, credentials);
+        getStorage().setState({ sessions: sessionState.sessions, machines: sessionState.machines,
+            machineListByServerId: sessionState.machineListByServerId });
+        boundary.response = { success: true, comparison: { ...comparison, id: '4'.repeat(64) },
+            metadata: { sourceKey: comparison.id, source: comparison.source } };
+        const reopened = await renderHook(() => useSessionCapturedScmComparison({ sessionId, serverId, comparison: source }));
+        await vi.waitFor(() => expect(reopened.getCurrent().comparison?.id).toBe('4'.repeat(64)));
+    });
     it('retains a completed turn capture when navigation pins it before switching to Files', async () => {
         const source = { kind: 'turnCheckpoint' as const, turnId: 'completed-turn' };
         const comparison = ScmComparisonSchema.parse({ id: 'f'.repeat(64), source,
             repository: { rootPath: '/repo/exact' }, endpoints: { before: 'turn-start', after: 'turn-final' },
             inventory: { state: 'complete', reasons: [], files: [changedFile] } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const prior = await mount(source);
+        const prior = await mount(source, false);
         await prior.unmount();
         boundary.calls = [];
         const sessionId = 'capture-turnCheckpoint';
@@ -114,7 +276,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(comparisonCalls()).toHaveLength(2);
     });
     it('reviews captured files with one keyboard cursor, numbering and content-key marks', async () => {
-        const mounted = await mount({ kind: 'session' });
+        const mounted = await mount({ kind: 'session' }, false);
         await mounted.unmount();
         const sessionId = 'capture-session';
         const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
@@ -187,7 +349,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(hook.getCurrent().changes.restoreBeforeTurn).toBeTypeOf('function');
     });
     it('keeps a rendered restore callback bound to its original file, turn and expected hash', async () => {
-        const prior = await mount({ kind: 'session' });
+        const prior = await mount({ kind: 'session' }, false);
         await prior.unmount();
         boundary.calls = [];
         const sessionId = 'capture-session';
@@ -211,7 +373,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         }] });
     });
     it('confirms whole-file restore only for unsaved editor content and retains it on cancellation', async () => {
-        const prior = await mount({ kind: 'session' });
+        const prior = await mount({ kind: 'session' }, false);
         await prior.unmount();
         boundary.calls = [];
         boundary.response = { success: true, entries: [{ path: 'src/a.ts', status: 'restored', hashBefore: 'b'.repeat(64), hashAfter: 'a'.repeat(64) }] };
@@ -240,7 +402,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(onReplacedUnsavedEdits).toHaveBeenCalledOnce();
     });
     it('offers the existing whole-turn rollback when a restore is unsupported or has moved on', async () => {
-        const prior = await mount({ kind: 'session' });
+        const prior = await mount({ kind: 'session' }, false);
         await prior.unmount();
         boundary.calls = [];
         const sessionId = 'capture-session';
@@ -261,7 +423,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(offerWholeTurnRollback.mock.calls).toEqual([['turn-4'], ['turn-4']]);
     });
     it('keeps Uncommitted live without captures while tab state changes and agent writes arrive', async () => {
-        const prior = await mount({ kind: 'session' });
+        const prior = await mount({ kind: 'session' }, false);
         await prior.unmount();
         boundary.calls = [];
         const sessionId = 'capture-session';
@@ -298,7 +460,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         boundary.savedInventory = { success: true, results: [{ cwd: '/repo/exact', sessionId: 'capture-commit',
             resultId: result.resultId, revision: result.revision, comparisonId: comparison.id, source, bytes: 1, updatedAtMs: 1 }],
             count: 1, bytes: 1, sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         const serverId = getStorage().getState().sessions['capture-commit']!.serverId!;
         scopes.push({ serverId, accountId: 'captured-account' });
@@ -326,7 +488,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         // The inventory is newest first: the failed attempt is what a plain "first match" restores.
         boundary.savedInventory = { success: true, results: [listed('failed-later-result', 2), listed('published-result', 1)],
             count: 2, bytes: 2, sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 2 } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         const serverId = getStorage().getState().sessions['capture-commit']!.serverId!;
         scopes.push({ serverId, accountId: 'captured-account' });
@@ -344,7 +506,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
             repository: { rootPath: '/repo/exact' }, endpoints: { before, after },
             inventory: { state, files: [], reasons } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         boundary.calls = [];
         const serverId = getStorage().getState().sessions['capture-session']!.serverId;
@@ -377,7 +539,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
                     before: { startLine: 1, lineCount: 1 }, after: { startLine: 0, lineCount: 0 } }],
             }] : [], reasons: [] } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         boundary.calls = [];
         const sessionId = `capture-${source.kind}`;
@@ -443,7 +605,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
                     evidence: { state: 'available', unifiedDiff: '' }, occurrences: [] },
             ] } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         boundary.calls = [];
         const serverId = getStorage().getState().sessions['capture-pullRequest']!.serverId;
@@ -460,7 +622,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
     it.each(['walkthrough', 'files'] as const)('cold-opens direct %s with one saved evidence read and no duplicate capture', async (view) => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };
         boundary.response = { success: false, error: 'must_not_recapture', errorCode: 'DIFF_UNAVAILABLE' };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         boundary.calls = [];
         const serverId = getStorage().getState().sessions['capture-commit']!.serverId!;
@@ -495,7 +657,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
                 before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 },
             }] }], reasons: [] } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         const sessionId = 'capture-commit';
         const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
@@ -534,7 +696,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const comparison = ScmComparisonSchema.parse({ id: 'phone-comparison', source, repository: { rootPath: '/repo/exact' }, endpoints: {},
             inventory: { state: 'complete', files: [], reasons: [] } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         const sessionId = 'capture-commit';
         const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
@@ -558,7 +720,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const source = { kind: 'commit' as const, commit: 'saved-ref' };
         const comparison = ScmComparisonSchema.parse({ ...SPECIMEN_COMPARISON, source, id: 'd'.repeat(64), repository: { rootPath: '/repo/exact' } });
         boundary.response = { success: true, comparison, metadata: { sourceKey: comparison.id, source } };
-        const hook = await mount(source);
+        const hook = await mount(source, false);
         await hook.unmount();
         const serverId = getStorage().getState().sessions['capture-commit']!.serverId!;
         const scope = { serverId, accountId: 'captured-account' };

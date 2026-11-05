@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ScmComparison, ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { ScmComparisonHeader } from './ScmComparisonHeader';
@@ -17,7 +17,9 @@ import { t } from '@/text';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmReviewedMarks } from './useScmReviewedMarks';
 import { useReviewListHunkReview } from '@/components/workspaces/scm/review/hunkReview/useReviewListHunkReview';
-import { readCapturedScmFileForSession } from '@/sync/ops/scmDiffSummary/generate';
+import { readCapturedScmFileForSession, getScmDiffSummaryState, subscribeScmDiffSummaryHostState,
+    retainCapturedScmFile } from '@/sync/ops/scmDiffSummary/generate';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -54,11 +56,19 @@ export function CapturedComparisonFilesView(props: Readonly<{
     const { theme } = useUnistyles();
     const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId ?? props.workspaceScope?.serverId);
     const scope = resolution.kind === 'bound' ? resolution.scope : null;
-    const evidenceKey = JSON.stringify([scope?.serverId, scope?.accountId, props.comparison.id]);
-    const [hydrated, setHydrated] = React.useState<Readonly<{ key: string; files: ReadonlyMap<string, ScmComparisonFile> }> | null>(null);
-    const comparison = React.useMemo(() => hydrated?.key === evidenceKey ? { ...props.comparison,
-        inventory: { ...props.comparison.inventory, files: props.comparison.inventory.files.map(file => hydrated.files.get(file.path) ?? file) } }
-        : props.comparison, [props.comparison, hydrated, evidenceKey]);
+    const sessionId = props.host?.sessionId ?? props.sessionId;
+    const machineId = props.host?.machineId ?? props.workspaceScope?.machineId;
+    const cwd = props.comparison.repository.rootPath;
+    const evidenceKey = JSON.stringify([scope?.serverId, scope?.accountId, sessionId, machineId, cwd, props.comparison.id]);
+    const getSnapshot = React.useCallback(() => getScmDiffSummaryState().capturedFilesByKey?.[evidenceKey]?.files ?? null, [evidenceKey]);
+    const subscribe = React.useCallback((listener: () => void) => scope && (sessionId || machineId)
+        ? subscribeScmDiffSummaryHostState(sessionId ? { sessionId } : { machineId: machineId!, cwd },
+            serverAccountScopeKeySuffix(scope), listener) : () => {},
+    [scope?.serverId, scope?.accountId, sessionId, machineId, cwd]);
+    const hydrated = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    const comparison = React.useMemo(() => hydrated ? { ...props.comparison,
+        inventory: { ...props.comparison.inventory, files: props.comparison.inventory.files.map(file => hydrated.get(file.path) ?? file) } }
+        : props.comparison, [props.comparison, hydrated]);
     const projected = React.useMemo(() => buildCapturedComparisonFiles(comparison), [comparison]);
     const initiallyCollapsed = React.useMemo(() => props.initialCollapsedPaths ?? comparison.inventory.files
         .filter((file) => file.generated || file.lockfile).map((file) => file.path), [props.initialCollapsedPaths, comparison]);
@@ -85,7 +95,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
             renderHeader };
     }, [props.comparison, props.comparisonChrome, renderFileNotes, theme.colors.text.secondary]);
     const fetchCapturedDiff = React.useCallback<NonNullable<ReviewProps['fetchUnifiedDiffForPath']>>(async ({ path }) => {
-        const file = props.comparison.inventory.files.find(file => file.path === path);
+        const file = getSnapshot()?.get(path) ?? props.comparison.inventory.files.find(file => file.path === path);
         if (typeof file?.evidence.unifiedDiff === 'string') return { success: true, diff: file.evidence.unifiedDiff };
         if (file?.evidence.state !== 'deferred' || !binding?.isCurrent()) return {
             success: false, error: file?.evidence.state === 'unavailable' ? file.evidence.reason : t('scmComparison.unsupportedReason') };
@@ -97,13 +107,11 @@ export function CapturedComparisonFilesView(props: Readonly<{
             input: { cwd: props.comparison.repository.rootPath, comparisonId: props.comparison.id,
                 source: props.comparison.source, path } });
         if (response.success && response.capturedFile && binding.isCurrent()) {
-            const capturedFile = response.capturedFile;
-            setHydrated(previous => ({ key: evidenceKey,
-                files: new Map(previous?.key === evidenceKey ? previous.files : []).set(path, capturedFile) }));
+            retainCapturedScmFile(binding, { ...host, cwd }, evidenceKey, response.capturedFile);
         }
         return response.success && typeof response.diff === 'string' ? { success: true, diff: response.diff }
             : { success: false, error: response.error ?? t('scmComparison.unsupportedReason') };
-    }, [props.comparison, props.host, props.sessionId, props.workspaceScope, binding, evidenceKey]);
+    }, [props.comparison, getSnapshot, props.host, props.sessionId, props.workspaceScope, binding, evidenceKey, cwd]);
     const renderReview = (hunkReview?: ReviewProps['hunkReview']) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId}
             reviewScopeKey={JSON.stringify([props.reviewScopeKey ?? props.sessionId, evidenceKey])}
             snapshot={projected.snapshot} changedFilesViewMode="repository"

@@ -50,22 +50,35 @@ describe('File changes dependency settlement', () => {
         expect(screen.findByTestId('captured-comparison-refresh-error')).toBeNull();
         expect(screen.getTextContent()).toContain('new');
     });
-    it('loads only an expanded Review file from its pinned capture', async () => {
+    it('retains an expanded pinned Review diff when the responsive presenter remounts offline', async () => {
         const opened: unknown[] = [];
+        let offline = false;
         fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
             if (request.method !== RPC_METHODS.SCM_DIFF_FILE) return undefined;
             opened.push(request.payload);
+            if (offline) throw new RpcError('RPC target disconnected after request submission', 'RPC_OUTCOME_UNKNOWN');
             return { success: true, diff: comparison.inventory.files[0]!.evidence.unifiedDiff,
                 capturedFile: comparison.inventory.files[0] };
         } });
         const index = ScmComparisonSchema.parse({ ...comparison, inventory: { ...comparison.inventory,
             files: ['a.ts', 'b.ts'].map(path => ({ ...fileAtPath(path),
                 linesAdded: 1, linesRemoved: 1, evidence: { state: 'deferred', reason: 'Read the captured file diff' } })) } });
-        const screen = await fixture.render(<CapturedComparisonFilesView comparison={index} sessionId="s1"
-            workspaceScope={fixture.scope} initialCollapsedPaths={['b.ts']} maxFiles={25} maxChangedLines={2000} />);
+        const scope = fixture.scope;
+        let replacePresenter!: () => void;
+        function Probe() {
+            const [layout, setLayout] = React.useState(0);
+            replacePresenter = () => setLayout(value => value + 1);
+            return <CapturedComparisonFilesView key={layout} comparison={index} sessionId="s1"
+                workspaceScope={scope} initialCollapsedPaths={['b.ts']} maxFiles={25} maxChangedLines={2000} />;
+        }
+        const screen = await fixture.render(<Probe />);
         await vi.waitFor(() => expect(opened, screen.getTextContent()).toHaveLength(1));
         expect(opened[0]).toMatchObject({ cwd: '/repo', captured: { comparisonId: comparison.id, path: 'a.ts' } });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('new'));
+        offline = true;
+        await act(async () => replacePresenter());
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('new'));
+        expect(opened).toHaveLength(1);
     });
     it('reads continuation only on request and pins it to the retained comparison', async () => {
         const requests: unknown[] = [];
@@ -184,7 +197,7 @@ describe('File changes dependency settlement', () => {
         expect(screen.findByTestId('file-changes-loading')).toBeNull();
     });
 
-    it('keeps captured content and exposes Retry after its refresh fails', async () => {
+    it('keeps captured file-details content and Retry across a remount after its refresh fails', async () => {
         let captures = 0;
         fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
             if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return undefined;
@@ -194,15 +207,24 @@ describe('File changes dependency settlement', () => {
         } });
         const currentFixture = fixture;
         let review!: FileChangesReview;
+        let replaceDetails!: () => void;
         function Probe() {
             review = useFileChangesReview({ scope: currentFixture.scope, sessionId: 's1', filePath: 'a.ts',
                 liveDiff: null, refreshLiveDiff: () => {}, onChangesScopeChange: () => {}, active: true });
             return <FileChangesBody review={review} keyboardActive={false}>{() => <>retained-diff</>}</FileChangesBody>;
         }
-        const screen = await fixture.render(<Probe />);
+        function Owner() {
+            const [layout, setLayout] = React.useState(0);
+            replaceDetails = () => setLayout(value => value + 1);
+            return <Probe key={layout} />;
+        }
+        const screen = await fixture.render(<Owner />);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('retained-diff'));
         await act(async () => review.refresh());
         await vi.waitFor(() => expect(review.error).not.toBeNull());
+        await act(async () => replaceDetails());
+        await vi.waitFor(() => expect(screen.findByTestId('file-changes-stale')).not.toBeNull());
+        expect(captures).toBe(2);
         expect(screen.findByTestId('file-changes-stale')).not.toBeNull();
         expect(screen.getTextContent()).toContain('retained-diff');
         expect(screen.findByTestId('file-changes-loading')).toBeNull();

@@ -5,6 +5,27 @@ import { requestActiveReviewFileForComparison, useActiveReviewFilePath } from '@
 import { scmComparisonKey } from './filesComparison';
 import type { SessionScmReviewComparison, SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
+import { getScmReviewComparison, retainScmReviewComparison, subscribeScmDiffSummaryHostState } from '@/sync/ops/scmDiffSummary/generate';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+
+/** An untargeted Review resumes its Session's scope; explicit links and picker choices win. */
+export function useSessionScmReviewComparison(sessionId: string, serverId: string | null | undefined,
+    comparison: SessionScmReviewComparison | undefined, active: boolean) {
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
+    const scope = resolution.kind === 'bound' ? resolution.scope : null;
+    const getSnapshot = React.useCallback(() => scope ? getScmReviewComparison(scope, sessionId) : null,
+        [scope?.serverId, scope?.accountId, sessionId]);
+    const subscribe = React.useCallback((listener: () => void) => scope
+        ? subscribeScmDiffSummaryHostState({ sessionId }, serverAccountScopeKeySuffix(scope), listener) : () => {},
+    [scope?.serverId, scope?.accountId, sessionId]);
+    const retained = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    React.useEffect(() => {
+        if (binding && active && comparison) retainScmReviewComparison(binding, sessionId, comparison);
+    }, [binding, sessionId, comparison, active]);
+    return comparison ?? retained;
+}
+
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
 

@@ -182,6 +182,17 @@ results still embed the full comparison. A pinned Files route restoring such a
 result can therefore bypass capture paging; that separate response contract
 needs the same bounded projection before all saved-result routes are bounded.
 
+Captured index pages, continuation cursors, settled read failures and hydrated
+file patches belong to the existing diff-summary Account/host state, rather than
+the mounted Review or file-details presenter. Phone recomposition and Home →
+Session navigation reuse that captured evidence immediately after Account binding,
+marking reused evidence's freshness unknown. More continues
+from the retained cursor; Retry remains available over retained content. The
+existing credential-owned Account lifetime releases these projections on retirement.
+The same per-Session owner retains the selected Review comparison for an
+untargeted reopen. Explicit comparison destinations take precedence. Pane
+presentation remains owned by the existing Details/cockpit navigation rule.
+
 The capture storage owner writes a seekable record file atomically. Index pages
 start at their requested cursor, and a file destination reads only its index and
 evidence records; these reads do not parse unrelated retained patches. Existing

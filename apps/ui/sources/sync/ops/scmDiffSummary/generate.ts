@@ -15,7 +15,7 @@ import type {
 } from '@happier-dev/protocol';
 import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm';
 import { ScmDiffFileResponseSchema, type ScmDiffFileResponse } from '@happier-dev/protocol/scm';
-import type { ScmComparisonSource } from '@happier-dev/protocol/scm/comparison';
+import type { ScmComparisonSource, ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -29,6 +29,7 @@ import {
     type ScmDiffSummaryOperationIntent,
     type ScmDiffSummaryState,
     type ScmDiffSummaryViewModel,
+    type CapturedScmRead,
 } from '@/sync/domains/scm/diffSummary/state';
 import {
     createScmDiffSummaryCacheState,
@@ -39,11 +40,12 @@ import {
 } from '@/sync/domains/scm/diffSummary/cache/cacheState';
 import type { ScmDiffSummaryCacheKeyInput } from '@/sync/domains/scm/diffSummary/cache/cacheKey';
 import type { ScmDiffSummaryHost } from './results';
+import type { ScmReviewComparisonSelector } from '@/sync/domains/scm/diffSummary/selection';
 import { invokeUiScmAction, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
 import { scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
 import { getPreferredLanguage } from '@/text';
-import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
     resolveScmDiffSummarySettings,
     SCM_DIFF_SUMMARY_SETTING_KEYS,
@@ -656,6 +658,42 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         generateFromUserAction,
         prefetch,
         refreshRun,
+        getReviewComparison: (scope: ServerAccountScope, sessionId: string) => state.reviewComparisonsByHostKey?.[
+            hostSubscriptionKey(serverAccountScopeKeySuffix(scope), { sessionId })]?.comparison ?? null,
+        retainReviewComparison: (lifetime: ServerAccountScopeLifetime, sessionId: string, comparison: ScmReviewComparisonSelector) => {
+            const owner = readServerAccountScopeOwnerLifetime(lifetime);
+            if (!owner.isCurrent()) return;
+            const scopeKey = serverAccountScopeKeySuffix(owner.scope);
+            const hostKey = hostSubscriptionKey(scopeKey, { sessionId });
+            const previous = state.reviewComparisonsByHostKey?.[hostKey];
+            if (previous && JSON.stringify(previous.comparison) === JSON.stringify(comparison)) return;
+            if (!previous) owner.onRetire(() => retireScope(owner.scope));
+            setState({ ...state, reviewComparisonsByHostKey: { ...state.reviewComparisonsByHostKey,
+                [hostKey]: { scopeKey, hostKey, comparison } } }, [], [hostKey]);
+        },
+        retainCapturedRead: (lifetime: ServerAccountScopeLifetime, host: ScmDiffSummaryHost & Readonly<{ cwd: string }>, key: string,
+            update: (previous: CapturedScmRead | null) => CapturedScmRead | null) => {
+            const owner = readServerAccountScopeOwnerLifetime(lifetime);
+            if (!owner.isCurrent()) return;
+            const previous = state.capturedReadsByKey?.[key]?.value ?? null;
+            const value = update(previous);
+            if (!value || value === previous) return;
+            if (!previous) owner.onRetire(() => retireScope(owner.scope));
+            const scopeKey = serverAccountScopeKeySuffix(owner.scope);
+            const hostKey = hostSubscriptionKey(scopeKey, { ...host, sessionId: host.sessionId ?? null });
+            setState({ ...state, capturedReadsByKey: { ...state.capturedReadsByKey,
+                [key]: { scopeKey, hostKey, value } } }, [], [hostKey]);
+        },
+        retainCapturedFile: (lifetime: ServerAccountScopeLifetime, host: ScmDiffSummaryHost & Readonly<{ cwd: string }>, key: string, file: ScmComparisonFile) => {
+            const owner = readServerAccountScopeOwnerLifetime(lifetime);
+            if (!owner.isCurrent()) return;
+            const previous = state.capturedFilesByKey?.[key];
+            if (!previous) owner.onRetire(() => retireScope(owner.scope));
+            const scopeKey = serverAccountScopeKeySuffix(owner.scope);
+            const hostKey = hostSubscriptionKey(scopeKey, { ...host, sessionId: host.sessionId ?? null });
+            setState({ ...state, capturedFilesByKey: { ...state.capturedFilesByKey,
+                [key]: { scopeKey, hostKey, files: new Map(previous?.files).set(file.path, file) } } }, [], [hostKey]);
+        },
         loadSavedResult: (params: ScmDiffSummaryHost & Readonly<{ scope: ServerAccountScope; result: ScmDiffSummaryResult;
             /** Inventory recency, so independent output readers cannot reorder saved results by load time. */
             savedAtMs?: number }>): string | null => {
@@ -708,6 +746,10 @@ export const retireScmDiffSummaryScope = defaultOperations.retireScope;
 export const prefetchScmDiffSummary = defaultOperations.prefetch;
 export const applyScmDiffSummaryCheckpointCleanupReceipt = defaultOperations.applyCheckpointCleanupReceipt;
 export const getScmDiffSummaryState = defaultOperations.getState;
+export const retainCapturedScmRead = defaultOperations.retainCapturedRead;
+export const retainCapturedScmFile = defaultOperations.retainCapturedFile;
+export const getScmReviewComparison = defaultOperations.getReviewComparison;
+export const retainScmReviewComparison = defaultOperations.retainReviewComparison;
 export const subscribeScmDiffSummaryState = defaultOperations.subscribe;
 export const subscribeScmDiffSummaryHostState = defaultOperations.subscribeHost;
 

@@ -116,7 +116,7 @@ import {
 } from '@/scm/operations/commitSelectionHints';
 import { isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 import { SessionCapturedScmReviewDetailsView } from './SessionCapturedScmReviewDetailsView';
-import { useScmReviewActiveFileSelection, useSessionScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
+import { useScmReviewActiveFileSelection, useSessionScmReviewTabState, useSessionScmReviewComparison } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
   sessionId: string;
@@ -140,7 +140,9 @@ const PENDING_COMPARISON = { kind: 'workingTree' } as const;
 
 export const SessionScmReviewDetailsView = React.memo(
   (props: SessionScmReviewDetailsViewProps) => {
-    const comparison = props.target?.comparison;
+    const comparison = useSessionScmReviewComparison(props.sessionId, props.serverId, props.target?.comparison, props.active !== false);
+    const target = React.useMemo(() => comparison && !props.target?.comparison
+      ? { ...props.target, comparison } : props.target, [comparison, props.target]);
     if (
       comparison &&
       resolveFilesComparisonPresentation(comparison, {
@@ -153,10 +155,11 @@ export const SessionScmReviewDetailsView = React.memo(
       return (
         <SessionCapturedScmReviewDetailsView
           {...props}
+          target={target}
           comparison={comparison}
         />
       );
-    return <SessionWorkingScmReviewDetailsView {...props} />;
+    return <SessionWorkingScmReviewDetailsView {...props} target={target} />;
   },
 );
 
