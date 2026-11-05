@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
+import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import { useMachineDaemonReadIdentities } from '../useMachineDaemonReadTarget';
 import { machineResourceStore } from './machineResourceStore';
 import type { MachineResourceKey, MachineVitalsView } from './machineRpc';
@@ -47,11 +49,32 @@ export function useMachineResourceLiveDemand(machineKeys: readonly MachineResour
  * so the presentation and host-viewed facts the demand follows (a retained tab hiding, the window
  * losing focus) re-render this leaf alone, never the surface's rows, header or dashboard.
  */
-export function MachineResourceLiveDemand(props: Readonly<{
+type MachineResourceLiveDemandProps = Readonly<{
     machineKeys: readonly MachineResourceKey[];
     detail: MachineVitalsView;
     enabled?: boolean;
-}>): null {
+    /** A list meter follows the physical scroll host instead of the list's retained mounts. */
+    viewportRef?: React.RefObject<unknown>;
+    /** Keep the meter mounted and pass the incumbent measurement callback to its physical layout. */
+    children?: (measure: () => void) => React.ReactNode;
+}>;
+
+export function MachineResourceLiveDemand(props: MachineResourceLiveDemandProps): React.ReactElement | null {
+    if (props.enabled === false && !props.children) return null;
+    return props.viewportRef
+        ? React.createElement(MeasuredMachineResourceLiveDemand, { ...props, viewportRef: props.viewportRef })
+        : React.createElement(PresentedMachineResourceLiveDemand, props);
+}
+
+function MeasuredMachineResourceLiveDemand(props: MachineResourceLiveDemandProps & Readonly<{ viewportRef: React.RefObject<unknown> }>) {
+    const tracker = useOptionalPluginUiScrollActivityTracker();
+    const { near, measure } = useMeasuredNearViewport(tracker, props.viewportRef, true, JSON.stringify(props.machineKeys));
+    return React.createElement(React.Fragment, null,
+        near && props.enabled !== false ? React.createElement(PresentedMachineResourceLiveDemand, props) : null,
+        props.children?.(measure));
+}
+
+function PresentedMachineResourceLiveDemand(props: MachineResourceLiveDemandProps): null {
     useMachineResourceLiveDemand(props.machineKeys, { detail: props.detail, ...(props.enabled === undefined ? {} : { enabled: props.enabled }) });
     return null;
 }

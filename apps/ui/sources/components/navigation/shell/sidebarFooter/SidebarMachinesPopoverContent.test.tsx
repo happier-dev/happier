@@ -51,7 +51,6 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key, params) => params && 'count' in params ? `${key}:${params.count}`
         : params && 'team' in params ? `${key}:${params.team}` : key });
 });
-vi.mock('@/components/ui/lists/Item', () => ({ Item: (props: Record<string, unknown>) => React.createElement('Item', props) }));
 vi.mock('@/components/settings/machines/machinesSettingsViewModel', () => ({
     useMachinesSettingsViewModel: () => ({
         activeServerId: HOME, isLoadingMachines: false, showMachinesGroupedByServer: false,
@@ -117,9 +116,17 @@ const fleet = () => [
         role: 'use', resourceMode: 'plain', accessState: 'ready' } as Machine['access'] }),
 ];
 
-async function renderPopover() {
+async function renderPopover(options?: Parameters<typeof renderScreen>[1]) {
+    // The inventory fixture feeds both its group projection and the canonical
+    // Machine owner. Attention reads current rows there, not retained mock rows.
+    for (const group of state.groups) {
+        storage.getState().applyMachines([...group.machines], true, {
+            sourceServerId: group.serverId,
+            ...(group.accountScope ? { sourceAccountId: group.accountScope.accountId } : {}),
+        });
+    }
     const { SidebarMachinesPopoverContent } = await import('./SidebarMachinesPopoverContent');
-    return renderScreen(<SidebarMachinesPopoverContent close={() => {}} maxHeight={520} />);
+    return renderScreen(<SidebarMachinesPopoverContent close={() => {}} maxHeight={520} />, options);
 }
 
 it.each([false, true])('keeps needs-you machines in the open popover demand and releases on background/close (mixed=%s)', async mixed => {
@@ -145,7 +152,9 @@ it.each([false, true])('keeps needs-you machines in the open popover demand and 
             series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] }, attention: { level: 'calm', reasons: [] } };
     });
     try {
-        const screen = await renderPopover();
+        // The native/DOM geometry boundary places these two meters inside the physical scroller.
+        const rect = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 100 }) };
+        const screen = await renderPopover({ createNodeMock: () => ({ ...rect, getInnerViewRef: () => rect }) });
         await act(async () => { await vi.waitFor(() => {
             const reads = resourceRpc.mock.calls.map(([input]) => input).filter(input => input.method === RPC_METHODS.MACHINES_VITALS_GET);
             expect(reads.map(input => input.machineId).sort()).toEqual(machines.map(row => row.id).sort());
@@ -190,16 +199,18 @@ describe('SidebarMachinesPopoverContent', () => {
 
     it("says what each machine is doing from the Activity classifier's per-machine count", async () => {
         const screen = await renderPopover();
+        const { Item } = await import('@/components/ui/lists/Item');
+        const row = (id: string) => screen.findAllByType(Item).find(node => node.props.testID === `sidebar-machines-row.${HOME}.${id}`);
         // The work word sits on the name's line (the row's title meta), never in the detail slot that centres
         // against the strip beneath the name.
-        const meta = (id: string) => (screen.findByTestId(`sidebar-machines-row.${HOME}.${id}`)?.props.titleMeta as React.ReactElement<{ children: unknown }> | undefined)?.props.children;
-        expect(screen.findByTestId(`sidebar-machines-row.${HOME}.mine`)?.props.titleAccessory).toBeTruthy();
-        expect(screen.findByTestId(`sidebar-machines-row.${HOME}.mine`)?.props.detail).toBeUndefined();
+        const meta = (id: string) => (row(id)?.props.titleMeta as React.ReactElement<{ children: unknown }> | undefined)?.props.children;
+        expect(row('mine')?.props.titleAccessory).toBeTruthy();
+        expect(row('mine')?.props.detail).toBeUndefined();
         expect(meta('mine')).toBe('machineDetailPage.work.working:2');
         expect(meta('shared')).toBe('machineDetailPage.work.working:1');
         // Offline says why, never "No work": one quiet line under the name, where an online row has its strip
         // (MPG-18), so a long presence sentence never wraps the name's line.
-        const edge = screen.findByTestId(`sidebar-machines-row.${HOME}.edge`)?.props;
+        const edge = row('edge')?.props;
         expect(edge?.titleMeta).toBeUndefined();
         expect((edge?.subtitle as React.ReactElement<{ children: unknown }> | undefined)?.props.children)
             .toEqual(expect.stringMatching(/./));

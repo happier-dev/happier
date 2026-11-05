@@ -1,10 +1,5 @@
 import * as React from 'react';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
-import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
-import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -89,8 +84,6 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
 export function NewSessionMachineSelectionContent<TMachine extends MachineDisplayRenderable = Machine>(
     props: NewSessionMachineSelectionContentProps<TMachine>,
 ) {
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const bindings = useServerCredentialAccountScopeBindings(props.groups.map(group => group.serverId));
     const [loadedOffers, setLoadedOffers] = React.useState<Readonly<{
         serverId: string; offers: readonly ManagedMachineSelectionOffer[];
     }> | null>(null);
@@ -101,11 +94,6 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         projectionHandler.current?.(serverId, projection);
     }, []);
     const managedMachines = props.managedMachines ?? (loadedOffers?.serverId === props.selectedServerId ? loadedOffers.offers : undefined);
-    // The open picker is a surface that shows each machine's memory fact: one batched live demand while it is open (MPG-35).
-    const demandKeys = React.useMemo(() => props.groups.flatMap(group => group.machines
-        .filter(machine => isMachineReachable(bindings.get(resolveServerProfileScopeIdForIdentifier(group.serverId))?.isCurrent() ? bindings.get(resolveServerProfileScopeIdForIdentifier(group.serverId))?.scope : null, machine))
-        .map(machine => ({ serverId: group.serverId, machineId: machine.id }))), [props.groups, reachabilityRevision, bindings]);
-    useMachineResourceLiveDemand(demandKeys, { detail: 'summary' });
     const listModel = useMachineSelectionListModel<TMachine>({
         purpose: 'session',
         groups: props.groups,

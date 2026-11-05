@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -33,6 +34,65 @@ const resource = { id: 'resource', homeId: 'srv_history', custodianAccountId: 'o
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, archivedAt: 0 } as const;
 
 describe('preset collection and history through Actions', () => {
+    it.each(['collection', 'detail'] as const)('suspends retained %s reads while hidden and resumes with current data', async kind => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+        harness.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [resource] } });
+        let presented = false;
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(
+            PluginSurfaceFocusEligibilityProvider, { active: presented, children });
+        const hook = await renderHook(() => {
+            const collection = useMachinePresets(kind === 'collection' ? [serverId] : []);
+            const detail = useMachinePresetDetail(serverId, kind === 'detail' ? preset.id : '');
+            return kind === 'collection' ? collection.statesByServerId[serverId] : detail.state;
+        }, { wrapper });
+        const path = kind === 'collection' ? '/v1/machines/presets/list' : '/v1/machines/presets/get';
+        try {
+            expect(harness.requestsFor(path)).toHaveLength(0);
+            presented = true;
+            await hook.rerender();
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ value: expect.anything() }));
+            const ready = hook.getCurrent();
+            const before = harness.requestsFor(path).length;
+            presented = false;
+            await hook.rerender();
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => publishHomeAccountChange(serverId));
+            }
+            await flushHookEffects({ cycles: 30 });
+            expect(harness.requestsFor(path)).toHaveLength(before);
+            expect(hook.getCurrent()?.value).toBe(ready?.value);
+            presented = true;
+            await hook.rerender();
+            await waitForHomeGovernance(() => expect(harness.requestsFor(path)).toHaveLength(before + 1));
+        } finally { await hook.unmount(); }
+    });
+
+    it('refreshes a preset collection for its controller changes without reading for other Machines', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const hook = await renderHook(() => useMachinePresets([serverId]));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toHaveLength(1));
+            const before = harness.requestsFor('/v1/machines/presets/list').length;
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => publishHomeAccountChange(serverId, [`other-machine-${index}`],
+                    { source: 'socket', changeKinds: ['machine'] }));
+                await flushHookEffects({ cycles: 10 });
+            }
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+            await act(async () => publishHomeAccountChange(serverId, [preset.controller.machineId],
+                { source: 'socket', changeKinds: ['machine'] }));
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1));
+            await act(async () => publishHomeAccountChange(serverId, ['new-preset'],
+                { source: 'socket', changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 2));
+        } finally { await hook.unmount(); }
+    });
+
     it('refreshes ordinary history reads invalidated after an approved preset read settles', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });

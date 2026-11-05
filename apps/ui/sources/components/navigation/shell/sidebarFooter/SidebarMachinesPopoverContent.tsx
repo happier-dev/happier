@@ -33,7 +33,7 @@ import { MachineSummaryFreshnessLine } from '@/components/machines/summary/Machi
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
+import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceRefreshing, useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -207,7 +207,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
             subheader={(
                 <>
                     {/* A summary that stopped answering says how old it is, with Retry, where the counts stand. */}
-                    <PopoverPresence rows={presenceRows} demandEnabled={summary.metrics.length > 0 || needsYouKeys.size > 0} />
+                    <PopoverPresence rows={presenceRows} />
                     {/* With one machine there is nothing to summarise: its row is the summary. */}
                     {machineCount > 1 ? (
                         <HappierPressable
@@ -316,8 +316,8 @@ const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props:
  * saying why ("Offline · last seen yesterday", "Asleep · …"), which closes the name's line, or sits under it
  * when the two cannot share the line.
  */
-/** Only the aggregate badge and demand leaf observe the whole fleet's presence. */
-function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[]; demandEnabled: boolean }>) {
+/** The aggregate badge reads presence and held summaries without acquiring fleet-wide demand. */
+function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[] }>) {
     const rows = useMachineCollectionPresenceRows(props.rows);
     const counts = React.useMemo(() => rows.reduce((result, row) => {
         if (row.kind !== 'machine') return result;
@@ -328,7 +328,6 @@ function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[]
     }, { online: 0, offline: 0, unknown: 0 }), [rows]);
     const machineKeys = React.useMemo(() => rows.flatMap(row => row.online && row.kind === 'machine'
         ? [{ serverId: row.serverId, machineId: row.machineId }] : []), [rows]);
-    useMachineResourceLiveDemand(machineKeys, { detail: 'summary', enabled: props.demandEnabled });
     return <MachineSummaryFreshnessLine machineKeys={machineKeys} fallback={(
         <View style={styles.counts}>
             <MachinePresenceCounts testID="sidebar-machines-presence" counts={counts} />
@@ -386,11 +385,14 @@ const MachinesPopoverRow = React.memo(function MachinesPopoverRow(props: Readonl
             titleMeta={awayLine ? undefined : <Text style={styles.rowMeta} numberOfLines={1}>{detail}</Text>}
             accessibilityLabel={[row.title, tag, detail].filter(Boolean).join(', ')}
             icon={(
-                <View ref={markRef} collapsable={false}>
+                <MachineResourceLiveDemand machineKeys={[{ serverId: row.serverId, machineId }]} detail="summary"
+                    enabled={row.kind === 'machine' && row.online && setting.metrics.length > 0} viewportRef={markRef}>
+                {measure => <View ref={markRef} collapsable={false} onLayout={measure}>
                     <HappierCollectionListMark>
                         <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
                     </HappierCollectionListMark>
-                </View>
+                </View>}
+                </MachineResourceLiveDemand>
             )}
             density="compact"
             showChevron={false}

@@ -26,6 +26,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
+import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { t } from '@/text';
 import { useMachineWorkingCount } from '@/components/machines/work/machineWorkingCounts';
 import type { MachineAttentionEntry } from '@/components/machines/attention/collectMachineAttention';
@@ -60,6 +61,7 @@ const MachineNeedsYouRow = React.memo(function MachineNeedsYouRow(props: Readonl
     const styles = stylesheet;
     const { entry } = props;
     const [expanded, setExpanded] = React.useState(true);
+    const summaryRef = React.useRef<View>(null);
     const summarySetting = useMachineSummarySettingValue();
     const availability = useMachineResourceSummary({ serverId: entry.serverId, machineId: entry.machineId });
     const working = useMachineWorkingCount({ serverId: entry.serverId, machineId: entry.machineId });
@@ -90,15 +92,24 @@ const MachineNeedsYouRow = React.memo(function MachineNeedsYouRow(props: Readonl
                     <HappierCollectionListMark>
                         <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
                     </HappierCollectionListMark>
-                    <View style={styles.headerText}>
-                        <View style={styles.titleLine}>
-                            <Text style={styles.name} numberOfLines={1}>{entry.name}</Text>
-                            <Text style={styles.work} numberOfLines={1}>{workText}</Text>
-                        </View>
-                        <MachineSummaryStrip availability={availability} style={summarySetting.style}
-                            metrics={summarySetting.metrics} layout="under"
-                            testID={`sidebar-machines-needs-you.${entry.serverId}.${entry.machineId}.strip`} />
-                    </View>
+                    <MachineResourceLiveDemand
+                        machineKeys={[{ serverId: entry.serverId, machineId: entry.machineId }]}
+                        detail="summary"
+                        enabled={entry.online && summarySetting.metrics.length > 0}
+                        viewportRef={summaryRef}
+                    >
+                        {(measure) => (
+                            <View ref={summaryRef} collapsable={false} onLayout={measure} style={styles.headerText}>
+                                <View style={styles.titleLine}>
+                                    <Text style={styles.name} numberOfLines={1}>{entry.name}</Text>
+                                    <Text style={styles.work} numberOfLines={1}>{workText}</Text>
+                                </View>
+                                <MachineSummaryStrip availability={availability} style={summarySetting.style}
+                                    metrics={summarySetting.metrics} layout="under"
+                                    testID={`sidebar-machines-needs-you.${entry.serverId}.${entry.machineId}.strip`} />
+                            </View>
+                        )}
+                    </MachineResourceLiveDemand>
                 </HappierPressable>
             )}
         >

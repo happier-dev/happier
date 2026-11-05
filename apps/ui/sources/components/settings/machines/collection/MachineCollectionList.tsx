@@ -67,14 +67,6 @@ import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/use
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
 
-/** Presence changes adjust the existing batched demand without redrawing the collection. */
-function CollectionResourceLiveDemand({ rows }: Readonly<{ rows: readonly MachineCollectionRow[] }>) {
-    const current = useMachineCollectionPresenceRows(rows);
-    const machineKeys = React.useMemo(() => current.flatMap(row => row.online && row.kind === 'machine'
-        ? [{ serverId: row.serverId, machineId: row.machineId }] : []), [current]);
-    return <MachineResourceLiveDemand machineKeys={machineKeys} detail="summary" />;
-}
-
 /** The directory batches known owners; an owner beyond its current page uses the same exact Team reader as detail. */
 function MachinePresetTeamCollectionRow(props: Readonly<{
     serverId: string; teamId: string; knownName?: string; render: (audience: string) => React.ReactElement;
@@ -191,6 +183,7 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     const { rail, selected, selectedRef, onOpen } = props;
     const row = useMachineCollectionRowPresence(props.row);
     const summaryMetrics = useMachineSummarySettingValue().metrics.length;
+    const summaryRef = React.useRef<View>(null);
     return rail ? (
         // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its
         // live summary or its one word, then the host when the name is a different one. The glyph says the platform.
@@ -202,7 +195,10 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
             titleLines={1}
             // With no instruments chosen and nothing to say, the row is its name alone.
             subtitle={summaryMetrics === 0 && !(row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)) && !row.host ? undefined : (
-                <View style={railRowStyles.line}>
+                <MachineResourceLiveDemand
+                    machineKeys={[{ serverId: row.serverId, machineId: row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? '' }]}
+                    detail="summary" enabled={row.kind === 'machine' && row.online && summaryMetrics > 0} viewportRef={summaryRef}>
+                {measure => <View ref={summaryRef} collapsable={false} onLayout={measure} style={railRowStyles.line}>
                     <MachineListRowSummary
                         testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
                         serverId={row.serverId}
@@ -211,7 +207,8 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
                         quietWord={row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)}
                     />
                     {row.host ? <Text variant="meta" numberOfLines={1} style={railRowStyles.host}>{row.host}</Text> : null}
-                </View>
+                </View>}
+                </MachineResourceLiveDemand>
             )}
             accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
             icon={(
@@ -325,8 +322,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         presetsByServerId: viewModel.presetsByServerId,
         teamNamesByServerId,
     });
-
-    const demandRows = React.useMemo(() => rail ? collection.sections.flatMap(section => section.rows) : [], [collection.sections, rail]);
 
     React.useEffect(() => {
         const selected = collection.sections.flatMap(section => section.rows).find(row => isMachineCollectionRowSelected(selectedKey, row));
@@ -514,7 +509,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
 
     return (
         <>
-        <CollectionResourceLiveDemand rows={demandRows} />
         <CollectionList
             testID="settings.machines.rail"
             title={t('settings.machines')}

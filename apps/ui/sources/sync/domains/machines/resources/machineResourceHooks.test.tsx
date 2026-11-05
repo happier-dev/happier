@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 import type { createReactNativeAppStateEmitter } from '@/dev/testkit/mocks/reactNative';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -65,6 +65,92 @@ describe('machine resource visibility and demand', () => {
         storage.setState({ machines: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
         await homes.reset();
         vi.unstubAllGlobals();
+    });
+
+    it('bounds mounted row demand through the physical viewport and withdraws it when scrolled away', async () => {
+        const { MachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { PluginUiScrollActivityProvider } = await import('@happier-dev/plugin-ui/advanced');
+        const { createNearViewportTracker } = await import('@/components/widgets/nearViewport');
+        const root = { getBoundingClientRect: () => ({ x: 0, y: 0, left: 0, top: 0, width: 400, height: 100 }) };
+        const row = { current: { getBoundingClientRect: () => ({ x: 0, y: 500, left: 0, top: 500, width: 400, height: 40 }) } };
+        const tracker = createNearViewportTracker({ quantum: 40, initialViewportHeight: 100, readContentNode: () => root });
+        const pending = createDeferred<unknown>();
+        let watchSignal: AbortSignal | undefined;
+        boundary.rpc.mockImplementation(async input => {
+            if (input.method === 'daemon.vitals.watch') { watchSignal = input.signal; return pending.promise; }
+            return { state: 'reporting', sample: null, series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } };
+        });
+        const screen = await renderScreen(React.createElement(PluginUiScrollActivityProvider, { tracker },
+            React.createElement(MachineResourceLiveDemand, {
+                machineKeys: [{ serverId: homeA, machineId: 'machine-a' }], detail: 'summary', viewportRef: row,
+            })));
+        try {
+            await flushHookEffects({ cycles: 20 });
+            expect(boundary.rpc).not.toHaveBeenCalled();
+            // The DOM boundary fixture supplies only the scroll fields this native event adapter reads.
+            await act(async () => tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 480 } } } as never));
+            await waitForHomeGovernance(() => expect(watchSignal).toBeDefined());
+            expect(boundary.rpc.mock.calls.filter(([input]) => input.method === 'machines.vitals.get')).toHaveLength(1);
+            await act(async () => tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 0 } } } as never));
+            expect(watchSignal?.aborted).toBe(true);
+            const count = boundary.rpc.mock.calls.length;
+            await flushHookEffects({ cycles: 20 });
+            expect(boundary.rpc).toHaveBeenCalledTimes(count);
+        } finally { pending.resolve({ changed: false }); await screen.unmount(); }
+    });
+
+    it('remeasures a live meter when its row moves without changing the scroll extent', async () => {
+        const { MachineResourceLiveDemand } = await import('./useMachineResourceLiveDemand');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { PluginUiScrollActivityProvider } = await import('@happier-dev/plugin-ui/advanced');
+        const { createNearViewportTracker } = await import('@/components/widgets/nearViewport');
+        let top = 0;
+        const root = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 100 }) };
+        const row = { current: { getBoundingClientRect: () => ({ left: 0, top, width: 400, height: 40 }) } };
+        const tracker = createNearViewportTracker({ quantum: 40, initialViewportHeight: 100, readContentNode: () => root });
+        const pending = createDeferred<unknown>();
+        let watchSignal: AbortSignal | undefined;
+        let onLayout = () => {};
+        boundary.rpc.mockImplementation(async input => {
+            if (input.method === 'daemon.vitals.watch') { watchSignal = input.signal; return pending.promise; }
+            return { state: 'reporting', sample: null, series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } };
+        });
+        const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
+            <MachineResourceLiveDemand machineKeys={[{ serverId: homeA, machineId: 'machine-a' }]} detail="summary" viewportRef={row}>
+                {measure => { onLayout = measure; return null; }}
+            </MachineResourceLiveDemand>
+        </PluginUiScrollActivityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(watchSignal).toBeDefined());
+            await act(async () => { top = 500; onLayout(); });
+            expect(watchSignal?.aborted).toBe(true);
+            const count = boundary.rpc.mock.calls.length;
+            await flushHookEffects({ cycles: 20 });
+            expect(boundary.rpc).toHaveBeenCalledTimes(count);
+        } finally { pending.resolve({ changed: false }); await screen.unmount(); }
+    });
+
+    it('keeps the session chooser passive when it presents published machine presence', async () => {
+        const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const machine = { ...createMachineFixture({ id: 'chooser-machine', active: true, activeAt: Date.now() }),
+            serverId: homeA, serverName: 'Home A' };
+        storage.setState({ machineListByServerId: { [homeA]: [machine] }, machineListStatusByServerId: { [homeA]: 'idle' } });
+        const pending = createDeferred<unknown>();
+        boundary.rpc.mockImplementation(async input => input.method === 'daemon.vitals.watch' ? pending.promise
+            : { state: 'reporting', sample: null, series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } });
+        const screen = await renderScreen(<NewSessionMachineSelectionContent
+            groups={[{ serverId: homeA, serverName: 'Home A', loading: false, signedOut: false, machines: [machine] }]}
+            selectedMachine={machine} selectedServerId={homeA} recentMachines={[]} favoriteMachines={[]}
+            onSelectMachine={() => {}} onSelectScopedMachine={() => {}} serverId={homeA} onToggleFavorite={() => {}}
+            showCliGlyphs={false} autoDetectCliGlyphs={false} showSearch={false} />);
+        try {
+            await flushHookEffects({ cycles: 20 });
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally { pending.resolve({ changed: false }); await screen.unmount(); }
     });
 
     it('reads row-local published availability without creating value reads or live demand', async () => {

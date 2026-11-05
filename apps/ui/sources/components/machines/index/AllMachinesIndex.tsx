@@ -61,7 +61,7 @@ import { useMachineSummarySettingValue } from '@/components/machines/summary/use
 import type { MachineSummaryMetric, MachineSummaryStyle } from '@/components/machines/summary/machineSummaryStripModel';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
+import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceSummary, type MachineResourceAvailability } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { MachinesDashboardArea } from '@/components/machines/widgets/MachinesDashboardArea';
 import { MachineAttentionStatedAbove } from '@/components/machines/widgets/machineAttentionStatedAbove';
@@ -209,10 +209,6 @@ function AllMachinesIndexBody() {
     });
     const summarySetting = useMachineSummarySettingValue();
     const anatomy = useMachineIndexAnatomy(view, summarySetting.style, summarySetting.metrics, deviceType === 'phone');
-    // An open page keeps its online machines' summaries live (one batched demand for the whole fleet).
-    const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
-        ? [{ serverId: item.serverId, machineId: item.machineId }] : []), [items]);
-    useMachineResourceLiveDemand(demandKeys, { detail: 'summary', enabled: summarySetting.metrics.length > 0 });
 
     const header = (
         <>
@@ -463,13 +459,26 @@ const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Rea
 }>) {
     const availability = useMachineResourceSummary(machineKeyOf(props.item));
     const quiet = props.metrics.length === 0 ? (props.item.reason ?? props.item.presence) : describeQuiet(props.item, availability);
-    if (quiet !== null) return <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>;
-    return <MachineSummaryStrip testID={`machines.index.strip.${props.item.key}`}
-        availability={availability} style={props.style} metrics={props.metrics} layout="under" />;
+    return <MachineIndexMeter item={props.item} enabled={props.metrics.length > 0}>
+        {quiet !== null ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>
+            : <MachineSummaryStrip testID={`machines.index.strip.${props.item.key}`}
+                availability={availability} style={props.style} metrics={props.metrics} layout="under" />}
+    </MachineIndexMeter>;
 });
 
 function machineKeyOf(item: MachineIndexItem): Readonly<{ serverId: string; machineId: string }> {
     return { serverId: item.serverId, machineId: item.kind === 'machine' ? item.machineId : item.enrolledMachineId ?? '' };
+}
+
+/** The table, phone line and card anchor live demand to their actual metric band. */
+function MachineIndexMeter(props: Readonly<{ item: MachineIndexItem; enabled: boolean; fill?: boolean; children: React.ReactNode }>) {
+    const ref = React.useRef<View>(null);
+    return <MachineResourceLiveDemand machineKeys={[machineKeyOf(props.item)]} detail="summary"
+        enabled={props.enabled && props.item.kind === 'machine' && props.item.online} viewportRef={ref}>
+    {measure => <View ref={ref} collapsable={false} onLayout={measure} style={props.fill ? { flex: 1 } : undefined}>
+        {props.children}
+    </View>}
+    </MachineResourceLiveDemand>;
 }
 
 /** Why a machine shows no figures: not online (its presence), or online on a Happier that does not report. */
@@ -490,9 +499,10 @@ const MachineMetricCell = React.memo(function MachineMetricCell(props: Readonly<
 }>) {
     const availability = useMachineResourceSummary(machineKeyOf(props.item));
     const quiet = describeQuiet(props.item, availability);
-    if (quiet !== null) return props.first ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text> : null;
-    return <MachineSummaryStrip testID={`machines.index.metric.${props.item.key}.${props.metric}`}
-        availability={availability} style={props.style} metrics={[props.metric]} layout="cells" />;
+    const content = quiet !== null ? (props.first ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text> : null)
+        : <MachineSummaryStrip testID={`machines.index.metric.${props.item.key}.${props.metric}`}
+            availability={availability} style={props.style} metrics={[props.metric]} layout="cells" />;
+    return props.first ? <MachineIndexMeter item={props.item} enabled>{content}</MachineIndexMeter> : content;
 });
 
 /** Where it runs, or whose it is: "macOS", "Ben's machine". */
@@ -560,17 +570,19 @@ const MachineIndexCard = React.memo(function MachineIndexCard(props: Readonly<{
         ? (count > 0 ? t('machineDetailPage.work.working', { count }) : t('machineDetailPage.work.none'))
         : describeWhere(item);
     return (
-        <MachineCardBody
-            testID={`machines.index.card.${item.key}`}
-            mark={<MachineIndexMark item={item} />}
-            // The name without its disambiguator, which stands whole beside it: a long name shortens, the suffix never does.
-            name={item.titleParts.name}
-            tag={[item.titleParts.hint, describeTag(item) ?? item.ownership].filter(Boolean).join(' · ') || null}
-            line={item.reason ?? item.presence}
-            tiles={tiles}
-            footerLeft={work}
-            action={updateAction}
-        />
+        <MachineIndexMeter item={item} enabled={props.metrics.length > 0} fill>
+            <MachineCardBody
+                testID={`machines.index.card.${item.key}`}
+                mark={<MachineIndexMark item={item} />}
+                // The name without its disambiguator, which stands whole beside it: a long name shortens, the suffix never does.
+                name={item.titleParts.name}
+                tag={[item.titleParts.hint, describeTag(item) ?? item.ownership].filter(Boolean).join(' · ') || null}
+                line={item.reason ?? item.presence}
+                tiles={tiles}
+                footerLeft={work}
+                action={updateAction}
+            />
+        </MachineIndexMeter>
     );
 });
 

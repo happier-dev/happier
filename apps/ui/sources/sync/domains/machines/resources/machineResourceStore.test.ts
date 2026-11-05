@@ -112,6 +112,36 @@ describe('machine resources subscription owner', () => {
     vi.useRealTimers();
   });
 
+  it('rearms only for delivered samples and does no work for retained or withdrawn Machines', async () => {
+    vi.useFakeTimers();
+    const h = harness(() => Date.now());
+    const retained = Array.from({ length: 128 }, (_, index) => ({ ...key, machineId: `machine-${index}` }));
+    for (const input of retained) h.store.getState(input);
+    const visible = retained.slice(0, 2);
+    const releases = visible.flatMap(input => [h.store.demand(input), h.store.demand(input)]);
+    try {
+      await settle();
+      expect(h.snapshotClient).toHaveBeenCalledTimes(2);
+      expect(h.watchClient).toHaveBeenCalledTimes(2);
+      // The daemon owns cadence. The client starts no timer to re-read or re-arm a parked watch.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.snapshotClient).toHaveBeenCalledTimes(2);
+      expect(h.watchClient).toHaveBeenCalledTimes(2);
+      for (const watch of h.watches.slice()) {
+        watch.answer.resolve({ ok: true, value: { changed: true, samples: [sample(75_000)] } });
+      }
+      await settle();
+      expect(h.watchClient).toHaveBeenCalledTimes(4);
+      for (const release of releases) release();
+      await settle();
+      expect(h.watches.slice(-2).every(watch => watch.input.signal?.aborted)).toBe(true);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(h.snapshotClient).toHaveBeenCalledTimes(2);
+      expect(h.watchClient).toHaveBeenCalledTimes(4);
+    } finally { for (const release of releases) release(); h.store.reset(); }
+  });
+
+
   it('reads a fresh sample on its Home reconnect without waiting for the held watch or looping on request success', async () => {
     const h = harness(() => 75_000);
     const release = h.store.demand(key);

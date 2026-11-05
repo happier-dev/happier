@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachinePresetUpdateInputV1, ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -45,6 +46,7 @@ export function useMachinePresetQuery<T>(input: Readonly<{
     onInvalidated?: () => void;
 }>) {
     const { serverId, homeId, presetId, binding, resolution, read, refreshRevision } = input;
+    const presented = useLayoutPresentationActive();
     // Credential revisions cancel custody; only the exact Home/Account identifies retained presentation.
     const queryKey = JSON.stringify([serverId, homeId, resolution.kind === 'bound' ? resolution.scope : null, presetId]);
     const [state, setState] = React.useState<MachinePresetQueryState<T> & { queryKey: string }>(
@@ -68,7 +70,7 @@ export function useMachinePresetQuery<T>(input: Readonly<{
         setState({ queryKey, value: null, loading: !!presetId, error: null });
     }, [queryKey, state.queryKey, state.value, state.error, presetId, withdraw]);
     React.useEffect(() => {
-        if (!binding?.isCurrent() || !read || !presetId) return;
+        if (!presented || !binding?.isCurrent() || !read || !presetId) return;
         const controller = new AbortController();
         pendingRead.current = controller;
         const retirement = binding.onRetire(() => controller.abort());
@@ -94,8 +96,8 @@ export function useMachinePresetQuery<T>(input: Readonly<{
             if (approvalRead.current?.controller === controller) approvalRead.current = null;
         });
         return () => { controller.abort(); retirement.dispose(); if (approvalRead.current?.controller === controller) approvalRead.current = null; };
-    }, [binding, read, presetId, queryKey, withdraw, revision, refreshRevision]);
-    React.useEffect(() => subscribeHomeAccountChange(event => {
+    }, [presented, binding, read, presetId, queryKey, withdraw, revision, refreshRevision]);
+    React.useEffect(() => presented ? subscribeHomeAccountChange(event => {
         if (event.machineResourcesAffect === false) return;
         if (!presetId || !areServerProfileIdentifiersEquivalent(serverId, event.serverId)) return;
         // This read has not executed yet: its post-decision result satisfies preceding wakes.
@@ -103,7 +105,7 @@ export function useMachinePresetQuery<T>(input: Readonly<{
         pendingRead.current?.abort();
         callbacks.current.onInvalidated?.();
         refresh();
-    }), [serverId, presetId]);
+    }) : undefined, [presented, serverId, presetId]);
     const sameScope = resolution.kind === 'bound' && state.queryKey === queryKey;
     return { sameScope, state: sameScope
         ? binding?.isCurrent() ? state : { ...state, loading: !!presetId }
@@ -199,10 +201,13 @@ export function useMachinePresetConfiguration(input: Readonly<{
 
 /** Exact-Home collection projection; it owns no recipe or resource persistence. */
 export function useMachinePresets(serverIds: readonly string[], onApprovalPending?: (approval: ActionApprovalRegistration, serverId: string) => void) {
+    const presented = useLayoutPresentationActive();
     const accountScopes = useServerCredentialAccountScopeStates(serverIds);
     const bindings = React.useMemo(() => new Map([...accountScopes].flatMap(([serverId, entry]) => entry.binding ? [[serverId, entry.binding] as const] : [])), [accountScopes]);
     const requestedIdsKey = JSON.stringify(serverIds);
     const [state, setState] = React.useState<Readonly<Record<string, ScopedQueryState<readonly ManagedMachinePresetV1[]>>>>({});
+    const stateRef = React.useRef(state);
+    stateRef.current = state;
     const [refreshRevision, setRefreshRevision] = React.useState(0);
     const presetsProjectionRef = React.useRef<Readonly<Record<string, readonly ManagedMachinePresetV1[]>>>({});
     const approvalRef = React.useRef(onApprovalPending);
@@ -219,6 +224,12 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         reads.current.clear();
     }, []);
     React.useEffect(() => {
+        if (!presented) {
+            for (const read of reads.current.values()) { read.controller.abort(); read.retirement.dispose(); }
+            reads.current.clear();
+            refreshTargets.current.clear();
+            return;
+        }
         setState(current => {
             const retained = Object.entries(current).filter(([serverId, entry]) => {
                 const resolution = accountScopes.get(serverId)?.resolution;
@@ -273,14 +284,20 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
             });
         }
         refreshTargets.current.clear();
-    }, [accountScopes, bindings, refreshRevision]);
-    React.useEffect(() => subscribeHomeAccountChange(event => {
+    }, [presented, accountScopes, bindings, refreshRevision]);
+    React.useEffect(() => presented ? subscribeHomeAccountChange(event => {
         if (event.machineResourcesAffect === false) return;
         const serverId = [...bindings.keys()].find(id => areServerProfileIdentifiersEquivalent(id, event.serverId));
         if (!serverId || reads.current.get(serverId)?.awaitingApproval) return;
+        // Only controller Machines contribute live availability to this collection.
+        // Unknown and mixed-domain wakes still repair the complete projection.
+        const presets = stateRef.current[serverId]?.value;
+        if (presets && event.source === 'socket' && event.changeKinds?.length
+            && event.changeKinds.every(kind => kind === 'machine') && event.entityIds?.length
+            && !presets.some(preset => preset.controller && event.entityIds!.includes(preset.controller.machineId))) return;
         refreshTargets.current.add(serverId);
         refresh();
-    }), [bindings, refresh]);
+    }) : undefined, [presented, bindings, refresh]);
     return React.useMemo(() => {
         const presetsByServerId: Record<string, readonly ManagedMachinePresetV1[]> = {};
         const statesByServerId: Record<string, MachinePresetQueryState<readonly ManagedMachinePresetV1[]>> = {};
