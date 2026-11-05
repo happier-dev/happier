@@ -17,7 +17,6 @@ import { useScopedPluginUiProjection } from '@/components/plugins/projection/use
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
-import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { PROJECT_ROUTE_ROOT_SENTINEL, type ProjectPageV1, type ProjectMobileSurface, type ProjectAttachedDashboardSelection } from './detail/projectRouteState';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
@@ -68,7 +67,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
     const enclosingStateSize = useSurfaceStateCardSize();
-    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
     const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
     const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId, props.serverId);
@@ -307,9 +305,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                         name: resolveWorkspaceRefDisplayName(workspaceRef),
                     },
                 }}
-                initialRight={multiPaneEnabled && deviceType === 'tablet'
-                    ? { isOpen: true, activeTabId: resolveProjectRightTabId(null) }
-                    : undefined}
                 onPluginSurfaceOpenChange={props.onPluginSurfaceOpenChange}
                 detailsPaneEnabled
                 detailsPaneBuiltinAdapter={projectDetailsPaneAdapter}

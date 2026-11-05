@@ -45,7 +45,6 @@ import { useOpenPaneDestinationWindow, usePaneDestinationWindowActions } from '.
 import { PaneHeader } from './PaneHeader';
 import { PaneHeaderActions } from './PaneHeaderActions';
 import { PluginDetailsPaneOverlay } from './details/surfaces/PluginDetailsPaneOverlay';
-import type { InitialRightPaneState } from './model/appPaneReducer';
 import {
     PluginDetailsDestinationLaunchScope,
     usePluginDetailsDestinationNavigationOwners,
@@ -76,7 +75,6 @@ export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
     selectedPaneTabKey?: string;
     /** A creation default, never an instruction to reopen an existing scope. */
-    initialRight?: InitialRightPaneState;
     main: React.ReactNode;
     /** Hosts without a named main column never offer the hide control. */
     mainColumn?: PaneMainColumnDescriptor;
@@ -351,14 +349,12 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     const screenFocused = useDestinationFocus();
     // Activation reads the current creation input; resizing or changing preferences
     // must not activate the scope again. The reducer ignores it for retained scopes.
-    const initialRightRef = React.useRef(props.initialRight);
-    initialRightRef.current = props.initialRight;
 
     // The page on screen owns the active scope; a page left behind (still mounted under the one on
     // screen) releases it, so "the current page's right sidebar" always names the page the user sees.
     React.useEffect(() => {
         if (!screenFocused) return;
-        dispatch({ type: 'activateScope', scopeId: props.scopeId, initialRight: initialRightRef.current });
+        dispatch({ type: 'activateScope', scopeId: props.scopeId });
         return () => dispatch({ type: 'releaseScope', scopeId: props.scopeId });
     }, [dispatch, props.scopeId, screenFocused]);
 

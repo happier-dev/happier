@@ -165,21 +165,29 @@ describe('Project companion pane dismissal in the DOM', () => {
             `[data-testid="project-overview-merged.widget.${item.instance.id}"]`)).not.toBeNull());
         expect(saved.items.map(item => item.area)).toEqual(['main', 'aside']);
     });
-    it.each([1100, 830])('opens a fresh wide Project scope at %s with the preferred tab', async (width) => {
+    it.each([390, 830, 1100])('gives the page its room first: a fresh Project scope at %s starts closed, stays closed on widening, and the rail opens the preferred tab', async (width) => {
         await resize(width);
         await renderProject();
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
+        expect(container.querySelector('[data-testid="project-rightpanel-header"]')).toBeNull();
+        expect(container.querySelector('[data-testid="multi-pane-right-modal"]')).toBeNull();
+        await resize(1400);
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
+        if (width === 390) return;
         const tabId = resolveProjectRightTabId(null);
+        await act(async () => runtime.pane.openRight({ tabId }));
         expect(runtime.pane.scopeState?.right).toMatchObject({
-            isOpen: true, activeTabId: tabId, selectedDestination: { kind: 'builtin', id: tabId },
+            isOpen: true, selectedDestination: { kind: 'builtin', id: tabId },
         });
         expect(element('project-rightpanel-header')).toBeTruthy();
     });
-    it('starts a fresh phone-width web scope closed and keeps it closed on widening', async () => {
-        await renderProject();
-        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
-        expect(container.querySelector('[data-testid="multi-pane-right-modal"]')).toBeNull();
+    it('draws the Files companion with the same tree as a Session, not the Code page', async () => {
         await resize(1100);
-        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
+        await renderProject('overview');
+        await act(async () => runtime.pane.openRight({ tabId: 'files' }));
+        await vi.waitFor(() => expect(container.querySelector('[data-testid="project-rightpanel-surface-files"] [data-testid="repository-tree-drop-zone"]')).not.toBeNull());
+        expect(container.querySelector('[data-testid="project-rightpanel-surface-files"] [data-testid="workspace-code"]')).toBeNull();
+        expect(container.querySelector('[data-testid="project-rightpanel-surface-files"] [data-testid="workspace-code-bar-goto"]')).toBeNull();
     });
     it('does not auto-open when multi-pane is disabled, including when enabled later', async () => {
         await resize(1100);
