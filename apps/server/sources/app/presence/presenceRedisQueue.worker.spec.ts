@@ -18,8 +18,13 @@ const enrollmentRedis = {
     disconnect: vi.fn(() => finishEnrollmentRead?.()),
 };
 
-const getRedisClient = vi.fn(() => ({ xgroup, xreadgroup, xack, xautoclaim, xpending,
-    duplicate: () => enrollmentRedis }));
+const sharedRead = vi.fn((...args: unknown[]) => xreadgroup(...args));
+const duplicate = vi.fn(() => ({ ...enrollmentRedis,
+    xreadgroup: vi.fn((...args: unknown[]) => xreadgroup(...args)),
+    disconnect: vi.fn(() => finishEnrollmentRead?.()),
+}));
+const getRedisClient = vi.fn(() => ({ xgroup, xreadgroup: sharedRead, xack, xautoclaim, xpending,
+    duplicate }));
 vi.mock("@/storage/redis/redis", () => ({ getRedisClient }));
 
 const dbMocks = createDbMocks({
@@ -30,7 +35,14 @@ const executeRaw = vi.fn(async (_query: TemplateStringsArray, ..._values: unknow
 // Only the persistent transaction/driver boundary is replaced. Admission,
 // monotonic persistence, deadline enrollment and flush custody stay real.
 const database = { ...dbMocks.db, $executeRaw: executeRaw,
-    $queryRaw: async (query: TemplateStringsArray) => query.join('').startsWith('SHOW') ? [{ statement_timeout: '0' }] : [],
+    $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = query.join('');
+        if (sql.startsWith('SHOW')) return [{ statement_timeout: '0' }];
+        // PostgreSQL admission now obtains its Machine row through a locking
+        // read; preserve the same database fixture used by the SQLite delegate.
+        if (sql.includes('FOR UPDATE')) return [await dbMocks.db.machine.findUnique({ where: { id: values[0] } })];
+        return [];
+    },
     $executeRawUnsafe: async () => 0,
 };
 const transactions = createDbTransactionMock(() => ({ ...database }));
@@ -52,8 +64,9 @@ type StreamReply = [string, [string, string[]][]][] | null;
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((complete) => { resolve = complete; });
-    return { promise, resolve };
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((complete, fail) => { resolve = complete; reject = fail; });
+    return { promise, resolve, reject };
 }
 
 let lastObservation = 0;
@@ -69,6 +82,7 @@ await import('./presenceRedisQueue');
 describe("presenceRedisQueue worker", () => {
     const env = createEnvPatcher(["HAPPY_INSTANCE_ID"]);
     let finishRead: ((reply: StreamReply) => void) | undefined;
+    let failRead: ((error: Error) => void) | undefined;
     let activeWorker: { stop: () => Promise<void> } | undefined;
     let releaseWrites: (() => void)[];
 
@@ -80,6 +94,7 @@ describe("presenceRedisQueue worker", () => {
         xreadgroup.mockImplementation(() => {
             const read = deferred<StreamReply>();
             finishRead = read.resolve;
+            failRead = read.reject;
             readStarted.resolve();
             return read.promise;
         });
@@ -104,6 +119,7 @@ describe("presenceRedisQueue worker", () => {
         xautoclaim.mockReset().mockResolvedValue(["0-0", []]);
         xack.mockReset().mockResolvedValue(1);
         finishRead = undefined;
+        failRead = undefined;
         activeWorker = undefined;
         releaseWrites = [];
         shutdownController = new AbortController();
@@ -111,8 +127,10 @@ describe("presenceRedisQueue worker", () => {
         dbMocks.reset();
         dbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
         dbMocks.db.session.findUnique.mockResolvedValue(null);
-        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: 'u1', active: false,
-            lastActiveAt: new Date(0), revokedAt: null, replacedByMachineId: null });
+        dbMocks.db.machine.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+            id: where.id, accountId: 'u1', active: true, kind: 'machine', installationId: null,
+            lastActiveAt: new Date(0), revokedAt: null, replacedByMachineId: null,
+        }));
         executeRaw.mockReset().mockResolvedValue(1);
     });
 
@@ -126,6 +144,26 @@ describe("presenceRedisQueue worker", () => {
         vi.restoreAllMocks();
         vi.useRealTimers();
         env.restore();
+    });
+
+    it("keeps blocking reads off the shared command connection and closes its readers on stop", async () => {
+        const { worker } = await startReading();
+
+        expect(xreadgroup).toHaveBeenCalled();
+        expect(sharedRead).not.toHaveBeenCalled();
+        expect(duplicate).toHaveReturnedTimes(2);
+        const readers = duplicate.mock.results.map(result => result.value);
+        const streamReader = readers.find(reader => reader.xreadgroup.mock.calls.length > 0)!;
+        // ioredis rejects an outstanding BLOCK command when disconnected.
+        streamReader.disconnect.mockImplementationOnce(() => failRead!(new Error('Connection is closed.')));
+
+        await worker.stop();
+        await vi.advanceTimersByTimeAsync(0);
+
+        for (const reader of readers) {
+            expect(reader.disconnect).toHaveBeenCalled();
+        }
+        expect(vi.getTimerCount()).toBe(0); // Normal stop must not enter transport retry.
     });
 
     it("parks an empty worker for 300 seconds with zero flush wakes", async () => {
@@ -162,7 +200,9 @@ describe("presenceRedisQueue worker", () => {
         await vi.advanceTimersByTimeAsync(1);
 
         expect(executeRaw).toHaveBeenCalledOnce();
-        expect(executeRaw).toHaveBeenLastCalledWith(expect.any(Array), new Date(lastObservation).toISOString(), "u1", "m1", new Date(lastObservation).toISOString());
+        expect(executeRaw.mock.calls.at(-1)?.slice(1, 5)).toEqual([
+            new Date(lastObservation).toISOString(), "u1", "m1", new Date(lastObservation).toISOString(),
+        ]);
         expect(xack).toHaveBeenCalledExactlyOnceWith("presence:alive:v1", "presence-worker", "1-0", "2-0");
         expect(flushes).toHaveBeenCalledOnce();
         const { stopLocalMachinePresenceTimeout } = await import('./timeout');
@@ -198,7 +238,9 @@ describe("presenceRedisQueue worker", () => {
         await vi.advanceTimersByTimeAsync(0);
         expect(xack).toHaveBeenCalledExactlyOnceWith("presence:alive:v1", "presence-worker", "1-0");
         expect(executeRaw).toHaveBeenCalledTimes(2);
-        expect(executeRaw).toHaveBeenLastCalledWith(expect.any(Array), new Date(lastObservation).toISOString(), "u1", "m1", new Date(lastObservation).toISOString());
+        expect(executeRaw.mock.calls.at(-1)?.slice(1, 5)).toEqual([
+            new Date(lastObservation).toISOString(), "u1", "m1", new Date(lastObservation).toISOString(),
+        ]);
         expect(stopped).toBe(false);
 
         secondWrite.resolve(1);

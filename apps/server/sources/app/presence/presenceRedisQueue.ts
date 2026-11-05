@@ -210,16 +210,20 @@ export function startPresenceRedisWorker(params?: {
     // enrollment. Each deadline host follows the SAME stream independently,
     // without a consumer group, socket server, peer identity, or extra key.
     const enrollmentRedis = redis.duplicate();
+    // BLOCK occupies a Redis connection until an arrival or the read deadline.
+    // Keep socket ownership checks and all other commands off that connection.
+    const streamRedis = redis.duplicate();
     const enrollmentAbort = new AbortController();
     let enrollCursor: string | null = null;
     let markReady!: () => void;
     const ready = new Promise<void>(resolve => { markReady = resolve; });
-    const stopEnrollment = (): void => {
+    const stopReaders = (): void => {
         enrollmentAbort.abort();
         enrollmentRedis.disconnect();
+        streamRedis.disconnect();
         markReady();
     };
-    shutdownSignal.addEventListener('abort', stopEnrollment, { once: true });
+    shutdownSignal.addEventListener('abort', stopReaders, { once: true });
     const enrollment = backoff(async () => {
         if (enrollCursor === null) {
             const tail = await enrollmentRedis.xrevrange(STREAM_KEY, '+', '-', 'COUNT', 1);
@@ -296,11 +300,11 @@ export function startPresenceRedisWorker(params?: {
 
     const stop = async () => {
         stopped = true;
-        stopEnrollment();
+        stopReaders();
         clearTimer();
         await flushPending();
         await enrollment;
-        shutdownSignal.removeEventListener('abort', stopEnrollment);
+        shutdownSignal.removeEventListener('abort', stopReaders);
         setPresenceStreamPendingEntries(pendingAckIds.length);
         await refreshRedisPendingEntries(redis);
     };
@@ -361,7 +365,7 @@ export function startPresenceRedisWorker(params?: {
                 }
             }
 
-            const res = await redis.xreadgroup(
+            const res = await streamRedis.xreadgroup(
                 "GROUP",
                 GROUP,
                 consumerName,
@@ -372,7 +376,10 @@ export function startPresenceRedisWorker(params?: {
                 "STREAMS",
                 STREAM_KEY,
                 ">",
-            );
+            ).catch(error => {
+                if (stopped || shutdownSignal.aborted) throw new AbortedExeption();
+                throw error;
+            });
 
             if (!res) {
                 await delay(1, shutdownSignal);
