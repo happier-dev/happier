@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, readlink, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, mkdir, readFile, readlink, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ensureCliBuilt, ensureDepsInstalled, isCliDistFreshForInputs, pmExecBin, readUsableCliDistFreshness } from './pm.mjs';
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
-import { assertDependenciesReady, inspectDependencyRefresh, withDependencyConsumption, withDependencyRefresh } from './dependency_refresh.mjs';
+import { assertDependenciesReady, inspectDependencyRefresh, withDependencyRefresh } from './dependency_refresh.mjs';
 import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { readHappyCliRuntimeInputFreshness } from './cli_runtime_inputs.mjs';
 import { resolveValidRuntimeSnapshot } from '../../../../cli/bin/_resolveRuntimeEntrypoint.mjs';
@@ -25,7 +25,7 @@ const CLI_DIST_BUILD_MANIFEST_MODULE_PATH = fileURLToPath(
 const CLI_RUNTIME_INPUTS_MODULE_URL = new URL('./cli_runtime_inputs.mjs', import.meta.url).href;
 const { writeCliDistBuildManifest } = createRequire(import.meta.url)(CLI_DIST_BUILD_MANIFEST_MODULE_PATH);
 
-test('healthy stack startup verifies dependencies without requesting a refresh behind a finite reader', { timeout: 10000 }, async t => {
+test('healthy stack startup verifies dependencies without reinstalling or rewriting admission', { timeout: 10000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-healthy-read-only-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const component of ['ui', 'cli', 'server']) {
@@ -40,21 +40,15 @@ test('healthy stack startup verifies dependencies without requesting a refresh b
   await writePnpmArgDumpStub({ binDir, outputPath });
   const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, OUTPUT_PATH: outputPath,
     HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '' };
-  delete env.HAPPIER_BUILD_DEPENDENCY_CUSTODY;
   await withDependencyRefresh({ installDir: root, env }, async () => mkdir(join(root, 'node_modules'), { recursive: true }));
   const marker = join(root, 'node_modules/.happier-stack-dependencies-ready');
   const before = await readFile(marker, 'utf8');
-  let enter, release;
-  const entered = new Promise(resolve => { enter = resolve; });
-  const held = new Promise(resolve => { release = resolve; });
-  const reader = withDependencyConsumption({ installDir: root, env, signal: t.signal }, async () => { enter(); await held; });
-  await entered;
-  const startup = ensureDepsInstalled(join(root, 'apps/ui'), 'happier-ui', { env, quiet: true });
-  try {
-    const result = await Promise.race([startup.then(() => 'verified'), new Promise(resolve => setTimeout(() => resolve('waited for writer'), 500))]);
-    assert.equal(result, 'verified');
-    assert.equal(await readFile(marker, 'utf8'), before, 'verification must not withdraw or republish admission');
-  } finally { release(); await Promise.allSettled([reader, startup]); }
+  await ensureDepsInstalled(join(root, 'apps/ui'), 'happier-ui', { env, quiet: true });
+  assert.equal(await readFile(marker, 'utf8'), before, 'verification must not withdraw or republish admission');
+  assert.doesNotMatch(await readFile(outputPath, 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }), /\binstall\b/, 'a healthy startup does not reinstall dependencies');
 });
 
 test('development startup automatically admits stale dependencies through the refresh owner', async t => {
@@ -241,7 +235,8 @@ async function writePnpmEnvDumpStub({ binDir, outputPath }) {
     pnpmPath,
     [
       '#!/usr/bin/env node',
-      "const { writeFileSync } = require('node:fs');",
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "if (process.argv[2] === 'install') mkdirSync('node_modules', { recursive: true });",
       "const out = {",
       '  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? null,',
       '  pnpm_config_store_dir: process.env.pnpm_config_store_dir ?? null,',
@@ -270,7 +265,8 @@ async function writePnpmRuntimeDumpStub({ binDir, outputPath }) {
     pnpmPath,
     [
       '#!/usr/bin/env node',
-      "const { writeFileSync } = require('node:fs');",
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "if (process.argv[2] === 'install') mkdirSync('node_modules', { recursive: true });",
       "const out = {",
       '  fakeNodeUsed: process.env.FAKE_NODE_USED ?? null,',
       '  execPath: process.execPath,',
@@ -326,6 +322,7 @@ async function writePnpmArgDumpStub({ binDir, outputPath }) {
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [ "${1:-}" = "install" ]; then mkdir -p node_modules; fi',
     ].join('\n') + '\n',
     'utf-8'
   );
@@ -593,7 +590,6 @@ async function writePnpmForceRepairPkgrollThenBuildStub({ binDir, outputPath, cl
       'if [ "${1:-}" = "install" ] && [ "${2:-}" = "--force" ]; then',
       ...(uiPatchOutput ? [
         `  [[ -f ${shellSingleQuote(join(cliDir, '../..', '.project/tmp/dependency-install.lock'))} ]] || exit 44`,
-        `  [[ ! -f ${shellSingleQuote(join(cliDir, '../..', 'node_modules/.happier-stack-dependencies-ready'))} ]] || exit 45`,
         `  rm -f ${shellSingleQuote(uiPatchOutput)}`,
       ] : []),
       `  cat > ${JSON.stringify(pkgrollCliPath)} <<'EOF'`,
@@ -606,7 +602,6 @@ async function writePnpmForceRepairPkgrollThenBuildStub({ binDir, outputPath, cl
       ...(uiPatchOutput ? [
         'if [[ "$*" == "--filter @happier-dev/app run --silent postinstall:real" ]]; then',
         `  [[ -f ${shellSingleQuote(join(cliDir, '../..', '.project/tmp/dependency-install.lock'))} ]] || exit 44`,
-        `  [[ ! -f ${shellSingleQuote(join(cliDir, '../..', 'node_modules/.happier-stack-dependencies-ready'))} ]] || exit 45`,
         `  mkdir -p ${shellSingleQuote(dirname(uiPatchOutput))}`,
         `  echo 'patched module' > ${shellSingleQuote(uiPatchOutput)}`,
         '  exit 0',
@@ -881,7 +876,7 @@ test('ensureDepsInstalled does not publish lockfile changes from a synchronized 
   assert.match(await readFile(outputPath, 'utf-8'), /^install .*--frozen-lockfile\b/m);
 });
 
-test('ensureDepsInstalled skips dependency refresh in service mode when node_modules already exists', async (t) => {
+test('ensureDepsInstalled refreshes stale dependencies in service mode', async (t) => {
   const fixture = await createStackCacheFixture(t, 'hs-pm-stack-cache-service-install-skip-');
   const { root, envPath, componentDir, binDir } = fixture;
   const outputPath = join(root, 'argv.txt');
@@ -903,7 +898,7 @@ test('ensureDepsInstalled skips dependency refresh in service mode when node_mod
 
   await ensureDepsInstalled(componentDir, 'test-component', { quiet: true, env: process.env });
   const out = await readFile(outputPath, 'utf-8');
-  assert.ok(!out.includes('install'), `expected no pnpm install in service mode, got:\n${out}`);
+  assert.match(out, /^install .*--frozen-lockfile\b/m);
 });
 
 test('ensureDepsInstalled skips dependency refresh when explicitly disabled in local mode', async (t) => {
@@ -1305,6 +1300,8 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
   await writeFile(join(root, 'pnpm-lock.yaml'), '# fixture\n');
   await writeFile(join(root, 'pnpm-workspace.yaml'), "packages:\n  - \"apps/*\"\n");
   const patchPath = join(uiDir, 'patches/markdown.patch');
+  await copyFile(new URL('../../../../ui/tools/resolveUiPostinstallTasks.mjs', import.meta.url),
+    join(uiDir, 'tools/resolveUiPostinstallTasks.mjs'));
   const assetSourcePath = join(uiDir, 'tools/postinstall/worker.js');
   const requiredOutputPath = join(uiDir, 'node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js');
   const assetOutputPath = join(uiDir, 'public/worker.js');
@@ -1318,8 +1315,9 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
     postinstallSourcePath: patchPath, assetSourcePath, assetOutputPath });
   // Pnpm is the process boundary; installation and scripts use the same stub.
   const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, OUTPUT_PATH: outputPath,
-    HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '' };
-  await withDependencyRefresh({ installDir: root, env, },
+    HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '' };
+  await withDependencyRefresh({ installDir: root, env },
     async () => mkdir(join(root, 'node_modules'), { recursive: true }));
   const prepare = (componentRelativeDir, extraEnv = {}) => bootstrapRemoteDependencies({
     repoDir: root, componentRelativeDir, executionPlacement: 'remote', env: { ...env, ...extraEnv },
@@ -1366,7 +1364,7 @@ test('remote runtime and source-test bootstrap complete UI postinstall under ins
   await writeFile(join(root, 'pnpm-lock.yaml'), '# failed source-test refresh\n');
   await assert.rejects(sourcePrepare({ HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
   assert.equal((await inspectDependencyRefresh({ installDir: root,
-    })).required, true);
+  })).required, true);
   await sourcePrepare();
   assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'));
 });
@@ -1734,8 +1732,7 @@ test('ensureDepsInstalled keeps current dependency reads outside the CLI publica
     ].join('\n'),
   ], { cwd: root, env: process.env });
 
-  // Dependency read custody uses .project/tmp/dependency-install.lock. Only
-  // the unrelated CLI publication lock must remain outside this read path.
+  // Dependency readiness does not acquire the unrelated CLI publication lock.
   const cliLockPath = resolveCliDistBuildLockPath(root);
   await mkdir(cliLockPath);
 
@@ -1942,7 +1939,7 @@ test('ensureDepsInstalled retries a failed refresh even when pnpm touched node_m
 
   await assert.rejects(
     () => ensureDepsInstalled(join(root, 'apps', 'ui'), 'happier-ui', { quiet: true }),
-    /pnpm failed \(code=2,/,
+    error => error.code === 'HAPPIER_DEPENDENCY_REFRESH_FAILED' && error.cause?.exitCode === 2,
   );
   await ensureDepsInstalled(join(root, 'apps', 'ui'), 'happier-ui', { quiet: true });
 

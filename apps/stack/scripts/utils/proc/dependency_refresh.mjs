@@ -137,6 +137,7 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
 /** Finite readers share the installer's existing exclusion boundary. Acquire
  * only after capacity admission; preparation and repairs precede consumption. */
 export async function withDependencyConsumption({ installDir, env = process.env, signal, wait = true, waitForPublication = false }, consume) {
+  if (wait) await refreshRemoteDependenciesIfNeeded({ installDir, env, signal });
   const lockPath = resolveDependencyRefreshLockPath(installDir, env);
   if (dependencyWriters.getStore()?.get(lockPath)?.active) return await consume(env);
   const generationPath = `${lockPath}.generation`;
@@ -230,9 +231,32 @@ export async function waitForDependencyRefreshWriter({ installDir, env = process
 }
 
 export async function waitForDependencyRefresh({ installDir, env = process.env, signal }) {
+  await refreshRemoteDependenciesIfNeeded({ installDir, env, signal });
   if (!await waitForDependencyRefreshWriter({ installDir, env, signal })) return;
   const publication = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);
   assertDependencyPublicationComplete(installDir, publication);
+}
+
+async function refreshRemoteDependenciesIfNeeded({ installDir, env, signal }) {
+  if (String(env.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() !== '1' || isDependencyRefreshDisabled(env)) return;
+  if (!await waitForDependencyRefreshWriter({ installDir, env, signal })) return;
+  const needsRefresh = async () => {
+    const readiness = await inspectDependencyRefresh({ installDir, env });
+    // A synced input change can recover an older failed attempt. The same
+    // failed inputs remain a typed refusal until explicitly retried or edited.
+    return readiness.required && readiness.installedIdentity !== null
+      && readiness.failedInstallIdentity !== readiness.installIdentity
+      && String(readiness.dependencyIdentity.packageManager).startsWith('pnpm@');
+  };
+  if (!await needsRefresh()) return;
+  const { ensureDepsInstalled } = await import('./pm.mjs');
+  // Keep admission under the existing writer: concurrent consumers share both
+  // success and failure, without holding reader custody or retrying an install.
+  await withDependencyRefreshLock({ installDir, env, signal, isRequired: needsRefresh }, async () => {
+    if (await needsRefresh()) {
+      await ensureDepsInstalled(installDir, 'remote source runtime', { env, signal, prepareComponentOutputs: false });
+    }
+  });
 }
 
 async function collectDependencyInputPaths({ installDir, componentDir }) {
@@ -382,12 +406,14 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
   const unfinishedMutation = generation?.generation != null
     && generation.generation !== generation.completedGeneration && !currentWriterAttempt;
   const selfReferentialNodeModulesLinkPath = await inspectSelfReferentialNodeModulesLink(installDir);
+  const installedIdentity = marker?.version === REFRESH_STATE_VERSION && typeof marker.identity === 'string' ? marker.identity : null;
   const admitted = await pathExists(join(installDir, 'node_modules'))
-    && marker?.version === REFRESH_STATE_VERSION && typeof marker.identity === 'string'
+    && installedIdentity !== null
     && selfReferentialNodeModulesLinkPath === null && !unfinishedMutation;
   const required = !admitted || marker.identity !== installIdentity;
   if (borrowedNodeModulesTarget !== null && required) throw dependenciesBorrowed(installDir, borrowedNodeModulesTarget);
-  return { admitted, required,
+  return { admitted, required, installedIdentity,
+    failedInstallIdentity: unfinishedMutation ? generation?.installationFailure?.inputIdentity ?? null : null,
     inputPaths, inputSnapshot, dependencyIdentity, installIdentity, markerPath, selfReferentialNodeModulesLinkPath };
 }
 
@@ -582,7 +608,7 @@ export async function withDependencyRefresh({
         const generationPath = `${context.lockPath}.generation`;
         const publication = await readJsonIfExists(generationPath);
         await writeJsonAtomic(generationPath, { ...publication,
-          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode } });
+          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode, inputIdentity: before.installIdentity } });
       }
       throw failure;
     }

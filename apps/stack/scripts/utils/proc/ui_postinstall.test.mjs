@@ -8,6 +8,7 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { ensureUiPostinstallOutputs, inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectDependencyRefresh, isDependencyRefreshLockActive, readDependencyPublicationState, resolveDependencyRefreshLockPath,
   withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { withBuildInputDependencies } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 
 async function repairFixture(t) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-ui-repair-writer-' });
@@ -84,6 +85,16 @@ test('direct UI repair and dependency restoration hold the writer and invalidate
       restoreDependencies: async () => assert.fail('healthy forced preparation needs no reinstall') });
   });
   assert.equal((await lstat(quarantine)).isDirectory(), true, 'output checks without installation preserve quarantine');
+});
+
+test('an artifact spanning direct UI repair is rejected by the real dependency publication guard', async t => {
+  const { fixture, uiDir, env, observeProcess } = await repairFixture(t);
+  await assert.rejects(withBuildInputDependencies({ sourceDir: fixture.root, env }, async () => {
+    await ensureUiPostinstallOutputs(uiDir, fixture.root, { quiet: true, env,
+      runPostinstall: async () => { assert.equal(observeProcess({ writeOutput: true }).status, 0); },
+      restoreDependencies: async () => assert.fail('the repair subprocess succeeds') });
+    return 'artifact';
+  }), { code: 'BUILD_INPUTS_CHANGED' });
 });
 
 test('failed UI dependency restoration preserves the canonical pnpm error and leaves recovery pending', async t => {

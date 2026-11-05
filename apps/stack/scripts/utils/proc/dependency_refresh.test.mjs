@@ -6,6 +6,9 @@ import test from 'node:test';
 
 import { adoptDependencyInstallation, assertDependenciesReady, inspectDependencyRefresh, markDependencyMutation, readDependencyPublicationState,
   resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { ensureDepsInstalled } from './pm.mjs';
+import { withPnpmInstallGuard } from '../worktrees/pnpm_install_guard.mjs';
+import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 
@@ -251,6 +254,38 @@ test('borrowed dependency admission is read-only and requires a completed matchi
   const interrupted = await snapshot();
   await assert.rejects(assertDependenciesReady({ installDir: borrower, env }), { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
   assert.deepEqual(await snapshot(), interrupted);
+});
+
+test('every borrowed dependency writer refuses before lock, generation, adoption or postinstall writes', async t => {
+  for (const matching of [false, true]) {
+    const { borrower, env, snapshot } = await borrowedTree(t, { matching });
+    const before = await snapshot();
+    const write = async () => assert.fail('a borrowed-tree mutation callback must not run');
+    const options = { installDir: borrower, env };
+    const operations = [
+      () => withDependencyRefresh({ ...options, force: true }, write),
+      () => withDependencyRefresh({ ...options, onDependenciesReady: write }, write),
+      () => withDependencyRefreshLock(options, write),
+      () => markDependencyMutation(options),
+      () => adoptDependencyInstallation({ ...options, onDependenciesReady: write }),
+      () => withPnpmInstallGuard(options, write),
+    ];
+    if (!matching) operations.push(
+      () => withDependencyRefresh({ ...options, env: { ...env,
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' } }, write),
+      () => assertDependenciesReady(options),
+      () => ensureDepsInstalled(borrower, 'borrower', { env, quiet: true, prepareComponentOutputs: false }),
+      () => ensureDepsInstalled(borrower, 'borrower', { env, quiet: true, prepareComponentOutputs: false, refreshExisting: false }),
+      () => ensureDepsInstalled(borrower, 'borrower', { env: { ...env,
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' },
+        quiet: true, prepareComponentOutputs: false }),
+      () => bootstrapRemoteDependencies({ repoDir: borrower, env, toolsOnly: true }),
+    );
+    for (const operation of operations) {
+      await assert.rejects(operation(), { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
+      assert.deepEqual(await snapshot(), before);
+    }
+  }
 });
 
 test('an owned node_modules symlink inside the installation root can still refresh', async t => {

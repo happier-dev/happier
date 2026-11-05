@@ -13,7 +13,7 @@ import { expandHome } from '../paths/canonical_home.mjs';
 import { applyStackInfraProcessKind } from './stack_process_kind.mjs';
 export { applyStackInfraProcessKind };
 import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuildLock.mjs';
-import { inspectDependencyRefresh, isDependencyRefreshDisabled, resolveDependencyInstallRoot, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+import { inspectDependencyRefresh, isDependencyRefreshDisabled, markDependencyMutation, resolveDependencyInstallRoot, resolveLockedInstallEnv, waitForDependencyRefresh, waitForDependencyRefreshWriter, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
 export { resolveDependencyInstallRoot } from './dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs as prepareUiPostinstallOutputs, inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
@@ -256,14 +256,14 @@ async function readScriptEntrypointKind(path) {
   return classifyScriptEntrypointSource(source);
 }
 
-function buildDependencyInstallArgs(packageManagerName, { force = false, preserveLockfile = false } = {}) {
+function buildDependencyInstallArgs(packageManagerName, { force = false } = {}) {
   const args = ['install'];
   if (force) {
     args.push('--force');
   }
   if (packageManagerName === 'pnpm') {
     args.push('--prod=false');
-    if (preserveLockfile) args.push('--frozen-lockfile');
+    args.push('--frozen-lockfile');
   }
   return args;
 }
@@ -472,21 +472,26 @@ export async function ensureServerGeneratedProviderOutputs(componentDir, install
       stdio: check || quiet ? 'ignore' : 'inherit', env: childEnv, signal,
     });
   };
-  // The server generator owns every freshness decision, including its source
-  // stamps and patched private runtime copies. Healthy checks remain readers.
+  // The server generator owns its output freshness. A starter waits for a
+  // currently active installer, then checks without retaining dependency custody.
   try {
-    await withDependencyConsumption({ installDir, env, signal }, readEnv => invoke(true, readEnv));
+    await waitForDependencyRefresh({ installDir, env, signal });
+    await invoke(true, env);
     return;
   } catch (error) {
     signal?.throwIfAborted();
     if (checkOnly) throw error;
   }
-  await withDependencyRefreshLock({ installDir, env, signal }, async ({ lockPath, owner }) => {
+  await withDependencyRefreshLock({ installDir, env, signal, isRequired: async () => {
+    try { await invoke(true, env); return false; } catch { signal?.throwIfAborted(); return true; }
+  } }, async ({ lockPath, owner }) => {
     const writerEnv = resolveLockedInstallEnv(env, { lockPath, owner });
     try { await invoke(true, writerEnv); return; } catch { signal?.throwIfAborted(); }
     if (!quiet) console.log('[local] regenerating stale happier-server Prisma provider outputs...');
     // Generation replaces client files, not dependency packages. Loaded servers
-    // keep their client; no long-lived Stack retirement is needed for this write.
+    // keep their client. The publication owner keeps this named server output
+    // separate from the dependency generation consumed by Expo.
+    await markDependencyMutation({ installDir, env, output: 'server-generated-client:prisma' });
     await invoke(false, writerEnv);
   });
 }
@@ -515,7 +520,6 @@ export async function ensureUiPostinstallOutputs(componentDir, installDir, { qui
       await prepare();
       const repairArgs = buildDependencyInstallArgs(pm.name, {
         force: true,
-        preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
       });
       repairArgs.push('--ignore-scripts');
       await runPm(pm, repairArgs, { cwd: installDir, stdio, env, captureFailureDiagnostic: true });
@@ -641,23 +645,7 @@ export async function applyStackCacheEnv(baseEnv) {
 }
 
 export async function ensureDepsInstalled(dir, label, options = {}) {
-  try {
-    return await ensureComponentDependenciesInstalled(dir, label, options);
-  } catch (error) {
-    const env = options.env ?? process.env;
-    if (String(env.HAPPIER_STACK_DEV_AUTO_REFRESH_DEPS ?? '').trim() !== '1') throw error;
-    const callerEnvFile = resolveExplicitStackEnvFilePath(env);
-    const foreignPreparation = error?.code === 'HAPPIER_DEPENDENCY_STACK_START_IN_PROGRESS'
-      && typeof error.pendingStackBaseDir === 'string'
-      && callerEnvFile
-      && resolve(dirname(callerEnvFile)) !== resolve(error.pendingStackBaseDir)
-      && await pathExists(join(resolveDependencyInstallRoot(dir), 'node_modules'));
-    if (error?.code !== 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED' && !foreignPreparation) throw error;
-    // Only defer mutation: component preflight still verifies installed bytes.
-    // Cold trees and the caller's own source preparation must remain fail-closed.
-    console.warn(`[local] ${label} dependency refresh is temporarily blocked; continuing with installed bytes. Will retry on the next dependency input change or startup.\n${error.message}`);
-    return { admitted: false, required: true, reason: error.code };
-  }
+  return await ensureComponentDependenciesInstalled(dir, label, options);
 }
 
 async function ensureComponentDependenciesInstalled(
@@ -667,9 +655,9 @@ async function ensureComponentDependenciesInstalled(
     quiet = false,
     env: envIn = process.env,
     refreshExisting = true,
-    waitForPendingStart = false,
     prepareComponentOutputs = true,
     onDependenciesReady = null,
+    signal,
   } = {},
 ) {
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
@@ -683,6 +671,8 @@ async function ensureComponentDependenciesInstalled(
 
   const installDir = resolveDependencyInstallRoot(componentDir);
   const nodeModules = join(installDir, 'node_modules');
+  await waitForDependencyRefreshWriter({ installDir, env: envIn, signal });
+  const dependencyReadiness = await inspectDependencyRefresh({ installDir, componentDir, env: envIn });
   const stdio = quiet ? 'ignore' : 'inherit';
   // Stack explicitly prepares component-owned lifecycle outputs. UI postinstall
   // is run explicitly below: pnpm may skip lifecycle scripts after a scriptless
@@ -704,7 +694,7 @@ async function ensureComponentDependenciesInstalled(
   const sharedUiDir = monorepoRoot && resolve(monorepoRoot) === resolve(installDir)
     ? join(monorepoRoot, 'apps', 'ui') : null;
   const needsSharedUiRepair = sharedUiDir && (
-    (await inspectDependencyRefresh({ installDir, componentDir, env })).required
+    dependencyReadiness.required
     || (await inspectUiPostinstallOutputs(sharedUiDir, installDir, { env })).length > 0
   );
   const guardedDependencyReadyAction = onDependenciesReady || prepareComponentOutputs || needsSharedUiRepair
@@ -728,7 +718,7 @@ async function ensureComponentDependenciesInstalled(
     if (pm.name !== 'pnpm' || onDependenciesReady || needsSharedUiRepair) return false;
     const readiness = await inspectDependencyRefresh({ installDir, componentDir, env });
     if (readiness.required || (await inspectUiPostinstallOutputs(componentDir, installDir, { env })).length > 0) return false;
-    await withDependencyRefresh({ installDir, componentDir, env, refreshExisting, waitForPendingStart }, refreshDependencies);
+    await withDependencyRefresh({ installDir, componentDir, env, refreshExisting, signal }, refreshDependencies);
     if (prepareComponentOutputs) await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     return true;
   };
@@ -736,19 +726,15 @@ async function ensureComponentDependenciesInstalled(
     if (!guardedDependencyReadyAction) return;
     if (await admitCurrentTree({ refreshExisting: false })) return;
     if (pm.name === 'pnpm') {
-      await withDependencyRefresh({ installDir, componentDir, env,
-        refreshExisting: false, waitForPendingStart, onDependenciesReady: guardedDependencyReadyAction }, async () => {});
+      await withDependencyRefresh({ installDir, componentDir, env, signal,
+        refreshExisting: false, onDependenciesReady: guardedDependencyReadyAction }, async () => {});
     } else {
       await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     }
   };
-  const installArgs = buildDependencyInstallArgs(pm.name, {
-    // A dev target is a one-way synchronized replica. Its dependency tree is
-    // mutable, but dependency inputs remain owned by the source checkout.
-    preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
-  });
+  const installArgs = buildDependencyInstallArgs(pm.name);
   const installAndPrepare = async (installEnv = env) => {
-    await runPm(pm, installArgs, { cwd: installDir, stdio, env: installEnv, captureFailureDiagnostic: true });
+    await runPm(pm, installArgs, { cwd: installDir, stdio, env: installEnv, signal, captureFailureDiagnostic: true });
     if (pm.name === 'pnpm' && String(installEnv.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1') {
       await ensureServerGeneratedProviderOutputs(join(installDir, 'apps', 'server'), installDir, { quiet, env: installEnv, pm });
     }
@@ -778,20 +764,6 @@ async function ensureComponentDependenciesInstalled(
       return;
     }
 
-    // In service contexts (launchd/systemd), avoid doing surprise dependency refreshes just because
-    // files changed on disk. This keeps long-running stacks resilient even if the checkout becomes
-    // temporarily un-buildable (e.g. mid-rebase / failing typecheck).
-    const allowRefresh =
-      String(env?.HAPPIER_STACK_SERVICE_ALLOW_REFRESH_DEPS ?? '').trim() === '1' ||
-      String(env?.HAPPIER_STACK_ALLOW_REFRESH_DEPS ?? '').trim() === '1';
-    if (isServiceMode(env) && !allowRefresh) {
-      if (onDependenciesReady) {
-        throw new Error(`[local] cannot run ${label} dependency-ready actions in a service without dependency refresh permission`);
-      }
-      await prepareWithoutInstall();
-      return;
-    }
-
     if (await admitCurrentTree({ refreshExisting: true })) return;
 
     if (pm.name === 'pnpm') {
@@ -799,8 +771,8 @@ async function ensureComponentDependenciesInstalled(
         installDir,
         componentDir,
         env,
-        waitForPendingStart,
         onDependenciesReady: guardedDependencyReadyAction,
+        signal,
       }, refreshDependencies);
     }
 
@@ -824,8 +796,8 @@ async function ensureComponentDependenciesInstalled(
         installDir,
         componentDir,
         env,
-        waitForPendingStart,
         onDependenciesReady: guardedDependencyReadyAction,
+        signal,
       },
       installFirstRun,
     );
