@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -17736,6 +17737,15 @@ settingsSession: {
         review: {
             environment: "環境",
         },
+        newEnvironment: "新しい環境",
+        name: "名前",
+        namePlaceholder: "Staging",
+        whoTitle: "デプロイできる人",
+        whoManagers: "この環境の管理者",
+        production: "本番",
+        productionHint: "表示されるすべての場所で本番としてマークされます。",
+        createFailedTitle: "この環境を保存できませんでした",
+        creationReview: deploymentCreationReviewTranslations['ja'],
     },
     identity: {
         savedNotOpen: '保存済み・未オープン',

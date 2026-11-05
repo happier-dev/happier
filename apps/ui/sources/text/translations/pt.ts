@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -17929,6 +17930,15 @@ settingsSession: {
         review: {
             environment: "Ambiente",
         },
+        newEnvironment: "Novo ambiente",
+        name: "Nome",
+        namePlaceholder: "Staging",
+        whoTitle: "Quem pode implantar",
+        whoManagers: "Gerentes deste ambiente",
+        production: "Produção",
+        productionHint: "Marcado como produção onde quer que apareça.",
+        createFailedTitle: "Não foi possível salvar este ambiente",
+        creationReview: deploymentCreationReviewTranslations['pt'],
     },
     identity: {
         savedNotOpen: 'Salvos, não abertos',

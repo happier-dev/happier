@@ -3483,10 +3483,19 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+      '@happier-dev/plugin-ui':
+        specifier: 0.0.0
+        version: link:../../plugin-ui
     devDependencies:
       '@types/node':
         specifier: ^22.15.3
         version: 22.20.5
+      '@types/react':
+        specifier: 19.2.0
+        version: 19.2.0
+      react:
+        specifier: 19.2.0
+        version: 19.2.0
       typescript:
         specifier: 5.9.3
         version: 5.9.3

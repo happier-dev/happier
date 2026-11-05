@@ -25,7 +25,7 @@ export function useRegistryTokenPicker() {
     [personalSecrets, sharedEntries],
   );
   const pick = React.useCallback(
-    (props: Pick<SavedSecretPickerModalProps, 'selectedId' | 'includeNoneRow' | 'onSelectId'>) => {
+    (props: Pick<Extract<SavedSecretPickerModalProps, { selectedId: string | null }>, 'selectedId' | 'includeNoneRow' | 'onSelectId'>) => {
       Modal.show({
         component: SavedSecretPickerModal,
         // Choosing a token binds one; renaming, replacing or deleting stored secrets stays in Settings → Secrets.

@@ -8,14 +8,17 @@ import { writePromptLibraryRecord } from '@/sync/api/account/apiPromptLibraryCat
 
 const unavailableScope = Object.freeze({ status: 'unavailable', value: null, revision: 'absent',
     sourceSettingsVersion: null, stale: true, reason: 'scope-unavailable' } as const);
-function usePromptLibraryCatalogSource<K extends PromptLibraryCatalogKeyV1>(key: K, requestedScope?: ServerAccountScope | null) {
+const noSubscription = () => () => {};
+type CatalogDemand = Readonly<{ enabled?: boolean }>;
+function usePromptLibraryCatalogSource<K extends PromptLibraryCatalogKeyV1>(key: K, requestedScope?: ServerAccountScope | null, demand?: CatalogDemand) {
     const activeScope = useAccountSettingsScope();
     const scope = requestedScope === undefined ? activeScope : requestedScope;
     const explicitlyUnavailable = requestedScope === null;
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
     const captured = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
-    React.useEffect(() => captured ? observePromptLibraryCatalog(captured) : undefined, [captured]);
+    const enabled = demand?.enabled !== false;
+    React.useEffect(() => captured && enabled ? observePromptLibraryCatalog(captured) : undefined, [captured, enabled]);
     const read = React.useCallback(() => explicitlyUnavailable ? unavailableScope : getPromptLibraryCatalogValue(captured, key),
         [captured, explicitlyUnavailable, key]);
     return { captured, read };
@@ -23,10 +26,10 @@ function usePromptLibraryCatalogSource<K extends PromptLibraryCatalogKeyV1>(key:
 
 /** Read-only observers select displayed facts; writers retain the complete authority/CAS snapshot. */
 export function usePromptLibraryCatalogSelection<K extends PromptLibraryCatalogKeyV1, T>(key: K,
-    select: (snapshot: PromptLibraryCatalogValueSnapshot<K>) => T, requestedScope?: ServerAccountScope | null): T {
-    const { read } = usePromptLibraryCatalogSource(key, requestedScope);
+    select: (snapshot: PromptLibraryCatalogValueSnapshot<K>) => T, requestedScope?: ServerAccountScope | null, demand?: CatalogDemand): T {
+    const { read } = usePromptLibraryCatalogSource(key, requestedScope, demand);
     const readSelection = React.useCallback(() => select(read()), [read, select]);
-    return React.useSyncExternalStore(subscribePromptLibraryCatalogSnapshots, readSelection, readSelection);
+    return React.useSyncExternalStore(demand?.enabled === false ? noSubscription : subscribePromptLibraryCatalogSnapshots, readSelection, readSelection);
 }
 
 export function usePromptLibraryCatalogValue<K extends PromptLibraryCatalogKeyV1>(key: K, requestedScope?: ServerAccountScope | null) {

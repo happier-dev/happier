@@ -66,7 +66,7 @@ describe('RegistrySourcesView through real registry Actions', () => {
         phase = 'open picker';
         await screen.pressByTestIdAsync('registries:detail:token:choose');
         const picker = modal.show.mock.calls.at(-1)![0];
-        const props = picker.props as import('@/components/ui/forms/valueRefs/SavedSecretPickerModal').SavedSecretPickerModalProps;
+        const props = picker.props as Extract<import('@/components/ui/forms/valueRefs/SavedSecretPickerModal').SavedSecretPickerModalProps, { selectedId: string | null }>;
         expect(props.selectedId).toBe(previous.secretRef);
         phase = 'apply token';
         await React.act(async () => { props.onSelectId('happier:shared-secret:v1:registry-token'); });
@@ -99,7 +99,7 @@ describe('RegistrySourcesView through real registry Actions', () => {
         expect(screen.findByTestId('registries:add:submit')!.props.disabled).toBe(true);
         modal.show.mockClear();
         await screen.pressByTestIdAsync('registries:add:token:choose');
-        const props = modal.show.mock.calls.at(-1)![0].props as import('@/components/ui/forms/valueRefs/SavedSecretPickerModal').SavedSecretPickerModalProps;
+        const props = modal.show.mock.calls.at(-1)![0].props as Extract<import('@/components/ui/forms/valueRefs/SavedSecretPickerModal').SavedSecretPickerModalProps, { selectedId: string | null }>;
         await React.act(async () => { props.onSelectId('happier:shared-secret:v1:acme-token'); });
         await waitForHomeGovernance(() => expect(screen.findByTestId('registries:add:submit')!.props.disabled).toBe(false));
         expect(home.read().record.value).toMatchObject({ sources: [expect.objectContaining({ title: 'Review skills' })] });

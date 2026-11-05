@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -16626,6 +16627,15 @@ La meva pregunta: `,
             review: {
                 environment: "Entorn",
             },
+            newEnvironment: "Entorn nou",
+            name: "Nom",
+            namePlaceholder: "Staging",
+            whoTitle: "Qui pot desplegar",
+            whoManagers: "Els gestors d’aquest entorn",
+            production: "Producció",
+            productionHint: "Marcat com a producció allà on aparegui.",
+            createFailedTitle: "No s’ha pogut desar aquest entorn",
+            creationReview: deploymentCreationReviewTranslations['ca'],
         },
         identity: {
             savedNotOpen: 'Desats, no oberts',

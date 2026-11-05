@@ -6,10 +6,9 @@ import { SecretsList } from '@/components/secrets/SecretsList';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { t } from '@/text';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { SharedSavedSecretReferenceSelectionV1Schema, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
-    selectedId: string | null;
-    onSelectId: (id: string | null) => void;
     /** The source editor's captured Home, retained when this modal stays mounted. */
     scope?: AccountSettingsScope | null;
     /**
@@ -30,13 +29,30 @@ export type SavedSecretPickerModalProps = CustomModalInjectedProps & Readonly<{
      * mutate the account from behind that disclosure.
      */
     allowEdit?: boolean;
-}>;
+}> & (Readonly<{ selectedId: string | null; onSelectId: (id: string | null) => void }>
+    | Readonly<{ referenceSelection: Readonly<{
+        selected: SharedSavedSecretReferenceSelectionV1 | null;
+        onSelect: (selection: SharedSavedSecretReferenceSelectionV1) => void;
+    }> }>);
 
 export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
-    const catalog = useSavedSecretCatalog(Object.prototype.hasOwnProperty.call(props, 'scope')
-        ? { scope: props.scope ?? null }
-        : undefined);
-    const includeNoneRow = props.includeNoneRow !== false;
+    const referenceSelection = 'referenceSelection' in props ? props.referenceSelection : null;
+    const catalog = useSavedSecretCatalog({
+        ...(Object.prototype.hasOwnProperty.call(props, 'scope') ? { scope: props.scope ?? null } : {}),
+        includeMaterial: referenceSelection === null,
+    });
+    const includeNoneRow = referenceSelection === null && props.includeNoneRow !== false;
+    const selectedId = referenceSelection?.selected?.ref ?? ('selectedId' in props ? props.selectedId : null);
+    const onSelectId = (id: string) => {
+        if (referenceSelection) {
+            const resolution = catalog.resolveReference(id);
+            if (resolution.kind !== 'shared_resource' || resolution.status !== 'ready') return;
+            const selection = SharedSavedSecretReferenceSelectionV1Schema.safeParse({ ref: id, resourceRevision: resolution.revision });
+            if (!selection.success) return;
+            referenceSelection.onSelect(selection.data);
+        } else if ('onSelectId' in props) props.onSelectId(id || null);
+        props.onClose();
+    };
     const retrySharedCatalog = React.useCallback(() => {
         void catalog.reload().catch(() => {});
     }, [catalog.reload]);
@@ -55,15 +71,12 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
                 onRenamePersonal={catalog.personalMutations.rename}
                 onRotatePersonal={catalog.personalMutations.rotate}
                 onDeletePersonal={catalog.personalMutations.delete}
-                selectedId={props.selectedId ?? ''}
-                onSelectId={(id) => {
-                    props.onSelectId(id ? id : null);
-                    props.onClose();
-                }}
+                selectedId={selectedId ?? ''}
+                onSelectId={onSelectId}
                 includeNoneRow={includeNoneRow}
                 noneSubtitle={includeNoneRow ? t('settings.mcpServersPickSecretNoneSubtitle') : undefined}
                 allowAdd={props.allowAdd !== false}
-                allowEdit={props.allowEdit !== false}
+                allowEdit={referenceSelection === null && props.allowEdit !== false}
             />
         </ItemList>
     );

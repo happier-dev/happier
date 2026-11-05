@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -17438,6 +17439,15 @@ settingsSession: {
         review: {
             environment: "环境",
         },
+        newEnvironment: "新环境",
+        name: "名称",
+        namePlaceholder: "Staging",
+        whoTitle: "谁可以部署",
+        whoManagers: "此环境的管理者",
+        production: "生产",
+        productionHint: "在所有显示位置都标记为生产环境。",
+        createFailedTitle: "无法保存此环境",
+        creationReview: deploymentCreationReviewTranslations['zh-Hans'],
     },
     identity: {
         savedNotOpen: '已保存，未打开',

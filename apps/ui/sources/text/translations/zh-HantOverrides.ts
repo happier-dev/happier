@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
@@ -13629,7 +13630,11 @@ settingsSession: {
                 filesAndScmSubtitle: '此畫面將重用現有的側邊欄與詳細面板，但範圍將從工作階段改為工作區。',
             },
         },
+
+    deployments: {
+      creationReview: deploymentCreationReviewTranslations['zh-Hant'],
     },
+},
   ...apiTokenSettingsTranslations['zh-Hant'],
   ...embedSettingsTranslations['zh-Hant'],
   ...embedTranslations['zh-Hant'],

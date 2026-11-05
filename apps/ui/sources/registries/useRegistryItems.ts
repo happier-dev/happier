@@ -7,7 +7,7 @@ import { useRegistrySourceRevision } from './useRegistrySourceRevision';
 const parse = (value: unknown) => REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(value);
 const EMPTY_PAGES: readonly RegistryListPageV1[] = [];
 export function useRegistryItems(input: { kind: RegistryKindV1; sourceIds?: readonly string[]; query?: string }, enabled = true) {
-    const revision = useRegistrySourceRevision();
+    const revision = useRegistrySourceRevision(enabled);
     const [more, setMore] = React.useState<{ first: ReturnType<typeof parse> | null; pages: readonly RegistryListPageV1[] } | null>(null);
     const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof parse> | null) => {
         const parsed = parse(value);

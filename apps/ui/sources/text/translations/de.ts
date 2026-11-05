@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -17898,6 +17899,15 @@ settingsSession: {
             review: {
                 environment: "Umgebung",
             },
+            newEnvironment: "Neue Umgebung",
+            name: "Name",
+            namePlaceholder: "Staging",
+            whoTitle: "Wer bereitstellen darf",
+            whoManagers: "Verwalter dieser Umgebung",
+            production: "Produktion",
+            productionHint: "Überall als Produktion gekennzeichnet.",
+            createFailedTitle: "Umgebung konnte nicht gespeichert werden",
+            creationReview: deploymentCreationReviewTranslations['de'],
         },
         identity: {
             savedNotOpen: 'Gespeichert, nicht geöffnet',

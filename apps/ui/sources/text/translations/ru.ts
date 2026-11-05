@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -17775,6 +17776,15 @@ settingsSession: {
         review: {
             environment: "Среда",
         },
+        newEnvironment: "Новое окружение",
+        name: "Название",
+        namePlaceholder: "Staging",
+        whoTitle: "Кто может развёртывать",
+        whoManagers: "Менеджеры этого окружения",
+        production: "Продакшен",
+        productionHint: "Отмечено как продакшн везде, где появляется.",
+        createFailedTitle: "Не удалось сохранить окружение",
+        creationReview: deploymentCreationReviewTranslations['ru'],
     },
     identity: {
         savedNotOpen: 'Сохранённые, не открытые',

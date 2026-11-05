@@ -1,0 +1,673 @@
+type Name = Readonly<{ name: string }>;
+type Machine = Readonly<{ machine: string }>;
+type Port = Readonly<{ service: string; port: number }>;
+type Project = Readonly<{ project: string }>;
+
+export type StoreAppPageTranslation = Readonly<{
+  install: string;
+  addressTitle: string;
+  addressBody: (params: Port) => string;
+  firstRunTitle: string;
+  firstRunBody: string;
+  prepareTitle: (params: Name) => string;
+  prepareDescription: string;
+  whereTitle: string;
+  whereDescription: (params: Name) => string;
+  noMachine: string;
+  firstRunWarningTitle: string;
+  firstRunWarningBody: string;
+  projectTitle: string;
+  projectDescription: string;
+  projectNew: string;
+  projectNewHint: string;
+  projectNameLabel: string;
+  projectOwnerLabel: string;
+  projectOwnerYou: string;
+  nameProject: string;
+  projectsLoading: string;
+  deploysTitle: string;
+  deploysDescription: string;
+  controllerLabel: string;
+  controllerDefault: string;
+  chooseMachine: string;
+  nameEnvironment: string;
+  domainAddress: string;
+  domainAddressFor: (params: Readonly<{ service: string }>) => string;
+  domainDnsHint: (params: Readonly<{ route: string }>) => string;
+  domainPlaceholder: string;
+  domainRequired: string;
+  chooseProject: string;
+  projectPlaceholder: string;
+  review: string;
+  back: string;
+  preparedTitle: string;
+  preparedDescription: string;
+  createOn: (params: Machine) => string;
+  inNewProject: (params: Name) => string;
+  inProject: (params: Project) => string;
+  refused: (params: Name) => string;
+  approvalWaiting: string;
+  approvalDescription: string;
+}>;
+
+const en: StoreAppPageTranslation = {
+  install: 'Install and deploy',
+  addressTitle: 'Your address, with HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier routes it to ${service} on port ${port}`,
+  firstRunTitle: 'Whoever opens it first creates the admin',
+  firstRunBody:
+    'Open it right after it starts; its page reminds you until you do',
+  prepareTitle: ({ name }) => `Install ${name}`,
+  prepareDescription: 'Nothing is created until you confirm.',
+  whereTitle: 'Where it runs',
+  whereDescription: ({ name }) =>
+    `The Machine that runs ${name} and keeps its data.`,
+  noMachine: 'Connect a Machine to run apps',
+  firstRunWarningTitle: 'Until you create the admin, anyone who reaches its address can do it',
+  firstRunWarningBody: 'The address is public once DNS points at it. Create yours first.',
+  projectTitle: 'Project',
+  projectDescription: 'Where its environment is listed.',
+  projectNew: 'New project',
+  projectNewHint: 'Starts empty, just for this App',
+  projectNameLabel: 'Project name',
+  projectOwnerLabel: 'Owner',
+  projectOwnerYou: 'You',
+  nameProject: 'Name the new project',
+  projectsLoading: 'Loading projects…',
+  deploysTitle: 'Deploys',
+  deploysDescription:
+    'Your Account’s choice applies unless you pick a Machine here.',
+  controllerLabel: 'Runs deploys from',
+  controllerDefault: 'Your usual choice',
+  chooseMachine: 'Choose a Machine first',
+  nameEnvironment: 'Name the environment first',
+  domainAddress: 'Address',
+  domainAddressFor: ({ service }) => `Address for ${service}`,
+  domainDnsHint: ({ route }) => `Point this name's DNS at the Machine; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Enter a lowercase hostname for each required address, without a scheme, port or path.',
+  chooseProject: 'Choose a project first',
+  projectPlaceholder: 'Choose a project',
+  review: 'Review',
+  back: 'Back',
+  preparedTitle: 'Ready to install',
+  preparedDescription: 'This is everything that will happen.',
+  createOn: ({ machine }) => `Create the environment on ${machine}`,
+  inNewProject: ({ name }) => `In a new project, ${name} · no repository`,
+  inProject: ({ project }) => `In ${project}`,
+  refused: ({ name }) => `Couldn’t prepare ${name}`,
+  approvalWaiting: 'Waiting for approval',
+  approvalDescription: 'Once it’s approved, review it again here.',
+};
+
+const ca: StoreAppPageTranslation = {
+  install: 'Instal·la i desplega',
+  addressTitle: 'La teva adreça, amb HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier l’encamina a ${service} al port ${port}`,
+  firstRunTitle: 'Qui l’obri primer crea l’administrador',
+  firstRunBody:
+    'Obre-la tan bon punt arrenqui; la seva pàgina t’ho recorda fins que ho facis',
+  prepareTitle: ({ name }) => `Instal·la ${name}`,
+  prepareDescription: 'No es crea res fins que confirmis.',
+  whereTitle: 'On s’executa',
+  whereDescription: ({ name }) =>
+    `La màquina que executa ${name} i en conserva les dades.`,
+  noMachine: 'Connecta una màquina per executar apps',
+  firstRunWarningTitle: 'Fins que no creïs l’administrador, qualsevol que arribi a la seva adreça ho pot fer',
+  firstRunWarningBody: 'L’adreça és pública un cop el DNS hi apunta. Crea el teu primer.',
+  projectTitle: 'Projecte',
+  projectDescription: 'On apareix el seu entorn.',
+  projectNew: 'Projecte nou',
+  projectNewHint: 'Comença buit, només per a aquesta aplicació',
+  projectNameLabel: 'Nom del projecte',
+  projectOwnerLabel: 'Propietari',
+  projectOwnerYou: 'Tu',
+  nameProject: 'Posa nom al projecte nou',
+  projectsLoading: 'Carregant projectes…',
+  deploysTitle: 'Desplegaments',
+  deploysDescription:
+    'S’aplica l’elecció del teu compte si no tries una màquina aquí.',
+  controllerLabel: 'Desplega des de',
+  controllerDefault: 'La teva elecció habitual',
+  chooseMachine: 'Primer tria una màquina',
+  nameEnvironment: 'Primer posa nom a l’entorn',
+  domainAddress: 'Adreça',
+  domainAddressFor: ({ service }) => `Adreça per a ${service}`,
+  domainDnsHint: ({ route }) => `Fes que el DNS d’aquest nom apunti a la màquina; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Introdueix un nom d’amfitrió en minúscules per a cada adreça obligatòria, sense esquema, port ni ruta.',
+  chooseProject: 'Primer tria un projecte',
+  projectPlaceholder: 'Tria un projecte',
+  review: 'Revisa',
+  back: 'Enrere',
+  preparedTitle: 'A punt per instal·lar',
+  preparedDescription: 'Això és tot el que passarà.',
+  createOn: ({ machine }) => `Crear l’entorn a ${machine}`,
+  inNewProject: ({ name }) => `En un projecte nou, ${name} · sense repositori`,
+  inProject: ({ project }) => `A ${project}`,
+  refused: ({ name }) => `No s’ha pogut preparar ${name}`,
+  approvalWaiting: 'Esperant l’aprovació',
+  approvalDescription: 'Quan s’aprovi, torna-la a revisar aquí.',
+};
+
+const de: StoreAppPageTranslation = {
+  install: 'Installieren und bereitstellen',
+  addressTitle: 'Deine Adresse, mit HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier leitet sie an ${service} auf Port ${port}`,
+  firstRunTitle: 'Wer sie zuerst öffnet, legt den Admin an',
+  firstRunBody:
+    'Öffne sie direkt nach dem Start; ihre Seite erinnert dich, bis du es tust',
+  prepareTitle: ({ name }) => `${name} installieren`,
+  prepareDescription: 'Nichts wird angelegt, bis du bestätigst.',
+  whereTitle: 'Wo sie läuft',
+  whereDescription: ({ name }) =>
+    `Die Maschine, die ${name} ausführt und ihre Daten behält.`,
+  noMachine: 'Verbinde eine Maschine, um Apps auszuführen',
+  firstRunWarningTitle: 'Bis du den Admin anlegst, kann das jeder, der ihre Adresse erreicht',
+  firstRunWarningBody: 'Die Adresse ist öffentlich, sobald DNS darauf zeigt. Leg deinen zuerst an.',
+  projectTitle: 'Projekt',
+  projectDescription: 'Wo ihre Umgebung aufgeführt wird.',
+  projectNew: 'Neues Projekt',
+  projectNewHint: 'Startet leer, nur für diese App',
+  projectNameLabel: 'Projektname',
+  projectOwnerLabel: 'Eigentümer',
+  projectOwnerYou: 'Du',
+  nameProject: 'Gib dem neuen Projekt einen Namen',
+  projectsLoading: 'Projekte werden geladen…',
+  deploysTitle: 'Bereitstellungen',
+  deploysDescription:
+    'Die Wahl deines Kontos gilt, wenn du hier keine Maschine wählst.',
+  controllerLabel: 'Bereitstellung von',
+  controllerDefault: 'Deine übliche Wahl',
+  chooseMachine: 'Wähle zuerst eine Maschine',
+  nameEnvironment: 'Benenne zuerst die Umgebung',
+  domainAddress: 'Adresse',
+  domainAddressFor: ({ service }) => `Adresse für ${service}`,
+  domainDnsHint: ({ route }) => `Richte den DNS dieses Namens auf die Maschine; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Gib für jede erforderliche Adresse einen Hostnamen in Kleinbuchstaben ohne Schema, Port oder Pfad ein.',
+  chooseProject: 'Wähle zuerst ein Projekt',
+  projectPlaceholder: 'Projekt wählen',
+  review: 'Prüfen',
+  back: 'Zurück',
+  preparedTitle: 'Bereit zur Installation',
+  preparedDescription: 'Das ist alles, was passieren wird.',
+  createOn: ({ machine }) => `Die Umgebung auf ${machine} anlegen`,
+  inNewProject: ({ name }) =>
+    `In einem neuen Projekt, ${name} · ohne Repository`,
+  inProject: ({ project }) => `In ${project}`,
+  refused: ({ name }) => `${name} konnte nicht vorbereitet werden`,
+  approvalWaiting: 'Wartet auf Freigabe',
+  approvalDescription: 'Sobald sie freigegeben ist, prüfe sie hier erneut.',
+};
+
+const es: StoreAppPageTranslation = {
+  install: 'Instalar y desplegar',
+  addressTitle: 'Tu dirección, con HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier la dirige a ${service} en el puerto ${port}`,
+  firstRunTitle: 'Quien la abra primero crea el administrador',
+  firstRunBody:
+    'Ábrela en cuanto arranque; su página te lo recuerda hasta que lo hagas',
+  prepareTitle: ({ name }) => `Instalar ${name}`,
+  prepareDescription: 'No se crea nada hasta que confirmes.',
+  whereTitle: 'Dónde se ejecuta',
+  whereDescription: ({ name }) =>
+    `La máquina que ejecuta ${name} y guarda sus datos.`,
+  noMachine: 'Conecta una máquina para ejecutar apps',
+  firstRunWarningTitle: 'Hasta que crees el administrador, cualquiera que llegue a su dirección puede hacerlo',
+  firstRunWarningBody: 'La dirección es pública en cuanto el DNS apunta a ella. Crea el tuyo primero.',
+  projectTitle: 'Proyecto',
+  projectDescription: 'Dónde aparece su entorno.',
+  projectNew: 'Proyecto nuevo',
+  projectNewHint: 'Empieza vacío, solo para esta aplicación',
+  projectNameLabel: 'Nombre del proyecto',
+  projectOwnerLabel: 'Propietario',
+  projectOwnerYou: 'Tú',
+  nameProject: 'Ponle nombre al proyecto nuevo',
+  projectsLoading: 'Cargando proyectos…',
+  deploysTitle: 'Despliegues',
+  deploysDescription:
+    'Se aplica la elección de tu cuenta si no eliges una máquina aquí.',
+  controllerLabel: 'Despliega desde',
+  controllerDefault: 'Tu elección habitual',
+  chooseMachine: 'Elige primero una máquina',
+  nameEnvironment: 'Pon primero nombre al entorno',
+  domainAddress: 'Dirección',
+  domainAddressFor: ({ service }) => `Dirección para ${service}`,
+  domainDnsHint: ({ route }) => `Apunta el DNS de este nombre a la máquina; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Introduce un nombre de host en minúsculas para cada dirección obligatoria, sin esquema, puerto ni ruta.',
+  chooseProject: 'Elige primero un proyecto',
+  projectPlaceholder: 'Elige un proyecto',
+  review: 'Revisar',
+  back: 'Atrás',
+  preparedTitle: 'Lista para instalar',
+  preparedDescription: 'Esto es todo lo que pasará.',
+  createOn: ({ machine }) => `Crear el entorno en ${machine}`,
+  inNewProject: ({ name }) => `En un proyecto nuevo, ${name} · sin repositorio`,
+  inProject: ({ project }) => `En ${project}`,
+  refused: ({ name }) => `No se pudo preparar ${name}`,
+  approvalWaiting: 'Esperando aprobación',
+  approvalDescription: 'Cuando se apruebe, revísala de nuevo aquí.',
+};
+
+const fr: StoreAppPageTranslation = {
+  install: 'Installer et déployer',
+  addressTitle: 'Ton adresse, en HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier la dirige vers ${service} sur le port ${port}`,
+  firstRunTitle: 'La première personne qui l’ouvre crée l’administrateur',
+  firstRunBody:
+    'Ouvre-la dès son démarrage ; sa page te le rappelle tant que ce n’est pas fait',
+  prepareTitle: ({ name }) => `Installer ${name}`,
+  prepareDescription: 'Rien n’est créé tant que tu ne confirmes pas.',
+  whereTitle: 'Où elle tourne',
+  whereDescription: ({ name }) =>
+    `La machine qui exécute ${name} et garde ses données.`,
+  noMachine: 'Connecte une machine pour exécuter des apps',
+  firstRunWarningTitle: 'Tant que tu n’as pas créé l’admin, n’importe qui atteignant son adresse peut le faire',
+  firstRunWarningBody: 'L’adresse est publique dès que le DNS pointe dessus. Crée le tien d’abord.',
+  projectTitle: 'Projet',
+  projectDescription: 'Où son environnement est listé.',
+  projectNew: 'Nouveau projet',
+  projectNewHint: 'Démarre vide, rien que pour cette application',
+  projectNameLabel: 'Nom du projet',
+  projectOwnerLabel: 'Propriétaire',
+  projectOwnerYou: 'Toi',
+  nameProject: 'Donne un nom au nouveau projet',
+  projectsLoading: 'Chargement des projets…',
+  deploysTitle: 'Déploiements',
+  deploysDescription:
+    'Le choix de ton compte s’applique si tu ne choisis pas de machine ici.',
+  controllerLabel: 'Déploie depuis',
+  controllerDefault: 'Ton choix habituel',
+  chooseMachine: 'Choisis d’abord une machine',
+  nameEnvironment: 'Nomme d’abord l’environnement',
+  domainAddress: 'Adresse',
+  domainAddressFor: ({ service }) => `Adresse pour ${service}`,
+  domainDnsHint: ({ route }) => `Fais pointer le DNS de ce nom vers la machine ; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Saisis un nom d’hôte en minuscules pour chaque adresse requise, sans schéma, port ni chemin.',
+  chooseProject: 'Choisis d’abord un projet',
+  projectPlaceholder: 'Choisis un projet',
+  review: 'Vérifier',
+  back: 'Retour',
+  preparedTitle: 'Prête à installer',
+  preparedDescription: 'Voici tout ce qui va se passer.',
+  createOn: ({ machine }) => `Créer l’environnement sur ${machine}`,
+  inNewProject: ({ name }) => `Dans un nouveau projet, ${name} · sans dépôt`,
+  inProject: ({ project }) => `Dans ${project}`,
+  refused: ({ name }) => `Impossible de préparer ${name}`,
+  approvalWaiting: 'En attente d’approbation',
+  approvalDescription: 'Une fois approuvée, vérifie-la à nouveau ici.',
+};
+
+const it: StoreAppPageTranslation = {
+  install: 'Installa e distribuisci',
+  addressTitle: 'Il tuo indirizzo, con HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier lo instrada a ${service} sulla porta ${port}`,
+  firstRunTitle: 'Chi la apre per primo crea l’amministratore',
+  firstRunBody:
+    'Aprila appena parte; la sua pagina te lo ricorda finché non lo fai',
+  prepareTitle: ({ name }) => `Installa ${name}`,
+  prepareDescription: 'Non viene creato nulla finché non confermi.',
+  whereTitle: 'Dove gira',
+  whereDescription: ({ name }) =>
+    `La macchina che esegue ${name} e ne conserva i dati.`,
+  noMachine: 'Collega una macchina per eseguire app',
+  firstRunWarningTitle: 'Finché non crei l’amministratore, chiunque raggiunga il suo indirizzo può farlo',
+  firstRunWarningBody: 'L’indirizzo è pubblico appena il DNS punta lì. Crea il tuo per primo.',
+  projectTitle: 'Progetto',
+  projectDescription: 'Dove compare il suo ambiente.',
+  projectNew: 'Nuovo progetto',
+  projectNewHint: 'Parte vuoto, solo per questa app',
+  projectNameLabel: 'Nome del progetto',
+  projectOwnerLabel: 'Proprietario',
+  projectOwnerYou: 'Tu',
+  nameProject: 'Dai un nome al nuovo progetto',
+  projectsLoading: 'Caricamento progetti…',
+  deploysTitle: 'Distribuzioni',
+  deploysDescription:
+    'Vale la scelta del tuo account se qui non scegli una macchina.',
+  controllerLabel: 'Distribuisce da',
+  controllerDefault: 'La tua scelta abituale',
+  chooseMachine: 'Scegli prima una macchina',
+  nameEnvironment: 'Dai prima un nome all’ambiente',
+  domainAddress: 'Indirizzo',
+  domainAddressFor: ({ service }) => `Indirizzo per ${service}`,
+  domainDnsHint: ({ route }) => `Punta il DNS di questo nome alla macchina; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Inserisci un nome host in minuscolo per ogni indirizzo obbligatorio, senza schema, porta o percorso.',
+  chooseProject: 'Scegli prima un progetto',
+  projectPlaceholder: 'Scegli un progetto',
+  review: 'Verifica',
+  back: 'Indietro',
+  preparedTitle: 'Pronta da installare',
+  preparedDescription: 'Ecco tutto quello che succederà.',
+  createOn: ({ machine }) => `Creare l’ambiente su ${machine}`,
+  inNewProject: ({ name }) =>
+    `In un nuovo progetto, ${name} · senza repository`,
+  inProject: ({ project }) => `In ${project}`,
+  refused: ({ name }) => `Impossibile preparare ${name}`,
+  approvalWaiting: 'In attesa di approvazione',
+  approvalDescription: 'Quando viene approvata, verificala di nuovo qui.',
+};
+
+const ja: StoreAppPageTranslation = {
+  install: 'インストールしてデプロイ',
+  addressTitle: 'あなたのアドレス（HTTPS）',
+  addressBody: ({ service, port }) =>
+    `Happier が ${service} のポート ${port} にルーティングします`,
+  firstRunTitle: '最初に開いた人が管理者を作成します',
+  firstRunBody:
+    '起動したらすぐに開いてください。完了するまでページで案内します',
+  prepareTitle: ({ name }) => `${name} をインストール`,
+  prepareDescription: '確認するまで何も作成されません。',
+  whereTitle: '実行場所',
+  whereDescription: ({ name }) =>
+    `${name} を実行し、データを保持するマシンです。`,
+  noMachine: 'アプリを実行するにはマシンを接続してください',
+  firstRunWarningTitle: '管理者を作成するまでは、そのアドレスにアクセスできる人なら誰でも作成できます',
+  firstRunWarningBody: 'DNS が向いた時点でアドレスは公開されます。先に自分の管理者を作成してください。',
+  projectTitle: 'プロジェクト',
+  projectDescription: '環境が表示される場所です。',
+  projectNew: '新しいプロジェクト',
+  projectNewHint: 'このアプリ専用の空のプロジェクト',
+  projectNameLabel: 'プロジェクト名',
+  projectOwnerLabel: '所有者',
+  projectOwnerYou: 'あなた',
+  nameProject: '新しいプロジェクトに名前を付けてください',
+  projectsLoading: 'プロジェクトを読み込み中…',
+  deploysTitle: 'デプロイ',
+  deploysDescription:
+    'ここでマシンを選ばない場合はアカウントの設定が使われます。',
+  controllerLabel: 'デプロイ元',
+  controllerDefault: 'いつもの設定',
+  chooseMachine: '先にマシンを選んでください',
+  nameEnvironment: '先に環境名を入力してください',
+  domainAddress: 'アドレス',
+  domainAddressFor: ({ service }) => `${service} のアドレス`,
+  domainDnsHint: ({ route }) => `この名前の DNS をマシンに向けてください。${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: '必須のアドレスごとに、スキーム・ポート・パスを含まない小文字のホスト名を入力してください。',
+  chooseProject: '先にプロジェクトを選んでください',
+  projectPlaceholder: 'プロジェクトを選択',
+  review: '確認',
+  back: '戻る',
+  preparedTitle: 'インストールの準備ができました',
+  preparedDescription: '実行される内容はこれですべてです。',
+  createOn: ({ machine }) => `${machine} に環境を作成`,
+  inNewProject: ({ name }) => `新しいプロジェクト ${name} · リポジトリなし`,
+  inProject: ({ project }) => `${project} 内`,
+  refused: ({ name }) => `${name} を準備できませんでした`,
+  approvalWaiting: '承認待ち',
+  approvalDescription: '承認されたら、ここで再度確認してください。',
+};
+
+const pl: StoreAppPageTranslation = {
+  install: 'Zainstaluj i wdróż',
+  addressTitle: 'Twój adres, z HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier kieruje go do ${service} na porcie ${port}`,
+  firstRunTitle: 'Kto otworzy ją pierwszy, tworzy administratora',
+  firstRunBody:
+    'Otwórz ją zaraz po starcie; jej strona przypomina o tym, dopóki tego nie zrobisz',
+  prepareTitle: ({ name }) => `Zainstaluj ${name}`,
+  prepareDescription: 'Nic nie zostanie utworzone, dopóki nie potwierdzisz.',
+  whereTitle: 'Gdzie działa',
+  whereDescription: ({ name }) =>
+    `Maszyna, która uruchamia ${name} i przechowuje jej dane.`,
+  noMachine: 'Połącz maszynę, aby uruchamiać aplikacje',
+  firstRunWarningTitle: 'Dopóki nie utworzysz administratora, może to zrobić każdy, kto dotrze pod jej adres',
+  firstRunWarningBody: 'Adres jest publiczny, gdy tylko DNS na niego wskaże. Utwórz swoje konto jako pierwszy.',
+  projectTitle: 'Projekt',
+  projectDescription: 'Gdzie widać jej środowisko.',
+  projectNew: 'Nowy projekt',
+  projectNewHint: 'Zaczyna pusty, tylko dla tej aplikacji',
+  projectNameLabel: 'Nazwa projektu',
+  projectOwnerLabel: 'Właściciel',
+  projectOwnerYou: 'Ty',
+  nameProject: 'Nazwij nowy projekt',
+  projectsLoading: 'Wczytywanie projektów…',
+  deploysTitle: 'Wdrożenia',
+  deploysDescription:
+    'Obowiązuje wybór twojego konta, chyba że wybierzesz tu maszynę.',
+  controllerLabel: 'Wdraża z',
+  controllerDefault: 'Twój zwykły wybór',
+  chooseMachine: 'Najpierw wybierz maszynę',
+  nameEnvironment: 'Najpierw nazwij środowisko',
+  domainAddress: 'Adres',
+  domainAddressFor: ({ service }) => `Adres dla ${service}`,
+  domainDnsHint: ({ route }) => `Skieruj DNS tej nazwy na maszynę; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Wpisz nazwę hosta małymi literami dla każdego wymaganego adresu, bez schematu, portu ani ścieżki.',
+  chooseProject: 'Najpierw wybierz projekt',
+  projectPlaceholder: 'Wybierz projekt',
+  review: 'Przejrzyj',
+  back: 'Wstecz',
+  preparedTitle: 'Gotowa do instalacji',
+  preparedDescription: 'To wszystko, co się wydarzy.',
+  createOn: ({ machine }) => `Utworzyć środowisko na ${machine}`,
+  inNewProject: ({ name }) => `W nowym projekcie, ${name} · bez repozytorium`,
+  inProject: ({ project }) => `W ${project}`,
+  refused: ({ name }) => `Nie udało się przygotować ${name}`,
+  approvalWaiting: 'Czeka na zatwierdzenie',
+  approvalDescription: 'Po zatwierdzeniu przejrzyj ją tu ponownie.',
+};
+
+const pt: StoreAppPageTranslation = {
+  install: 'Instalar e implementar',
+  addressTitle: 'O teu endereço, com HTTPS',
+  addressBody: ({ service, port }) =>
+    `O Happier encaminha-o para ${service} na porta ${port}`,
+  firstRunTitle: 'Quem a abrir primeiro cria o administrador',
+  firstRunBody: 'Abre-a assim que arrancar; a página lembra-te até o fazeres',
+  prepareTitle: ({ name }) => `Instalar ${name}`,
+  prepareDescription: 'Nada é criado até confirmares.',
+  whereTitle: 'Onde corre',
+  whereDescription: ({ name }) =>
+    `A máquina que executa ${name} e guarda os seus dados.`,
+  noMachine: 'Liga uma máquina para executar apps',
+  firstRunWarningTitle: 'Até criares o administrador, qualquer pessoa que chegue ao seu endereço o pode fazer',
+  firstRunWarningBody: 'O endereço fica público assim que o DNS aponta para ele. Cria o teu primeiro.',
+  projectTitle: 'Projeto',
+  projectDescription: 'Onde o seu ambiente aparece.',
+  projectNew: 'Novo projeto',
+  projectNewHint: 'Começa vazio, só para esta aplicação',
+  projectNameLabel: 'Nome do projeto',
+  projectOwnerLabel: 'Proprietário',
+  projectOwnerYou: 'Tu',
+  nameProject: 'Dá um nome ao novo projeto',
+  projectsLoading: 'A carregar projetos…',
+  deploysTitle: 'Implementações',
+  deploysDescription:
+    'Aplica-se a escolha da tua conta, a menos que escolhas uma máquina aqui.',
+  controllerLabel: 'Implementa a partir de',
+  controllerDefault: 'A tua escolha habitual',
+  chooseMachine: 'Escolhe primeiro uma máquina',
+  nameEnvironment: 'Dá primeiro um nome ao ambiente',
+  domainAddress: 'Endereço',
+  domainAddressFor: ({ service }) => `Endereço para ${service}`,
+  domainDnsHint: ({ route }) => `Aponta o DNS deste nome para a máquina; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Introduz um nome de anfitrião em minúsculas para cada endereço obrigatório, sem esquema, porta ou caminho.',
+  chooseProject: 'Escolhe primeiro um projeto',
+  projectPlaceholder: 'Escolhe um projeto',
+  review: 'Rever',
+  back: 'Voltar',
+  preparedTitle: 'Pronta para instalar',
+  preparedDescription: 'É tudo o que vai acontecer.',
+  createOn: ({ machine }) => `Criar o ambiente em ${machine}`,
+  inNewProject: ({ name }) => `Num novo projeto, ${name} · sem repositório`,
+  inProject: ({ project }) => `Em ${project}`,
+  refused: ({ name }) => `Não foi possível preparar ${name}`,
+  approvalWaiting: 'À espera de aprovação',
+  approvalDescription: 'Quando for aprovada, revê-a aqui de novo.',
+};
+
+const ru: StoreAppPageTranslation = {
+  install: 'Установить и развернуть',
+  addressTitle: 'Ваш адрес, с HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier направляет его на ${service}, порт ${port}`,
+  firstRunTitle: 'Кто откроет первым, тот создаст администратора',
+  firstRunBody:
+    'Откройте сразу после запуска; страница будет напоминать, пока вы этого не сделаете',
+  prepareTitle: ({ name }) => `Установить ${name}`,
+  prepareDescription: 'Ничего не создаётся, пока вы не подтвердите.',
+  whereTitle: 'Где работает',
+  whereDescription: ({ name }) =>
+    `Машина, которая запускает ${name} и хранит его данные.`,
+  noMachine: 'Подключите машину, чтобы запускать приложения',
+  firstRunWarningTitle: 'Пока вы не создадите администратора, это может сделать любой, кто откроет её адрес',
+  firstRunWarningBody: 'Адрес становится публичным, как только на него указывает DNS. Создайте свою учётную запись первым.',
+  projectTitle: 'Проект',
+  projectDescription: 'Где отображается его окружение.',
+  projectNew: 'Новый проект',
+  projectNewHint: 'Создаётся пустым, только для этого приложения',
+  projectNameLabel: 'Название проекта',
+  projectOwnerLabel: 'Владелец',
+  projectOwnerYou: 'Вы',
+  nameProject: 'Назовите новый проект',
+  projectsLoading: 'Загрузка проектов…',
+  deploysTitle: 'Развёртывания',
+  deploysDescription:
+    'Действует выбор вашего аккаунта, если здесь не выбрана машина.',
+  controllerLabel: 'Развёртывает с',
+  controllerDefault: 'Ваш обычный выбор',
+  chooseMachine: 'Сначала выберите машину',
+  nameEnvironment: 'Сначала назовите окружение',
+  domainAddress: 'Адрес',
+  domainAddressFor: ({ service }) => `Адрес для ${service}`,
+  domainDnsHint: ({ route }) => `Направь DNS этого имени на машину; ${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: 'Укажи имя хоста строчными буквами для каждого обязательного адреса, без схемы, порта и пути.',
+  chooseProject: 'Сначала выберите проект',
+  projectPlaceholder: 'Выберите проект',
+  review: 'Проверить',
+  back: 'Назад',
+  preparedTitle: 'Готово к установке',
+  preparedDescription: 'Вот всё, что произойдёт.',
+  createOn: ({ machine }) => `Создать окружение на ${machine}`,
+  inNewProject: ({ name }) => `В новом проекте ${name} · без репозитория`,
+  inProject: ({ project }) => `В ${project}`,
+  refused: ({ name }) => `Не удалось подготовить ${name}`,
+  approvalWaiting: 'Ожидает одобрения',
+  approvalDescription: 'После одобрения проверьте его здесь ещё раз.',
+};
+
+const zhHans: StoreAppPageTranslation = {
+  install: '安装并部署',
+  addressTitle: '你的地址，使用 HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier 将其路由到 ${service} 的 ${port} 端口`,
+  firstRunTitle: '第一个打开它的人创建管理员',
+  firstRunBody: '启动后请立即打开；在你完成之前，它的页面会一直提醒',
+  prepareTitle: ({ name }) => `安装 ${name}`,
+  prepareDescription: '确认之前不会创建任何内容。',
+  whereTitle: '运行位置',
+  whereDescription: ({ name }) => `运行 ${name} 并保存其数据的机器。`,
+  noMachine: '连接一台机器以运行应用',
+  firstRunWarningTitle: '在你创建管理员之前，任何访问其地址的人都可以创建',
+  firstRunWarningBody: 'DNS 指向后地址即公开。请先创建你的管理员。',
+  projectTitle: '项目',
+  projectDescription: '其环境显示的位置。',
+  projectNew: '新项目',
+  projectNewHint: '为此应用新建一个空项目',
+  projectNameLabel: '项目名称',
+  projectOwnerLabel: '所有者',
+  projectOwnerYou: '你',
+  nameProject: '为新项目命名',
+  projectsLoading: '正在加载项目…',
+  deploysTitle: '部署',
+  deploysDescription: '如果不在此选择机器，则使用你账户的设置。',
+  controllerLabel: '部署来源',
+  controllerDefault: '你的常用选择',
+  chooseMachine: '请先选择机器',
+  nameEnvironment: '请先为环境命名',
+  domainAddress: '地址',
+  domainAddressFor: ({ service }) => `${service} 的地址`,
+  domainDnsHint: ({ route }) => `将此名称的 DNS 指向机器；${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: '请为每个必填地址输入小写主机名，不含协议、端口或路径。',
+  chooseProject: '请先选择项目',
+  projectPlaceholder: '选择项目',
+  review: '审核',
+  back: '返回',
+  preparedTitle: '已准备好安装',
+  preparedDescription: '以下是将要发生的全部内容。',
+  createOn: ({ machine }) => `在 ${machine} 上创建环境`,
+  inNewProject: ({ name }) => `在新项目 ${name} 中 · 无仓库`,
+  inProject: ({ project }) => `在 ${project} 中`,
+  refused: ({ name }) => `无法准备 ${name}`,
+  approvalWaiting: '等待批准',
+  approvalDescription: '批准后，请在这里再次审核。',
+};
+
+const zhHant: StoreAppPageTranslation = {
+  install: '安裝並部署',
+  addressTitle: '你的位址，使用 HTTPS',
+  addressBody: ({ service, port }) =>
+    `Happier 將其路由到 ${service} 的 ${port} 埠`,
+  firstRunTitle: '第一個開啟它的人建立管理員',
+  firstRunBody: '啟動後請立即開啟；在你完成之前，它的頁面會持續提醒',
+  prepareTitle: ({ name }) => `安裝 ${name}`,
+  prepareDescription: '確認之前不會建立任何內容。',
+  whereTitle: '執行位置',
+  whereDescription: ({ name }) => `執行 ${name} 並保存其資料的機器。`,
+  noMachine: '連接一台機器以執行應用程式',
+  firstRunWarningTitle: '在你建立管理員之前，任何存取其位址的人都可以建立',
+  firstRunWarningBody: 'DNS 指向後位址即公開。請先建立你的管理員。',
+  projectTitle: '專案',
+  projectDescription: '其環境顯示的位置。',
+  projectNew: '新專案',
+  projectNewHint: '為此應用程式新建一個空專案',
+  projectNameLabel: '專案名稱',
+  projectOwnerLabel: '擁有者',
+  projectOwnerYou: '你',
+  nameProject: '為新專案命名',
+  projectsLoading: '正在載入專案…',
+  deploysTitle: '部署',
+  deploysDescription: '如果不在此選擇機器，則使用你帳戶的設定。',
+  controllerLabel: '部署來源',
+  controllerDefault: '你的常用選擇',
+  chooseMachine: '請先選擇機器',
+  nameEnvironment: '請先為環境命名',
+  domainAddress: '位址',
+  domainAddressFor: ({ service }) => `${service} 的位址`,
+  domainDnsHint: ({ route }) => `將此名稱的 DNS 指向機器；${route}`,
+  domainPlaceholder: 'status.example.com',
+  domainRequired: '請為每個必填地址輸入小寫主機名稱，不含通訊協定、連接埠或路徑。',
+  chooseProject: '請先選擇專案',
+  projectPlaceholder: '選擇專案',
+  review: '審核',
+  back: '返回',
+  preparedTitle: '已準備好安裝',
+  preparedDescription: '以下是將要發生的全部內容。',
+  createOn: ({ machine }) => `在 ${machine} 上建立環境`,
+  inNewProject: ({ name }) => `在新專案 ${name} 中 · 無儲存庫`,
+  inProject: ({ project }) => `在 ${project} 中`,
+  refused: ({ name }) => `無法準備 ${name}`,
+  approvalWaiting: '等待核准',
+  approvalDescription: '核准後，請在這裡再次審核。',
+};
+
+export const storeAppPageTranslations = {
+  en,
+  ca,
+  de,
+  es,
+  fr,
+  it,
+  ja,
+  pl,
+  pt,
+  ru,
+  zhHans,
+  zhHant,
+} as const;

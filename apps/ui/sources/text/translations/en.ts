@@ -1,3 +1,4 @@
+import { deploymentCreationReviewTranslations } from './deploymentCreationReviewTranslations';
 import { botTemplateRecipientTranslations } from './botTemplateRecipientTranslations';
 import { botTemplateTranslations } from './botTemplateTranslations';
 import { screenCaptureCopy } from './screenCaptureTranslations.shared';
@@ -21369,6 +21370,15 @@ const enProjects = {
       review: {
           environment: "Environment",
       },
+      newEnvironment: "New environment",
+      name: "Name",
+      namePlaceholder: "Staging",
+      whoTitle: "Who may deploy",
+      whoManagers: "Managers of this environment",
+      production: "Production",
+      productionHint: "Marked as production wherever it appears.",
+      createFailedTitle: "Couldn’t save this environment",
+      creationReview: deploymentCreationReviewTranslations['en'],
   },
   identity: {
     savedNotOpen: 'Saved, not open',

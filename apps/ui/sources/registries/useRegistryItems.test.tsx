@@ -1,10 +1,11 @@
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
@@ -33,6 +34,7 @@ const [{ usePluginSettingsScreenState }, { usePromptLibraryCatalogValue }] = awa
 ]);
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { useRegistrySourceRevision } = await import('./useRegistrySourceRevision');
+const { useRegistrySources } = await import('./useRegistrySources');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getPromptLibraryCatalogSnapshot, getPromptLibraryCatalogValue, beginPromptLibraryCatalogRowsLoad,
     applyPromptLibraryCatalogRowsSnapshot, applyPromptLibraryCatalogAcknowledgedRecord } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
@@ -72,6 +74,26 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('keeps source-revision acquisition cold while every registry consumer is disabled', async () => {
+        const { fixture, sourceId } = await setupHome('disabled-revision-demand');
+        const before = fixture.requests.length;
+        let enabled = false;
+        const hook = await renderHook(() => ({
+            sources: useRegistrySources('plugin', enabled),
+            list: useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }, enabled),
+            selected: useRegistryItem({ kind: 'plugin', sourceId, itemId: 'sample.plugin' }, enabled),
+        }));
+        const catalogReads = () => fixture.requests.slice(before).filter(request =>
+            request.method === 'GET' && request.path.split('?')[0] === PROMPT_LIBRARY_ROWS_ROUTE_V1).length;
+        await flushHookEffects();
+        expect(catalogReads()).toBe(0);
+        enabled = true;
+        await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().list.items).toHaveLength(1));
+        expect(catalogReads()).toBe(1);
+        await hook.unmount();
+    });
+
     it('renders registry observers only for changed source facts, not read freshness', async () => {
         const { fixture } = await setupHome('source-render-cost');
         let renders = 0;

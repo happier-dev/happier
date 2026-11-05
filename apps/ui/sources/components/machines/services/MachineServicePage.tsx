@@ -21,6 +21,8 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
+import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionSheet';
+import { canAdoptMachineService } from './adoption/machineServiceAdoptionPresentation';
 import {
   machineServiceControls,
   machineServiceDeclaredFacts,
@@ -171,6 +173,9 @@ function MachineServicePresent(props: Readonly<{
     since: formatWithCachedDateTimeFormatter(sinceMs, undefined, SINCE_FORMAT),
   });
   const portOpen = useServicePortOpen(props.offline ? null : service.port ?? null);
+  // A watched Compose project leads with adopting it (lab `services/adopt`); a Machine that isn't answering can't capture it.
+  const adoptable = canAdoptMachineService(service);
+  const adopt = adoptable && !props.offline;
   return (
     <View testID="machine-service-page">
       <MachineTabSubHead
@@ -179,8 +184,17 @@ function MachineServicePresent(props: Readonly<{
         back={props.back}
         description={meta || null}
       >
-        {visible || portOpen ? (
+        {visible || portOpen || adopt ? (
           <View style={styles.controls} testID="machine-service-controls">
+            {adopt ? (
+              <RoundButton
+                testID="machine-service-adopt"
+                size="small"
+                title={t('machineServices.adopt.action')}
+                onPress={() => showMachineServiceAdoption({ serverId: props.serverId, machineId: props.machineId,
+                  machineName, service })}
+              />
+            ) : null}
             {portOpen ? (
               <RoundButton
                 testID="machine-service-open"
@@ -222,6 +236,11 @@ function MachineServicePresent(props: Readonly<{
         {portOpen?.reason ? (
           <Text variant="meta" testID="machine-service-open-reason" style={[styles.outcome, { color: theme.colors.text.secondary }]}>
             {portOpen.reason}
+          </Text>
+        ) : null}
+        {adoptable ? (
+          <Text variant="body" testID="machine-service-watched-note" style={[styles.since, { color: theme.colors.text.secondary }]}>
+            {t('machineServices.adopt.watchedNote', { service: service.name })}
           </Text>
         ) : null}
         {since === null ? null : (

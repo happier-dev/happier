@@ -3,16 +3,21 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    AccountSettingsV2GetResponseSchema,
-    CurrentCursorResponseSchema,
-    FeaturesResponseSchema,
+    AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import {
+    CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import {
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
     SavedSecretCatalogEntryV1Schema,
-    SavedSecretResourceMaterialsResponseV1Schema,
+    SavedSecretResourceMaterialsResponseV1Schema} from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import {
     sealSavedSecretResourceStoredContentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { storage } from '@/sync/domains/state/storage';
@@ -111,6 +116,8 @@ describe('SavedSecretPickerModal', () => {
             serverUrl: 'https://secret-picker.example.test', accountId: 'account-a',
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
+                const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
+                if (bootstrap) return bootstrap;
                 if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
                 if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
                 if (init?.method && init.method !== 'GET') {
@@ -125,6 +132,9 @@ describe('SavedSecretPickerModal', () => {
                 if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
                     content: { t: 'plain', v: { secrets: [], experiments: true } }, version: 1,
                 }));
+                if (path === '/v1/account/saved-secrets/resources') {
+                    return Response.json({ resources: materialReply.resources.map(resource => resource.entry) });
+                }
                 if (path === '/v1/account/saved-secrets/resources/materials') {
                     if (materialUnavailable) return new Response('{}', { status: 503 });
                     return Response.json(materialReply);
@@ -155,6 +165,7 @@ describe('SavedSecretPickerModal', () => {
             selectedId: null,
             onSelectId: vi.fn(),
         }));
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${privateRef}:rename`)).toBeTruthy());
 
         for (const action of ['rename', 'replace', 'delete']) {
             expect(screen.findByTestId(`saved-secret:${privateRef}:${action}`)).toBeTruthy();
@@ -185,11 +196,32 @@ describe('SavedSecretPickerModal', () => {
         expect(screen.findByTestId('saved-secret:none')).toBeNull();
 
         // Selecting an already-stored record stays the whole point of the surface.
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${privateRef}`)
+            .some(node => typeof node.props.onPress === 'function')).toBe(true));
         screen.pressByTestId(`saved-secret:${privateRef}`);
         expect(onSelectId).toHaveBeenCalledWith(privateRef);
         expect(onClose).toHaveBeenCalledTimes(1);
         expect(writes).toEqual([]);
         expect(storage.getState().settings.secrets).toEqual([]);
+    });
+
+    it('settles reference-only selection with the current exact revision and no material in its result', async () => {
+        const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
+        const onSelect = vi.fn();
+        const onSelectId = vi.fn();
+        const onClose = vi.fn();
+        const screen = await renderScreen(React.createElement(SavedSecretPickerModal, {
+            onClose, selectedId: null, onSelectId,
+            referenceSelection: { selected: null, onSelect },
+        }));
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${readyEntry.ref}`)
+            .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
+        screen.pressByTestId('saved-secret:happier:shared-secret:v1:shared-ready');
+        expect(onSelect).toHaveBeenCalledWith({ ref: readyEntry.ref, resourceRevision: readyEntry.revision });
+        expect(onSelectId).not.toHaveBeenCalled();
+        expect(onClose).toHaveBeenCalledOnce();
+        expect(writes).toEqual([]);
+        expect(JSON.stringify(onSelect.mock.calls)).not.toContain('shared-value');
     });
 
     it('selects ready shared resources and keeps preparing access visible but disabled', async () => {
@@ -200,6 +232,8 @@ describe('SavedSecretPickerModal', () => {
             onClose, selectedId: null, onSelectId,
         }));
 
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${readyEntry.ref}`)
+            .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
         screen.pressByTestId('saved-secret:happier:shared-secret:v1:shared-ready');
         expect(onSelectId).toHaveBeenCalledWith('happier:shared-secret:v1:shared-ready');
         expect(onClose).toHaveBeenCalledTimes(1);
@@ -221,6 +255,8 @@ describe('SavedSecretPickerModal', () => {
             onSelectId,
         };
         const screen = await renderScreen(React.createElement(SavedSecretPickerModal, pickerProps));
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${readyEntry.ref}`)
+            .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
         materialUnavailable = true;
         await act(async () => {
             await expect(refreshSavedSecretCatalog(scope)).rejects.toThrow();
@@ -234,6 +270,7 @@ describe('SavedSecretPickerModal', () => {
         expect(staleRow?.props.onPress).toBeUndefined();
         expect(onClose).not.toHaveBeenCalled();
 
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-catalog-retry')).toBeTruthy());
         materialUnavailable = false;
         await screen.pressByTestIdAsync('saved-secret-catalog-retry');
         await act(async () => {
