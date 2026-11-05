@@ -717,8 +717,8 @@ agentIsolation: params.agentIsolation,
     },
     startMemoryWorkerForMachine: async (runtimeMachineId) => {
       try {
-        const { startMemoryWorker } = await import('../memory/memoryWorker');
-        return await startMemoryWorker({
+        const { prepareMemoryWorker } = await import('../memory/memoryWorker');
+        return await prepareMemoryWorker({
           credentials: params.credentials,
           machineId: runtimeMachineId,
         });

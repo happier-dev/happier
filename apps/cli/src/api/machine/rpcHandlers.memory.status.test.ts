@@ -29,6 +29,7 @@ describe('rpcHandlers.memory (status)', () => {
         rpcHandlerManager,
         memoryWorker: {
           stop: () => {},
+          waitForReady: async () => {},
           reloadSettings: async () => {},
           ensureUpToDate: async () => {},
           getEmbeddingsDiagnostics: () => ({
@@ -88,6 +89,7 @@ describe('rpcHandlers.memory (status)', () => {
 
       const memoryWorker = {
         stop: () => {},
+        waitForReady: async () => {},
         reloadSettings: async () => {},
         ensureUpToDate: async () => {},
         getEmbeddingsDiagnostics: () => ({
@@ -156,6 +158,7 @@ describe('rpcHandlers.memory (status)', () => {
       registerMachineMemoryRpcHandlers({
         rpcHandlerManager: { registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => handlers.set(method, handler) } as any,
         memoryWorker: {
+          waitForReady: async () => {},
           getSettings: () => ({ v: 1, enabled: false, indexMode: 'hints', embeddings: { mode: 'disabled', presetId: 'balanced', custom: null, blend: { ftsWeight: 0.7, embeddingWeight: 0.3 } } }),
           getEmbeddingsDiagnostics: () => ({ mode: 'disabled', presetId: null, providerKind: null, modelId: null, runtimeState: 'unavailable', usingFallback: false }),
           getWorkerStatus: () => ({ state: 'disabled', lastTickAtMs: null, lastInventoryAtMs: null, currentSessionId: null, currentPhase: null }),
@@ -189,6 +192,7 @@ describe('rpcHandlers.memory (status)', () => {
           } as any,
           memoryWorker: {
             stop: () => {},
+            waitForReady: async () => {},
             reloadSettings: async () => {},
             ensureUpToDate: async () => {},
             removeSessions: async () => {},

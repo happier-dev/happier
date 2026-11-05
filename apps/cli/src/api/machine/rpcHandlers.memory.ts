@@ -33,6 +33,7 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
   const { rpcHandlerManager, memoryWorker } = params;
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_STATUS, async (raw: unknown, context) => {
+    await memoryWorker.waitForReady(context?.signal);
     const settings = memoryWorker.getSettings();
     const embeddingsDiagnostics = memoryWorker.getEmbeddingsDiagnostics();
     const tier1DbPath = memoryWorker.getTier1DbPath();
@@ -198,7 +199,8 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
     });
   });
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, async () => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, async (_raw: unknown, context) => {
+    await memoryWorker.waitForReady(context?.signal);
     const { readMemorySettingsFromDisk } = await import('@/settings/memorySettings');
     return await readMemorySettingsFromDisk();
   });
@@ -241,6 +243,7 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       return { v: 1, ok: false, errorCode: 'memory_invalid_query', error: 'memory_invalid_query' };
     }
 
+    await memoryWorker.waitForReady(context?.signal);
     const settings = memoryWorker.getSettings();
     if (!settings.enabled) return disabledResult();
     if (parsed.data.scope.type === 'project' && !memoryWorker.resolveDocumentSearchScope) {
@@ -292,6 +295,7 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
     if (!parsed.success) {
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });
     }
+    await memoryWorker.waitForReady(context?.signal);
     const settings = memoryWorker.getSettings();
     if (!settings.enabled) {
       return MemoryWindowV1Schema.parse({ v: 1, snippets: [], citations: [] });

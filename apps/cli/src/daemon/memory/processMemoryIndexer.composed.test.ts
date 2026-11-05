@@ -1,21 +1,55 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AxiosAdapter, AxiosRequestConfig } from 'axios';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
-import { runBackgroundServiceProcessWorker } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessWorkerEntry';
-import type { BackgroundServiceProcessChannel } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessChannel';
-import type { TerminationEvent } from '@/subprocess/supervision/types';
-import type { MemoryHintCommit, MemoryHintRun, MemoryIndexerConnection, MemoryIndexerHost, MemoryIndexerSnapshot } from './memoryIndexerBoundary';
+import { createMemoryProcessBoundary as createProcessBoundary } from './processMemoryIndexer.testkit';
+import { type MemoryHintCommit, type MemoryHintRun, type MemoryIndexerConnection, type MemoryIndexerHost,
+  type MemoryIndexerSnapshot } from './memoryIndexerBoundary';
 import type { MemorySettingsV1 } from '@/settings/memorySettings';
+import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { BackgroundServiceProcessPluginHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBootstrap';
 import type { AdmittedBackgroundServicePlugin } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessSource';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+
+const { mockIo, httpFixture } = vi.hoisted(() => ({ mockIo: vi.fn(), httpFixture: {
+  handlers: new Map<string, (url: string, config: AxiosRequestConfig) => Promise<Readonly<{ status: number; data: unknown }>>>(),
+  restore: () => {},
+} }));
+vi.mock('socket.io-client', () => ({ io: mockIo }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  const original = actual.default.defaults.adapter;
+  // Keep real clients, request encoding and interceptors. The OS HTTP adapter
+  // must be installed before modules capture their own axios.create clients.
+  const adapter: AxiosAdapter = async config => {
+    const url = actual.default.getUri(config);
+    if (new URL(url).origin !== 'https://api.example.test') return await actual.default.getAdapter(original)(config);
+    const authorization = config.headers.get('Authorization');
+    const handler = typeof authorization === 'string' ? httpFixture.handlers.get(authorization) : undefined;
+    const methodBound = config.method === 'get'
+      || config.method === 'post' && ['/v1/account/project-rows/list', '/v2/sessions/read-batch'].includes(new URL(url).pathname);
+    if (!handler || !methodBound) throw new Error('Unbound Memory startup HTTP fixture request');
+    const response = await handler(url, config);
+    return { ...response, config, headers: {}, statusText: 'fixture' };
+  };
+  actual.default.defaults.adapter = adapter;
+  httpFixture.restore = () => { actual.default.defaults.adapter = original; httpFixture.handlers.clear(); };
+  return actual;
+});
+
+afterAll(() => { httpFixture.restore(); });
 
 // Transform the real child graph outside each operation's deadline.
 await import('./processMemoryIndexer');
 await import('./memoryIndexerServiceEntry');
+await import('./memoryWorker');
+await import('@/api/apiMachine');
+await import('../machine/bootstrapMachineSyncRuntime');
+await import('../startup/createDaemonMachineBootstrapRuntime');
 
 function deferred() {
   let resolve!: () => void;
@@ -23,67 +57,22 @@ function deferred() {
   return { promise, resolve };
 }
 
-/** Only the OS pipe/process is replaced; both framed peers, entry and engine stay real. */
-function createProcessBoundary() {
-  const children: { channel: BackgroundServiceProcessChannel; closed: boolean; crash(): void }[] = [];
-  const readers: Readonly<{ agentId: string; current: boolean; available: boolean }>[] = [];
-  let beforeClose: (() => Promise<void>) | undefined;
-  const spawnChannel = async (): Promise<BackgroundServiceProcessChannel> => {
-    const parentListeners: ((data: Buffer) => void)[] = [];
-    const childListeners: ((data: Buffer) => void)[] = [];
-    const closeListeners: (() => void)[] = [];
-    let finish!: (event: TerminationEvent) => void;
-    const termination = new Promise<TerminationEvent>(done => { finish = done; });
-    const deliver = (listeners: readonly ((data: Buffer) => void)[], frame: Buffer) => {
-      for (const listener of listeners) { listener(frame.subarray(0, 3)); listener(frame.subarray(3)); }
-    };
-    const worker = runBackgroundServiceProcessWorker({
-      onData: listener => { childListeners.push(listener); },
-      onClose: listener => { closeListeners.push(listener); },
-      write: frame => deliver(parentListeners, frame),
-    }, { loadHostEntry: async () => ({ run: async (context, payload) => {
-      for (const [agentId, runtime] of context.agentRuntimesByAgentId ?? []) readers.push({ agentId,
-        current: runtime.isCurrent() && !runtime.retirementSignal.aborted, available: !!runtime.externalSessions });
-      const { runMemoryIndexerService } = await import('./memoryIndexerServiceEntry');
-      await runMemoryIndexerService(context, payload);
-    } }) });
-    const close = async () => {
-      for (const listener of closeListeners) listener();
-      await worker;
-      await beforeClose?.();
-      child.closed = true;
-      finish({ type: 'exited', code: 0 });
-    };
-    const channel: BackgroundServiceProcessChannel = {
-      pid: 43123 + children.length,
-      send: frame => deliver(childListeners, frame),
-      onData: listener => { parentListeners.push(listener); },
-      waitForTermination: () => termination,
-      close, terminate: close,
-    };
-    const child = { channel, closed: false, crash: () => {
-      finish({ type: 'exited', code: 23 });
-      for (const listener of closeListeners) listener();
-    } };
-    children.push(child);
-    return channel;
-  };
-  return { children, readers, spawnChannel, holdClose() {
-    const entered = deferred();
-    const release = deferred();
-    beforeClose = async () => { entered.resolve(); await release.promise; };
-    return { entered: entered.promise, release: release.resolve };
-  } };
+async function expireChildGrace() {
+  // Let the settled operation's bridge replies admit the child's idle grace,
+  // then fire that exact owner deadline. No wall-time timeout is increased.
+  await new Promise<void>(resolve => { setImmediate(resolve); });
+  await vi.advanceTimersByTimeAsync(57_000);
 }
 
 describe('Memory process placement composition', () => {
-  const env = snapshotEnvValues(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_LOG_LEVEL']);
+  const env = snapshotEnvValues(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_LOG_LEVEL', 'HAPPY_ENABLE_V2_CHANGES']);
   let home: string;
   const connections: MemoryIndexerConnection[] = [];
   beforeEach(async () => {
     home = await createTempDir('memory-process-composed-');
     applyEnvValues({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://api.example.test', HAPPIER_WEBAPP_URL: 'https://app.example.test' });
     vi.resetModules();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   });
   afterEach(async () => {
     for (const connection of connections.splice(0)) await connection.retire();
@@ -94,32 +83,184 @@ describe('Memory process placement composition', () => {
     await removeTempDir(home);
   });
 
-  async function setup(hostOverrides: Partial<MemoryIndexerHost> = {}, settingsOverrides: Partial<MemorySettingsV1> = {}, pluginOptions: Readonly<{
-    plugins?: readonly AdmittedBackgroundServicePlugin[];
-    pluginHost?: BackgroundServiceProcessPluginHost;
-  }> = {}) {
+  it.each(['complete', 'stop'] as const)('connects core Machine control while initial Memory policy waits, without exposing or losing Memory work (%s)', async ending => {
+    vi.useRealTimers();
+    applyEnvValues({ HAPPY_ENABLE_V2_CHANGES: 'false' });
+    const { ApiClient } = await import('@/api/api');
+    const { ApiMachineClient } = await import('@/api/apiMachine');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc/methods');
+    const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+    const { FeaturesResponseSchema, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } = await import('@happier-dev/protocol');
+    const { bootstrapMachineSyncRuntime } = await import('../machine/bootstrapMachineSyncRuntime');
+    const { createDaemonMachineBootstrapRuntime } = await import('../startup/createDaemonMachineBootstrapRuntime');
+    const { createCliRegistryHostV1 } = await import('@/registries/createCliRegistryHost');
+    const { createDaemonServerWorkScheduler, createDaemonServerWorkBudget } = await import('../serverWork');
+    const { DEFAULT_MEMORY_SETTINGS, writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    const { resolveMemoryIndexPaths } = await import('./memoryIndexPaths');
+    const { openSummaryShardIndexDb } = await import('./summaryShardIndexDb');
+    const { openDeepIndexDb } = await import('./deepIndex/deepIndexDb');
+    const { memoryIndexPolicyKey, resolveMemoryIndexPolicy } = await import('./transcript/coveragePolicy');
+    const { createSessionRecordFixture, createCompactSessionListRowFixture, createSessionReadBatchResponseFixture } = await import('@/testkit/backends/sessionFixtures');
+    const { createTestMetadata } = await import('@/testkit/backends/sessionMetadata');
+    const processChannel = await import('@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessChannel');
+    const { configuration } = await import('@/configuration');
+    const { waitForObservation } = await import('@/api/client/accountEncryptionCurrentnessObservation');
+    const priorDaemon = configuration.isDaemonProcess;
+    Object.assign(configuration, { isDaemonProcess: false });
+    const savedSettings = await writeMemorySettingsToDisk({ ...DEFAULT_MEMORY_SETTINGS, enabled: true, indexMode: 'deep', deleteOnDisable: false,
+      embeddings: { ...DEFAULT_MEMORY_SETTINGS.embeddings, mode: 'disabled' } });
+    const paths = resolveMemoryIndexPaths();
+    await mkdir(dirname(paths.tier1DbPath), { recursive: true });
+    const seed = openSummaryShardIndexDb({ dbPath: paths.tier1DbPath });
+    seed.trySeedSessionCursorsIfMissing({ sessionId: 'retained-before-connect', nowMs: 1, lastHintedSeq: 0, lastDeepIndexedSeq: 0 });
+    seed.close();
+    const deep = openDeepIndexDb({ dbPath: paths.deepDbPath });
+    deep.init();
+    deep.insertChunk({ sessionId: 'retained-before-connect', seqFrom: 1, seqTo: 2,
+      createdAtFromMs: 1, createdAtToMs: 2, text: 'retained searchable marker',
+      policyKey: memoryIndexPolicyKey(resolveMemoryIndexPolicy(savedSettings)) });
+    expect(deep.search({ query: 'retained', scope: { type: 'global' }, maxResults: 5 })).toHaveLength(1);
+    deep.close();
+    const retained = createSessionRecordFixture({ id: 'retained-before-connect', encryptionMode: 'plain',
+      metadata: JSON.stringify(createTestMetadata({ machineId: 'memory-startup-machine' })) });
+    const entered = deferred();
+    const release = deferred();
+    let held = true;
     const boundary = createProcessBoundary();
-    const snapshots: MemoryIndexerSnapshot[] = [];
-    const failures: unknown[] = [];
-    const settlements: boolean[] = [];
-    const host: MemoryIndexerHost = {
-      publish: snapshot => { snapshots.push(snapshot); },
-      failed: error => { failures.push(error); },
-      settled: () => { settlements.push(boundary.children.every(child => child.closed)); },
-      readExternalSources: async () => ({ sources: [], configuredSourceKeys: [], changes: [] }),
-      observeSessions: async ids => ids,
-      runHint: async () => { throw new Error('Unexpected hint'); }, commitHint: async () => {},
-      ...hostOverrides,
+    vi.spyOn(processChannel, 'spawnBackgroundServiceProcessChannel').mockImplementation(boundary.spawnChannel);
+    const axios = (await import('axios')).default;
+    let closing = false;
+    const readHome = async (url: string, config?: AxiosRequestConfig): Promise<Readonly<{ status: number; data: unknown }>> => {
+      if (closing) throw new Error('Memory startup HTTP fixture is closed');
+      const path = new URL(String(url)).pathname;
+      if (path === '/v2/sessions' || path === '/v2/sessions/archived') {
+        // Only the real child's retained-policy inventory is held. Bootstrap
+        // also reads inventory independently; it must not satisfy this gate.
+        if (held && boundary.runs > 0) {
+          entered.resolve();
+          if (config?.signal instanceof AbortSignal) await waitForObservation(release.promise, config.signal);
+          else await release.promise;
+        }
+        return { status: 200, data: { sessions: path === '/v2/sessions' ? [createCompactSessionListRowFixture(retained)] : [], hasNext: false, nextCursor: null } };
+      }
+      if (path === '/v2/sessions/read-batch') return { status: 200, data: createSessionReadBatchResponseFixture({
+        request: typeof config?.data === 'string' ? JSON.parse(config.data) : config?.data, sessions: [retained],
+      }) };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'memory-startup-account' } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (path === '/v2/changes') return { status: 200, data: { changes: [], nextCursor: 0 } };
+      if (path === '/v1/account/project-rows/list') return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [] } };
+      throw new Error(`Unexpected Memory startup HTTP path: ${path}`);
     };
-    const { DEFAULT_MEMORY_SETTINGS } = await import('@/settings/memorySettings');
-    const settings = { ...DEFAULT_MEMORY_SETTINGS, enabled: false, deleteOnDisable: false, ...settingsOverrides };
-    const { connectProcessMemoryIndexer: connectIndexer } = await import('./processMemoryIndexer');
-    const params = { credentials: { token: 'fixture', encryption: null }, machineId: 'machine_1', host,
-      readSettings: () => settings, spawnChannel: boundary.spawnChannel, ...pluginOptions };
-    const connection = await connectIndexer(params);
-    connections.push(connection);
-    return { connection, boundary, snapshots, failures, settlements, settings };
-  }
+    vi.spyOn(axios, 'get').mockImplementation(readHome);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({})));
+    const socket = createApiSessionSocketStub({
+      emit: (event, args, current) => {
+        if (event === SOCKET_RPC_EVENTS.REGISTER) queueMicrotask(() => current.trigger(SOCKET_RPC_EVENTS.REGISTERED, args[0]));
+      },
+      emitWithAck: (event, payload) => event === 'machine-update-state'
+        ? { result: 'success', version: 1, daemonState: (payload as { daemonState: string }).daemonState }
+        : event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1
+          ? { v: 1, result: 'success', revision: 1 } : { result: 'success', version: 1 },
+    });
+    bindApiSessionSocketMock(mockIo, socket);
+    const credentials = { token: `opaque-startup-fixture-${ending}`, encryption: null };
+    httpFixture.handlers.set(`Bearer ${credentials.token}`, readHome);
+    const machine = { id: 'memory-startup-machine', encryptionMode: 'plain' as const,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+    const client = new ApiMachineClient(credentials.token, machine);
+    const scheduler = createDaemonServerWorkScheduler({ budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) });
+    const factory = createDaemonMachineBootstrapRuntime({
+      api: await ApiClient.create(credentials), credentials, controlPort: 41233, runtimeId: 'memory-startup-runtime',
+      publicReleaseChannel: 'dev', startupSource: 'manual', serviceLabel: undefined, transferRuntimeStatePublisher: null,
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      spawnSessionForInternalResume: async () => ({ type: 'success', sessionId: 'unused' }),
+      stopSession: async () => ({ status: 'not_found' }), awaitAgentSessionOpen: undefined,
+      isSessionAlreadyRunning: async () => false, loadLocalSessionMetadataForHandoff: async () => null,
+      beforeShutdown: async () => {}, requestShutdown: () => {}, directPeerServerLifecycle: null,
+      directTransferRegistryHost: createCliRegistryHostV1(), daemonServerWorkScheduler: scheduler,
+      setDaemonServerWorkOnline: () => {}, onMachineConnectionOnline: async () => {},
+      reconcileConnectedServicesProjection: async () => {}, isShuttingDown: () => closing,
+    });
+    let runtime: Awaited<ReturnType<typeof bootstrapMachineSyncRuntime>> | undefined;
+    const pending: Promise<unknown>[] = [];
+    const starting = bootstrapMachineSyncRuntime({ ...factory, machineId: machine.id, machine,
+      preferredHost: 'fixture.local', happyHomeDir: home, happyLibDir: home,
+      filesystemAccessPolicy: { kind: 'osUser' }, takeoverRequested: false,
+      createConnectedApiMachine: () => client, startAutomationWorkerForMachine: () => null,
+      startVoiceInferenceWorkerForMachine: async () => null,
+      connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null,
+    }).then(value => { runtime = value; return value; });
+    try {
+      await entered.promise;
+      expect(boundary.children).toHaveLength(1);
+      expect(boundary.runs).toBe(1);
+      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+      const running = await starting;
+      const memory = running.memoryWorker;
+      expect(memory).not.toBeNull();
+      expect(memory!.getSettings().enabled).toBe(true);
+      expect(memory!.getDeepDbPath()).toBeNull();
+      expect(memory!.getWorkerStatus().state).not.toBe('idle');
+      const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+      let statusReplied = false;
+      const status = manager.invokeLocal(RPC_METHODS.DAEMON_MEMORY_STATUS, {})
+        .then(value => { statusReplied = true; return value; });
+      pending.push(Promise.allSettled([status]));
+      const cancelled = new AbortController();
+      const reason = new Error('cancelled Memory caller');
+      const waiting = memory!.waitForReady(cancelled.signal);
+      const rejected = expect(waiting).rejects.toBe(reason);
+      cancelled.abort(reason);
+      await rejected;
+      let replied = false;
+      const search = manager.invokeLocal(RPC_METHODS.DAEMON_MEMORY_SEARCH,
+        { v: 1, query: 'retained', scope: { type: 'global' }, mode: 'deep', maxResults: 5 }).then(value => { replied = true; return value; });
+      const purges = memory!.removeSessions(['retained-before-connect']);
+      const reloading = memory!.reloadSettings();
+      // Observe every request immediately, including when an assertion fails
+      // before release; cleanup must not manufacture unhandled rejections.
+      pending.push(Promise.allSettled([search, purges, reloading]));
+      await new Promise<void>(resolve => { setImmediate(resolve); });
+      expect(replied).toBe(false);
+      expect(statusReplied).toBe(false);
+      if (ending === 'stop') {
+        await memory!.stop();
+        await expect(search).rejects.toThrow();
+        await expect(status).rejects.toThrow();
+        await expect(purges).rejects.toThrow();
+        await expect(memory!.waitForReady()).rejects.toThrow();
+        expect(boundary.children.length).toBeGreaterThan(0);
+        expect(boundary.children.every(child => child.closed)).toBe(true);
+        expect(memory!.getDeepDbPath()).toBeNull();
+        return;
+      }
+      held = false; release.resolve();
+      await purges;
+      await reloading;
+      const searchResult = await search;
+      expect(searchResult, JSON.stringify(searchResult)).toMatchObject({ v: 1, ok: true, hits: [] });
+      await expect(status).resolves.toMatchObject({ enabled: true, activeIndexReady: true });
+      expect(memory!.getDeepDbPath()).not.toBeNull();
+      expect(memory!.listIndexedSessionIds()).not.toContain('retained-before-connect');
+    } finally {
+      closing = true;
+      held = false; release.resolve();
+      await starting;
+      await Promise.all(pending);
+      await runtime?.memoryWorker?.stop();
+      runtime?.machineConnectionStateCleanup?.();
+      runtime?.disposeInactiveSessionUsageLimitRecovery();
+      await runtime?.stopPeerMediationLoopbackServer();
+      await runtime?.stopMachineIrohAcceptor();
+      await client.shutdown();
+      Object.assign(configuration, { isDaemonProcess: priorDaemon });
+    }
+  });
 
   it('starts no idle child, purges retained SQLite through the child, then rebirths after settlement', async () => {
     const { connection, boundary, settlements } = await setup();
