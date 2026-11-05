@@ -37,6 +37,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle, resolveLockedSessionTitle } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { isVoiceConversationCustodySessionMetadata } from '@happier-dev/protocol/voice/sessionBinding';
 import { readSessionRoleIdV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { LruMap } from '@/utils/cache/lruMap';
 
@@ -125,6 +126,8 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     statusErrorColor: string;
     workspaceSubtitle?: string | null;
     workspaceSubtitleEllipsizeMode?: 'head' | 'tail';
+    /** A Voice conversation's place ("Global Voice · OpenAI Realtime"), which replaces its private folder. */
+    voiceConversationSubtitle?: string;
     externalSessionRuntime: ExternalSessionRuntimePresentation | null;
     /**
      * Plugin-UI projection + open handler for the session header-action menu
@@ -344,14 +347,18 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const workspaceSubtitle = typeof input.workspaceSubtitle === 'string' && input.workspaceSubtitle.length > 0
         ? input.workspaceSubtitle
         : undefined;
-    // A no-folder session names where it runs (its machine), never its private folder.
-    const locationSubtitle = readSessionDirectoryKind(ownerMetadata) === 'managed'
-        ? getSessionSubtitle(session)
-        : workspaceSubtitle ?? fallbackSubtitle;
+    // A Voice conversation names where it lives (Global Voice and its service); a no-folder session names
+    // where it runs (its machine). Neither shows its private folder.
+    const voiceConversation = isVoiceConversationCustodySessionMetadata(ownerMetadata);
+    const locationSubtitle = voiceConversation
+        ? input.voiceConversationSubtitle
+        : readSessionDirectoryKind(ownerMetadata) === 'managed'
+            ? getSessionSubtitle(session)
+            : workspaceSubtitle ?? fallbackSubtitle;
     // Until a session is named it is titled after its folder; a subtitle repeating that says nothing.
     const subtitle = locationSubtitle === title ? undefined : locationSubtitle;
     const subtitleEllipsizeMode = subtitle
-        ? input.workspaceSubtitleEllipsizeMode ?? 'head' as const
+        ? voiceConversation ? 'tail' as const : input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;
     const avatarId = getSessionAvatarId(session);
     const agentId = readSessionPresentationAgentId(session);

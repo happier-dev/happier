@@ -3,7 +3,7 @@ import { Platform, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { HappierPressable, happierFocusRingStyle } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMessageActionNeighbourGapPx } from './messageActionNeighbourGap';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
@@ -29,6 +29,8 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecis
     showActions: boolean;
     showPinAction: boolean;
     timestampText: string | null;
+    /** A glyph that leads the timestamp line (the Voice planet on a spoken turn's marker). */
+    timestampGlyph?: IconName;
     invertTimestampAndActions: boolean;
     onActionsFocus: () => void;
     onActionsBlur: () => void;
@@ -110,7 +112,9 @@ export function CommittedMessageActions(props: Props) {
             testID={`transcript-message-pin:${props.message.id}`} invertedActionsLayout={props.invertTimestampAndActions}
             onHoverIn={props.onActionHoverIn} onHoverOut={props.onActionHoverOut} /> : null}
         onActionsFocus={props.onActionsFocus} onActionsBlur={props.onActionsBlur}
-        timestampText={props.timestampText} invertTimestampAndActions={props.invertTimestampAndActions}
+        timestampText={props.timestampText} timestampGlyph={props.timestampGlyph
+            ? <Icon name={props.timestampGlyph} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} /> : undefined}
+        invertTimestampAndActions={props.invertTimestampAndActions}
     >
         {availableActions.filter((action) => action.id !== 'pin').map((action) => {
             if (action.id === 'plugins') return <PluginMessageActionsView key={action.id} actions={pluginActions} invertedActionsLayout={props.invertTimestampAndActions} />;

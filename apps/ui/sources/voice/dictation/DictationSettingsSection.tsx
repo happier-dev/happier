@@ -6,8 +6,7 @@ import {
   VoiceRuntimePlatformSchema,
   type VoiceRuntimePlatform,
 } from '@happier-dev/protocol/voice/realtime/capabilities';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { LANGUAGES } from '@/constants/Languages';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -51,11 +50,10 @@ import {
   resolveVoiceDictationReadiness,
 } from './voiceDictationReadiness';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { StatusDot } from '@/components/ui/status/StatusDot';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { VoicePipelineView } from '@/voice/settings/pipeline/VoicePipelineView';
+import { VoiceReadinessLine } from '@/voice/settings/pipeline/VoicePipelineCard';
+import { resolveVoiceReadinessTone } from '@/voice/settings/pipeline/presentVoicePipeline';
 import { buildVoiceDictationPipeline } from '@/voice/settings/pipeline/voicePipelineSteps';
 import { asIconName } from '@/components/ui/icons/asIconName';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -333,7 +331,10 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
         {engineOptions.map((option) => {
           const selected = option.id === selectedId;
           const engineReadiness = readinessForEngine(option.id);
-          const needsYou = engineReadiness && engineReadiness.status !== 'ready' ? engineReadiness : null;
+          // The readiness owner decides the tone; the engine row says the condition in that tone.
+          const engineTone = resolveVoiceReadinessTone(engineReadiness);
+          const needsYou = engineReadiness && engineTone && engineTone !== 'ready' && engineTone !== 'unknown'
+            ? { readiness: engineReadiness, tone: engineTone } : null;
           return (
             <Item
               key={option.id}
@@ -343,13 +344,11 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
               subtitle={option.subtitle}
               subtitleLines={0}
               subtitleAccessory={needsYou ? (
-                <View
+                <VoiceReadinessLine
                   testID={`settings.voice.dictation.engine.${encodeURIComponent(option.id)}.needs`}
-                  style={styles.engineNeeds}
-                >
-                  <StatusDot color={theme.colors.state.warning.foreground} size={6} />
-                  <Text style={styles.engineNeedsText}>{translateVoiceReadiness(needsYou.reasonKey, { service: option.title })}</Text>
-                </View>
+                  tone={needsYou.tone}
+                  message={translateVoiceReadiness(needsYou.readiness.reasonKey, { service: option.title })}
+                />
               ) : undefined}
               accessibilityRole="radio"
               webRole="radio"
@@ -444,17 +443,3 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
     </View>
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  engineNeeds: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s6,
-  },
-  engineNeedsText: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('rowDescription'),
-    flexShrink: 1,
-    color: theme.colors.state.warning.foreground,
-  },
-}));

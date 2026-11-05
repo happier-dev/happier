@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveVoiceSpeechDiagnosticsHealthPresentation, VoiceSpeechDiagnosticsStatusResponseV1Schema } from '@happier-dev/protocol/voice/diagnostics';
 import { SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationOperationInputV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -92,6 +94,7 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
     [props.voice.diagnostics],
   );
   const machineId = useVoiceExecutionMachineId();
+  const machineLabel = useServerScopedMachineLabel(getActiveServerSnapshot().serverId ?? null, machineId);
   const accountLifetime = useActiveServerAccountScopeLifetime();
   const { execute } = useMountedActionExecution(accountLifetime?.scope);
   const actionAvailable = useSettingsSelector(settings => resolveActionSurfaceAvailability({
@@ -277,9 +280,11 @@ export function VoiceDiagnosticsSettingsSection(props: Readonly<{
               ? 'settings-voice-diagnostics-status-active'
               : 'settings-voice-diagnostics-status-inactive'}
             mode="info"
-            subtitle={status.root}
-            subtitleTestID="settings-voice-diagnostics-root"
-            subtitleLines={2}
+            // Where recordings live, said as a place on the person's machine; the path is plumbing.
+            subtitle={machineLabel
+              ? t('settingsVoice.diagnostics.locationOnMachine', { machine: machineLabel })
+              : t('settingsVoice.diagnostics.locationPrivate')}
+            subtitleLines={0}
           />
           <SettingRow
             setting={VOICE_PRIVACY_SETTINGS.settings.diagnosticsBackupPolicy}

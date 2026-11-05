@@ -17,10 +17,10 @@ const noRevision = () => 0;
  * revision, which is why every consumer reads it through this one hook instead of re-deriving a
  * subscription of its own.
  */
-export function useVoiceProviderRegistryRevision(registry: VoiceProviderRegistry): number {
+export function useVoiceProviderRegistryRevision(registry: VoiceProviderRegistry, enabled = true): number {
     return React.useSyncExternalStore(
-        registry.subscribe ?? subscribeToNothing,
-        registry.getRevision ?? noRevision,
-        registry.getRevision ?? noRevision,
+        enabled ? registry.subscribe ?? subscribeToNothing : subscribeToNothing,
+        enabled ? registry.getRevision ?? noRevision : noRevision,
+        enabled ? registry.getRevision ?? noRevision : noRevision,
     );
 }

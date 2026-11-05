@@ -63,6 +63,8 @@ export type VoiceMomentsTranslation = Readonly<{
     continuedOn: (params: Readonly<{ device: string }>) => string;
     continuedElsewhere: string;
     continuedHere: string;
+    /** The account-wide Voice a conversation belongs to, in a Voice conversation's header. */
+    globalVoice: string;
     dismiss: string;
 }>;
 
@@ -130,5 +132,6 @@ export const voiceMomentsTranslationsEnglish = { en: {
         continuedOn: ({ device }) => `Continued on ${device}`,
         continuedElsewhere: 'Continued on another device',
         continuedHere: 'Continued on this device',
+        globalVoice: 'Global Voice',
         dismiss: 'Dismiss',
     } } satisfies Pick<Readonly<Record<string, VoiceMomentsTranslation>>, "en">;

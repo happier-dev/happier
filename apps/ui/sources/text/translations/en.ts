@@ -17021,8 +17021,9 @@ const enSettingsVoice = {
     exportFailed:
       'The private recording could not be exported. Nothing was uploaded.',
     backupPolicy: 'Backup exclusion',
-    backupPolicyBestEffort:
-      'Stored in the selected machine’s private cache and marked for backup tools that honor the cache-directory standard. No automatic upload or sync is implemented; operating-system backup exclusion is not guaranteed.',
+    backupPolicyBestEffort: 'Never uploaded or synced. Your computer’s own backups may still copy it.',
+    locationOnMachine: ({ machine }: { machine: string }) => `A private folder on ${machine}.`,
+    locationPrivate: 'A private folder on your Voice machine.',
     activeIndicator: 'Speech diagnostics on',
     checkingIndicator: 'Checking speech diagnostics status',
     statusUnknownIndicator: 'Speech diagnostics status is unknown',

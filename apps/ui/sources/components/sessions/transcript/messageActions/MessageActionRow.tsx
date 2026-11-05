@@ -26,6 +26,8 @@ export function MessageActionRow(props: Readonly<{
     onActionsFocus?: () => void;
     onActionsBlur?: () => void;
     timestampText: string | null;
+    /** A glyph that leads the timestamp line (drawn by the host in the timestamp's ink). */
+    timestampGlyph?: React.ReactNode;
 }>): React.ReactElement {
     const hasTimestamp = typeof props.timestampText === 'string' && props.timestampText.length > 0;
     return (
@@ -38,12 +40,29 @@ export function MessageActionRow(props: Readonly<{
             ]}
             testID={`transcript-message-actions-row:${props.messageId}`}
         >
-            {hasTimestamp ? (
+            {hasTimestamp && props.timestampGlyph ? (
+                // A glyph leads the line (a Voice turn's planet); the pair keeps the timestamp's spacing.
+                <View style={[
+                    styles.timestamp,
+                    styles.timestampSpacing,
+                    props.invertTimestampAndActions ? styles.timestampTextInverted : null,
+                ]}>
+                    {props.timestampGlyph}
+                    <Text
+                        testID={`transcript-message-timestamp:${props.messageId}`}
+                        numberOfLines={1}
+                        style={styles.timestampText}
+                    >
+                        {props.timestampText}
+                    </Text>
+                </View>
+            ) : hasTimestamp ? (
                 <Text
                     testID={`transcript-message-timestamp:${props.messageId}`}
                     numberOfLines={1}
                     style={[
                         styles.timestampText,
+                        styles.timestampSpacing,
                         props.invertTimestampAndActions ? styles.timestampTextInverted : null,
                     ]}
                 >
@@ -94,13 +113,22 @@ const styles = StyleSheet.create((theme) => ({
     containerWebPointerEvents: {
         pointerEvents: 'box-none',
     },
+    timestamp: {
+        flexShrink: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+    },
+    timestampSpacing: {
+        marginRight: theme.space.s8,
+    },
     timestampText: {
         flexShrink: 1,
         minWidth: 0,
         color: theme.colors.text.tertiary,
         fontSize: 11,
         lineHeight: 16,
-        marginRight: theme.space.s8,
     },
     timestampTextInverted: {
         marginLeft: theme.space.s12,

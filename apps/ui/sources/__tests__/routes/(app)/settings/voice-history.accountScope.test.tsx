@@ -22,7 +22,7 @@ vi.mock('@/components/ui/lists/virtualized', () => ({ VirtualizedList: legendLis
 vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await vi.importActual<typeof import('@/dev/testkit/mocks/router')>('@/dev/testkit/mocks/router');
-  return createExpoRouterMock({ pathname: '/settings/voice-history' }).module;
+  return createExpoRouterMock({ pathname: '/settings/voice/history' }).module;
 });
 
 await loadSyncSingletonForTests();
@@ -94,7 +94,7 @@ describe('Voice History route account scope', () => {
     const sessionA = await installHistorySession('account-a');
     const messagesA = `/v1/sessions/${sessionA}/messages`;
     homeHttp.answer(homeId, messagesA, { body: await voicePage('account-a-row', 'Account A transcript', 20, true) });
-    const route = await import('../../../../app/(app)/settings/voice-history');
+    const route = await import('../../../../app/(app)/settings/voice/history');
     const screen = await renderScreen(React.createElement(route.default));
     await waitForHomeGovernance(async () => {
       await flushHookEffects();

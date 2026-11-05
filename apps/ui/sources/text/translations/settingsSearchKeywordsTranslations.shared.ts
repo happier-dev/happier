@@ -51,6 +51,7 @@ export const english = {
         voiceDictation: 'voice, dictation, speech, transcription',
         voicePrivacy: 'voice, privacy, history, retention',
         voiceAdvanced: 'voice, advanced, machine, diagnostics',
+        voiceHistory: 'voice, history, conversations, transcripts',
         memory: 'memory, search, index',
         groupSessionsBehavior: 'sessions, transcript, permissions, actions',
         session: 'session, terminal, tmux',

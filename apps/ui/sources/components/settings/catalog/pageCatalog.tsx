@@ -248,6 +248,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                             { id: 'voiceDictation', titleKey: 'settingsVoice.intents.dictation.title', subtitleKey: 'settingsVoice.intents.dictation.subtitle', route: SETTINGS_ROUTES.voiceDictation, keywordsKey: 'settingsSearchKeywords.voiceDictation', icon: ({ theme }) => <Icon name="microphone" size={16} color={theme.colors.text.secondary} /> },
                             { id: 'voicePrivacy', titleKey: 'settingsVoice.intents.privacy.title', subtitleKey: 'settingsVoice.intents.privacy.subtitle', route: SETTINGS_ROUTES.voicePrivacy, keywordsKey: 'settingsSearchKeywords.voicePrivacy', icon: ({ theme }) => <Icon name="shield-check" size={16} color={theme.colors.text.secondary} /> },
                             { id: 'voiceAdvanced', titleKey: 'settingsVoice.intents.advanced.title', subtitleKey: 'settingsVoice.intents.advanced.subtitle', route: SETTINGS_ROUTES.voiceAdvanced, keywordsKey: 'settingsSearchKeywords.voiceAdvanced', icon: ({ theme }) => <Icon name="sliders-horizontal" size={16} color={theme.colors.text.secondary} /> },
+                            { id: 'voiceHistory', titleKey: 'settingsVoice.history.title', subtitleKey: 'settingsVoice.history.entrySubtitle', route: SETTINGS_ROUTES.voiceHistory, keywordsKey: 'settingsSearchKeywords.voiceHistory', icon: ({ theme }) => <Icon name="clock-counter-clockwise" size={16} color={theme.colors.text.secondary} /> },
                         ],
                     },
                 ],

@@ -21,7 +21,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
-import { SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListStep } from '@/components/ui/selectionList';
+import { SELECTION_LIST_MODAL_MAX_HEIGHT, SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
@@ -56,7 +56,6 @@ const draftFromView = (view: MachinePoolViewV1 | null): Draft => {
     return { name: view?.pool.name ?? '', description: view?.pool.description ?? '', ...tierState };
 };
 const single = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] ?? '' : value ?? '';
-const MEMBER_PICKER_MAX_HEIGHT = 520;
 const NO_MACHINES: readonly Machine[] = [];
 const tierLabel = (tier: number) => tier === 0 ? t('machinePools.primary') : t('machinePools.fallback', { number: tier });
 
@@ -72,7 +71,7 @@ function MachinePoolSelectionListModalContent(props: Readonly<{
         rootStep={props.rootStep}
         selectedOptionId={null}
         listAccessibilityLabel={props.listAccessibilityLabel}
-        maxHeight={MEMBER_PICKER_MAX_HEIGHT}
+        maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
         heightBehavior={resolveSelectionListModalHeightBehavior()}
         keyboardHintsEnabled
         onRequestClose={props.onClose}

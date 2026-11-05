@@ -369,6 +369,7 @@ describe('settingsRouteRegistry', () => {
             'voice/conversations',
             'voice/privacy',
             'voice/advanced',
+            'voice/history',
         ]));
     });
 });

@@ -134,6 +134,7 @@ describe('settings catalog rail shape', () => {
             '/settings/voice/dictation',
             '/settings/voice/privacy',
             '/settings/voice/advanced',
+            '/settings/voice/history',
         ]);
     });
 });

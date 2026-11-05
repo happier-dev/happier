@@ -1746,7 +1746,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
 
     it.each([
         { lifetime: 'runtime_attempt' as const, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/coding-target?serverId=ended-home' },
-        { lifetime: 'runtime_attempt' as const, target: null, destination: '/settings/voice-history' },
+        { lifetime: 'runtime_attempt' as const, target: null, destination: '/settings/voice/history' },
         { lifetime: undefined, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/saved-conversation?serverId=ended-home' },
     ])('opens the captured ended destination after binding removal ($destination)', async ({ lifetime, target, destination }) => {
         const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');

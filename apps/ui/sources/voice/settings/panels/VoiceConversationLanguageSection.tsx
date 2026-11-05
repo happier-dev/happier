@@ -11,7 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { LANGUAGES, getLanguageDisplayNameForCode } from '@/constants/Languages';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { projectConversationLanguage, projectConversationLanguagePreference, projectConversationLanguagePreferenceSelection } from '@/voice/settings/language/conversationLanguage';
 import { VOICE_CONVERSATIONS_SETTINGS, resolveVoiceConversationLanguageSetting } from '@/voice/settings/voiceSettingsDeclarations';
 import { updateVoiceConversationLanguagePreference } from '@/voice/settings/voiceSettingBinding';
@@ -20,8 +20,9 @@ import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
 import { useVoiceSettingsSearchPrerequisite } from '@/voice/settings/VoiceSettingsSearchPrerequisite';
 
+/** A language reads by its name in the viewer's language, never by its tag ("en"). */
 function languageName(code: string): string {
-  return LANGUAGES.find((language) => language.code === code)?.name ?? code;
+  return getLanguageDisplayNameForCode(code, getPreferredLanguage());
 }
 
 const SETTINGS = VOICE_CONVERSATIONS_SETTINGS.settings;

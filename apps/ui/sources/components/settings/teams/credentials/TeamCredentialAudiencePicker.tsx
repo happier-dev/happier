@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { SessionAccessCandidateRowModel, SessionAccessDirectoryKind, SessionAccessGrantOperationModel } from '@/components/sessions/access/sessionAccessEditorTypes';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import { Item } from '@/components/ui/lists/Item';
-import { SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
+import { SELECTION_LIST_MODAL_MAX_HEIGHT, SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -15,7 +15,6 @@ export type TeamCredentialAudiencePrincipal =
 export type TeamCredentialAudiencePrincipalKind = TeamCredentialAudiencePrincipal['kind'];
 
 const EMPTY_OPERATIONS: Readonly<Record<string, SessionAccessGrantOperationModel>> = Object.freeze({});
-const PICKER_MAX_HEIGHT = 520;
 
 function optionFromRow(
     row: SessionAccessCandidateRowModel,
@@ -105,7 +104,7 @@ function PickerContent(props: Readonly<{
         inputValue={query}
         onChangeInputValue={setQuery}
         listAccessibilityLabel={props.label ?? t('teams.credentials.audience.add')}
-        maxHeight={PICKER_MAX_HEIGHT}
+        maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
         heightBehavior={resolveSelectionListModalHeightBehavior()}
         keyboardHintsEnabled
         onRequestClose={props.onClose}

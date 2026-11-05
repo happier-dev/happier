@@ -144,19 +144,34 @@ export const VoicePipelineCard = React.memo(function VoicePipelineCard(props: Vo
     );
 });
 
-function StepReadiness(props: Readonly<{ readiness: VoicePipelineStepReadiness }>) {
-    const { readiness } = props;
-    const toneStyle = readiness.tone === 'needs_you'
+/**
+ * One readiness condition in words: the tone's glyph, then the message in the tone's ink (amber needs
+ * you, rose cannot work here, quiet otherwise). Pipeline steps and engine rows share it, so a condition
+ * reads the same wherever it shows.
+ */
+export function VoiceReadinessLine(props: Readonly<{
+    tone: Exclude<VoiceReadinessTone, 'ready' | 'unknown'>;
+    message: string;
+    testID?: string;
+}>) {
+    const toneStyle = props.tone === 'needs_you'
         ? styles.readinessNeedsYou
-        : readiness.tone === 'blocked'
+        : props.tone === 'blocked'
             ? styles.readinessBlocked
             : styles.readinessQuiet;
     return (
+        <View testID={props.testID} style={styles.readinessLine}>
+            <View style={styles.glyphSlot}><VoiceReadinessGlyph tone={props.tone} /></View>
+            <Text style={[styles.readinessText, toneStyle]}>{props.message}</Text>
+        </View>
+    );
+}
+
+function StepReadiness(props: Readonly<{ readiness: VoicePipelineStepReadiness }>) {
+    const { readiness } = props;
+    return (
         <View style={styles.readiness}>
-            <View style={styles.readinessLine}>
-                <View style={styles.glyphSlot}><VoiceReadinessGlyph tone={readiness.tone} /></View>
-                <Text style={[styles.readinessText, toneStyle]}>{readiness.message}</Text>
-            </View>
+            <VoiceReadinessLine tone={readiness.tone} message={readiness.message} />
             {readiness.action ? (
                 <View style={styles.readinessAction}>
                     <RoundButton

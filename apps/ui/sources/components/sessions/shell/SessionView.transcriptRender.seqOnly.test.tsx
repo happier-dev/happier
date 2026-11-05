@@ -20,6 +20,7 @@ import type { Socket } from 'socket.io-client';
 import type { StorageState } from '@/sync/store/types';
 import { shallow } from 'zustand/vanilla/shallow';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { clearSessionSurfaceVisibilityForServerScopeReset } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
@@ -72,7 +73,6 @@ const createReactiveRouteState = vi.hoisted(() => <TValue,>(initialValue: TValue
 });
 const sessionScreenFocusState = vi.hoisted(() => createReactiveRouteState(true));
 const sessionSubagentsHookSpy = vi.hoisted(() => vi.fn());
-const sessionExecutionRunsSupportedHookSpy = vi.hoisted(() => vi.fn());
 const selectSyncErrorForServerSpy = vi.hoisted(() => vi.fn((_syncError: unknown, _serverId: string | null | undefined) => null));
 const approvalArtifactsSpy = vi.hoisted(() => vi.fn());
 const pendingOutboundSendPromises = vi.hoisted(() => [] as Promise<unknown>[]);
@@ -416,12 +416,6 @@ vi.mock('posthog-react-native', () => ({
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));
-vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
-    useSessionExecutionRunsSupported: (sessionId: string) => {
-        sessionExecutionRunsSupportedHookSpy(sessionId);
-        return false;
-    },
-}));
 vi.mock('@/hooks/session/useSessionSubagents', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/hooks/session/useSessionSubagents')>();
     return { ...actual, useSessionSubagents: (input: Parameters<typeof actual.useSessionSubagents>[0]) => {
@@ -506,6 +500,8 @@ const runtime = installSessionPaneRuntimeTestHarness({
 });
 const shellStorageModule = await import('@/sync/domains/state/storage');
 const { storage: shellStorage } = shellStorageModule;
+const executionSupportModule = await import('@/hooks/server/useSessionExecutionRunsSupported');
+const sessionExecutionRunsSupportedHookSpy = vi.spyOn(executionSupportModule, 'useSessionExecutionRunsSupported');
 // Observe subscription placement without replacing the owners' behavior.
 const pendingMessagesHookSpy = vi.spyOn(shellStorageModule, 'useSessionPendingMessages');
 const transcriptIdsHookSpy = vi.spyOn(shellStorageModule, 'useSessionTranscriptIds');
@@ -662,6 +658,57 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await act(async () => { transcriptReadGate?.resolve(); });
         vi.clearAllMocks();
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
+    });
+
+    it('does not rerender an ordinary SessionView for unrelated Voice settings changes', async () => {
+        const screen = await renderSessionView();
+        await flushHookEffects();
+        // This real hook runs once in SessionView's render; child commits do not count.
+        expect(sessionExecutionRunsSupportedHookSpy).toHaveBeenCalled();
+        sessionExecutionRunsSupportedHookSpy.mockClear();
+        for (let change = 0; change < 3; change++) {
+            await act(async () => {
+                const settings = shellStorage.getState().settings;
+                const voice = settings.voice;
+                shellStorage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: {
+                    ...voice,
+                    privacy: { ...voice.privacy, recentMessagesCount: voice.privacy.recentMessagesCount + 1 },
+                } }, settings));
+                expect(shellStorage.getState().settings.voice.privacy.recentMessagesCount).toBe(voice.privacy.recentMessagesCount + 1);
+            });
+        }
+        expect(sessionExecutionRunsSupportedHookSpy).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it('updates a Voice carrier service subtitle separately from an ordinary SessionView', async () => {
+        const { useVoiceConversationHeaderSubtitle } = await import('@/voice/presence/useVoiceConversationHeaderSubtitle');
+        const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/metadata/systemSessionV1');
+        const { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } = await import('@happier-dev/protocol/voice/sessionBinding');
+        const { t } = await import('@/text');
+        const selectProvider = async (providerId: 'off' | 'local_direct') => act(async () => {
+            const settings = shellStorage.getState().settings;
+            shellStorage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+                voice: { ...settings.voice, providerId },
+            }, settings));
+        });
+        await selectProvider('off');
+        let metadata: unknown = {};
+        const hook = await renderHook(() => useVoiceConversationHeaderSubtitle(metadata), { wrapper: runtime.Wrapper });
+        expect(hook.getCurrent()).toBeUndefined();
+        metadata = buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
+        await hook.rerender();
+        const where = t('voiceMoments.globalVoice');
+        expect(hook.getCurrent()).toBe(where);
+        await selectProvider('local_direct');
+        expect(hook.getCurrent()?.startsWith(`${where} · `)).toBe(true);
+        expect(hook.getCurrent()!.length).toBeGreaterThan(`${where} · `.length);
+        await selectProvider('off');
+        expect(hook.getCurrent()).toBe(where);
+        metadata = {};
+        await hook.rerender();
+        expect(hook.getCurrent()).toBeUndefined();
+        await hook.unmount();
     });
 
     it('renders ChatList when session.seq > 0 even if visible committed messages are empty', async () => {

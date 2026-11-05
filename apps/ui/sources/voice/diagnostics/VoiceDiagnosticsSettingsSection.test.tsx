@@ -289,21 +289,25 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     await diagnosticsEvents.waitFor(() => expect(statusSignals.every(signal => signal.aborted)).toBe(true));
     const retry = await renderScreen(createSettingsSection({ voice: voiceSettingsParse({ diagnostics }), setVoice: commitVoiceSettings }));
     await waitForTestEvent(retry.subscribe, () => retry.tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.location') })[0]?.props.subtitle,
-      value => value === '/private/m1');
-    expect(retry.tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle).toBe('/private/m1');
+      value => typeof value === 'string');
+    // The machine is proved by the status read above; the row names it as a place, never a path.
+    expect(String(retry.tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle)).not.toContain('/private/');
     await retry.unmount();
   });
 
   it('rebinds diagnostics after the Account runtime retires without changing its machine', async () => {
     const screen = await renderScreen(createSettingsSection({ voice: voiceSettingsParse({ diagnostics }), setVoice: commitVoiceSettings }));
     const location = () => screen.tree.root.findAllByProps({ title: tLoose('settingsVoice.diagnostics.location') });
-    await waitForTestEvent(screen.subscribe, () => location()[0]?.props.subtitle, value => value === '/private/m1');
-    expect(location()[0]?.props.subtitle).toBe('/private/m1');
-    status.mockResolvedValueOnce({ ok: true, root: '/private/rebound', artifacts: [], health: testState.health });
+    const reboundArtifact = () => screen.tree.root.findAllByProps({ testID: 'settings-voice-diagnostics-artifact-rebound-1' });
+    await waitForTestEvent(screen.subscribe, () => location().length, count => count > 0);
+    // The location names the machine's private folder, never its path.
+    expect(String(location()[0]?.props.subtitle)).not.toContain('/private/');
+    expect(reboundArtifact()).toHaveLength(0);
+    status.mockResolvedValueOnce({ ok: true, root: '/private/rebound', health: testState.health,
+      artifacts: [{ id: 'rebound-1', createdAtMs: 1, direction: 'stt_input', format: 'webm', durationMs: null, byteLength: 1236 }] });
     const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     await act(async () => { retireActiveServerAccountScopeLifetime(); });
-    await waitForTestEvent(screen.subscribe, () => location()[0]?.props.subtitle, value => value === '/private/rebound');
-    expect(location()[0]?.props.subtitle).toBe('/private/rebound');
+    await waitForTestEvent(screen.subscribe, () => reboundArtifact().length, count => count > 0);
     await screen.unmount();
   });
 
@@ -358,7 +362,8 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
       tree = renderer.create(createSettingsSection( { voice: first, setVoice: commitVoiceSettings })); registerStandardCleanupTarget(tree);
     });
     if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
-    expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle).toBe('/private/m1');
+    // The machine is proved by the status read above; the row names it as a place, never a path.
+    expect(String(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle)).not.toContain('/private/');
 
     machineState.machineId = 'm2';
     await act(async () => {
@@ -368,7 +373,8 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
 
     expect(status.mock.calls.map(([machineId]) => machineId)).toEqual(['m1', 'm2']);
     expect(configure).not.toHaveBeenCalled();
-    expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle).toBe('/private/m2');
+    // The machine is proved by the status read above; the row names it as a place, never a path.
+    expect(String(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle)).not.toContain('/private/');
   });
 
   it('invalidates stale daemon status during restart reconciliation and reloads it after acknowledgement', async () => {
@@ -392,7 +398,8 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     });
     if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
     expect(status).toHaveBeenCalledTimes(2);
-    expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle).toBe('/private/m1');
+    // The machine is proved by the status read above; the row names it as a place, never a path.
+    expect(String(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.location') }).props.subtitle)).not.toContain('/private/');
   });
 
   it('does not let an older cleanup retry re-enable or republish a revoked former machine', async () => {
@@ -455,6 +462,7 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     });
     if (modalScreen.findByTestId('web-modal-confirm')) await modalScreen.pressByTestIdAsync('web-modal-confirm');
 
+    // Said as the outcome for the person, without the storage mechanism.
     expect(tree.root.findByProps({ title: tLoose('settingsVoice.diagnostics.backupPolicy') }).props.subtitle)
       .toBe(tLoose('settingsVoice.diagnostics.backupPolicyBestEffort'));
   });

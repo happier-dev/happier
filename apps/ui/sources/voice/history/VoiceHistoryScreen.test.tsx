@@ -60,7 +60,7 @@ vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await vi.importActual<typeof import('@/dev/testkit/mocks/router')>(
     '@/dev/testkit/mocks/router',
   );
-  return createExpoRouterMock({ pathname: '/settings/voice-history' }).module;
+  return createExpoRouterMock({ pathname: '/settings/voice/history' }).module;
 });
 
 const OPENAI_SOURCE = Object.freeze({

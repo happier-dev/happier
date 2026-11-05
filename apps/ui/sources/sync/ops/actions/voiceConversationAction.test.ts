@@ -755,7 +755,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'completed' } });
             await screen.update(await createRealAppRouteElement(hosted, credentials));
             const destination = scenario === 'ended' ? `/session/saved-conversation?serverId=${serverId}`
-                : scenario === 'history' ? '/settings/voice-history' : '/settings/voice/conversations?focus=provider';
+                : scenario === 'history' ? '/settings/voice/history' : '/settings/voice/conversations?focus=provider';
             expect(screen.findByTestId('voice-action-hosted-destination')?.props.children).toBe(destination);
             const stale = await createDefaultActionExecutor().execute(actionId, { expectedAttempt: 'previous-attempt' }, context);
             expect(stale).toMatchObject({ ok: true, result: { status: 'unavailable', code: 'stale_voice_attempt' } });

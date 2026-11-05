@@ -155,6 +155,7 @@ import { WarningActionBanner } from "./view/WarningActionBanner";
 import { ComposerBannerCollapseProvider } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
 import { resolveSessionViewHeaderProps, shouldFoldSessionHeaderIconActions } from "./view/resolveSessionViewHeaderProps";
+import { useVoiceConversationHeaderSubtitle } from '@/voice/presence/useVoiceConversationHeaderSubtitle';
 import { useWorkspaceSyncRelationshipSummaries } from "@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries";
 import { resolveWorkspaceSyncSetAttention } from "@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel";
 import { createWorkspaceSyncConflictDetailsTab } from "@/components/workspaces/sync/workspaceSyncConflictDetailsTab";
@@ -1529,6 +1530,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         [companionPreference.preference, resolveCompanionHeaderPlacement],
     );
 
+    const voiceConversationSubtitle = useVoiceConversationHeaderSubtitle(ownerMetadata);
     // Compute header props based on session state
     const headerProps = React.useMemo(() => resolveSessionViewHeaderProps({
         isDataReady,
@@ -1560,6 +1562,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         statusErrorColor: theme.colors.status.error,
         workspaceSubtitle: headerWorkspaceDisplay.displayTitle,
         workspaceSubtitleEllipsizeMode: headerWorkspaceDisplay.subtitleEllipsizeMode,
+        voiceConversationSubtitle,
         externalSessionRuntime: externalSessionRuntimePresentation,
         pluginUiProjection: headerPluginProjection.pluginUiProjection,
         pluginUiScopedLaunchFacts: headerScopedLaunchFacts,
@@ -1587,6 +1590,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             isPhone: deviceType === 'phone',
         } : undefined,
     }), [
+        voiceConversationSubtitle,
         actionRailVisible,
         mobileTerminalTabAvailable,
         buildCurrentSessionHref,

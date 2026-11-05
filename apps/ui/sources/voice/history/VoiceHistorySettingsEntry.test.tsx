@@ -20,13 +20,13 @@ describe('VoiceHistorySettingsEntry', () => {
     const row = screen.findByTestId('settings-voice-history-entry');
     expect(row?.props.accessibilityRole).toBe('button');
     screen.pressByTestId('settings-voice-history-entry');
-    expect(routerMock.spies.push).toHaveBeenCalledWith('/settings/voice-history');
+    expect(routerMock.spies.push).toHaveBeenCalledWith('/settings/voice/history');
 
     const { getSettingsStackScreenDefinitions } = await import(
       '@/components/settings/navigation/settingsRouteRegistry'
     );
     const route = getSettingsStackScreenDefinitions((key) => key)
-      .find((definition) => definition.name === 'voice-history');
+      .find((definition) => definition.name === 'voice/history');
     expect(route?.options.headerTitle).toBe('settingsVoice.history.title');
   });
 });

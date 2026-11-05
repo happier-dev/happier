@@ -9,7 +9,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
-import { useServerScopedMachine } from './hooks';
+import { useServerScopedMachine, useServerScopedMachineLabel } from './hooks';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -157,5 +157,31 @@ describe('useServerScopedMachine demand', () => {
             await removeServerProfile(first.id);
             await removeServerProfile(second.id);
         }
+    });
+});
+
+describe('useServerScopedMachineLabel', () => {
+    let previousState: ReturnType<typeof storage.getState>;
+    beforeEach(() => { previousState = storage.getState(); });
+    afterEach(() => { standardCleanup(); storage.setState(previousState, true); });
+
+    it('goes from the locked label straight to the name, never through an empty label, and publishes only real changes', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const named = createMachineFixture({ metadata: { ...createMachineFixture().metadata!, displayName: 'NLDW3' } });
+        const locked = { ...named, metadata: null, availability: { kind: 'locked' as const, reason: 'content_unreadable' as const } };
+        // Sync re-reads the row before its content opens: no metadata and no availability yet.
+        const hydrating = { ...named, metadata: null, availability: undefined };
+        const publish = async (machine: typeof named) => act(async () => storage.setState({ machines: { [machine.id]: machine },
+            machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } }));
+        await publish(locked as typeof named);
+        const seen: (string | null)[] = [];
+        const hook = await renderHook(() => { const label = useServerScopedMachineLabel(serverId, named.id); seen.push(label); return label; });
+        await publish(hydrating as typeof named);
+        await publish({ ...(hydrating as typeof named), activeAt: 99 });
+        await publish(named);
+        await publish({ ...named, activeAt: 100 });
+        expect(hook.getCurrent()).toBe('NLDW3');
+        expect(seen).not.toContain(null);
+        expect(seen).toEqual([seen[0], 'NLDW3']);
     });
 });

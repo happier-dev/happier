@@ -37,6 +37,8 @@ export type VoiceDiagnosticsCopy = Readonly<{
   exportFailed: string;
   backupPolicy: string;
   backupPolicyBestEffort: string;
+  locationOnMachine: (params: { machine: string }) => string;
+  locationPrivate: string;
   activeIndicator: string;
   checkingIndicator: string;
   statusUnknownIndicator: string;

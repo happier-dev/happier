@@ -872,6 +872,7 @@ function UserTextBlock(props: {
     isWeb,
     showActions: showMessageActions,
   });
+  const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;
   const timestampText = timestampPresentation.showTimestamp
     ? formatTranscriptMessageTimestamp(props.message.createdAt)
     : null;
@@ -892,7 +893,7 @@ function UserTextBlock(props: {
       settings={props.messageDisplayCommon} rollbackAction={props.rollbackAction}
       messagePins={props.messagePins} onToggleMessagePin={props.onToggleMessagePin}
       showActions={showMessageActions} showPinAction={showPinButton}
-      timestampText={timestampText} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
+      timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
       onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -1032,7 +1033,7 @@ function UserTextBlock(props: {
       settings={props.messageDisplayCommon} rollbackAction={props.rollbackAction}
       messagePins={props.messagePins} onToggleMessagePin={props.onToggleMessagePin}
       showActions={showMessageActions} showPinAction={showPinButton}
-      timestampText={timestampText} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
+      timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
       onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -1236,6 +1237,7 @@ function AgentTextBlock(props: {
     isWeb,
     showActions: showMessageActions,
   });
+  const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;
   const timestampText = timestampPresentation.showTimestamp
     ? formatTranscriptMessageTimestamp(props.message.createdAt)
     : null;
@@ -1371,7 +1373,7 @@ function AgentTextBlock(props: {
       settings={props.messageDisplayCommon} rollbackAction={props.rollbackAction}
       messagePins={props.messagePins} onToggleMessagePin={props.onToggleMessagePin}
       showActions={showMessageActions} showPinAction={showPinButton}
-      timestampText={timestampText} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
+      timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
       onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}

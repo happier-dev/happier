@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useUnistyles } from 'react-native-unistyles';
@@ -29,10 +30,10 @@ import {
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
+import { resolveSessionModelLabel } from '@/sync/domains/models/modelOptions';
 import { parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { VoiceHearControls } from '@/voice/settings/panels/VoiceHearControls';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { resolveVoiceSttCapturePlan } from '@/voice/runtime/input/resolveVoiceSttCapturePlan';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
@@ -64,6 +65,9 @@ import {
   LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
   importLegacyVoiceOpenAiChatProvider,
 } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
+
+/** The menu id of "the session's own" in the Agent and Model selects. */
+const SAME_AS_SESSION_ID = '__same_as_session__';
 
 const AGENT_SELECTION_SETTINGS = {
   agentSource: VOICE_CONVERSATIONS_SETTINGS.settings.agentSource,
@@ -141,6 +145,7 @@ export function LocalConversationSection(props: {
   const needsProviderChatSelection = cfg.agent.providerChat?.status === 'needs_selection'
     || cfg.agent.providerChat?.status === 'migration_required' && cfg.agent.providerChat.reason === 'provider_catalog_import_required';
   const executionMachineId = useVoiceExecutionMachineId();
+  const agentMachineLabel = useServerScopedMachineLabel(getActiveServerSnapshot().serverId ?? null, executionMachineId);
   const enabled = resolveVoiceProviderIdFromSettings(voice) === 'local_conversation';
   const customAgentRequested = useSettingRevealRequested([AGENT_SELECTION_SETTINGS.customAgent]);
   const customChatModelRequested = useSettingRevealRequested([CHAT_MODEL_SETTINGS.chatModelId]);
@@ -304,6 +309,48 @@ export function LocalConversationSection(props: {
     ];
   }, [selectableModelMenuItems, theme.colors.text.secondary]);
 
+  const followsSessionAgent = cfg.agent.agentSource === 'session';
+  const followsAgentModel = cfg.agent.chatModelSource === 'session';
+  // A chosen model is named by its catalog title, even before the agent's model list has loaded.
+  const chatModelId = String(cfg.agent.chatModelId ?? '').trim();
+  const chatModelLabel = modelIdMenuItems.find((it) => it.id === chatModelId)?.title
+    ?? resolveSessionModelLabel(String(cfg.agent.agentId ?? '').trim(), null, chatModelId)
+    ?? chatModelId;
+  const selectedAgentMark = selectedAgentEntry ? (
+    <AgentCatalogIdentityIcon
+      entry={selectedAgentEntry}
+      machineId={preflightMachineId}
+      serverId={capabilityServerId || null}
+      current={daemonMergedProjection.phase === 'ready'}
+      size={16}
+    />
+  ) : undefined;
+  const selectedAgentChoiceLabel = resolvedAgentEntries[0]?.title ?? t('settingsVoice.local.modelCustomTitle');
+  // "Same as …" names whose model it is: the session's, or the fixed agent's own default.
+  const sameAsAgentModelLabel = followsSessionAgent
+    ? t('settingsVoice.pages.conversations.agentSameAsSession')
+    : t('settingsVoice.pages.conversations.modelSameAs', { agent: selectedAgentIdLabel });
+  const agentMenuItems = React.useMemo(() => [
+    {
+      id: SAME_AS_SESSION_ID,
+      title: t('settingsVoice.pages.conversations.agentSameAsSession'),
+      subtitle: t('settingsVoice.local.conversation.agentSource.followSessionSubtitle'),
+      icon: renderDropdownItemIcon({ name: 'arrows-clockwise', color: theme.colors.text.secondary }),
+    },
+    ...agentIdMenuItems,
+  ], [agentIdMenuItems, theme.colors.text.secondary]);
+  const chatModelMenuItems = React.useMemo(() => [
+    {
+      id: SAME_AS_SESSION_ID,
+      title: sameAsAgentModelLabel,
+      subtitle: t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle'),
+      icon: renderDropdownItemIcon({ name: 'arrows-clockwise', color: theme.colors.text.secondary }),
+    },
+    ...modelIdMenuItems,
+  ], [modelIdMenuItems, sameAsAgentModelLabel, theme.colors.text.secondary]);
+  // A capability the server or policy has turned off leaves nothing to set up below it.
+  const voiceAgentBlocked = !voiceAgentEnabled && voiceAgentAvailability !== 'checking';
+
   // What Start does: two long, sentence-like choices, so a field select rather than a segmented control.
   const rootSessionPolicyItems = React.useMemo(() => [
     {
@@ -327,6 +374,9 @@ export function LocalConversationSection(props: {
   };
 
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
+  /** Picking an agent fixes it: the settings with the source set, for the selection to build on. */
+  const withFixedAgentSource = () => cfg.agent.agentSource === 'agent'
+    ? voice : writeLocalConversationVoiceSettings(voice, { ...cfg, agent: { ...cfg.agent, agentSource: 'agent' } });
   const setStreaming = (patch: Partial<typeof cfg.streaming>) => setCfg({ streaming: { ...cfg.streaming, ...patch } });
 
 
@@ -374,20 +424,19 @@ export function LocalConversationSection(props: {
               ...(voiceAgentAvailability === 'policy_disabled' ? { disabled: !voiceAgentEnabled } : { unavailableReason: voiceAgentUnavailableReason }) },
           ]}
         />
+        {/* The fix lives in Features, so the prerequisite is a destination row: its value, then the way there. */}
         {voiceAgentAvailability === 'policy_disabled' ? <Item
+          testID="settings.voice.local.turnOnVoiceAgent"
           title={t('settingsFeatures.expVoiceAgent')}
           subtitle={voiceAgentUnavailableReason}
           subtitleLines={0}
-          showChevron={false}
-          accessoryLayout="adaptive"
-          rightElementOutsidePressable
-          rightElement={<RoundButton title={t('settingsVoice.pages.conversations.turnOnVoiceAgent')}
-            testID="settings.voice.local.turnOnVoiceAgent" display="secondary" size="small"
-            onPress={() => router.push(SETTINGS_ROUTES.features)} />}
+          detail={t('settingsVoice.pages.conversations.voiceAgentOff')}
+          accessibilityRole="button"
+          onPress={() => router.push(SETTINGS_ROUTES.features)}
         /> : null}
         </>
         </SettingAnchor>
-      {cfg.conversationMode === 'agent' ? (
+      {cfg.conversationMode === 'agent' && !voiceAgentBlocked ? (
         <>
         {needsProviderChatSelection ? (
           <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agent}>
@@ -444,43 +493,41 @@ export function LocalConversationSection(props: {
         ) : null}
         {!hasConfiguredProviderChat ? (
           <>
+        {/* One row answers which agent thinks, the session's own or a fixed one, so it hosts both settings. */}
         <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agentSource}>
-        <SegmentedChoiceItem
-          title={t(AGENT_SELECTION_SETTINGS.agentSource.titleKey)}
-          subtitleLines={0}
-          testIDPrefix="settings.voice.local.mediatorAgentSource"
-          value={cfg.agent.agentSource}
-          onChange={(next) => setAgent({ agentSource: next })}
-          options={[
-            { id: 'session', label: t('settingsVoice.local.conversation.agentSource.followSessionTitle'), description: t('settingsVoice.local.conversation.agentSource.followSessionSubtitle') },
-            { id: 'agent', label: t('settingsVoice.local.conversation.agentSource.fixedAgentTitle'), description: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle') },
-          ]}
-        />
-        </SettingAnchor>
-        {cfg.agent.agentSource === 'agent' ? (
-          <>
-          <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agent}>
+        <SettingAnchor setting={AGENT_SELECTION_SETTINGS.agent}>
           <DropdownMenu
+            testID="settings.voice.local.agent"
             open={openMenu === 'mediatorAgentId'}
             onOpenChange={(next) => setOpenMenu(next ? 'mediatorAgentId' : null)}
             variant="selectable"
             search={true}
             searchPlaceholder={t('settingsVoice.local.conversation.searchBackendsPlaceholder')}
-            selectedId={selectedAgentIdForDropdown ?? ''}
+            selectedId={followsSessionAgent ? SAME_AS_SESSION_ID : selectedAgentIdForDropdown ?? ''}
             showCategoryTitles={false}
             matchTriggerWidth={true}
             connectToTrigger={true}
             rowKind="item"
             popoverBoundaryRef={props.popoverBoundaryRef}
             itemTrigger={{
-              title: t('settingsVoice.local.mediatorAgentId'),
-              subtitleFormatter: () => (selectedAgentTarget && !selectedAgentTarget.ok
-                ? t('settingsVoice.local.machineErrors.agent_selection_unavailable')
-                : agentIdMenuItems.find((it) => it.id === (selectedAgentIdForDropdown ?? ''))?.subtitle ?? t('settingsVoice.local.mediatorAgentIdSubtitle')),
-              detailFormatter: () => selectedAgentIdLabel,
+              title: t(AGENT_SELECTION_SETTINGS.agent.titleKey),
+              subtitleFormatter: () => (followsSessionAgent
+                ? t('settingsVoice.local.conversation.agentSource.followSessionSubtitle')
+                : selectedAgentTarget && !selectedAgentTarget.ok
+                  ? t('settingsVoice.local.machineErrors.agent_selection_unavailable')
+                  // Where and how the fixed agent runs; the select already names which agent it is.
+                  : agentMachineLabel ? t('settingsVoice.pages.conversations.agentRunsOn', { machine: agentMachineLabel })
+                    : t('settingsVoice.local.mediatorAgentIdSubtitle')),
+              detailFormatter: () => (followsSessionAgent ? t('settingsVoice.pages.conversations.agentSameAsSession') : selectedAgentIdLabel),
+              field: { leading: followsSessionAgent ? undefined : selectedAgentMark },
             }}
-            items={agentIdMenuItems}
+            items={agentMenuItems}
             onSelect={(id) => {
+              if (id === SAME_AS_SESSION_ID) {
+                setOpenMenu(null);
+                if (cfg.agent.agentSource !== 'session') setAgent({ agentSource: 'session' });
+                return;
+              }
               if (id === '__custom__') {
                 setOpenMenu(null);
                 setCustomEntry('agentId');
@@ -490,11 +537,12 @@ export function LocalConversationSection(props: {
               const next = String(id ?? '').trim();
               const entry = resolveVoiceAgentCatalogSelectionV1(resolvedAgentEntries, next);
               if (!entry) return;
-              props.setVoice(applyVoiceAgentSelection(voice, { kind: 'catalog', entry }));
+              props.setVoice(applyVoiceAgentSelection(withFixedAgentSource(), { kind: 'catalog', entry }));
               setOpenMenu(null);
             }}
           />
-          </SettingAnchor>
+        </SettingAnchor>
+        </SettingAnchor>
           {customEntry === 'agentId' ? (
             <SettingAnchor setting={AGENT_SELECTION_SETTINGS.customAgent}>
             <FieldValueItem
@@ -506,26 +554,30 @@ export function LocalConversationSection(props: {
               value={String(cfg.agent.agentId ?? '')}
               onCommit={(draft) => {
                 setCustomEntry(null);
-                const nextVoice = applyVoiceAgentSelection(voice, { kind: 'custom', agentId: draft });
+                const fixedVoice = withFixedAgentSource();
+                const nextVoice = applyVoiceAgentSelection(fixedVoice, { kind: 'custom', agentId: draft });
                 if (nextVoice === voice) return String(cfg.agent.agentId ?? '');
                 props.setVoice(nextVoice);
               }}
             />
             </SettingAnchor>
           ) : null}
+        {!followsSessionAgent ? (
+          <>
           <SettingAnchor setting={AGENT_SELECTION_SETTINGS.connectedServices}>
           <VoiceGlobalConnectedServicesBindingField
             agentId={selectedAgentEntry?.identity ?? cfg.agent.agentId}
             serviceIds={connectedServiceIds}
             bindingVersion={2}
             title={t(AGENT_SELECTION_SETTINGS.connectedServices.titleKey)}
+            subtitle={t('settingsVoice.pages.conversations.agentAccountDescription')}
             value={cfg.agent.connectedServices}
             onChange={(value) => setAgent({ connectedServices: VoiceAgentConnectedServicesSchema.parse(value) })}
           />
           </SettingAnchor>
           </>
-        ) : searchPrerequisite({ settings: [AGENT_SELECTION_SETTINGS.customAgent, AGENT_SELECTION_SETTINGS.connectedServices,
-          ...(!needsProviderChatSelection ? [AGENT_SELECTION_SETTINGS.agent] : [])], reason: t('settingsVoice.pages.search.select', { choice: t('settingsVoice.local.conversation.agentSource.fixedAgentTitle'), control: t('settingsVoice.local.mediatorAgentSource') }) })}
+        ) : searchPrerequisite({ settings: [AGENT_SELECTION_SETTINGS.customAgent, AGENT_SELECTION_SETTINGS.connectedServices],
+          reason: t('settingsVoice.pages.search.select', { choice: selectedAgentChoiceLabel, control: t(AGENT_SELECTION_SETTINGS.agent.titleKey) }) })}
           </>
         ) : searchPrerequisite({ settings: Object.values(AGENT_SELECTION_SETTINGS), reason: t('settingsVoice.pages.search.providerChatConfigured') })}
         <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.permissionIntent}>
@@ -545,47 +597,39 @@ export function LocalConversationSection(props: {
         </SettingAnchor>
         {!hasConfiguredProviderChat ? (
           <>
+        {/* One select, the agent's own model or a chosen one, hosts both model settings. */}
         <SettingAnchor setting={CHAT_MODEL_SETTINGS.chatModelSource}>
-        <SegmentedChoiceItem
-          title={t(CHAT_MODEL_SETTINGS.chatModelSource.titleKey)}
-          subtitleLines={0}
-          testIDPrefix="settings.voice.local.mediatorChatModelSource"
-          value={cfg.agent.chatModelSource}
-          onChange={(next) => setAgent({ chatModelSource: next })}
-          options={[
-            { id: 'session', label: t('settingsVoice.local.mediatorChatModelSourceSession'), description: t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle') },
-            { id: 'custom', label: t('settingsVoice.local.mediatorChatModelSourceCustom'), description: t('settingsVoice.local.conversation.chatModelSource.customSubtitle') },
-          ]}
-        />
-        </SettingAnchor>
-        {cfg.agent.chatModelSource === 'custom' ? (
-          <SettingAnchor setting={CHAT_MODEL_SETTINGS.chatModelId}>
+        <SettingAnchor setting={CHAT_MODEL_SETTINGS.chatModelId}>
           <>
           <DropdownMenu
+            testID="settings.voice.local.chatModel"
             open={openMenu === 'mediatorChatModelId'}
             onOpenChange={(next) => setOpenMenu(next ? 'mediatorChatModelId' : null)}
             variant="selectable"
             search={true}
             searchPlaceholder={t('settingsVoice.local.conversation.searchModelsPlaceholder')}
-            selectedId={String(cfg.agent.chatModelId ?? '').trim()}
+            selectedId={followsAgentModel ? SAME_AS_SESSION_ID : String(cfg.agent.chatModelId ?? '').trim()}
             showCategoryTitles={false}
             matchTriggerWidth={true}
             connectToTrigger={true}
             rowKind="item"
               popoverBoundaryRef={props.popoverBoundaryRef}
               itemTrigger={{
-                title: t('settingsVoice.local.conversation.chatModelId.title'),
-                subtitleFormatter: () => (
-                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.chatModelId ?? '').trim())?.subtitle
-                  ?? t('settingsVoice.local.conversation.chatModelId.subtitle')
+                title: t(CHAT_MODEL_SETTINGS.chatModelSource.titleKey),
+                subtitleFormatter: () => (followsAgentModel
+                  ? t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle')
+                  : modelIdMenuItems.find((it) => it.id === String(cfg.agent.chatModelId ?? '').trim())?.subtitle
+                    ?? t('settingsVoice.local.conversation.chatModelId.subtitle')
                 ),
-                detailFormatter: () => (
-                  modelIdMenuItems.find((it) => it.id === String(cfg.agent.chatModelId ?? '').trim())?.title
-                  ?? String(cfg.agent.chatModelId)
-                ),
+                detailFormatter: () => (followsAgentModel ? sameAsAgentModelLabel : chatModelLabel),
               }}
-            items={modelIdMenuItems}
+            items={chatModelMenuItems}
             onSelect={(id) => {
+              if (id === SAME_AS_SESSION_ID) {
+                setOpenMenu(null);
+                if (cfg.agent.chatModelSource !== 'session') setAgent({ chatModelSource: 'session' });
+                return;
+              }
               if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
                 preflightModels.probe.onRefresh?.();
                 setOpenMenu(null);
@@ -599,7 +643,7 @@ export function LocalConversationSection(props: {
 
               const next = String(id ?? '').trim();
               if (!next) return;
-              setAgent({ chatModelId: next });
+              setAgent({ chatModelSource: 'custom', chatModelId: next });
               setOpenMenu(null);
             }}
           />
@@ -614,13 +658,13 @@ export function LocalConversationSection(props: {
               onCommit={(draft) => {
                 setCustomEntry(null);
                 if (!draft) return String(cfg.agent.chatModelId ?? '');
-                setAgent({ chatModelId: draft });
+                setAgent({ chatModelSource: 'custom', chatModelId: draft });
               }}
             />
           ) : null}
           </>
-          </SettingAnchor>
-        ) : searchPrerequisite({ settings: [CHAT_MODEL_SETTINGS.chatModelId], reason: t('settingsVoice.pages.search.select', { choice: t('settingsVoice.local.mediatorChatModelSourceCustom'), control: t('settingsVoice.local.mediatorChatModelSource') }) })}
+        </SettingAnchor>
+        </SettingAnchor>
           </>
         ) : searchPrerequisite({ settings: Object.values(CHAT_MODEL_SETTINGS), reason: t('settingsVoice.pages.search.providerChatConfigured') })}
         <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.verbosity}>

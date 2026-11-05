@@ -145,7 +145,11 @@ export type VoiceSettingsPagesCopy = Readonly<{
       accountDescription: string;
       payWithTitle: string;
       happierBillingUnavailable: string;
-      turnOnVoiceAgent: string;
+      voiceAgentOff: string;
+      agentTitle: string;
+      agentSameAsSession: string;
+      modelSameAs: (params: { agent: string }) => string;
+      agentAccountDescription: string;
       payWithHappierDescription: string;
       payWithOwnDescription: string;
       runsOn: string;
@@ -163,6 +167,7 @@ export type VoiceSettingsPagesCopy = Readonly<{
       talkToAgent: string;
       talkToAgentDescription: string;
       agentFeatureRequired: (params: { feature: string }) => string;
+      agentRunsOn: (params: { machine: string }) => string;
       itMayTitle: string;
       itMayReadOnly: string;
       itMayReadOnlyDescription: string;
@@ -397,7 +402,11 @@ export const en: VoiceSettingsPagesCopy = {
       accountDescription: 'It is the same service either way; this only changes who pays.',
       payWithTitle: 'Pay with',
       happierBillingUnavailable: "Happier billing isn’t available on this server.",
-      turnOnVoiceAgent: "Turn on Voice agent",
+      voiceAgentOff: "Off",
+      agentTitle: "Agent",
+      agentSameAsSession: "Same as session",
+      modelSameAs: ({ agent }) => `Same as ${agent}`,
+      agentAccountDescription: "Which sign-in it uses.",
       payWithHappierDescription: 'Your Happier plan covers it. No account of your own needed.',
       payWithOwnDescription: 'You use your own account and API key with this service.',
       runsOn: 'Runs on',
@@ -415,6 +424,7 @@ export const en: VoiceSettingsPagesCopy = {
       talkToAgent: 'A Voice agent',
       talkToAgentDescription: 'A Voice agent reads your sessions and acts on them for you.',
       agentFeatureRequired: ({ feature }) => `Enable ${feature} in Settings → Features.`,
+      agentRunsOn: ({ machine }) => `Runs on ${machine}, in a folder of its own.`,
       itMayTitle: 'It may',
       itMayReadOnly: 'Read only',
       itMayReadOnlyDescription: 'It reads your sessions and files and changes nothing.',

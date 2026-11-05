@@ -12,6 +12,7 @@ import type {
 
 import {
   SELECTION_LIST_MODAL_CARD_SCROLL,
+  SELECTION_LIST_MODAL_MAX_HEIGHT,
   SelectionList,
   resolveSelectionListModalHeightBehavior,
   type SelectionListStep,
@@ -46,7 +47,6 @@ import {
   connectedAccountPurposeTargetChoiceId,
 } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 
-const PURPOSE_TARGET_PICKER_MAX_HEIGHT = 520;
 const EMPTY_ACCOUNTS = Object.freeze([]);
 const EMPTY_GROUPS = Object.freeze([]);
 const EMPTY_TEAM_RESOURCES: HomeTeamCredentialModelCatalog['resources'] = Object.freeze([]);
@@ -82,7 +82,7 @@ function ConnectedAccountPurposeTargetPickerModalContent(
         rootStep={props.rootStep}
         selectedOptionId={props.selectedOptionId}
         listAccessibilityLabel={props.accessibilityLabel}
-        maxHeight={PURPOSE_TARGET_PICKER_MAX_HEIGHT}
+        maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
         heightBehavior={resolveSelectionListModalHeightBehavior()}
         keyboardHintsEnabled
         onRequestClose={props.onClose}

@@ -69,15 +69,29 @@ async function publishMachineCensus() {
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
 const routeParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
+const routerSpies = vi.hoisted(() => ({ value: null as null | { push: (...args: unknown[]) => unknown } }));
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  return createExpoRouterMock({ params: () => routeParams.value }).module;
+  const routerMock = createExpoRouterMock({ params: () => routeParams.value });
+  routerSpies.value = routerMock.spies;
+  return routerMock.module;
 });
 // These daemon responses are emitted at the Socket.IO wire boundary below;
 // the scoped RPC adapter, catalogs and capability parsing stay real.
 const registryDescribe = vi.hoisted(() => vi.fn<
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe
 >());
+
+function serveBundledCodexAgent() {
+  registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
+    v: 2, generation: 7, familiesById: {}, agentsById: {
+      codex: {
+        id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, title: 'Codex',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      },
+    },
+  }) });
+}
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -364,7 +378,7 @@ describe('LocalConversationSection', () => {
     } });
     const setVoice = vi.fn();
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
     expect(picker?.props.itemTrigger.subtitleFormatter()).toBe(t('settingsVoice.local.machineErrors.agent_selection_unavailable'));
     expect(capabilitiesInvoke).not.toHaveBeenCalled();
     expect(setVoice).not.toHaveBeenCalled();
@@ -379,10 +393,10 @@ describe('LocalConversationSection', () => {
     const setVoice = vi.fn<(voice: VoiceSettings) => void>(() => { changed.resolve(); });
     const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex' } });
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
     const rowTargetKey = 'agent:happier.agent.custom-acp/custom-acp:definition:row-review';
     expect(picker?.props.items.find((item: { id: string }) => item.id === rowTargetKey)).toMatchObject({ title: 'Row review' });
-    await selectDropdownOption(screen, t('settingsVoice.local.mediatorAgentId'),
+    await selectDropdownOption(screen, t('settingsVoice.pages.conversations.agentTitle'),
       'dropdown-option-agent_happier_agent_custom-acp_custom-acp_definition_row-review');
     await changed.promise;
     expect(setVoice).toHaveBeenCalledOnce();
@@ -390,7 +404,7 @@ describe('LocalConversationSection', () => {
       agentId: 'custom-acp', agentTargetKey: rowTargetKey,
     });
     await screen.update(<LocalConversationSection voice={setVoice.mock.calls[0]![0]} setVoice={setVoice} />);
-    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'))?.props.selectedId).toBe(rowTargetKey);
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'))?.props.selectedId).toBe(rowTargetKey);
     await expect(resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1',
       selection: readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent,
     })).resolves.toMatchObject({ ok: true, backendTarget: {
@@ -491,7 +505,54 @@ describe('LocalConversationSection', () => {
     expect(reasonTexts).toHaveLength(1);
     const agentOption = findSegmentedChoiceByTitle(screen, t('settingsVoice.pages.conversations.talkToTitle'))
       ?.props.options.find((option: { id: string }) => option.id === 'agent');
-    expect(agentOption?.disabled).toBe(true);
+    expect(agentOption?.disabled).toBe(true);    // The fix lives in Features: the prerequisite row leads there (a destination, not an operation).
+    act(() => screen.pressByTestId('settings.voice.local.turnOnVoiceAgent'));
+    expect(routerSpies.value?.push).toHaveBeenCalledWith('/settings/features');
+  });
+  it('collapses every Voice agent row behind the one prerequisite row while the capability is off', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    storage.getState().applySettingsLocal({ featureToggles: { 'voice.agent': false, 'execution.runs': true } });
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex' } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={vi.fn()} />);
+    expect(screen.findByTestId('settings.voice.local.turnOnVoiceAgent')).toBeTruthy();
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'))).toBeNull();
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'))).toBeNull();
+    expect(findSegmentedChoiceByTitle(screen, t(VOICE_CONVERSATIONS_SETTINGS.settings.permissionIntent.titleKey))).toBeNull();
+  });
+  it('answers which agent and model in one select each, with the session as one of the answers', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const following = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'session', agentId: 'codex', chatModelSource: 'session',
+    } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={following} setVoice={setVoice} />);
+    const agent = () => findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
+    const model = () => findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'));
+    expect(findSegmentedChoiceByTitle(screen, t('settingsVoice.local.mediatorAgentSource'))).toBeNull();
+    expect(findSegmentedChoiceByTitle(screen, t('settingsVoice.local.mediatorChatModelSource'))).toBeNull();
+    const sessionId = agent()?.props.selectedId as string;
+    expect(agent()?.props.items[0]).toMatchObject({ id: sessionId, title: t('settingsVoice.pages.conversations.agentSameAsSession') });
+    expect(model()?.props.selectedId).toBe(sessionId);
+
+    const codexId = agent()?.props.items.find((item: { id: string }) => item.id !== sessionId && item.id !== '__custom__')?.id as string;
+    act(() => agent()?.props.onSelect(codexId));
+    const fixed = readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent;
+    expect(fixed.agentSource).toBe('agent');
+
+    setVoice.mockClear();
+    act(() => model()?.props.onSelect('m-chosen'));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent).toMatchObject({ chatModelSource: 'custom', chatModelId: 'm-chosen' });
+
+    const chosen = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'codex', chatModelSource: 'custom', chatModelId: 'm-chosen',
+    } });
+    await act(async () => screen.update(<LocalConversationSection voice={chosen} setVoice={setVoice} />));
+    setVoice.mockClear();
+    act(() => model()?.props.onSelect(sessionId));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent.chatModelSource).toBe('session');
+    setVoice.mockClear();
+    act(() => agent()?.props.onSelect(sessionId));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent.agentSource).toBe('session');
   });
   it.each(['sticky', 'replacement', 'unavailable'] as const)('keeps the %s execution target for Agent identities and models', async (kind) => {
     const LocalConversationSection = await loadLocalConversationSection();
@@ -522,8 +583,8 @@ describe('LocalConversationSection', () => {
     } } }));
     const setVoice = vi.fn();
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
-    const models = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
+    const models = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'));
     if (kind === 'unavailable') {
       expect(picker?.props.selectedId).toBe('com.a.voice.agent');
       expect(picker?.props.items.some((item: { id: string }) => item.id === 'com.b.voice.agent')).toBe(false);
@@ -590,7 +651,7 @@ describe('LocalConversationSection', () => {
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     const agentPicker = findDropdownByItemTriggerTitle(
       screen,
-      t('settingsVoice.local.mediatorAgentId'),
+      t('settingsVoice.pages.conversations.agentTitle'),
     );
     const findExternalEntry = () => agentPicker?.props.items.find(
       (item: DropdownMenuItem) => item.id === 'agent:com.acme.voice/agent',
@@ -640,6 +701,7 @@ describe('LocalConversationSection', () => {
   });
 
   it('persists the exact backend target key of a bundled Agent selection', async () => {
+    serveBundledCodexAgent();
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
@@ -653,13 +715,17 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const agentPicker = findDropdownByItemTriggerTitle(
+    const agentPicker = () => findDropdownByItemTriggerTitle(
       screen,
-      t('settingsVoice.local.mediatorAgentId'),
+      t('settingsVoice.pages.conversations.agentTitle'),
     );
+    const bundledTargetKey = 'agent:happier.agent.codex/codex';
+    await waitForTestEvent(screen.subscribe, () => agentPicker()?.props.items.some(
+      (item: DropdownMenuItem) => item.id === bundledTargetKey,
+    ), available => available === true);
 
     act(() => {
-      agentPicker?.props.onSelect('codex');
+      agentPicker()?.props.onSelect(bundledTargetKey);
     });
 
     const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
@@ -692,7 +758,7 @@ describe('LocalConversationSection', () => {
     });
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     act(() => {
-      findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'))?.props.onSelect('__custom__');
+      findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'))?.props.onSelect('__custom__');
     });
     const field = screen.findAll((node) => node.props?.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
     expect(field).toBeDefined();
@@ -728,7 +794,7 @@ describe('LocalConversationSection', () => {
     });
     const agentPicker = findDropdownByItemTriggerTitle(
       screen,
-      t('settingsVoice.local.mediatorAgentId'),
+      t('settingsVoice.pages.conversations.agentTitle'),
     );
 
     expect(agentPicker?.props.items).not.toEqual(expect.arrayContaining([
@@ -751,7 +817,7 @@ describe('LocalConversationSection', () => {
     });
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
     act(() => {
-      findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'))?.props.onSelect('__custom__');
+      findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'))?.props.onSelect('__custom__');
     });
     const field = screen.findAll((node) => node.props?.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
     act(() => { field.props.onCommit('  com.acme.voice.agent  '); });
@@ -882,7 +948,7 @@ describe('LocalConversationSection', () => {
     openAdvancedAgent(screen);
     for (const title of [
       t('settingsVoice.local.mediatorAgentSource'),
-      t('settingsVoice.local.mediatorAgentId'),
+      t('settingsVoice.pages.conversations.agentTitle'),
       t('settingsVoice.local.mediatorChatModelSource'),
       t('settingsVoice.local.conversation.chatModelId.title'),
       t('settingsVoice.local.mediatorCommitModelSource'),
@@ -913,14 +979,13 @@ describe('LocalConversationSection', () => {
     const withoutProviderChat = writeLocalConversationVoiceSettings(voice, { ...cfg, agent: { ...cfg.agent, providerChat: null } });
     routeParams.value = { setting: VOICE_CONVERSATIONS_SETTINGS.settings.chatModelId.anchor };
     await screen.update(<LocalConversationSection voice={withoutProviderChat} setVoice={() => {}} />);
-    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'))).not.toBeNull();
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'))).not.toBeNull();
     expect(screen.findAllHostsByTestId('settings.voice.searchPrerequisite')).toHaveLength(0);
   });
 
   it.each([
     { id: 'agentSource', overrides: { conversationMode: 'direct_session' } },
     { id: 'customAgent', overrides: { conversationMode: 'agent', agent: { agentSource: 'session' } } },
-    { id: 'chatModelId', overrides: { conversationMode: 'agent', agent: { chatModelSource: 'session' } } },
     { id: 'commitModelId', overrides: { conversationMode: 'agent', agent: { commitModelSource: 'chat' } } },
     { id: 'silenceMs', overrides: { handsFree: { ...readLocalConversationVoiceSettings(voiceSettingsDefaults).handsFree, enabled: false } } },
     { id: 'sttLanguage', overrides: { stt: { ...readLocalConversationVoiceSettings(voiceSettingsDefaults).stt, provider: 'device' } } },
@@ -957,7 +1022,7 @@ describe('LocalConversationSection', () => {
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
     const chatModel = findDropdownByItemTriggerTitle(
       screen,
-      t('settingsVoice.local.conversation.chatModelId.title'),
+      t('settingsVoice.local.mediatorChatModelSource'),
     );
 
     await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
@@ -978,7 +1043,7 @@ describe('LocalConversationSection', () => {
 
     const screen = await renderSettingsView(<LocalConversationSection voice={initialVoice} setVoice={setVoice} />);
 
-    await openDropdown(screen, t('settingsVoice.local.mediatorAgentId'));
+    await openDropdown(screen, t('settingsVoice.pages.conversations.agentTitle'));
     await expect(screen.update(<LocalConversationSection voice={nextVoice} setVoice={setVoice} />)).resolves.toBeUndefined();
     expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
     expect(screen.findAll(node => typeof node.type === 'string'
@@ -1005,6 +1070,7 @@ describe('LocalConversationSection', () => {
   });
 
   it('renders the fixed Agent dropdown when agentSource=agent', async () => {
+    serveBundledCodexAgent();
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
@@ -1018,8 +1084,9 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const backendDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorBackend'));
-    expect(backendDropdown?.props.selectedId).toBe('agent:happier.agent.codex/codex');
+    await waitForTestEvent(screen.subscribe, () => findDropdownByItemTriggerTitle(
+      screen, t('settingsVoice.pages.conversations.agentTitle'),
+    )?.props.selectedId, selectedId => selectedId === 'agent:happier.agent.codex/codex');
   });
 
   it('offers only the selected Voice Agent services and saves its qualified pool choice', async () => {
@@ -1068,7 +1135,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'));
     expect(modelDropdown?.props.selectedId).toBe('m1');
   });
 
@@ -1086,7 +1153,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
-    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'));
     if (!modelDropdown) throw new Error('Expected voice agent chat model dropdown to be rendered');
 
     const iconTypesById = Object.fromEntries(
@@ -1132,7 +1199,7 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversation.chatModelId.title'));
+    const modelDropdown = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorChatModelSource'));
     expect(modelDropdown?.props.selectedId).toBe('codex-dynamic-1');
   });
 
@@ -1314,7 +1381,8 @@ describe('LocalConversationSection', () => {
     });
 
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
-    openAdvancedAgent(screen);
+    // The whole Voice agent block waits behind its prerequisite, advanced rows included.
+    expect(screen.findAll((node) => node.props?.testID === 'settings.voice.local.advancedAgent')).toHaveLength(0);
     expect(screen.findRowByTitle(t('settingsVoice.local.conversation.commitIsolation.title'))).toBeFalsy();
   });
 

@@ -116,7 +116,10 @@ function TestHarness(props: Readonly<{ enabled?: boolean; refreshKey?: string; s
 function ReadinessHarness(props: Readonly<{ purpose: 'conversation' | 'dictation'; probeMachine: boolean }>) {
     const voice = storage(state => state.settings.voice);
     const inputs = useVoiceSettingsReadinessInputs(voice, props);
-    return React.createElement('Readiness', { purpose: props.purpose, ...inputs.localAvailability.daemon });
+    return React.createElement('Readiness', {
+        purpose: props.purpose, ...inputs.localAvailability.daemon,
+        catalogState: inputs.daemonModelCatalog.state,
+    });
 }
 const state = (tree: ReactTestRenderer) => tree.root.findByType('State').props;
 async function mount(props: React.ComponentProps<typeof TestHarness> = {}) {
@@ -161,6 +164,61 @@ describe('useDaemonVoiceModelCatalogState', () => {
         }
     });
     afterEach(async () => { vi.useRealTimers(); await account.reset(); vi.restoreAllMocks(); });
+
+    it.each(['local_direct', 'local_conversation'])(
+        'keeps Conversations, Dictation and Advanced on the same model-status input through %s failure and recovery', async (providerId) => {
+        const ttsPack = listModelPackCatalogEntries('tts_sherpa')[0]!.packId;
+        const selectedPacks = [STT_PACK, ttsPack];
+        const voice = settingsParse({ voice: { providerId,
+            executionMachine: { mode: 'fixed', machineId: 'machine-a' },
+            dictation: { sttBinding: 'same_as_local' },
+            providers: { [providerId]: { schemaVersion: 1, config: {
+                stt: { provider: 'local_neural', localNeural: { execution: 'daemon', assetId: STT_PACK } },
+                tts: { provider: 'local_neural', localNeural: { execution: 'daemon', assetId: ttsPack } },
+            } } },
+        } }).voice;
+        storage.setState({ settings: { ...storage.getState().settings, voice } });
+        catalogReply(selectedPacks.map(packId => status(packId, { installState: 'installed', runtimeState: 'cold' })));
+        const screen = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+            <ReadinessHarness purpose="conversation" probeMachine />
+            <ReadinessHarness purpose="dictation" probeMachine />
+            <TestHarness />
+        </AuthProvider>);
+        await settle();
+        const catalogs = () => [
+            ...screen.tree.root.findAllByType('Readiness').map(node => node.props.catalogState),
+            state(screen.tree),
+        ];
+        const expectSharedStatus = (errorCode: string | null, runtimeState: string) => {
+            const inputs = catalogs();
+            for (const input of inputs) {
+                expect(input.errorCode).toBe(errorCode);
+                expect(input.statuses).toBe(inputs[0].statuses);
+                for (const packId of selectedPacks) {
+                    expect(input.statuses.find((model: DaemonVoiceInferenceModelStatus) => model.packId === packId))
+                        .toMatchObject({ installState: 'installed', runtimeState });
+                }
+            }
+        };
+        expectSharedStatus(null, 'cold');
+        expect(listingRequests()).toHaveLength(1);
+
+        respond = request => request.method.endsWith('.list')
+            ? DaemonVoiceInferenceModelsListResponseSchema.parse({
+                ok: false, error: 'Computer unavailable', errorCode: 'machine_unreachable',
+            })
+            : modelStatus([]);
+        await act(async () => { await state(screen.tree).refresh(); });
+        await settle();
+        expectSharedStatus('machine_unreachable', 'cold');
+
+        catalogReply(selectedPacks.map(packId => status(packId, { installState: 'installed', runtimeState: 'ready' })));
+        await act(async () => { await state(screen.tree).refresh(); });
+        await settle();
+        expectSharedStatus(null, 'ready');
+        expect(listingRequests()).toHaveLength(3);
+        await screen.unmount();
+    });
 
     it('keeps an explicit successful install when an unrelated Voice preference changes', async () => {
         const pending = createDeferred<ReturnType<typeof installed>>();

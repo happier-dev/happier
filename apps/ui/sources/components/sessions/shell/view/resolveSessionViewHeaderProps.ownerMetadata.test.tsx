@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
@@ -211,6 +214,40 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
 
         expect(resolveSessionViewHeaderProps({ ...input, workspaceSubtitle: title }).subtitle).toBeUndefined();
         expect(resolveSessionViewHeaderProps({ ...input, workspaceSubtitle: `~/code/${title}` }).subtitle).toBe(`~/code/${title}`);
+    });
+
+    it('names a Voice conversation by where it lives, never by its private folder', () => {
+        const session = createSessionFixture({
+            id: 'voice-conversation-header',
+            metadata: {
+                path: '/home/me/.happier/voice/3f9c2d7a8b1e4f60a5c3d2e1f0b9a8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1',
+                homeDir: '/home/me',
+                machineId: 'machine-1',
+                ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }),
+            } as Session['metadata'],
+        });
+        const input = {
+            isDataReady: true, session, sessionId: session.id,
+            sessionInfoHref: '/session/voice-conversation-header/info',
+            sessionRunsHref: '/session/voice-conversation-header/runs',
+            sessionAutomationsHref: '/session/voice-conversation-header/automations',
+            paneScopeId: 'voice-conversation-header', windowWidth: 1400,
+            sessionAutomationsEnabledCount: 0, sessionExecutionRunsSupported: true,
+            showAutomations: false, shouldShowSubagentsButton: false, subagentActiveCount: 0,
+            navigateWithBlurOnWeb: (action: () => void) => action(),
+            handleHeaderExtraItemSelect: () => false,
+            router: { push: () => {}, navigate: () => {} },
+            actionIconColor: '#000', headerTintColor: '#000', statusErrorColor: '#f00',
+            externalSessionRuntime: null,
+            workspaceSubtitle: '~/.happier/voice/3f9c2d7a8b1e4f60a5c3d2e1f0b9a8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1',
+            voiceConversationSubtitle: 'Global Voice · OpenAI Realtime',
+        } satisfies Parameters<typeof resolveSessionViewHeaderProps>[0];
+
+        expect(resolveSessionViewHeaderProps(input).subtitle).toBe('Global Voice · OpenAI Realtime');
+        // An ordinary session keeps its folder.
+        const ordinary = createSessionFixture({ id: 'ordinary-header' });
+        expect(resolveSessionViewHeaderProps({ ...input, session: ordinary, sessionId: ordinary.id, workspaceSubtitle: '~/code/app' }).subtitle)
+            .toBe('~/code/app');
     });
 
     it('keeps a deduplicated workspace conflict discoverable from the session header', () => {

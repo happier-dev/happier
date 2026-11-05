@@ -177,6 +177,7 @@ import {
   type SessionOrganizationProjection,
 } from '../domains/session/organization';
 import type { MachinePresenceCounts } from '@/utils/sessions/machineUtils';
+import { getSettledMachineDisplayName, isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummary, useMachinePresenceSummaries, useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import {
@@ -2874,6 +2875,23 @@ export function useServerScopedMachine<T>(serverId: string | null | undefined, m
     getSnapshot,
     getSnapshot,
   );
+}
+
+/**
+ * A Machine's name as rows show it, subscribed to that name rather than the record presence heartbeats replace.
+ * While sync re-reads the row (no content and no availability yet) the name it last settled stands, so a row
+ * goes from its locked or previous name straight to the opened one and never through an empty label.
+ */
+export function useServerScopedMachineLabel(serverId: string | null | undefined, machineId: string | null | undefined): string | null {
+  const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
+  const settledRef = React.useRef<Readonly<{ machineId: string; label: string | null }> | null>(null);
+  const select = React.useCallback((machine: Machine | null): string | null => {
+    const previous = settledRef.current?.machineId === normalizedMachineId ? settledRef.current.label : null;
+    const label = machine && isMachineDisplayHydrating(machine) ? previous : getSettledMachineDisplayName(machine);
+    settledRef.current = { machineId: normalizedMachineId, label };
+    return label;
+  }, [normalizedMachineId]);
+  return useServerScopedMachine(serverId, normalizedMachineId, select);
 }
 
 export function useAllSessions(): Session[] {
