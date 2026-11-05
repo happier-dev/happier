@@ -50,6 +50,13 @@ export function listMachineEnvironmentAdaptersV1(platform: string): readonly Bui
         adapter.platform === platform && adapter.globalEnvironment !== undefined);
 }
 
+export const MachineSetupToolchainSoftwareChoiceV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('toolchain'),
+    adapterId: z.literal('mise'),
+    tool: z.enum(['node', 'python']),
+}));
+export type MachineSetupToolchainSoftwareChoiceV1 = z.infer<typeof MachineSetupToolchainSoftwareChoiceV1Schema>;
+
 /** File names are declarations, not permission to read outside the admitted root. */
 export const PluginProjectNativeAdapterContributionV1Schema = lazyZodSchema(() => z.strictObject({
     id: asProtocolZod(PluginContributionLocalIdSchema),

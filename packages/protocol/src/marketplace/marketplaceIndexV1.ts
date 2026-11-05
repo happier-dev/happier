@@ -13,8 +13,14 @@ import { PluginEnginesV2Schema } from '../plugins/manifest/engines.js';
 import { NpmRegistryOriginV1Schema } from '../rpc/npmRegistryProfiles.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { PluginUpdatePolicyV1Schema } from './pluginUpdatePolicyV1.js';
-import { REGISTRY_FORMAT_KINDS_V1, RegistryFormatV1Schema } from '../registries/registrySourcesV1.js';
+import { REGISTRY_FORMAT_KINDS_V1, RegistryFormatV1Schema, RegistryKindV1Schema } from '../registries/registrySourcesV1.js';
 import { RegistryBrowserExtensionCatalogEntryV1Schema } from '../registries/registryBrowserExtensionV1.js';
+
+import { RegistryItemPointerV1Schema } from '../registries/registryItemsV1.js';
+import { ProviderContributionKeySchema } from '../providers/ids.js';
+import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
+import { ScmHostingProviderKindSchema } from '../scm/pullRequests.js';
+import { MachineSetupSoftwareChoiceV1Schema } from '../inputs/machineSetupSoftwareOptions.js';
 
 const NonEmptyText = z.string().check(z.trim(), z.minLength(1));
 const Identifier = z.string().check(z.trim(), z.minLength(1), z.regex(/^[a-z0-9][a-z0-9._-]*$/));
@@ -229,12 +235,63 @@ export function deriveMarketplaceNpmCompatibilityPlatformsV1(
 export const HappierPickV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['skill', 'mcpServer', 'agent']), format: RegistryFormatV1Schema,
   sourceUrl: HttpsUrl, itemId: z.string(), path: z.optional(z.string()),
+  display: z.optional(z.strictObject({ title: NonEmptyText, description: z.optional(z.string()) })),
 }).check(z.superRefine((pick, context) => {
   if (pick.format === 'happier-catalog' || !REGISTRY_FORMAT_KINDS_V1[pick.format].includes(pick.kind)) {
     context.addIssue({ code: 'custom', path: ['format'], message: 'Pick must point into a registry for its kind' });
   }
 })));
 export type HappierPickV1 = z.infer<typeof HappierPickV1Schema>;
+
+/** Inert references to existing domain identities, never Store kinds or installation operands. */
+export const MarketplaceCatalogReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('registryItem'), kind: RegistryKindV1Schema,
+    sourceId: RegistryItemPointerV1Schema.shape.sourceId, itemId: RegistryItemPointerV1Schema.shape.itemId,
+    version: z.optional(RegistryItemPointerV1Schema.shape.version) }),
+  z.strictObject({ type: z.literal('providerContribution'), contributionKey: ProviderContributionKeySchema }),
+  z.strictObject({ type: z.literal('agentContribution'), targetKey: BackendTargetKeyV2Schema }),
+  z.strictObject({ type: z.literal('software'), value: MachineSetupSoftwareChoiceV1Schema }),
+]));
+export type MarketplaceCatalogReferenceV1 = z.infer<typeof MarketplaceCatalogReferenceV1Schema>;
+
+/** An observed native Project relationship, never a probe or executable predicate. */
+export const MarketplaceCatalogMatchV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('repository'), hostingKind: ScmHostingProviderKindSchema,
+}));
+export type MarketplaceCatalogMatchV1 = z.infer<typeof MarketplaceCatalogMatchV1Schema>;
+
+/** One admitted editorial payload; local item ids refer only to its native references. */
+export const MarketplaceCatalogDiscoveryV1Schema = lazyZodSchema(() => z.strictObject({
+  items: z.array(z.strictObject({ id: NonEmptyText, reference: MarketplaceCatalogReferenceV1Schema,
+    title: NonEmptyText, description: z.optional(z.string()) })),
+  featured: z.optional(z.strictObject({ item: NonEmptyText, reason: NonEmptyText })),
+  categories: z.array(z.strictObject({ id: Identifier, title: NonEmptyText, description: z.optional(z.string()), items: z.array(NonEmptyText) })),
+  jobs: z.array(z.strictObject({ id: Identifier, title: NonEmptyText, description: NonEmptyText, glyph: NonEmptyText,
+    groups: z.array(z.strictObject({ title: NonEmptyText, description: z.optional(z.string()), items: z.array(NonEmptyText) })) })),
+  suggestions: z.optional(z.array(z.strictObject({ item: NonEmptyText, because: MarketplaceCatalogMatchV1Schema }))),
+}).check(z.superRefine((value, context) => {
+  const ids = new Set<string>();
+  value.items.forEach((item, index) => {
+    if (ids.has(item.id)) context.addIssue({ code: 'custom', path: ['items', index, 'id'], message: 'Duplicate discovery item' });
+    ids.add(item.id);
+  });
+  const reference = (id: string, path: PropertyKey[]) => {
+    if (!ids.has(id)) context.addIssue({ code: 'custom', path, message: 'Discovery choice must reference an admitted item' });
+  };
+  if (value.featured) reference(value.featured.item, ['featured', 'item']);
+  value.suggestions?.forEach((suggestion, index) => reference(suggestion.item, ['suggestions', index, 'item']));
+  value.categories.forEach((category, index) => category.items.forEach((id, item) => reference(id, ['categories', index, 'items', item])));
+  value.jobs.forEach((job, index) => job.groups.forEach((group, section) => group.items.forEach((id, item) =>
+    reference(id, ['jobs', index, 'groups', section, 'items', item]))));
+  for (const family of ['categories', 'jobs'] as const) {
+    const seen = new Set<string>();
+    value[family].forEach((entry, index) => {
+      if (seen.has(entry.id)) context.addIssue({ code: 'custom', path: [family, index, 'id'], message: 'Duplicate discovery group' });
+      seen.add(entry.id);
+    });
+  }
+})));
+export type MarketplaceCatalogDiscoveryV1 = z.infer<typeof MarketplaceCatalogDiscoveryV1Schema>;
 
 export const MarketplaceIndexSourceSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
   source: z.strictObject({ id: z.union([OpaqueId, z.string().check(z.refine(value => parseQualifiedPluginContributionKey(value) !== null, 'Expected a canonical qualified plugin contribution key'))]), title: NonEmptyText, kind: MarketplaceIndexSourceKindV1Schema, sourceUrl: HttpsUrl }),
@@ -246,6 +303,7 @@ export const MarketplaceIndexSourceSnapshotV1Schema = lazyZodSchema(() => z.stri
   entries: z.array(MarketplaceIndexEntryV1Schema),
   picks: z._default(z.array(HappierPickV1Schema), []),
   browserExtensions: z.optional(z.array(RegistryBrowserExtensionCatalogEntryV1Schema)),
+  discovery: z.optional(MarketplaceCatalogDiscoveryV1Schema),
   diagnostics: z.array(MarketplaceDiagnosticV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.source.kind !== 'curated' && value.picks.length > 0) {

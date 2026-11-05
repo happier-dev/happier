@@ -19,6 +19,66 @@ import {
 import { PluginCompatibilityProjectionV1Schema } from '../plugins/availability/v1.js';
 
 describe('MarketplaceIndexV1', () => {
+  it('admits exact native Software choices as inert editorial references without target or execution authority', () => {
+    const choices = [
+      { pluginId: 'happier.machine-software', recipeId: 'chrome', revision: '1' },
+      { kind: 'toolchain', adapterId: 'mise', tool: 'python' },
+    ];
+    for (const value of choices) {
+      const reference = { type: 'software', value };
+      const snapshot = { source: { id: 'catalog', title: 'Picks', kind: 'curated', sourceUrl: 'https://catalog.example/catalog.json' },
+        freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [],
+        discovery: { items: [{ id: 'software', title: 'Software', reference }], categories: [], jobs: [] } };
+      expect(parseMarketplaceIndexSourceSnapshotV1(snapshot).discovery?.items[0]?.reference).toEqual(reference);
+      for (const invalid of [{ ...reference, machineId: 'machine' }, { ...reference, command: 'install' },
+        { ...reference, value: { ...value, packageName: 'guessed-package' } }]) {
+        expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot, discovery: {
+          ...snapshot.discovery, items: [{ id: 'software', title: 'Software', reference: invalid }],
+        } }).success).toBe(false);
+      }
+    }
+  });
+  it('admits closed suggestion mappings to existing choices without granting fact or effect authority', () => {
+    const item = { id: 'review', title: 'Review', reference: { type: 'registryItem', kind: 'skill',
+      sourceId: 'builtin:skills-sh', itemId: 'fixture/skills/review' } };
+    const because = { kind: 'repository', hostingKind: 'github' };
+    const discovery = { items: [item], categories: [], jobs: [], suggestions: [{ item: item.id, because }] };
+    const snapshot = { source: { id: 'catalog', title: 'Picks', kind: 'curated', sourceUrl: 'https://catalog.example/catalog.json' },
+      freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], discovery };
+    const admitted = MarketplaceIndexSourceSnapshotV1Schema.safeParse(snapshot);
+    expect(admitted.success).toBe(true);
+    expect(parseMarketplaceIndexSourceSnapshotV1(snapshot).discovery).toEqual(discovery);
+    for (const suggestion of [
+      { item: 'missing', because },
+      { item: item.id, because: { ...because, command: 'probe-project' } },
+      { item: item.id, because: { kind: 'scan', hostingKind: 'github' } },
+      { item: item.id, because, reviewed: true },
+    ]) expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot,
+      discovery: { ...discovery, suggestions: [suggestion] } }).success).toBe(false);
+    const { suggestions: _suggestions, ...priorDiscovery } = discovery;
+    expect(parseMarketplaceIndexSourceSnapshotV1({ ...snapshot, discovery: priorDiscovery }).discovery).toEqual(priorDiscovery);
+  });
+  it('admits inert discovery references while rejecting unresolved choices and executable authority', () => {
+    const reference = { type: 'registryItem', kind: 'mcpServer', sourceId: 'builtin:mcp-registry', itemId: 'example/browser' };
+    const discovery = { items: [{ id: 'browser', title: 'Browser tools', description: 'Use a real browser', reference }],
+      featured: { item: 'browser', reason: 'Inspect your site' },
+      categories: [{ id: 'web', title: 'Web', items: ['browser'] }],
+      jobs: [{ id: 'test', title: 'Test a site', description: 'Choose a browser tool', glyph: 'globe',
+        groups: [{ title: 'Inspect', items: ['browser'] }] }] };
+    const snapshot = { source: { id: 'catalog', title: 'Picks', kind: 'curated', sourceUrl: 'https://catalog.example/catalog.json' },
+      freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], discovery };
+    const admitted = MarketplaceIndexSourceSnapshotV1Schema.safeParse(snapshot);
+    expect(admitted.success).toBe(true);
+    expect(parseMarketplaceIndexSourceSnapshotV1(snapshot)).toMatchObject({ discovery });
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot, discovery: { ...discovery,
+      featured: { item: 'not-admitted', reason: 'Unknown' } } }).success).toBe(false);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot, discovery: { ...discovery,
+      items: [{ ...discovery.items[0], reference: { ...reference, command: 'untrusted-command' } }] } }).success).toBe(false);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot, discovery: { ...discovery,
+      items: [{ ...discovery.items[0], reference: { ...reference, kind: 'provider' } }] } }).success).toBe(false);
+    expect(MarketplaceIndexSourceSnapshotV1Schema.safeParse({ ...snapshot, discovery: { ...discovery,
+      items: [discovery.items[0], discovery.items[0]] } }).success).toBe(false);
+  });
   it('admits registry pointers only as curated picks and preserves strict catalog envelopes', () => {
     const pick = { kind: 'skill', format: 'git', sourceUrl: 'https://github.com/example/skills', itemId: '', path: 'review' };
     const snapshot = { source: { id: 'catalog', title: 'Picks', kind: 'curated', sourceUrl: 'https://marketplace.happier.dev/catalog.json' },

@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryItemSummaryV1Schema } from './registryItemsV1.js';
+import { MarketplaceCatalogDiscoveryV1Schema } from '../marketplace/marketplaceIndexV1.js';
 
 export const RegistrySourceStatusV1Schema = lazyZodSchema(() => z.discriminatedUnion('state', [
   z.strictObject({ state: z.literal('ok'), fetchedAt: z.number().check(z.int(), z.nonnegative()) }),
@@ -29,6 +30,7 @@ export function readRegistryHttpRateLimitV1(input: Readonly<{ status: number;
 export const RegistryListPageV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), status: RegistrySourceStatusV1Schema, items: z.array(RegistryItemSummaryV1Schema),
   nextCursor: z.nullable(z.string()), total: z.optional(z.number().check(z.int(), z.nonnegative())), machineId: z.optional(z.string().check(z.minLength(1))),
+  discovery: z.optional(MarketplaceCatalogDiscoveryV1Schema),
 }));
 export type RegistryListPageV1 = z.infer<typeof RegistryListPageV1Schema>;
 export class RegistryFetchErrorV1 extends Error {

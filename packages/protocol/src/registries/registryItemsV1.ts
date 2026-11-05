@@ -45,6 +45,7 @@ export type RegistryAgentDistributionV1 = z.infer<typeof RegistryAgentDistributi
 export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), kind: RegistryKindV1Schema, itemId: z.string(), title: z.string().check(z.minLength(1)),
   description: z.optional(z.string()), version: z.optional(z.string().check(z.minLength(1))), iconUrl: z.optional(z.string()),
+  iconDarkUrl: z.optional(z.string()),
   publisher: z.optional(z.strictObject({ name: z.string().check(z.minLength(1)), verification: z.optional(z.enum(['github-account', 'domain', 'registry-checked', 'happier-reviewed'])) })),
   updatedAt: z.optional(z.number()), installs: z.optional(z.number().check(z.nonnegative())), license: z.optional(z.string()),
   links: z.optional(z.strictObject({ repository: z.optional(z.string()), website: z.optional(z.string()) })),

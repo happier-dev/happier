@@ -369,6 +369,7 @@ export type RegistriesActionResultById = {
                 description?: string | undefined;
                 version?: string | undefined;
                 iconUrl?: string | undefined;
+                iconDarkUrl?: string | undefined;
                 publisher?: {
                     name: string;
                     verification?: 'github-account' | 'domain' | 'registry-checked' | 'happier-reviewed' | undefined;
@@ -419,6 +420,65 @@ export type RegistriesActionResultById = {
             nextCursor: string | null;
             total?: number | undefined;
             machineId?: string | undefined;
+            discovery?: undefined | {
+                items: {
+                    id: string;
+                    reference: {
+                        type: 'agentContribution';
+                        targetKey: string;
+                    } | {
+                        type: 'providerContribution';
+                        contributionKey: string;
+                    } | {
+                        type: 'registryItem';
+                        kind: 'agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill';
+                        sourceId: string;
+                        itemId: string;
+                        version?: string | undefined;
+                    } | {
+                        type: 'software';
+                        value: {
+                            kind: 'toolchain';
+                            adapterId: 'mise';
+                            tool: 'node' | 'python';
+                        } | {
+                            pluginId: string;
+                            recipeId: string;
+                            revision: string;
+                        };
+                    };
+                    title: string;
+                    description?: string | undefined;
+                }[];
+                categories: {
+                    id: string;
+                    title: string;
+                    items: string[];
+                    description?: string | undefined;
+                }[];
+                jobs: {
+                    id: string;
+                    title: string;
+                    description: string;
+                    glyph: string;
+                    groups: {
+                        title: string;
+                        items: string[];
+                        description?: string | undefined;
+                    }[];
+                }[];
+                featured?: undefined | {
+                    item: string;
+                    reason: string;
+                };
+                suggestions?: undefined | {
+                    item: string;
+                    because: {
+                        kind: 'repository';
+                        hostingKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    };
+                }[];
+            };
         }[];
     };
     readonly "registries.items.read": {
@@ -431,6 +491,7 @@ export type RegistriesActionResultById = {
                 description?: string | undefined;
                 version?: string | undefined;
                 iconUrl?: string | undefined;
+                iconDarkUrl?: string | undefined;
                 publisher?: {
                     name: string;
                     verification?: 'github-account' | 'domain' | 'registry-checked' | 'happier-reviewed' | undefined;
