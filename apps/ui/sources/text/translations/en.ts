@@ -13267,6 +13267,10 @@ const enBrowserShell = {
     failedTitle: "Couldn't import",
     counterReason: "This passkey tracks a usage counter, so it can't be copied. Sign in to the site as usual instead.",
     sourceLockedNamed: ({ browser }: { browser: string }) => `Close ${browser} on that Machine and try again. If it asks for keychain access, allow it.`,
+    nextSteps: {
+      app_bound_encryption: "Chrome on Windows locks some cookies to Chrome itself, so they can't be copied. Sign in to those sites in this browser instead.",
+      partition_unsupported: "Firefox containers and partitioned cookies can't be copied. Sign in to those sites in this browser instead.",
+    },
     appBoundExplanation: "Chrome on Windows locks some cookies to Chrome itself, so they can't be copied. Sign in to those sites in this browser instead.",
     notInstalled: "Not installed on this Machine",
     status: { imported: "Imported", skipped: "Skipped", failed: "Couldn't import" },

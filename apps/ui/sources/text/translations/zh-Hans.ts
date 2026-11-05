@@ -11067,6 +11067,10 @@ export const zhHans: TranslationStructure = {
       failedTitle: "无法导入",
       counterReason: "此通行密钥会记录使用次数，因此无法复制。请照常登录该网站。",
       sourceLockedNamed: ({ browser }: { browser: string }) => `请在那台机器上关闭 ${browser} 后重试。如果它请求访问钥匙串，请允许。`,
+      nextSteps: {
+        app_bound_encryption: "Windows 上的 Chrome 会将部分 Cookie 绑定到 Chrome 本身，因此无法复制。请改为在此浏览器中登录这些网站。",
+        partition_unsupported: "Firefox 容器和分区 Cookie 无法复制。请改为在此浏览器中登录这些网站。",
+      },
       appBoundExplanation: "Windows 上的 Chrome 会将部分 Cookie 绑定到 Chrome 本身，因此无法复制。请改为在此浏览器中登录这些网站。",
       notInstalled: "这台机器上未安装",
       status: { imported: "已导入", skipped: "已跳过", failed: "无法导入" },

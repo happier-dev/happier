@@ -11731,6 +11731,10 @@ localTailscale: {
       failedTitle: "インポートできませんでした",
       counterReason: "このパスキーは使用回数を記録するため、コピーできません。いつもどおりサイトにサインインしてください。",
       sourceLockedNamed: ({ browser }: { browser: string }) => `そのマシンで ${browser} を閉じてから、もう一度お試しください。キーチェーンへのアクセスを求められたら許可してください。`,
+      nextSteps: {
+        app_bound_encryption: "Windows の Chrome は一部の Cookie を Chrome 自体に結び付けているため、コピーできません。それらのサイトにはこのブラウザーでサインインしてください。",
+        partition_unsupported: "Firefox のコンテナーとパーティション化された Cookie はコピーできません。それらのサイトにはこのブラウザーでサインインしてください。",
+      },
       appBoundExplanation: "Windows の Chrome は一部の Cookie を Chrome 自体に結び付けているため、コピーできません。それらのサイトにはこのブラウザーでサインインしてください。",
       notInstalled: "このマシンにはインストールされていません",
       status: { imported: "インポート済み", skipped: "スキップ", failed: "インポートできませんでした" },

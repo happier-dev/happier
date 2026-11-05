@@ -9253,6 +9253,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           failedTitle: "無法匯入",
           counterReason: "此通行密鑰會記錄使用次數，因此無法複製。請照常登入該網站。",
           sourceLockedNamed: ({ browser }: { browser: string }) => `請在那台機器上關閉 ${browser} 後重試。如果它要求存取鑰匙圈，請允許。`,
+          nextSteps: {
+            app_bound_encryption: "Windows 上的 Chrome 會將部分 Cookie 綁定到 Chrome 本身，因此無法複製。請改為在此瀏覽器中登入這些網站。",
+            partition_unsupported: "Firefox 容器與分割的 Cookie 無法複製。請改為在此瀏覽器中登入這些網站。",
+          },
           appBoundExplanation: "Windows 上的 Chrome 會將部分 Cookie 綁定到 Chrome 本身，因此無法複製。請改為在此瀏覽器中登入這些網站。",
           notInstalled: "這台機器上未安裝",
           status: { imported: "已匯入", skipped: "已略過", failed: "無法匯入" },
