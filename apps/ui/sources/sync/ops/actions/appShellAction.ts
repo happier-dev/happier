@@ -1,4 +1,6 @@
-import { AppShellActionInputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { AppShellActionInputSchemas, dismissAccountNoticeArtifactV1,
+    readNoticeInboxAccountIdV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { executeSessionBulkAction } from '@/components/sessions/actions/sessionBulkActionExecution';
 import { SESSION_BULK_ACTION_IDS } from '@/components/sessions/actions/sessionBulkActionTypes';
@@ -26,6 +28,38 @@ import { resolveRuntimeFeatureDecisionOrThrow } from '@/sync/domains/features/fe
 /** Thin projection of the incumbent bulk-acknowledgement and draft-repository owners. */
 export function createAppShellAction(accountContext?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['appShellAction']> {
     return async ({ actionId, input, context }) => {
+        if (actionId === 'inbox.notice.dismiss') {
+            const accountId = readNoticeInboxAccountIdV1(context);
+            const serverId = accountContext?.serverId ?? context.serverId;
+            if (!accountId || !serverId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+            const account = accountContext ?? await captureLazyActionAccountContext(serverId, context.signal);
+            try {
+                const assertCurrent = () => {
+                    context.signal?.throwIfAborted();
+                    account.assertCurrent();
+                    if (account.accountId !== accountId || context.serverId
+                        && !areServerProfileIdentifiersEquivalent(account.serverId, context.serverId)) {
+                        throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+                    }
+                };
+                let basis: DecryptedArtifact | null = null;
+                return await dismissAccountNoticeArtifactV1(input, { accountId, assertCurrent,
+                    read: async artifactId => {
+                        basis = await account.readArtifact(artifactId, { fresh: true, signal: context.signal });
+                        if (!basis?.isDecrypted || basis.draft === true || basis.bodyVersion === undefined) return null;
+                        const header = basis.rawHeader ?? basis.header;
+                        if (!header) return null;
+                        return { ...basis, artifactId: basis.id, header, body: basis.body,
+                            revision: { headerVersion: basis.headerVersion, bodyVersion: basis.bodyVersion } };
+                    },
+                    write: async request => {
+                        assertCurrent();
+                        if (!basis) throw new Error('usage_notice_unavailable');
+                        await account.updateArtifact(request.artifactId, request.header, request.body, basis, assertCurrent);
+                    },
+                });
+            } finally { if (!accountContext) account.dispose(); }
+        }
         if (actionId === 'session.draft.append') {
             context.signal?.throwIfAborted();
             const serverId = accountContext?.serverId ?? context.serverId;

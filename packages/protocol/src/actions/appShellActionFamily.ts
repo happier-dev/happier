@@ -1,3 +1,7 @@
+export { dismissAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
+import { AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema } from '../activity/accountNoticeRecoveryV1.js';
+import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
+export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -31,7 +35,7 @@ export function readNoticeInboxAccountIdV1(context: ActionExecutorContext): stri
     && context.runtimeAccountId === accountId && (host || context.actionCaller?.kind === 'session') ? accountId : null;
 }
 
-export const APP_SHELL_ACTION_IDS = ['session.work.get', 'inbox.get', 'inbox.mark_all_read', 'session.draft.open', 'session.draft.delete', 'session.draft.directory.set', 'session.draft.append'] as const;
+
 export type AppShellActionId = typeof APP_SHELL_ACTION_IDS[number];
 export function isAppShellActionId(value: string): value is AppShellActionId {
   return (APP_SHELL_ACTION_IDS as readonly string[]).includes(value);
@@ -117,6 +121,7 @@ export const AppShellActionInputSchemas = {
   'session.work.get': z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
   'inbox.get': z.strictObject({}),
   'inbox.mark_all_read': z.strictObject({ targets: z.array(InboxTargetSchema) }),
+  'inbox.notice.dismiss': AccountNoticeDismissInputV1Schema,
   'session.draft.open': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.delete': z.strictObject({ draftId: SessionDraftAddressV1Schema._zod.def.options[0].shape.draftId }),
   'session.draft.directory.set': z.strictObject({ ref: asProtocolZod(ComposerRefV1Schema).check(zMini.refine(ref => ref.kind === 'newSession')),
@@ -126,6 +131,7 @@ export const AppShellActionInputSchemas = {
     discussionSource: z.optional(z.omit(DiscussionSelectionSourceV1Schema, { draftCorrelationId: true })) }),
 } as const;
 export const AppShellActionOutputSchemas = {
+  'inbox.notice.dismiss': AccountNoticeDismissResultV1Schema,
   'session.work.get': z.discriminatedUnion('status', [ReadUnavailableSchema, ReadLoadingSchema, z.strictObject({
     status: z.literal('ready'), sessionId: z.string(),
     summary: z.strictObject({ outstanding: z.number(), needsYou: z.number(), stalled: z.number(), sessions: z.number(), runs: z.number() }),
@@ -159,6 +165,18 @@ export const AppShellActionOutputSchemas = {
 } as const;
 
 export const APP_SHELL_ACTION_SPECS = [
+  {
+    id: 'inbox.notice.dismiss', approval: { result: 'required' }, title: 'Dismiss an Inbox notice',
+    description: 'Dismiss one current private notice on the invoking Home and own Account. Keeps its evidence and never recovers a deployment.',
+    safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'account',
+    placements: [], bindings: { mcpToolName: 'inbox_notice_dismiss' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['inbox', 'notice', 'dismiss'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: AppShellActionInputSchemas['inbox.notice.dismiss'], outputSchema: AppShellActionOutputSchemas['inbox.notice.dismiss'],
+    inputHints: { fields: [{ path: 'artifactId', title: 'Notice id', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Displayed notice revision', widget: 'json' }] },
+  },
   {
     id: 'session.draft.open', approval: {result: 'required'}, title: 'Open a saved New Session draft',
     description: 'Open the exact saved New Session draft on its captured Home and Account. Preserves its content and never starts a Session.',
