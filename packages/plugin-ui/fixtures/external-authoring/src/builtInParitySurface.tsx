@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { ApprovalPrompt, Button, Collection, NavigationList, PageHeader, Row, Stack, useHappierCollection } from '@happier-dev/plugin-ui/components';
+import { ApprovalPrompt, Button, Collection, CollectionRowNeedsYouHighlight, NavigationList, PageHeader, Row, Stack, Text, useHappierCollection } from '@happier-dev/plugin-ui/components';
 
 type Review = Readonly<{ id: string; title: string; needsYou: boolean; unopened: boolean }>;
 
@@ -44,6 +44,11 @@ export function BuiltInParityExample(props: Readonly<{ text: (words: string) => 
       <NavigationList title={text('Machines')}>
         <NavigationList.Group title="Studio" detail="Mac mini" detailEnd="e3b5 · Offline" />
       </NavigationList>
+      {/* A row drawn outside Collection takes the same highlight under its own content. */}
+      <Row gap="small">
+        <CollectionRowNeedsYouHighlight unopened visible />
+        <Text value={text('Rotate the signing key by hand')} />
+      </Row>
       <ApprovalPrompt
         chrome="compact"
         tone="attention"
