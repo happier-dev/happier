@@ -24,7 +24,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 import { AGENT_INPUT_CHIP_ROW_HIT_REACH } from './agentInputChipRowReach';
 import { useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
 import {
     AGENT_INPUT_CHIP_ICON_SIZE_PX,
@@ -118,15 +118,15 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     const reducedMotion = useReducedMotionPreference();
     const { state, onRemove } = props;
     const removable = state.kind === 'folder' && typeof onRemove === 'function';
-    // × is a hover/keyboard accelerator (plan 03 §4.1): only a hover-capable primary pointer gets it
-    // and its reserved slot. Touch-only devices remove through the picker's "No folder" row and the
-    // screen-reader action, so the chip keeps its natural width there.
-    const reservesRemoveSlot = removable && isHoverCapablePrimaryPointer();
     const disabled = state.kind === 'machine_unavailable';
     // One hover region spans the chip and ×, so moving onto × never hides it.
     const hoverRegion = useRowActionHoverHost();
     const [chipFocusVisible, setChipFocusVisible] = React.useState(false);
     const [removeFocusVisible, setRemoveFocusVisible] = React.useState(false);
+    // Plan 03 §4.1: keyboard focus exposes × independently of the primary pointer. Without
+    // hover or keyboard focus, touch keeps the natural chip width and uses the picker to remove.
+    const hoverCapablePrimaryPointer = useHoverCapablePrimaryPointer();
+    const reservesRemoveSlot = removable && (hoverCapablePrimaryPointer || chipFocusVisible || removeFocusVisible);
     const openRef = React.useRef<ChipControl>(null);
     const focusAfterRemoveRef = React.useRef(false);
     const showRemove = reservesRemoveSlot && (hoverRegion.isHovered || chipFocusVisible || removeFocusVisible);

@@ -7,8 +7,10 @@ afterEach(() => {
 });
 
 function stubMatchMedia(matching: readonly string[]): void {
+    const matchMedia = (query: string) => ({ matches: matching.some((entry) => query.includes(entry)) });
+    vi.stubGlobal('matchMedia', matchMedia);
     vi.stubGlobal('window', {
-        matchMedia: (query: string) => ({ matches: matching.some((entry) => query.includes(entry)) }),
+        matchMedia,
     } as any);
 }
 

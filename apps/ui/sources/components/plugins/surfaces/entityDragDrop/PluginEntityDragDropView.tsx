@@ -19,7 +19,7 @@ import { useEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDrop
 import { TreeDropOutline } from '@/components/ui/treeDragDrop/ui/TreeDropOutline';
 import type { EntityDragCarry, EntityDropDestination } from '@/components/ui/treeDragDrop/entityDragDropTypes';
 import type { WindowBounds } from '@/components/ui/treeDragDrop/treeDragDropTypes';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { t } from '@/text';
 
 import type { PluginEntityDragDropBinding } from './pluginEntityDragDropBinding';
@@ -63,7 +63,7 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
     const runtime = binding.runtime;
     const sourceId = source?.id ?? '';
     const state = useEntityDragSourceState(runtime, sourceId);
-    const pointerInteraction = Platform.OS === 'web' && isHoverCapablePrimaryPointer();
+    const pointerInteraction = useHoverCapablePrimaryPointer();
     const enabled = source !== null && props.disabled !== true;
     const chooser = useEntityDragChooser(runtime, sourceId);
     const chooserOpen = chooser.open;

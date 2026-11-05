@@ -15,7 +15,7 @@ import {
   EntityFlatReorderList,
   EntityFlatReorderRow,
 } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
 import {
   useCollectionSpaceReorderBinding,
@@ -85,7 +85,7 @@ export const CollectionSpacesStrip = React.memo(function CollectionSpacesStrip(
   const styles = stylesheet;
   const { theme } = useUnistyles();
   const iconColor = theme.colors.text.secondary;
-  const pointer = isHoverCapablePrimaryPointer();
+  const pointer = useHoverCapablePrimaryPointer();
   const binding = useCollectionSpaceReorderBinding({
     entityKind: props.reorder?.entityKind ?? 'sessionWork',
     spaces: props.items,

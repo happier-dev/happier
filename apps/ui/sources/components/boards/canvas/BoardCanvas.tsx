@@ -24,7 +24,7 @@ import { EntityDragGripChooser } from '@/components/ui/treeDragDrop/ui/EntityDra
 import { createEntityDragGestureAdapter, useEntityDragSource, useEntityDragSourceState, useEntityDragDomBinding,
     useEntityDropTargetState, type EntityDragCarry } from '@/components/ui/treeDragDrop';
 import { t } from '@/text';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { BoardCardView } from '../cards/BoardCardView';
 import type { BoardCard } from '../model/boardCards';
 import type { BoardCardAction } from '../model/boardCardOpenTarget';
@@ -218,7 +218,8 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
         describe: () => ({ title: latest.current.member.title,
             subtitle: latest.current.member.kind === 'work' ? latest.current.member.card.status.word : t('boards.widgets.kind') }),
     });
-    const dom = useEntityDragDomBinding({ runtime, sourceId, enabled: isHoverCapablePrimaryPointer(), describe: () => latest.current.member.title,
+    const hoverCapablePrimaryPointer = useHoverCapablePrimaryPointer();
+    const dom = useEntityDragDomBinding({ runtime, sourceId, enabled: hoverCapablePrimaryPointer, describe: () => latest.current.member.title,
         canStart: (event, host) => {
             const element = typeof Element !== 'undefined' && event.target instanceof Element ? event.target : null;
             const control = element?.closest('button,input,textarea,a,[role="button"],[contenteditable="true"]');
@@ -380,7 +381,7 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
             // A widget's body has its own controls, so no card-wide button: its grip takes focus, the grid moves and the drag.
             {...(member.kind === 'widget' ? { controlRef: ref, accessibilityActions: moveActions, onAccessibilityAction: onMoveAction } : {})}
             onPress={toggle} onKeyDown={onKeyDown} expanded={chooserOpen} active={state.active}
-                revealed={member.kind === 'widget' || !isHoverCapablePrimaryPointer() || hovered || focused || chooserOpen}
+                revealed={member.kind === 'widget' || !hoverCapablePrimaryPointer || hovered || focused || chooserOpen}
             /></GestureDetector>} />;
     const width = memberWidthPx(member.span);
     return <View onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}

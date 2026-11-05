@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { isHappierCoarsePrimaryPointer, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 type NavigatorLike = {
     maxTouchPoints?: number;
@@ -68,10 +69,7 @@ export function isWebMobileHost(): boolean {
  * describe the primary pointer, so only those decide here.
  */
 export function isCoarsePrimaryPointerEnvironment(): boolean {
-    if (matchMedia('(pointer: fine)') || matchMedia('(hover: hover)')) return false;
-    if (matchMedia('(pointer: coarse)') || matchMedia('(hover: none)')) return true;
-    const nav = readNavigator();
-    return typeof nav?.maxTouchPoints === 'number' && nav.maxTouchPoints > 0;
+    return isHappierCoarsePrimaryPointer();
 }
 
 /**
@@ -83,12 +81,11 @@ export function isCoarsePrimaryPointerEnvironment(): boolean {
  * milliseconds — on work that would otherwise start at the click. A finger gives
  * none: press-in is roughly one frame before activation.
  *
- * Deliberately built on {@link isCoarsePrimaryPointerEnvironment}, which already
- * owns "can the PRIMARY pointer hover", rather than adding a second reading of the
- * same media queries.
+ * Subscribes to the shared primary-pointer owner rather than reading media per consumer.
  */
-export function isHoverCapablePrimaryPointer(): boolean {
-    return Platform.OS === 'web' && !isCoarsePrimaryPointerEnvironment();
+export function useHoverCapablePrimaryPointer(): boolean {
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
+    return Platform.OS === 'web' && !touch;
 }
 
 export function isWebMobileLikeViewport(params: Readonly<{ width: number; height: number }>): boolean {

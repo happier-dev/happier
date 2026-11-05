@@ -11,7 +11,7 @@ import { EntityDragGripTrigger, EntityStagedMoveDock, useEntityStagedMoveHints, 
 import { EntityDropSettledFeedback, type EntityDropSettledMatch } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
 import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 import { createEntityDragGestureAdapter, useEntityDragDomBinding, useEntityDropDomBinding, useEntityDragDropRuntime, useEntityDragDropSnapshot, useEntityDragSourceState, useEntityDropTargetState, TreeDropIndicatorLine, TreeDropOutline, type EntityDragCarry, type EntityDropDestination, type EntityDropTarget, type WindowBounds } from '@/components/ui/treeDragDrop';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
 import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/treeDropRegistryTypes';
 import { t } from '@/text';
@@ -63,7 +63,7 @@ export function useSessionSurfaceEntityDrag(binding: SessionSurfaceEntityBinding
     const latest = React.useRef(binding); latest.current = binding;
     // One gesture owner per pointer kind: a hover pointer carries through the host's browser drag, every other
     // pointer through the grip's pan. Both live on one grip would begin twice and strand the replaced carry.
-    const domCarry = isHoverCapablePrimaryPointer();
+    const domCarry = useHoverCapablePrimaryPointer();
     const dragDom = useEntityDragDomBinding({ runtime, sourceId, enabled: binding !== null && binding.getItem() !== null && domCarry,
         describe: () => latest.current?.title ?? '',
         canStart: event => {

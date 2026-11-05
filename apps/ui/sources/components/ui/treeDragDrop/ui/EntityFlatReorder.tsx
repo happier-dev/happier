@@ -11,7 +11,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
 import { t } from '@/text';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { createEntityDragGestureAdapter, ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '../entityDragGestureAdapter';
 import { ENTITY_DROP_UNCHANGED_CODES } from '../entityDropNoChange';
 import { useEntityDragDestinations, useEntityDragDropRuntime, useEntityDragDropSnapshot, useEntityDragSource, useEntityDragSourceState, useEntityDropTarget } from '../entityDragDropHooks';
@@ -229,7 +229,7 @@ export function EntityFlatReorderList(props: Readonly<{
         window.addEventListener('resize', refresh);
         return () => { window.removeEventListener('scroll', refresh, true); window.removeEventListener('resize', refresh); };
     }, [measure]);
-    const pointerInteraction = isHoverCapablePrimaryPointer();
+    const pointerInteraction = useHoverCapablePrimaryPointer();
     const [admittedMoves] = React.useState(() => new WeakMap<EntityDropEffectV1, LandedMove>());
     const dispatchedEffect = React.useRef<EntityDropEffectV1 | null>(null);
     // A released row waits where it was dropped until its owner's list shows the move (or the move is refused).

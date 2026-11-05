@@ -61,7 +61,7 @@ import {
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { HappyError } from '@/utils/errors/errors';
 
@@ -890,10 +890,11 @@ function RowHost(
     // The carried card names the item with its own mark (lab `c-art TD`); the drop's outcome is the card's second line.
     describe: () => ({ title: props.title, renderMark: (size) => <NodeMark node={node} wide size={size} /> }),
   });
+  const hoverCapablePrimaryPointer = useHoverCapablePrimaryPointer();
   const dragDom = useEntityDragDomBinding({
     runtime,
     sourceId,
-    enabled: tree.canWrite && isHoverCapablePrimaryPointer(),
+    enabled: tree.canWrite && hoverCapablePrimaryPointer,
     describe: () => props.title,
     canStart: (event) => {
       const element =
@@ -1189,7 +1190,8 @@ function RowMenu(
   const tree = useTreeContext();
   const hovered = React.useContext(RowRevealContext);
   // A pointer sees the ⋯ on the row it is over; a finger has no hover, so it stays.
-  const revealed = hovered || props.open || !isHoverCapablePrimaryPointer();
+  const hoverCapablePrimaryPointer = useHoverCapablePrimaryPointer();
+  const revealed = hovered || props.open || !hoverCapablePrimaryPointer;
   if (props.items.length === 0) return null;
   return (
     <DropdownMenu
