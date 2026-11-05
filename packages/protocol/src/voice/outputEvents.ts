@@ -4,6 +4,9 @@ import { z } from 'zod/mini';
 import { VoiceAssistantActionSchema, type VoiceAssistantAction } from './actions.js';
 import { normalizeVoiceSpeechTextChunk, resolveVoiceSpeechSegmentLength, speechTextEndAtOrBefore, toSpeechText, type VoiceSpeechTextState } from './speechText.js';
 
+/** Host-authored status text localized by the consuming UI, never spoken. */
+export const VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT = 'voiceSurface.earlierTurnsLeftOut';
+
 const VoiceOutputIdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128), z.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)));
 const VoiceOutputTurnIdSchema = VoiceOutputIdSchema;
 const VoiceOutputSequenceSchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0), z.maximum(4_095)));
