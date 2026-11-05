@@ -1515,3 +1515,13 @@ test('an explicit CDP endpoint is required without starting a browser', async ()
   });
   assert.deepEqual(result, { ok: false, reason: 'cdp_required' });
 });
+
+test('browser start defaults to the Stack canonical Home while preserving explicit diagnostic URLs', () => {
+  const uiUrl = 'http://qa-ui.localhost:19364/?server=http%3A%2F%2F127.0.0.1%3A3012&happier_hmr=0';
+  const canonicalServerUrl = 'http://qa-home.localhost:3012';
+  const info = { urls: { uiUrl, canonicalServerUrl } };
+  const actual = new URL(resolveQaBrowserUrl(undefined, [], info));
+  assert.equal(actual.searchParams.get('server'), canonicalServerUrl);
+  assert.equal(actual.searchParams.get('happier_hmr'), '0');
+  assert.equal(resolveQaBrowserUrl(uiUrl, [], info), uiUrl);
+});

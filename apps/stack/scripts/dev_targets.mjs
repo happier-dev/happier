@@ -326,11 +326,14 @@ async function main() {
         '  hstack dev-targets doctor [NAME] [--stack=NAME]',
         '  hstack dev-targets status NAME [--stack=NAME]',
         '  hstack dev-targets qa setup NAME --stack=QA_STACK [--json]',
-        '  hstack dev-targets browser start SESSION --stack=QA_STACK --url=QA_UI_URL [--target=NAME] [--gpu] [--forward-url=LOOPBACK_URL] [--worker-loopback-url=HTTP_LOOPBACK_URL] [--trust-cert=PEM_PATH] [--fake-audio[=WAV_PATH]]',
+        '  hstack dev-targets browser start SESSION --stack=QA_STACK [--url=QA_UI_URL] [--target=NAME] [--gpu] [--forward-url=LOOPBACK_URL] [--worker-loopback-url=HTTP_LOOPBACK_URL] [--trust-cert=PEM_PATH] [--fake-audio[=WAV_PATH]]',
+        '    Defaults to the current Stack-info UI endpoint and canonical Home URL; --url selects an explicit diagnostic URL.',
         '    Keeps the lane browser and CDP forward alive; Ctrl+C closes only this session.',
         '  hstack dev-targets browser signin SESSION --stack=QA_STACK --cdp=CDP_HTTP_URL [--confirm-home-alias=PREVIOUS_HOME_URL]',
         '    Read the Account secret key from stdin; SESSION is an attached agent-browser session.',
         '    --confirm-home-alias explicitly accepts that saved address changing to this Stack Home through the normal confirmation UI.',
+        '    Use it only for an intentional Home address change; it cannot override a stale descriptor revision or a profile origin mismatch.',
+        '    Sign-in succeeds only when the loaded Account profile comes from this Stack canonical Home origin.',
         '    --gpu requires --target: headed Chromium on a host with an active GPU display, without software rasterization.',
         '    --trust-cert pins the supplied certificate SPKI for this browser lifetime.',
         '    --worker-loopback-url routes one observed listener on the selected browser host directly, while Home/Expo use the controller route.',
@@ -426,15 +429,17 @@ async function main() {
     }
     const { readStackEnvObject } = await import('./stack/stack_environment.mjs');
     const { resolveControlledQaBrowserTarget } = await import('./utils/dev_targets/service_placement.mjs');
-    const { runQaBrowserSession } = await import('./utils/dev_targets/qa_browser.mjs');
+    const { resolveQaBrowserUrl, runQaBrowserSession } = await import('./utils/dev_targets/qa_browser.mjs');
     const { env: stackEnv } = await readStackEnvObject(stackName);
     const browserEnv = { ...process.env, ...stackEnv };
     const controlled = await resolveControlledQaBrowserTarget({ stackName, targetName, env: browserEnv });
     const target = controlled.target;
-    const url = String(kv.get('--url') ?? '').trim();
-    if (!url) throw new Error('[dev-targets] browser start requires --url from the QA stack UI endpoint');
+    const explicitUrl = String(kv.get('--url') ?? '').trim();
+    const extraUrls = kv.get('--forward-url') ? [kv.get('--forward-url')] : [];
+    const url = resolveQaBrowserUrl(explicitUrl, extraUrls,
+      explicitUrl ? null : await (await import('./stack/stack_info_snapshot.mjs')).readStackInfoSnapshot({ rootDir: executorRepoRoot, stackName }));
     await runQaBrowserSession({ target, stackName, stackBaseDir: controlled.authority.producerStackBaseDir,
-      sessionName: positionals[2], url, extraUrls: kv.get('--forward-url') ? [kv.get('--forward-url')] : [],
+      sessionName: positionals[2], url, extraUrls,
       workerLoopbackUrl: kv.get('--worker-loopback-url'),
       trustCertPath: kv.get('--trust-cert'), fakeAudio: kv.has('--fake-audio') ? kv.get('--fake-audio') : flags.has('--fake-audio'), gpu, env: browserEnv });
     return;

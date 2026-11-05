@@ -117,8 +117,16 @@ async function unusedPorts(count) {
 // Home authentication adopts the canonical address advertised by the server.
 // Preserve addresses, not just hostnames: temporary-port aliases stop working
 // as soon as the authenticated Home descriptor replaces the entered address.
-export function resolveQaBrowserUrl(url, extraUrls = []) {
+export function resolveQaBrowserUrl(url, extraUrls = [], stackInfo = null) {
+  const explicitUrl = String(url ?? '').trim();
+  url = explicitUrl || stackInfo?.urls?.uiUrl;
+  if (!url) throw new Error('[dev-targets] browser start has no current UI endpoint; check stack info or provide --url');
   const page = new URL(url);
+  if (!explicitUrl && stackInfo?.urls?.canonicalServerUrl) {
+    page.searchParams.set('server', stackInfo.urls.canonicalServerUrl);
+    page.searchParams.delete('serverUrl');
+    url = page.href;
+  }
   const urls = [page, ...extraUrls.map(value => new URL(value))];
   for (const key of ['server', 'serverUrl']) {
     const value = page.searchParams.get(key);

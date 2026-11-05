@@ -1,6 +1,23 @@
 // This code only drives the supported restore form. Authentication, Account
 // mode discovery and persistence remain owned by SecretKeyLoginForm.
 export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAliasUrl } = {}) {
+  if (step === 'home-revisions') {
+    // Failure diagnostics only: public descriptor facts, never auth storage or
+    // response payloads. These observations do not override revision admission.
+    const revision = async value => {
+      if (!value) return null;
+      try {
+        const response = await fetch(new URL('/v1/features', new URL(value).origin));
+        if (!response.ok) return null;
+        const observedRevision = (await response.json()).homeConnectionDescriptor?.revision;
+        return Number.isSafeInteger(observedRevision) && observedRevision > 0 ? observedRevision : null;
+      } catch { return null; }
+    };
+    const [expectedRevision, actualRevision] = await Promise.all([
+      revision(expectedHomeUrl), revision(confirmHomeAliasUrl),
+    ]);
+    return { expectedRevision, actualRevision };
+  }
   const waitFor = check => new Promise(resolve => {
     const observer = new MutationObserver(() => {
       const value = check();
@@ -24,6 +41,7 @@ export async function browserStep(step, key, { expectedHomeUrl, confirmHomeAlias
   let confirmedDialog;
   const aliasWarning = () => {
     const dialog = document.querySelector('[role="dialog"]');
+    if (dialog?.textContent.includes('Home canonical URL migration was not applied')) return 'home_migration_declined';
     const confirm = dialog?.querySelector('[data-testid="web-modal-confirm"]');
     if (!confirm || dialog === confirmedDialog) return null;
     // Consent names both addresses. Never accept an arbitrary confirmation or
@@ -155,12 +173,11 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
     let observingAccount = false;
     let profileLoaded;
     const profileRequests = new Map();
-    const homeOrigins = new Set([urls.canonicalServerUrl, urls.internalServerUrl]
-      .filter(Boolean).map(url => new URL(url).origin));
+    const expectedOrigin = new URL(urls.canonicalServerUrl).origin;
     const isHomeProfile = value => {
       try {
         const url = new URL(value);
-        return url.pathname === '/v1/account/profile' && homeOrigins.has(url.origin);
+        return url.pathname === '/v1/account/profile';
       } catch { return false; }
     };
     const resolveProfile = () => {
@@ -189,10 +206,12 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       if (observingAccount) {
         const params = message.params;
         if (message.method === 'Network.requestWillBeSent' && isHomeProfile(params.request.url)) {
-          profileRequests.set(params.requestId, { frameId: params.frameId, loaderId: params.loaderId });
+          profileRequests.set(params.requestId, { frameId: params.frameId, loaderId: params.loaderId,
+            origin: new URL(params.request.url).origin });
         }
         if (message.method === 'Network.responseReceived' && isHomeProfile(params.response.url)) {
-          profileRequests.set(params.requestId, { frameId: params.frameId, loaderId: params.loaderId, status: params.response.status });
+          profileRequests.set(params.requestId, { frameId: params.frameId, loaderId: params.loaderId,
+            origin: new URL(params.response.url).origin, status: params.response.status });
         }
         const request = profileRequests.get(params?.requestId);
         if (request && message.method === 'Network.loadingFinished') { request.finished = true; resolveProfile(); }
@@ -240,6 +259,11 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       const submitted = step('restore', key);
       key = '';
       const outcome = await submitted;
+      if (outcome === 'home_migration_declined') {
+        const revisions = await step('home-revisions');
+        throw Object.assign(failure(outcome), revisions, { expectedOrigin,
+          actualOrigin: confirmHomeAliasUrl ? new URL(confirmHomeAliasUrl).origin : null });
+      }
       if (outcome !== 'home') throw failure(['home_unavailable', 'restore_entry_unavailable', 'home_alias_confirmation_required'].includes(outcome) ? outcome : 'restore_failed');
       observingAccount = true;
       profileLoaded = Promise.withResolvers();
@@ -249,6 +273,9 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       // Observe the profile this main-frame navigation loaded; do not inspect
       // credential storage or infer identity from an editable display name.
       const profileRequest = await profileLoaded.promise;
+      if (profileRequest.origin !== expectedOrigin) {
+        throw Object.assign(failure('home_origin_mismatch'), { expectedOrigin, actualOrigin: profileRequest.origin });
+      }
       if (profileRequest.failed) throw failure('account_unavailable', 'profile_load_failed');
       if (profileRequest.status !== 200) throw Object.assign(failure('account_unavailable', 'profile_http_status'), { status: profileRequest.status });
       let response;
@@ -265,15 +292,23 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       observingAccount = false;
       await navigate('/');
       if (await step('home') !== 'home') throw failure('home_unavailable');
-      return { ok: true, accountIdPrefix };
+      return { ok: true, accountIdPrefix, homeOrigin: profileRequest.origin };
     })();
     return await Promise.race([restored, client.disconnected]);
   } catch (error) {
     // Browser/Playwright/CDP errors may contain the filled value. Only our closed
     // reason vocabulary can cross this boundary; never return exception text.
     const reasons = ['invalid_key', 'stdin_required', 'cdp_required', 'session_unavailable', 'browser_unavailable',
-      'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required'];
+      'restore_entry_unavailable', 'restore_failed', 'home_unavailable', 'account_unavailable', 'home_alias_confirmation_required', 'home_origin_mismatch', 'home_migration_declined'];
     const result = { ok: false, reason: reasons.includes(error?.reason) ? error.reason : 'browser_unavailable' };
+    if (result.reason === 'home_origin_mismatch' || result.reason === 'home_migration_declined') {
+      result.expectedOrigin = error.expectedOrigin;
+      result.actualOrigin = error.actualOrigin;
+    }
+    if (result.reason === 'home_migration_declined') {
+      result.expectedRevision = error.expectedRevision;
+      result.actualRevision = error.actualRevision;
+    }
     const details = ['account_page_unavailable', 'profile_load_failed', 'profile_http_status',
       'profile_body_unavailable', 'profile_json_invalid', 'profile_id_invalid'];
     if (result.reason === 'account_unavailable' && details.includes(error.detail)) {

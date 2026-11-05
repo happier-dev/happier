@@ -7,7 +7,7 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, confirmHomeAliasUrl, step = 'restore' } = {}) {
+async function observe({ alias = false, migrationDeclined = false, confirmHomeAliasUrl, step = 'restore' } = {}) {
   let view = 'restore';
   let aliasConfirmed = false;
   let credentialFilled = false;
@@ -20,12 +20,13 @@ async function observe({ alias = false, confirmHomeAliasUrl, step = 'restore' } 
   const input = new Input();
   const confirm = { click() { aliasConfirmed = true; publish(); } };
   const dialog = {
-    textContent: `Reached ${canonicalServerUrl}, previously ${aliasUrl}`,
+    textContent: migrationDeclined ? 'Error: Home canonical URL migration was not applied' : `Reached ${canonicalServerUrl}, previously ${aliasUrl}`,
     querySelector: () => confirm,
   };
   const document = {
     documentElement: {},
     querySelector(selector) {
+      if (migrationDeclined && selector === '[role="dialog"]') return dialog;
       if (alias && !aliasConfirmed && view === 'restore') {
         if (selector === '[role="dialog"]') return dialog;
         if (selector.includes('web-modal-confirm')) return confirm;
@@ -107,9 +108,25 @@ test('restores normally when there is no Home alias warning', async () => {
   assert.equal((await observe()).result, 'home');
 });
 
+test('reports a declined canonical migration instead of treating its error dialog as alias consent', async () => {
+  assert.equal((await observe({ migrationDeclined: true })).result, 'home_migration_declined');
+});
+
+test('projects both descriptor revisions without returning feature payloads or URL credentials', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async url => ({ ok: true, json: async () => ({ homeConnectionDescriptor: {
+    revision: new URL(url).origin === canonicalServerUrl ? 27 : 62,
+  } }) });
+  try {
+    assert.deepEqual(await browserStep('home-revisions', '', {
+      expectedHomeUrl: `${canonicalServerUrl}/?private=discard`, confirmHomeAliasUrl: aliasUrl,
+    }), { expectedRevision: 27, actualRevision: 62 });
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, restoreOutcome = 'home' } = {}) {
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
@@ -126,7 +143,9 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, status = 20
         this.message({ id, result: method === 'Page.navigate'
           ? { frameId: 'main', loaderId }
           : method === 'Runtime.callFunctionOn'
-            ? { result: { value: params.arguments[0].value === 'account' ? (accountReady ? 'account' : 'account_unavailable') : 'home' } }
+            ? { result: { value: params.arguments[0].value === 'account' ? (accountReady ? 'account' : 'account_unavailable')
+              : params.arguments[0].value === 'restore' ? restoreOutcome
+                : params.arguments[0].value === 'home-revisions' ? { expectedRevision: 27, actualRevision: 62 } : 'home' } }
             : method === 'Network.getResponseBody'
               ? { body: malformed ? '{' : JSON.stringify(params.requestId === 'profile' ? profile : { id: 'wrong-account' }) } : {} });
         if (method !== 'Page.navigate') return;
@@ -148,9 +167,9 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, status = 20
           }
           for (const [requestId, url, frame, loader] of [
             ['previous', canonicalServerUrl, 'main', 'previous'],
-            ['foreign', 'https://other-home.invalid', 'main', loaderId],
+            ['foreign', 'https://other-home.invalid', 'main', 'previous'],
             ['iframe', canonicalServerUrl, 'child', loaderId],
-            ['profile', canonicalServerUrl, 'main', loaderId],
+            ['profile', profileOrigin, 'main', loaderId],
           ]) {
             this.message({ method: 'Network.requestWillBeSent', params: { requestId, frameId: frame, loaderId: loader, type: 'Fetch',
               request: { method: 'GET', url: `${url}/v1/account/profile` },
@@ -169,21 +188,40 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, status = 20
     }
     close() {}
   }
-  return await runQaBrowserSigninPage({ urls: { uiUrl, canonicalServerUrl },
-    cdpHttpUrl: 'http://127.0.0.1:9999', key: randomBytes(32).toString('base64url'),
+  return await runQaBrowserSigninPage({ urls: { uiUrl, canonicalServerUrl, internalServerUrl },
+    cdpHttpUrl: 'http://127.0.0.1:9999', key: randomBytes(32).toString('base64url'), confirmHomeAliasUrl: aliasUrl,
   }, { WebSocketImpl: BrowserSocket,
     fetchImpl: async () => ({ ok: true, json: async () => [{ type: 'page', url: 'about:blank',
       webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
 
-test('reads Account identity only from this main-frame navigation and Home profile', async () => {
-  assert.deepEqual(await profileSignin(), { ok: true, accountIdPrefix: 'account-' });
+test('reads Account identity only from this main-frame navigation, ignoring previous documents and child frames', async () => {
+  assert.deepEqual(await profileSignin(), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
+});
+
+test('reports a declined migration with both safe Home origins and descriptor revisions', async () => {
+  assert.deepEqual(await profileSignin({ restoreOutcome: 'home_migration_declined' }), {
+    ok: false, reason: 'home_migration_declined', expectedOrigin: canonicalServerUrl, actualOrigin: aliasUrl,
+    expectedRevision: 27, actualRevision: 62,
+  });
 });
 
 test('reads the surviving profile GET after an HTTP 200 request is canceled in the same document', async () => {
-  assert.deepEqual(await profileSignin({ cancelledFirst: true }), { ok: true, accountIdPrefix: 'account-' });
+  assert.deepEqual(await profileSignin({ cancelledFirst: true }), { ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl });
 });
+
+for (const [name, options] of [
+  ['saved alias', { profileOrigin: aliasUrl }],
+  ['internal endpoint', { profileOrigin: 'http://127.0.0.1:3012', internalServerUrl: 'http://127.0.0.1:3012' }],
+]) {
+  test(`refuses the same Account served by the ${name} instead of the expected Home origin`, async () => {
+    assert.deepEqual(await profileSignin(options), {
+      ok: false, reason: 'home_origin_mismatch',
+      expectedOrigin: canonicalServerUrl, actualOrigin: options.profileOrigin,
+    });
+  });
+}
 
 for (const [name, options, detail] of [
   ['missing Account id', { profile: {} }, 'profile_id_invalid'],
