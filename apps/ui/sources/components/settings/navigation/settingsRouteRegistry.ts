@@ -186,7 +186,7 @@ function SettingsParentBackButton({
     accessibilityLabel: string;
     tintColor?: string;
     hideOnTopLevel: boolean;
-    /** Names the parent screen beside the arrow, for a page whose own large title is the only title. */
+    /** Names the parent screen beside the arrow: the page's own large title is the only title. */
     parentLabel?: Translate;
 }>): React.ReactElement | null {
     const pathname = usePathname();
@@ -245,8 +245,11 @@ export function getSettingsStackScreenDefinitions(
             options.headerShown = false;
             return { name: definition.name, options };
         }
+        // One rule for every subpage on a phone: the bar names the parent, the page names itself
+        // (a large title, `app/(app)/settings/_layout`). The hub is not a subpage: it has no parent in Settings to name.
+        const isHub = definition.name === 'index' && !definition.navigator;
         if (definition.titleKey) {
-            options.headerTitle = definition.headsItself ? '' : t(definition.titleKey);
+            options.headerTitle = isHub ? t(definition.titleKey) : '';
         }
         if ((definition.name !== 'index' || definition.navigator) && options.headerShown !== false) {
             const accessibilityLabel = t('common.back');
@@ -254,8 +257,7 @@ export function getSettingsStackScreenDefinitions(
                 accessibilityLabel,
                 tintColor,
                 hideOnTopLevel: false,
-                // A page that heads itself leaves the bar untitled, so its back names the parent.
-                ...(definition.headsItself ? { parentLabel: t } : {}),
+                parentLabel: t,
             });
         }
         return {

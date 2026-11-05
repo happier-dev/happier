@@ -6,7 +6,9 @@ import {
   type ReactTestInstance,
 } from 'react-test-renderer';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { SettingsModalFloatingControls } from './SettingsModalFloatingControls';
+import { View } from 'react-native';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { SettingsFloatingControlsHost, SettingsModalFloatingControls } from './SettingsModalFloatingControls';
 
 import {
   clearActiveUnsavedChangesGuard,
@@ -68,6 +70,22 @@ describe('SettingsModalFloatingControls', () => {
   });
 
   afterEach(() => clearActiveUnsavedChangesGuard());
+
+  it('names the parent in the Back it publishes to a phone bar', async () => {
+    pathnameState.value = '/settings/account/security';
+    const setBack = vi.fn();
+    await act(async () => {
+      create(
+        <NavigationTitleChromeProvider showsTitle publisher={{ setBack }}>
+          <SettingsFloatingControlsHost enabled>
+            <View />
+          </SettingsFloatingControlsHost>
+        </NavigationTitleChromeProvider>,
+      );
+    });
+    const back = setBack.mock.calls.at(-1)?.[0] as React.ReactElement<{ parentTitle?: string }>;
+    expect(back.props.parentTitle).toBe('settings.account');
+  });
 
   it('renders nothing on top-level categories (reachable from the rail)', async () => {
     pathnameState.value = '/settings/appearance';

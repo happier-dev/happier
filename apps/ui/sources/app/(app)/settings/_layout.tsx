@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { SettingsShell } from '@/components/settings/shell/SettingsShell';
 import { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
-import { useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationLargeTitleProvider, useNavigationTitleChromePublisher } from '@/components/ui/layout/navigationTitleChrome';
 import { RouteModalPortalScope } from '@/components/navigation/RouteModalPortalScope';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { getSettingsStackScreenDefinitions } from '@/components/settings/navigation/settingsRouteRegistry';
@@ -47,12 +47,14 @@ function SettingsLayoutBody() {
         <RouteModalPortalScope>
             {/* Crossing the phone width remounts this navigator; this keeps the page that was open. */}
             {hosted ? null : <SettingsPresentationRouteKeeper deviceType={deviceType} />}
-            {/* Phones keep the native stack header (which shows the title); the modal has none. */}
+            {/* A phone's bar names the parent and each page names itself with a large title; the modal has no bar. */}
+            <NavigationLargeTitleProvider largeTitle={deviceType === 'phone'}>
             <NavigationTitleChromeProvider showsTitle={hosted ? hostedShowsTitle : !isModalPresentation} publisher={publisher ?? undefined}>
             <SettingsShell>
                 {navigator}
             </SettingsShell>
             </NavigationTitleChromeProvider>
+            </NavigationLargeTitleProvider>
         </RouteModalPortalScope>
     );
 }

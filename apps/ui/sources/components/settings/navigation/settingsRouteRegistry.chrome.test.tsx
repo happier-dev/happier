@@ -52,7 +52,7 @@ describe('getSettingsStackScreenDefinitions', () => {
 
         const appearance = defs.find((d) => d.name === 'appearance');
         expect(appearance?.options.headerShown).not.toBe(false);
-        expect(appearance?.options.headerTitle).toBe('settings.appearance');
+        expect(appearance?.options.headerTitle).toBe('');
         expect(appearance?.options.headerLeft).toBeTypeOf('function');
         expect(appearance?.options.headerRight).toBeUndefined();
 
@@ -164,10 +164,20 @@ describe('a page that heads itself on a phone', () => {
         expect(machines.labels).toEqual(['settings.title']);
     });
 
-    it('keeps the bar title and an icon-only Back on a page the chrome titles', async () => {
-        const appearance = await renderBackLabels('/settings/appearance', 'appearance');
-        expect(appearance.title).toBe('settings.appearance');
-        expect(appearance.labels).toEqual([]);
+    // One rule for every subpage (owner 11-05): the bar names the parent, the page names itself.
+    it.each([
+        ['/settings/appearance', 'appearance', 'settings.title'],
+        ['/settings/features', 'features', 'settings.title'],
+        ['/settings/account/security', 'account/security', 'settings.account'],
+    ])('names the parent in the bar and leaves %s to name itself', async (pathname, name, parent) => {
+        const page = await renderBackLabels(pathname, name);
+        expect(page.title).toBe('');
+        expect(page.labels).toEqual([parent]);
+    });
+
+    it('keeps the Settings hub titled by the bar: it is not a subpage', async () => {
+        const hub = getSettingsStackScreenDefinitions(identity).find((candidate) => candidate.name === 'index');
+        expect(hub?.options.headerTitle).toBe('settings.title');
     });
 });
 

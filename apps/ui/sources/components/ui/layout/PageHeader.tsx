@@ -156,11 +156,12 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     React.useEffect(() => {
         if (!setChromeTitle) return;
         // Entity identity stays in the body. Leave its generic destination
-        // title (for example "Workflow") with the navigation owner.
-        setChromeTitle(props.alwaysShowTitle ? undefined : props.title);
+        // title (for example "Workflow") with the navigation owner. A large title is the page's own
+        // name: the bar above it left the name to the page, so it never goes into the bar.
+        setChromeTitle(props.alwaysShowTitle || largeTitle ? undefined : props.title);
         return () => setChromeTitle(undefined);
-    }, [props.alwaysShowTitle, props.title, setChromeTitle]);
-    const showTitle = props.alwaysShowTitle === true || !chromeShowsTitle;
+    }, [largeTitle, props.alwaysShowTitle, props.title, setChromeTitle]);
+    const showTitle = props.alwaysShowTitle === true || largeTitle || !chromeShowsTitle;
     const BackControl = useNavigationBackControl();
     // An entity page under retained title chrome puts its Back in that bar even on a deep link with no
     // history, so the identity starts on the same edge however the page was opened (DESIGN-9 P12).
