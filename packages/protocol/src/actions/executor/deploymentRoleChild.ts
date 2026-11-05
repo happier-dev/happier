@@ -187,9 +187,14 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     Object.defineProperties(childAuthorization, {
       ...Object.getOwnPropertyDescriptors(authorization),
       requesterHttpProjection: { value: Object.freeze({ ...http,
-        createRequestHeaders: async (request: Parameters<typeof http.createRequestHeaders>[0]) =>
-          readProof(childContext, qualifiedActionId, proof.input)
-            ? http.createRequestHeaders({ ...request, effectActionId: qualifiedActionId, reviewedChild }) : null,
+        createRequestHeaders: async (request: Parameters<typeof http.createRequestHeaders>[0]) => {
+          if (!readProof(childContext, qualifiedActionId, proof.input)) return null;
+          // Host reads explicitly retain the admitted parent purpose. Only the
+          // child's own requests carry its qualified effect and reviewed proof.
+          const { reviewedChild: _reviewedChild, ...parentRequest } = request;
+          return http.createRequestHeaders(request.effectActionId === parent.actionId
+            ? parentRequest : { ...request, effectActionId: qualifiedActionId, reviewedChild });
+        },
       }), enumerable: false },
     });
     Object.defineProperty(childContext, 'externalActionExecutionAuthorization', {
