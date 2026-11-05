@@ -57,6 +57,7 @@ import { awaitActionApprovalResult } from '@/components/approvals/actionApproval
 import type { SavedSecretPrivateCreationApprovalOptions } from '@/components/secrets/useSavedSecretCatalog';
 
 export type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/savedSecretTypes';
+export { openSavedSecretDisclosureInContext, recordSavedSecretDisclosureInContext, isSavedSecretDisclosureStorageCurrentInContext } from './savedSecretDisclosure';
 
 type SavedSecretMutationOutput = Readonly<{ resourceId: string; revision: number }>;
 type SavedSecretDeleteOutput = Readonly<{ resourceId: string }>;
@@ -1923,6 +1924,11 @@ export async function deleteSavedSecretResource(params: Readonly<{
     confirmedByPresentUser?: true;
     executeAdmittedMutation?: SavedSecretAdmittedMutationExecute;
     managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
+    /**
+     * Words the present-user confirmation (the secret's name and what deleting it does). The Action
+     * policy still decides whether to ask: a waived or approval-required delete never calls it.
+     */
+    confirmDeletion?: () => Promise<boolean>;
 }> & Omit<SavedSecretApprovalHandlers<SavedSecretDeleteOutput>, 'onApprovalFailed'> & Readonly<{
     /** The same owner-decoded result for immediate and Inbox-executed refusals. */
     onApprovalFailed?: (code: string, result: SavedSecretResourceDeleteFailure) => void;
@@ -1947,6 +1953,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 },
                 parse: value => SharedSavedSecretDeleteOutputV1Schema.parse(value),
                 ...(params.confirmedByPresentUser ? { approval: 'surface_confirmed' } : {}),
+                ...(params.confirmDeletion ? { executorOptions: { presentUserActionConfirmation: params.confirmDeletion } } : {}),
                 onApprovalSucceeded: async receipt => {
                     await applySavedSecretCatalogDeletion(params.scope, receipt.resourceId, params.expectedRevision,
                         context.accountLifetime.isCurrent());

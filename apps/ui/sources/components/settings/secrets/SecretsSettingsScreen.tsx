@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
@@ -12,6 +12,7 @@ import { reviewManagedResourceRemoval } from '@/components/settings/machines/man
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { savedSecretUsedByCopy } from '@/components/secrets/savedSecretRowCopy';
+import { buildCredentialsSecretRoute } from '@/components/settings/connectedServices/collection/connectedServicesCollectionRoutes';
 import { Modal } from '@/modal';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -75,6 +76,15 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             select();
         });
     };
+    // Credentials' rail and Secrets section select a secret (`secret`) or open the new-secret draft (`add`).
+    const params = useLocalSearchParams<{ secret?: string; add?: string }>();
+    const selectedRef = typeof params.secret === 'string' && params.secret.length > 0 ? params.secret : null;
+    const addParam = params.add === '1';
+    React.useEffect(() => {
+        if (!addParam) return;
+        setCreating(true);
+        router.setParams({ add: undefined });
+    }, [addParam, router]);
     const accessEntry = accessSelection === null || accessSelection.scopeKey !== scopeKey
         ? null
         : catalog.entries.find((entry) => entry.ref === accessSelection.ref) ?? null;
@@ -219,7 +229,11 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             : t('secrets.catalog.operationFailed'));
     }, []);
 
-    const removeSharedResource = React.useCallback(async (resourceId: string, expectedRevision: number) => {
+    const removeSharedResource = React.useCallback(async (resourceId: string, expectedRevision: number, confirmation: Readonly<{
+        /** The secret's name, or null when the Home cannot read it. */
+        name: string | null;
+        shared: boolean;
+    }>) => {
         if (!scope) return;
         // Deleting runs the owner reference census, which reads the owner's own
         // current Account Settings; without a known version it cannot run.
@@ -246,6 +260,12 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             const operation = {
                 scope, resourceId, expectedRevision,
                 expectedSettingsVersion: settingsVersion,
+                // The Action policy decides whether to ask; when it does, the question names the secret.
+                confirmDeletion: () => Modal.confirm(
+                    t('secretsSettings.deleteConfirmTitle', { name: confirmation.name ?? t('secrets.catalog.unavailableName') }),
+                    confirmation.shared ? t('secretsSettings.deleteNoteShared') : t('secretsSettings.deleteNote'),
+                    { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
+                ),
                 onApprovalSucceeded: () => {
                     if (!isCurrent()) return;
                     setSharedMutationPending(false);
@@ -288,14 +308,21 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     const removeShared = React.useCallback(async (entry: SavedSecretCatalogEntryV1) => {
         const parsed = parseSavedSecretCatalogReferenceV1(entry.ref);
         if (parsed?.kind !== 'shared_resource' || entry.revision === null) return;
-        await removeSharedResource(parsed.id, entry.revision);
+        const audience = entry.audience;
+        await removeSharedResource(parsed.id, entry.revision, { name: entry.name,
+            shared: Boolean(audience && audience.accounts.length + audience.teams.length + audience.groups.length > 0) });
     }, [removeSharedResource]);
 
     const removeCorruptShared = React.useCallback(async (
         entry: Extract<SavedSecretCatalogCorruptEntryV1, { relationship: 'owner' }>,
     ) => {
-        await removeSharedResource(entry.repair.resourceId, entry.repair.expectedRevision);
+        await removeSharedResource(entry.repair.resourceId, entry.repair.expectedRevision, { name: null, shared: false });
     }, [removeSharedResource]);
+
+    // A secret opens as its own page, the same route the Credentials rail selects.
+    const openSecret = React.useCallback((ref: string) => {
+        void runGuardedNavigation(() => router.push(buildCredentialsSecretRoute({ ref }) as never));
+    }, [router]);
 
     const openApproval = approvalId && scope ? () => router.pushRetainingCurrent(
         `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`,
@@ -377,8 +404,9 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             onCreated={async (ref, storage) => {
                 clearEditors();
                 if (storage === 'personal' || !scope) return;
-                // A new shared secret opens on who can use it, as sharing is why it was created.
+                // A new shared secret opens as its page, on who can use it, as sharing is why it was created.
                 setAccessSelection({ scopeKey: `${scope.serverId}:${scope.accountId}`, ref });
+                openSecret(ref);
             }}
         />
     ) : null;
@@ -386,6 +414,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     return (
         <SecretsSettingsPage
             key={scopeKey}
+            scope={scope}
             onBeginEdit={clearEditors}
             // Every current secret is a resource. Keep its storage and access
             // controls; the catalog routes private edits to the personal Action.
@@ -427,6 +456,9 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             onCancelAdd={() => { void runGuardedNavigation(clearEditors); }}
             createEditor={createEditor}
             accessEditor={accessEditor}
+            selectedRef={selectedRef}
+            onOpenUsedBy={(route) => { void runGuardedNavigation(() => router.push(route as never)); }}
+            onOpenSecret={openSecret}
         />
     );
 });

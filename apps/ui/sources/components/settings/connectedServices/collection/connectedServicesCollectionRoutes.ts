@@ -4,6 +4,14 @@ import { resolveSettingsNestedRouteName } from '@/components/settings/navigation
 
 export const CONNECTED_SERVICES_COLLECTION_ROUTE = '/settings/connected-services';
 export const CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE = '/settings/connected-services/sign-in';
+/** Saved Secrets, folded into Credentials (owner 10-30): one page in the collection, a secret selected by `secret`. */
+export const CONNECTED_SERVICES_SECRETS_ROUTE = '/settings/connected-services/secrets';
+
+/** A Saved Secret beside the rail (`ref`), or the new-secret draft (`add`). */
+export function buildCredentialsSecretRoute(input: Readonly<{ ref: string }> | Readonly<{ add: true }>): string {
+    const query = new URLSearchParams('ref' in input ? { secret: input.ref } : { add: '1' });
+    return `/(app)${CONNECTED_SERVICES_SECRETS_ROUTE}?${query}`;
+}
 const ACCOUNT_ROUTE = `${CONNECTED_SERVICES_COLLECTION_ROUTE}/account`;
 
 /** What the collection's detail shows: the index, a service, an account, a pool, or how agents sign in. */

@@ -12,6 +12,26 @@ import { getNotificationChannelCatalogValue, subscribeNotificationChannelCatalog
 import { getPromptLibraryCatalogValue, subscribePromptLibraryCatalogSnapshots } from './promptLibraryCatalogSnapshot';
 import { getRemoteHostCatalogSnapshot, subscribeRemoteHostCatalogSnapshots } from './remoteHostCatalogSnapshot';
 import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog } from './connectedMetadataCatalogSnapshot';
+import { observeProfileCatalog } from '@/sync/engine/settings/profileCatalogEngine';
+import { observeProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
+import { observeMcpServerCatalog } from '@/sync/engine/settings/mcpServerCatalogEngine';
+import { observeAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
+import { observeConnectedAccountCatalog } from '@/sync/engine/settings/connectedAccountCatalogEngine';
+import { observeNotificationChannelCatalog } from '@/sync/engine/settings/notificationChannelCatalogEngine';
+import { observePromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { observeRemoteHostCatalog } from '@/sync/engine/settings/remoteHostCatalogEngine';
+import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connectedMetadataCatalogEngine';
+
+/**
+ * While a surface shows the census, each catalog's own loader keeps its input present: a cold Account
+ * otherwise never completes coverage, because nothing else has opened those catalogs yet.
+ */
+export function observeSavedSecretUsedBySources(scope: ServerAccountScope): () => void {
+    const releases = [observeProfileCatalog(scope), observeProviderCatalog(scope), observeMcpServerCatalog(scope), observeAcpCatalog(scope),
+        observeConnectedAccountCatalog(scope, 'configurations'), observeConnectedAccountCatalog(scope, 'purposes'),
+        observeNotificationChannelCatalog(scope), observePromptLibraryCatalog(scope), observeRemoteHostCatalog(scope), observeConnectedMetadataCatalog(scope)];
+    return () => { for (const release of releases) release(); };
+}
 
 /** Retained census inputs only. This read never observes/loads a catalog. */
 export function readSavedSecretUsedBySources(scope: ServerAccountScope | null) {

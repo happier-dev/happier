@@ -19,7 +19,7 @@ import { NotificationChannelCatalogMutationV1Schema } from './notificationChanne
 import { PromptLibraryRowMutationV1Schema } from '../../prompts/library/promptLibrarySchemasV1.js';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '../../connect/qualifiedConnectedAccountCredentialMutationV4.js';
 
-import { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';
+import { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1, type SharedSavedSecretHomeActionIdV1 } from './savedSecretResourceActionIdsV1.js';
 export { SHARED_SAVED_SECRET_ACTION_IDS_V1, type SharedSavedSecretActionIdV1 } from './savedSecretResourceActionIdsV1.js';
 export const SharedSavedSecretActionIdV1Schema = lazyZodSchema(() => z.enum(SHARED_SAVED_SECRET_ACTION_IDS_V1));
 
@@ -121,6 +121,18 @@ export const SavedSecretResourceRecipientEnvelopeInputV1Schema = lazyZodSchema((
   encryptedDataKey: z.string().check(z.refine((value) => readCanonicalPaddedBase64DecodedLength(value) === ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES, 'Expected one canonical encrypted data-key envelope')),
   recipientContentPublicKeyFingerprint: z.string().check(z.minLength(1)),
 }));
+
+/** Person disclosure is client-owned; neither its input nor result can carry material. */
+export const SharedSavedSecretRevealInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ref: SharedResourceReferenceSchema,
+  expectedRevision: z.number().check(z.int(), z.positive()),
+}));
+export const SharedSavedSecretRevealOutputV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.enum(['displayed', 'hidden', 'cancelled']),
+  historyEntryId: z.optional(z.string().check(z.minLength(1))),
+}));
+export type SharedSavedSecretRevealInputV1 = z.infer<typeof SharedSavedSecretRevealInputV1Schema>;
+export type SharedSavedSecretRevealOutputV1 = z.infer<typeof SharedSavedSecretRevealOutputV1Schema>;
 
 export const SharedSavedSecretListInputV1Schema = lazyZodSchema(() => z.strictObject({}));
 /** Exact material demand shares the incumbent loader; omitted selection retains catalog-use reads. */
@@ -358,7 +370,7 @@ export const SHARED_SAVED_SECRET_ACTION_PATHS_V1 = {
   'secrets.shared.grants.set': '/v1/account/saved-secrets/resources/grants',
   'secrets.shared.update': '/v1/account/saved-secrets/resources/update',
   'secrets.shared.delete': '/v1/account/saved-secrets/resources/delete',
-} as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, string>>;
+} as const satisfies Readonly<Record<SharedSavedSecretHomeActionIdV1, string>>;
 
 export const SHARED_SAVED_SECRET_ACTION_METHODS_V1 = {
   'secrets.shared.list': 'GET',
@@ -367,7 +379,7 @@ export const SHARED_SAVED_SECRET_ACTION_METHODS_V1 = {
   'secrets.shared.grants.set': 'POST',
   'secrets.shared.update': 'POST',
   'secrets.shared.delete': 'POST',
-} as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, 'GET' | 'POST'>>;
+} as const satisfies Readonly<Record<SharedSavedSecretHomeActionIdV1, 'GET' | 'POST'>>;
 
 export const SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.shared.list': SharedSavedSecretListInputV1Schema,
@@ -376,6 +388,7 @@ export const SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.shared.grants.set': SharedSavedSecretGrantsSetInputV1Schema,
   'secrets.shared.update': SharedSavedSecretUpdateInputV1Schema,
   'secrets.shared.delete': SharedSavedSecretDeleteInputV1Schema,
+  'secrets.shared.reveal': SharedSavedSecretRevealInputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
 
 export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
@@ -385,11 +398,5 @@ export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
   'secrets.shared.grants.set': SharedSavedSecretMutationOutputV1Schema,
   'secrets.shared.update': SharedSavedSecretMutationOutputV1Schema,
   'secrets.shared.delete': SharedSavedSecretDeleteOutputV1Schema,
+  'secrets.shared.reveal': SharedSavedSecretRevealOutputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
-
-export type SharedSavedSecretRevealInputV1 = z.infer<typeof SharedSavedSecretRevealInputV1Schema>;
-
-export const SharedSavedSecretRevealInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ref: SharedResourceReferenceSchema,
-  expectedRevision: z.number().check(z.int(), z.positive()),
-}));

@@ -2823,6 +2823,11 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
+  /** Mounted person leaf; secret material never crosses the Action result boundary. */
+  savedSecretRevealAction?: (args: Readonly<{
+    input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRevealInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
   /** Client encryption custody; no envelope material crosses this public Action boundary. */
   teamMembershipHistoryAction?: (args: Readonly<{
     actionId: TeamMembershipHistoryActionIdV1;

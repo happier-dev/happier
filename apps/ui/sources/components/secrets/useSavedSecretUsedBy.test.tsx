@@ -16,7 +16,7 @@ import { applyAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapsho
 import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 import { applyNotificationChannelCatalogSnapshot } from '@/sync/store/settings/notificationChannelCatalogSnapshot';
 import { applyPromptLibraryCatalogSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-import { applyRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
+import { applyRemoteHostCatalogSnapshot, getRemoteHostCatalogSnapshot, invalidateRemoteHostCatalog } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 import { applyConnectedMetadataCatalogSnapshot } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
@@ -98,6 +98,12 @@ it('opens one secret with one real census, zero fetches and no rereads on render
         referrer: { id: 'work', displayName: 'Work credential' } }]);
     expect(reads).toHaveBeenCalledTimes(4);
     expect(home.request.mock.calls).toHaveLength(requestsBefore);
+    // A catalog revalidating is not "unknown": the page keeps the last census until the next one settles.
+    const settled = hook.getCurrent();
+    await act(async () => invalidateRemoteHostCatalog(scope));
+    expect(getRemoteHostCatalogSnapshot(scope)?.catalog.status).not.toBe('ready');
+    expect(hook.getCurrent()).toBe(settled);
+    expect(reads).toHaveBeenCalledTimes(4);
     await hook.rerender({ selected: '' });
     expect(hook.getCurrent()).toBeNull();
     expect(reads).toHaveBeenCalledTimes(4);

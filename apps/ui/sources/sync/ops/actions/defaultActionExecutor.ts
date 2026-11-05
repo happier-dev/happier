@@ -821,6 +821,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
    */
   homeDomainAction?: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   teamMembershipHistoryAction?: NonNullable<ActionExecutorDeps['teamMembershipHistoryAction']>;
+  savedSecretRevealAction?: NonNullable<ActionExecutorDeps['savedSecretRevealAction']>;
   /** Subordinate target-bound transport for a confirmed workspace conflict Action. */
   workspaceSyncConflictResolve?: NonNullable<ActionExecutorDeps['workspaceSyncConflictResolve']>;
   workflowAction?: NonNullable<ActionExecutorDeps['workflowAction']>;
@@ -3171,6 +3172,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         (opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction)!) } : {}),
     ...(opts?.teamMembershipHistoryAction ?? capturedFamilyPorts?.teamMembershipHistoryAction
       ? { teamMembershipHistoryAction: opts?.teamMembershipHistoryAction ?? capturedFamilyPorts!.teamMembershipHistoryAction } : {}),
+    ...(opts?.savedSecretRevealAction ? { savedSecretRevealAction: opts.savedSecretRevealAction } : {}),
     homeRuntimeTaskRpc: async ({ machineId, method, request, context }) => {
       if (!accountContext) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
       accountContext.assertCurrent();

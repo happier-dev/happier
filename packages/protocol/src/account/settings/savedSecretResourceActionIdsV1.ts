@@ -5,6 +5,8 @@ export const SHARED_SAVED_SECRET_ACTION_IDS_V1 = [
   'secrets.shared.grants.set',
   'secrets.shared.update',
   'secrets.shared.delete',
+  'secrets.shared.reveal',
 ] as const;
 
 export type SharedSavedSecretActionIdV1 = typeof SHARED_SAVED_SECRET_ACTION_IDS_V1[number];
+export type SharedSavedSecretHomeActionIdV1 = Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'>;

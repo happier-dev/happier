@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -26,6 +27,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -34,6 +36,8 @@ import { clearActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/na
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const alert = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn<IModal['confirm']>(async () => false));
+const writeClipboard = vi.hoisted(() => vi.fn(async (_value: string) => true));
+vi.mock('expo-clipboard', () => ({ setStringAsync: writeClipboard }));
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installDisconnectedServerSocketBoundary();
@@ -80,6 +84,10 @@ beforeEach(async () => {
     clearActiveUnsavedChangesGuard();
     alert.mockReset();
     confirm.mockReset().mockResolvedValue(false);
+    // A secret's page is the route's `secret`; no test inherits the previous one's.
+    (await import('expo-router')).router.setParams({ secret: undefined });
+    writeClipboard.mockClear();
+    installBrowserClipboardBoundary(async text => { await writeClipboard(text); });
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.confirm).mockImplementation(confirm);
     vi.mocked(Modal.alert).mockImplementation(alert);
@@ -141,7 +149,7 @@ async function mount(editAccess = true, initializeSync = false, beforeRender?: (
     const commits = vi.fn<React.ProfilerOnRenderCallback>();
     const screen = await renderScreen(<React.Profiler id="saved-secrets" onRender={commits}><SecretsSettingsScreen /></React.Profiler>);
     if (editAccess) {
-        await screen.pressByTestIdAsync(`saved-secret:${entries[0]!.ref}:header`);
+        await openSecretPage(entries[0]!.ref);
         await screen.pressByTestIdAsync(`saved-secret:${entries[0]!.ref}:manageAccess`);
         // Removing the recipient from the draft makes the editor dirty; nothing is written yet.
         await screen.pressByTestIdAsync('saved-secret-access-grant-account:recipient');
@@ -189,6 +197,233 @@ async function initializeRemovalSettings(scope: ServerAccountScope, waiveApprova
     });
 }
 
+describe('Shared Saved Secret person disclosure controller', () => {
+    it('projects the old value hidden on the first new-subject layout before passive cleanup', async () => {
+        const { scope, entries } = await mount(false);
+        const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/activity', { body: { historyEntryId: 'disclosure-entry' } });
+        const layouts: string[] = [];
+        const hook = await renderHook(({ selected }) => {
+            const controller = useSharedSavedSecretReveal({ scope, entry: selected, confirmDisclosure: async () => true });
+            React.useLayoutEffect(() => { if (selected.ref === entries[1]!.ref) layouts.push(controller.state.status); });
+            return controller;
+        }, { initialProps: { selected: entries[0]! } });
+        await act(async () => { await hook.getCurrent().reveal(); });
+        expect(hook.getCurrent().state.status).toBe('revealed');
+        await hook.rerender({ selected: entries[1]! });
+        expect(layouts.length).toBeGreaterThan(0);
+        expect(layouts.every(status => status === 'hidden')).toBe(true);
+    });
+
+    it('refuses a retired leaf after requested history before it reads the exact body', async () => {
+        const { scope, entries } = await mount(false);
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { openSavedSecretDisclosureInContext } = await import('@/sync/ops/settings/savedSecretDisclosure');
+        const response = createDeferred<void>();
+        const activityPath = '/v1/account/saved-secrets/resources/activity';
+        let exactBodyReads = 0;
+        harness.answer(scope.serverId, activityPath, { body: { historyEntryId: 'disclosure-entry' }, respondAfter: response.promise });
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { select: (_input, request) => {
+            if (new URL(request.url).searchParams.get('requireManage') === 'true') exactBodyReads++;
+            return { body: { resources: [materialFor(entries[0]!)] } };
+        } });
+        const account = await captureLazyActionAccountContext(scope.serverId);
+        let current = true;
+        try {
+            const opened = openSavedSecretDisclosureInContext(account, { ref: entries[0]!.ref, expectedRevision: 3 },
+                'host-device', undefined, () => current);
+            await vi.waitFor(() => expect(harness.requestsFor(activityPath)).toHaveLength(1));
+            current = false;
+            response.resolve();
+            expect(await opened).toMatchObject({ ok: false, reason: 'changed' });
+            expect(exactBodyReads).toBe(0);
+        } finally { account.dispose(); response.resolve(); }
+    });
+
+    it('reconciles two consumed history pages on an exact Copy push without dropping older siblings', async () => {
+        const { scope } = await mount(false);
+        const { useSharedSavedSecretActivity } = await import('@/components/secrets/useSharedSavedSecretActivity');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { savedSecretDisclosureActivityEntityIdV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
+        const row = { id: 'history-a', ref: entry('secret-a').ref, resourceRevision: 3, actorDisplayName: 'Owner',
+            deviceId: 'device-a', createdAt: '2026-10-27T00:00:00.000Z', outcome: 'displayed' as const,
+            copyOutcome: null as 'succeeded' | null, copyRequestedAt: null as string | null };
+        const sibling = { ...row, id: 'history-b', createdAt: '2026-10-27T00:00:01.000Z' };
+        const older = { ...row, id: 'history-older', createdAt: '2026-10-26T00:00:00.000Z' };
+        let rows = [row, sibling];
+        let olderRows = [older];
+        const path = '/v1/account/saved-secrets/resources/activity/read';
+        harness.answer(scope.serverId, path, { select: input => ({ body: input !== null && typeof input === 'object'
+            && 'cursor' in input && typeof input.cursor === 'string' && input.cursor
+            ? { items: olderRows, nextCursor: 'older-window-cursor' }
+            : { items: rows, nextCursor: 'first-page-cursor' } }) });
+        const hook = await renderHook(() => useSharedSavedSecretActivity({ scope, resourceId: 'secret-a', enabled: true }));
+        await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
+        await act(async () => { hook.getCurrent().loadMore(); });
+        await vi.waitFor(() => {
+            const state = hook.getCurrent().state;
+            expect(state.status === 'ready' && state.entries.length).toBe(3);
+        });
+        const before = hook.getCurrent().state;
+        if (before.status !== 'ready') throw new Error('Expected visible history');
+        const observedReads = harness.requestsFor(path).length;
+        await act(async () => { for (let index = 0; index < 20; index++) {
+            publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-b')],
+                { source: 'socket', changeKinds: ['account'] });
+        } });
+        expect(harness.requestsFor(path)).toHaveLength(observedReads);
+        rows = [{ ...row, copyOutcome: 'succeeded', copyRequestedAt: '2026-10-27T00:00:02.000Z' }, sibling];
+        await act(async () => { publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
+            { source: 'socket', changeKinds: ['account'] }); });
+        await vi.waitFor(() => {
+            const after = hook.getCurrent().state;
+            expect(after.status === 'ready' && after.entries[0]?.copyOutcome).toBe('succeeded');
+        });
+        const after = hook.getCurrent().state;
+        if (after.status !== 'ready') throw new Error('Expected refreshed visible history');
+        expect(after.entries[0]).not.toBe(before.entries[0]);
+        expect(after.entries[1]).toBe(before.entries[1]);
+        expect(after.entries[2]).toBe(before.entries[2]);
+        expect(after.nextCursor).toBe('older-window-cursor');
+        // A resource hint names no changed entry: reconcile each consumed page.
+        expect(harness.requestsFor(path)).toHaveLength(observedReads + 2);
+        expect(JSON.stringify(after)).not.toContain('test-secret');
+        olderRows = [{ ...older, copyOutcome: 'succeeded', copyRequestedAt: '2026-10-28T00:00:01.000Z' }];
+        await act(async () => { publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
+            { source: 'socket', changeKinds: ['account'] }); });
+        await vi.waitFor(() => {
+            const state = hook.getCurrent().state;
+            expect(state.status === 'ready' && state.entries.at(-1)?.copyOutcome).toBe('succeeded');
+        });
+        const copiedOlder = hook.getCurrent().state;
+        if (copiedOlder.status !== 'ready') throw new Error('Expected reconciled older Copy');
+        expect(copiedOlder.entries[0]).toBe(after.entries[0]);
+        expect(copiedOlder.entries[1]).toBe(after.entries[1]);
+        expect(copiedOlder.entries[2]).not.toBe(after.entries[2]);
+        // New disclosures prepend without discarding the consumed tail, and
+        // another page still starts from the oldest consumed cursor.
+        rows = [{ ...row, id: 'history-new', createdAt: '2026-10-28T00:00:00.000Z' }, rows[0]!];
+        olderRows = [sibling, olderRows[0]!];
+        await act(async () => { publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
+            { source: 'socket', changeKinds: ['account'] }); });
+        await vi.waitFor(() => {
+            const state = hook.getCurrent().state;
+            expect(state.status === 'ready' && state.entries[0]?.id).toBe('history-new');
+        });
+        const advanced = hook.getCurrent().state;
+        if (advanced.status !== 'ready') throw new Error('Expected advanced history');
+        expect(advanced.entries.map(entry => entry.id)).toEqual(['history-new', 'history-a', 'history-b', 'history-older']);
+        const oldest = { ...older, id: 'history-oldest', createdAt: '2026-10-25T00:00:00.000Z' };
+        olderRows = [oldest];
+        await act(async () => { hook.getCurrent().loadMore(); });
+        await vi.waitFor(() => {
+            const state = hook.getCurrent().state;
+            expect(state.status === 'ready' && state.entries.at(-1)?.id).toBe('history-oldest');
+        });
+        expect(harness.requestsFor(path).at(-1)?.input).toMatchObject({ cursor: 'older-window-cursor' });
+    });
+
+    it('attributes disclosure history to the current person without relabeling other or unknown actors', async () => {
+        const { scope } = await mount(false);
+        const { SharedSavedSecretHistory } = await import('@/components/secrets/SharedSavedSecretHistory');
+        const { Item } = await import('@/components/ui/lists/Item');
+        const row = { ref: entry('secret-a').ref, resourceRevision: 3, actorDisplayName: null,
+            deviceId: 'other-device', createdAt: '2026-10-27T00:00:00.000Z', outcome: 'displayed' as const,
+            copyOutcome: null, copyRequestedAt: null };
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/activity/read', { body: { items: [
+            { ...row, id: 'own-unnamed-history', actorIsSelf: true },
+            { ...row, id: 'named-history', actorDisplayName: 'History reviewer', actorIsSelf: false },
+            { ...row, id: 'unnamed-history', actorIsSelf: false },
+            // An older Home lacks the self fact. Missing identity is not evidence of self.
+            { ...row, id: 'older-home-history' },
+        ], nextCursor: null } });
+        const screen = await renderScreen(<SharedSavedSecretHistory testID="disclosure-history-attribution"
+            scope={scope} resourceId="secret-a" enabled />);
+        const historyRows = () => screen.findAllByType(Item).filter(item =>
+            /^disclosure-history-attribution:\d+$/.test(item.props.testID ?? ''));
+        await vi.waitFor(() => expect(historyRows()).toHaveLength(4));
+        expect(historyRows().map(item => item.props.subtitle)).toEqual([
+            'message.accountActorYou · secretsSettings.historyOtherDevice',
+            'History reviewer · secretsSettings.historyOtherDevice',
+            'secretsSettings.historyUnknownActor · secretsSettings.historyOtherDevice',
+            'secretsSettings.historyUnknownActor · secretsSettings.historyOtherDevice',
+        ]);
+        expect(screen.getTextContent()).not.toContain('test-secret');
+        expect(writeClipboard).not.toHaveBeenCalled();
+    });
+
+    it.each(['scope', 'ref', 'revision', 'manage', 'mode'] as const)('refuses a pending Copy when its current %s changes before cleanup', async change => {
+        const { scope, entries } = await mount(false);
+        const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
+        const activityPath = '/v1/account/saved-secrets/resources/activity';
+        const copyPath = `${activityPath}/copy`;
+        const response = createDeferred<void>();
+        harness.answer(scope.serverId, activityPath, { body: { historyEntryId: 'disclosure-entry' } });
+        harness.answer(scope.serverId, copyPath, { body: { historyEntryId: 'disclosure-entry' }, respondAfter: response.promise });
+        // Keep the live projection mutable to expose the pre-passive-cleanup window,
+        // rather than allowing the effect's Hide to make this assertion pass.
+        const selected = { ...entries[0]!, capabilities: { ...entries[0]!.capabilities } };
+        const selectedScope = { ...scope };
+        const hook = await renderHook(() => useSharedSavedSecretReveal({ scope: selectedScope, entry: selected,
+            confirmDisclosure: async () => true }));
+        await act(async () => { await hook.getCurrent().reveal(); });
+        expect(hook.getCurrent().state.status).toBe('revealed');
+        let copied!: Promise<'succeeded' | 'refused' | 'outcome_unknown'>;
+        await act(async () => { copied = hook.getCurrent().copy(); });
+        await vi.waitFor(() => expect(harness.requestsFor(copyPath)).toHaveLength(1));
+        if (change === 'scope') selectedScope.accountId = 'another-account';
+        if (change === 'ref') selected.ref = entries[1]!.ref;
+        if (change === 'revision') selected.revision = 4;
+        if (change === 'manage') selected.capabilities.manageAccess = false;
+        if (change === 'mode') selected.encryptionMode = 'e2ee';
+        await act(async () => { response.resolve(); expect(await copied).toBe('refused'); });
+        expect(writeClipboard).not.toHaveBeenCalled();
+        expect(harness.requestsFor(copyPath)).toHaveLength(1);
+    });
+
+    it('presents a value-free refusal when the admitted disclosure is refused', async () => {
+        const { scope, entries } = await mount(false);
+        const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/activity', { status: 403, body: { error: 'forbidden' } });
+        const hook = await renderHook(() => useSharedSavedSecretReveal({ scope, entry: entries[0]!,
+            confirmDisclosure: async () => true }));
+        await act(async () => { await hook.getCurrent().reveal(); });
+        expect(hook.getCurrent().state).toMatchObject({ status: 'refused', reason: 'forbidden' });
+        expect(JSON.stringify(hook.getCurrent().state)).not.toContain('test-secret');
+        expect(writeClipboard).not.toHaveBeenCalled();
+    });
+
+    it('keeps display transient and copies only by a fresh person gesture on the same history entry', async () => {
+        const { scope, entries } = await mount(false);
+        const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
+        const activityPath = '/v1/account/saved-secrets/resources/activity';
+        const copyPath = `${activityPath}/copy`;
+        harness.answer(scope.serverId, activityPath, { body: { historyEntryId: 'disclosure-entry' } });
+        harness.answer(scope.serverId, copyPath, { body: { historyEntryId: 'disclosure-entry' } });
+        confirm.mockResolvedValue(true);
+        const hook = await renderHook(({ selected }) => useSharedSavedSecretReveal({ scope, entry: selected,
+            confirmDisclosure: () => confirm('Reveal', selected.name ?? '') }), {
+            initialProps: { selected: entries[0]! },
+        });
+        expect(hook.getCurrent().state.status).toBe('hidden');
+        expect(writeClipboard).not.toHaveBeenCalled();
+        await act(async () => { await hook.getCurrent().reveal(); });
+        expect(hook.getCurrent().state).toMatchObject({ status: 'revealed', value: 'test-secret', historyEntryId: 'disclosure-entry' });
+        expect(writeClipboard).not.toHaveBeenCalled();
+        await act(async () => { expect(await hook.getCurrent().copy()).toBe('succeeded'); });
+        expect(writeClipboard.mock.calls).toEqual([['test-secret']]);
+        expect(harness.requestsFor(copyPath).map(request => request.input)).toEqual([
+            expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'requested' }),
+            expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'succeeded' }),
+        ]);
+        expect(JSON.stringify(harness.requestsFor(activityPath).map(request => request.input))).not.toContain('test-secret');
+        await hook.rerender({ selected: { ...entries[0]!, revision: 4 } });
+        expect(hook.getCurrent().state.status).toBe('hidden');
+        await act(async () => { expect(await hook.getCurrent().copy()).toBe('refused'); });
+        expect(writeClipboard).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('Saved Secrets editor continuity through the settings screen', () => {
     it('ignores unrelated Settings revisions while readiness and an opened sharing baseline stay current', async () => {
         const { screen, commits } = await mount(false);
@@ -218,7 +453,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         const secret = entries[0]!;
         const path = '/v1/account/saved-secrets/resources/delete';
         harness.answer(scope.serverId, path, { body: { resourceId: 'secret-a' } });
-        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:header`);
+        await openSecretPage(secret.ref);
         await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:delete`);
         await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
         expect(confirm).not.toHaveBeenCalled();
@@ -259,16 +494,10 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
             : { status: 409, body: { error: 'managed_resources_review_required', resources: [resource] } } });
         confirm.mockResolvedValue(true);
         const secret = entries[0]!;
-        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:header`);
+        await openSecretPage(secret.ref);
         await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:delete`);
         const artifacts = harness.artifacts(scope.serverId);
-        await vi.waitFor(() => expect(artifacts.list(), JSON.stringify({ alerts: alert.mock.calls,
-            hosts: harness.requestsFor(REMOTE_HOST_ROWS_ROUTE_V1), settings: harness.requestsFor('/v2/account/settings').map(request => {
-                const parsed = AccountSettingsV2UpdateRequestSchema.safeParse(request.input);
-                return parsed.success ? { expectedVersion: parsed.data.expectedVersion } : { read: true };
-            }),
-            deletes: harness.requestsFor(path),
-        })).toHaveLength(1));
+        await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
         const firstId = artifacts.list()[0]!.id;
         const readApproval = (id: string) => ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(id)!));
         expect(readApproval(firstId)).toMatchObject({ actionId: 'secrets.shared.delete', status: 'open' });
@@ -363,6 +592,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         });
         const secret = entries[0]!;
         const { storage } = await import('@/sync/domains/state/storage');
+        const { SecretsSettingsPage } = await import('./SecretsSettingsPage');
         const resource = createManagedResourceDependencyFixture();
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const originalLifetime = captureActiveServerAccountScopeLifetime();
@@ -396,18 +626,18 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
                 body: { resources: [...entries.map(materialFor), { entry: corruptEntry }] },
             });
             act(() => applySavedSecretCatalogPage({ scope, entries, observedAt: 2, corruptEntries: [corruptEntry] }));
-        } else await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:header`);
+        } else await openSecretPage(secret.ref);
         await screen.pressByTestIdAsync(deleteTestId);
-        expect(harness.requestsFor(path), JSON.stringify({ alerts: alert.mock.calls,
-            hosts: harness.requestsFor(REMOTE_HOST_ROWS_ROUTE_V1), settings: harness.requestsFor('/v2/account/settings').map(request => {
-                const parsed = AccountSettingsV2UpdateRequestSchema.safeParse(request.input);
-                return parsed.success ? { expectedVersion: parsed.data.expectedVersion } : { read: true };
-            }),
-        })).not.toHaveLength(0);
+        await vi.waitFor(() => expect(harness.requestsFor(path)).not.toHaveLength(0));
         await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
         expect(confirm.mock.calls[0]?.[1]).toContain('native-1');
-        const requests = harness.requestsFor(path);
         const accepted = choice === 'manual' || choice === 'corrupt';
+        if (accepted) await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+        if (choice === 'retired') await vi.waitFor(() => {
+            expect(screen.findByType(SecretsSettingsPage).props.scope).toEqual({ ...scope, accountId: 'account-next' });
+        });
+        await vi.waitFor(() => expect(screen.findByType(SecretsSettingsPage).props.sharedMutationsDisabled).toBe(false));
+        const requests = harness.requestsFor(path);
         expect(requests).toHaveLength(accepted ? 2 : 1);
         if (accepted) {
             expect(requests[1]?.input).toEqual({ ...requests[0]?.input as object, managedResourceDispositions: [{
@@ -433,7 +663,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
             recipientEnvelope: null,
         }] } });
         harness.answer(scope.serverId, path, { body: { resourceId, revision: 4 } });
-        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:header`);
+        await openSecretPage(secret.ref);
         await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:rename`);
         expect(harness.requestsFor(path)).toHaveLength(0);
         await act(async () => screen.changeTextByTestId(`saved-secret:${secret.ref}:edit-input`, '  Renamed key  '));
@@ -441,7 +671,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
         expect(harness.requestsFor(path)[0]?.input).toEqual(expect.objectContaining({
             resourceId, expectedRevision: 3, displayName: 'Renamed key',
-            storedContent: { t: 'plain', v: { v: 1, name: 'Renamed key', kind: 'apiKey', value: 'original-secret' } },
+            storedContent: { storage: { kind: 'value' }, t: 'plain', v: { v: 1, name: 'Renamed key', kind: 'apiKey', value: 'original-secret' } },
         }));
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secret.ref}:edit-input`)).toBeNull());
 
@@ -454,7 +684,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(2));
         expect(harness.requestsFor(path)[1]?.input).toEqual(expect.objectContaining({
             resourceId, expectedRevision: 3,
-            storedContent: { t: 'plain', v: { v: 1, name: 'secret-a', kind: 'apiKey', value: '  exact replacement\n' } },
+            storedContent: { storage: { kind: 'value' }, t: 'plain', v: { v: 1, name: 'secret-a', kind: 'apiKey', value: '  exact replacement\n' } },
         }));
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secret.ref}:edit-input`)).toBeNull());
     });
@@ -472,7 +702,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
             acknowledged = true;
             return { body: { resourceId: 'secret-a', revision: 4 } };
         } });
-        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:header`);
+        await openSecretPage(secret.ref);
         await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:rename`);
         await act(async () => screen.changeTextByTestId(`saved-secret:${secret.ref}:edit-input`, 'Acknowledged name'));
         try {
@@ -531,16 +761,17 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
 
     it('keeps a dirty recipient draft until the person confirms switching to another secret', async () => {
         const { screen, entries } = await mount();
-        await screen.pressByTestIdAsync(`saved-secret:${entries[1]!.ref}:header`);
+        await openSecretThroughList(screen, entries[1]!.ref);
         expect(alert).toHaveBeenCalledOnce();
         const buttons = alert.mock.calls[0]?.[2] as Array<{ style?: string; onPress?: () => void }>;
         await act(async () => buttons.find((button) => button.style === 'cancel')?.onPress?.());
-        // A is still editing and B's attempted expansion was declined.
+        // A is still editing and opening B was declined.
         expect(screen.findByTestId(`saved-secret:${entries[1]!.ref}:manageAccess`)).toBeNull();
         expect(screen.findByTestId(`saved-secret:${entries[0]!.ref}:manageAccess`)).toBeNull();
-        await screen.pressByTestIdAsync(`saved-secret:${entries[1]!.ref}:header`);
+        await openSecretThroughList(screen, entries[1]!.ref);
         const discardButtons = alert.mock.calls[1]?.[2] as Array<{ style?: string; onPress?: () => void }>;
         await act(async () => discardButtons.find((button) => button.style === 'destructive')?.onPress?.());
+        await followPushedSecretRoute();
         expect(screen.findByTestId(`saved-secret:${entries[1]!.ref}:manageAccess`)).not.toBeNull();
         await screen.pressByTestIdAsync(`saved-secret:${entries[1]!.ref}:manageAccess`);
         expect(screen.findByTestId(`saved-secret:${entries[1]!.ref}:manageAccess`)).toBeNull();
@@ -553,7 +784,7 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
     it('keeps a typed name when switching editor is declined, then retires it before access opens', async () => {
         const { screen, entries } = await mount(false);
         const ref = entries[0]!.ref;
-        await screen.pressByTestIdAsync(`saved-secret:${ref}:header`);
+        await openSecretPage(ref);
         await screen.pressByTestIdAsync(`saved-secret:${ref}:rename`);
         await act(async () => screen.changeTextByTestId(`saved-secret:${ref}:edit-input`, 'Unsaved name'));
         await screen.pressByTestIdAsync(`saved-secret:${ref}:manageAccess`);
@@ -572,3 +803,103 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
 // Native filesystem classes are an OS boundary, not part of this source-driven UI journey.
 vi.mock('expo-file-system', async () =>
     (await import('@/dev/testkit/mocks/expoFileSystem')).createExpoFileSystemFileMock().module);
+
+describe('Saved Secret reveal leaf on the Saved Secrets page', () => {
+    const activityPath = '/v1/account/saved-secrets/resources/activity';
+    const historyPath = `${activityPath}/read`;
+    function answerDisclosure(serverId: string) {
+        harness.answer(serverId, activityPath, { body: { historyEntryId: 'disclosure-entry' } });
+        harness.answer(serverId, `${activityPath}/copy`, { body: { historyEntryId: 'disclosure-entry' } });
+        harness.answer(serverId, historyPath, { body: { items: [{ id: 'history-a', ref: entry('secret-a').ref, resourceRevision: 3,
+            actorDisplayName: 'Owner', deviceId: 'device-elsewhere', createdAt: '2026-10-27T00:00:00.000Z', outcome: 'displayed',
+            copyOutcome: 'succeeded', copyRequestedAt: '2026-10-27T00:00:01.000Z' }], nextCursor: null } });
+    }
+
+    it('reveals after the person confirms, copies only on the explicit gesture, shows history and forgets the value on hide', async () => {
+        const { screen, scope, entries } = await mount(false);
+        answerDisclosure(scope.serverId);
+        const ref = entries[0]!.ref;
+        await openSecretPage(ref);
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${ref}:history:0`)).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain('test-secret');
+
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-reveal`);
+        expect(confirm).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor(activityPath)).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain('test-secret');
+
+        confirm.mockResolvedValue(true);
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-reveal`);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('test-secret'));
+        expect(writeClipboard).not.toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-copy`);
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${ref}:value-copied`)).not.toBeNull());
+        expect(writeClipboard.mock.calls).toEqual([['test-secret']]);
+        expect(harness.requestsFor(`${activityPath}/copy`).map(request => request.input)).toEqual([
+            expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'requested' }),
+            expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'succeeded' }),
+        ]);
+
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-reveal`);
+        expect(screen.getTextContent()).not.toContain('test-secret');
+        expect(screen.findByTestId(`saved-secret:${ref}:value-copy`)).toBeNull();
+        expect(writeClipboard).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers no reveal where the person cannot manage the secret or this device cannot read it', async () => {
+        const { screen, scope, entries } = await mount(false);
+        answerDisclosure(scope.serverId);
+        const [useOnly, unreadable] = entries;
+        await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 2, entries: [
+            { ...useOnly!, capabilities: { ...useOnly!.capabilities, manageAccess: false } },
+            { ...unreadable!, materialStatus: 'preparing_encrypted_access' },
+        ] }));
+        await openSecretPage(useOnly!.ref);
+        await openSecretPage(unreadable!.ref);
+        expect(screen.findByTestId(`saved-secret:${useOnly!.ref}:value-reveal`)).toBeNull();
+        expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:value-reveal`)).toBeNull();
+        expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:value-unavailable`)).not.toBeNull();
+        expect(confirm).not.toHaveBeenCalled();
+        expect(harness.requestsFor(activityPath)).toHaveLength(0);
+        // History is metadata: a manager still sees it while the value is unreadable here; use-only sees none.
+        expect(screen.findByTestId(`saved-secret:${useOnly!.ref}:history`)).toBeNull();
+        expect(screen.findByTestId(`saved-secret:${unreadable!.ref}:history`)).not.toBeNull();
+    });
+
+    it('says a refused reveal showed nothing and keeps the value masked', async () => {
+        const { screen, scope, entries } = await mount(false);
+        harness.answer(scope.serverId, activityPath, { status: 403, body: { error: 'forbidden' } });
+        harness.answer(scope.serverId, historyPath, { body: { items: [], nextCursor: null } });
+        const ref = entries[0]!.ref;
+        confirm.mockResolvedValue(true);
+        await openSecretPage(ref);
+        await screen.pressByTestIdAsync(`saved-secret:${ref}:value-reveal`);
+        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${ref}:value-refused`)).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain('test-secret');
+        expect(screen.findByTestId(`saved-secret:${ref}:value-copy`)).toBeNull();
+        expect(writeClipboard).not.toHaveBeenCalled();
+    });
+});
+
+/** Opens a secret's own page the way the Credentials rail and the Secrets list do: through the route. */
+async function openSecretPage(ref: string) {
+    const { router } = await import('expo-router');
+    await act(async () => { router.setParams({ secret: ref }); });
+}
+
+/** Opens a secret from the list the way a person does: through the screen's guarded navigation. */
+async function openSecretThroughList(screen: Awaited<ReturnType<typeof renderScreen>>, ref: string) {
+    const { SecretsSettingsPage } = await import('./SecretsSettingsPage');
+    await act(async () => { screen.findByType(SecretsSettingsPage).props.onOpenSecret(ref); });
+}
+
+/** The router boundary does not navigate; apply the secret route the screen last pushed. */
+async function followPushedSecretRoute() {
+    const { router } = await import('expo-router');
+    const calls: ReadonlyArray<readonly unknown[]> = vi.mocked(router.push).mock.calls;
+    const href = String(calls.at(-1)?.[0] ?? '');
+    const secret = new URLSearchParams(href.split('?')[1] ?? '').get('secret');
+    expect(secret).not.toBeNull();
+    await openSecretPage(secret!);
+}

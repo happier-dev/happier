@@ -5,13 +5,32 @@ import type { CollectionRowStatus } from '@/components/ui/lists/collection/Colle
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
 
-/** Used-by row copy from the resource owner's identity; paths are diagnostic metadata only. */
+/** What kind of thing holds the reference, in the person's words. */
+function savedSecretUsedByKindLabel(owner: AccountSettingsSavedSecretReference['owner']): string {
+    switch (owner) {
+        case 'provider': return t('settingsProviders.kind.frontier');
+        case 'connectedAccountCredential': return t('settingsVoice.realtimeProviders.authentication.account.title');
+        case 'connectedAccountConfiguration': return t('secretsSettings.usedByKindConnectedConfiguration');
+        case 'profile': return t('secretsSettings.usedByKindProfile');
+        case 'voice': return t('secretsSettings.usedByKindVoice');
+        case 'mcp': return t('secretsSettings.usedByKindMcp');
+        case 'acp': return t('secretsSettings.usedByKindAgent');
+        case 'plugin': return t('secretsSettings.usedByKindPlugin');
+        case 'remoteHost': return t('secretsSettings.usedByKindRemoteHost');
+        case 'notificationChannel': return t('secretsSettings.usedByKindNotificationChannel');
+        case 'registrySource': return t('secretsSettings.usedByKindRegistrySource');
+        case 'unknown': return t('common.unknown');
+    }
+}
+
+/**
+ * Used-by row copy from the resource owner's identity: its name and kind, or only its kind when the
+ * owner supplies no name. Paths are diagnostic metadata only.
+ */
 export function savedSecretUsedByCopy(reference: AccountSettingsSavedSecretReference): Readonly<{ title: string; subtitle: string }> {
-    return {
-        title: reference.referrer?.displayName || t('common.unknown'),
-        subtitle: reference.referrer?.kind === 'provider' ? t('settingsProviders.kind.frontier')
-            : reference.referrer?.kind === 'connectedAccountCredential' ? t('settingsVoice.realtimeProviders.authentication.account.title') : '',
-    };
+    const kind = savedSecretUsedByKindLabel(reference.referrer?.kind ?? reference.owner);
+    const name = reference.referrer?.displayName;
+    return name ? { title: name, subtitle: kind } : { title: kind, subtitle: '' };
 }
 
 /** The material status of a shared secret, in the owner's or recipient's words. */

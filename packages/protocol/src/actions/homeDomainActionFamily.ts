@@ -58,7 +58,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...TEAM_HOME_ACTION_IDS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1,
   ...MANAGED_GITHUB_APP_ACTION_IDS_V1,
-  ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
+  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id): id is Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'> => id !== 'secrets.shared.reveal'),
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
   'session.delete',
   'session.section.set',
@@ -73,7 +73,7 @@ export type HomeDomainActionIdV1 =
   | typeof TEAM_HOME_ACTION_IDS_V1[number]
   | ManagedIdentityProviderActionIdV1
   | ManagedGitHubAppActionIdV1
-  | SharedSavedSecretActionIdV1
+  | Exclude<SharedSavedSecretActionIdV1, 'secrets.shared.reveal'>
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
   | 'session.delete' | 'session.section.set' | 'session.tags.set';
 

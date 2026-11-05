@@ -51,6 +51,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: '[serviceId]', navigator: 'connected-services', titleKey: 'connectedServices.fallbackName' },
     { name: 'account', navigator: 'connected-services', titleKey: 'settings.connectedServices', headsItself: true },
     { name: 'sign-in', navigator: 'connected-services', titleKey: 'connectedServicesCollection.agentSignInTitle' },
+    { name: 'secrets', navigator: 'connected-services', titleKey: 'settings.secrets' },
     { name: 'provider-state-sharing', navigator: 'connected-services', titleKey: 'connectedServicesSettings.perAgentTitle' },
     // Legacy deep-link redirects (`ConnectedAccountLegacyRouteRedirect`). They
     // render no screen of their own, so their chrome title is the section's, not
