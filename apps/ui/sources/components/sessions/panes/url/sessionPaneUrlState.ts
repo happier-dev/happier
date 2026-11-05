@@ -495,6 +495,12 @@ export function reconcileSessionPaneScopeFromUrlState(
     }
 }
 
+/** The Session details link for one Details tab, or null when a link cannot name it (a contributed tab). */
+export function buildSessionDetailsTabHref(input: Readonly<{ sessionId: string; serverId?: string | null; tab: DetailsTab }>): string | null {
+    const details = readActiveDetailsUrlTarget([input.tab], input.tab.key);
+    return details ? buildSessionDetailsHref({ sessionId: input.sessionId, serverId: input.serverId, details }) : null;
+}
+
 /**
  * The link to one Session details destination (`/session/<id>/details?…`): the page a phone pushes and
  * the destination a workspace tab opens, carrying the same params a pane link does.

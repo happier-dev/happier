@@ -20,8 +20,9 @@ import { PluginSurfacePaneLaunchScope } from '@/components/plugins/surfaces/plug
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
-import { PanePresentationProvider, usePanePresentation, type PanePresentationIntent } from '@/components/appShell/panes/panePresentation';
-import { buildActiveDetailsRouteParams } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { PanePresentationProvider, usePanePresentation, type PanePresentation } from '@/components/appShell/panes/panePresentation';
+import { buildActiveDetailsRouteParams, buildSessionDetailsTabHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { useOptionalWorkspaceNavigation, type WorkspacePhoneControls } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useDestinationPathname, useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useSessionViewerPresentingReader } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 
@@ -384,10 +385,19 @@ export function SessionCockpitPanePresentationBoundary(props: React.PropsWithChi
 }>>) {
     const enclosingPresentation = usePanePresentation();
     const router = useDestinationRouter();
-    const presentPane = React.useCallback((intent: PanePresentationIntent) => {
+    // Read when a page opens, so workspace edits never re-create this presenter for every pane opener.
+    const workspacePhone = React.useRef<WorkspacePhoneControls | null>(null);
+    workspacePhone.current = useOptionalWorkspaceNavigation()?.phone ?? null;
+    const presentPane = React.useCallback<PanePresentation>((intent) => {
         if (intent.scopeId !== props.scopeId) return;
         if (intent.pane === 'details' && intent.start) return;
         if (intent.pane === 'details') {
+            // Every linkable Details page opened on a phone uses the same rail owner, whether opened from
+            // the Session, another Details page, or the Tabs button. It owns reuse and close-to-source.
+            const href = buildSessionDetailsTabHref({ sessionId: props.sessionId, serverId: props.serverId, tab: intent.tab });
+            const phone = workspacePhone.current;
+            if (href && phone) return phone.openHref(href, 'preview') ? 'ownTab' : undefined;
+            if (intent.fromDetails) return;
             const query = buildActiveDetailsRouteParams([intent.tab], intent.tab.key);
             if (query.details) {
                 // Publish the accepted target before switching scenes. Waiting
