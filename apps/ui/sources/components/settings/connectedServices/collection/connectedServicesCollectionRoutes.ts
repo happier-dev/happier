@@ -21,6 +21,9 @@ export type ConnectedServicesSelection =
     | Readonly<{ kind: 'account'; serviceKey: string; accountId: string }>
     | Readonly<{ kind: 'pool'; serviceKey: string; groupId: string }>
     | Readonly<{ kind: 'agentSignIn' }>
+    | Readonly<{ kind: 'secret'; ref: string }>
+    | Readonly<{ kind: 'secretDraft' }>
+    | Readonly<{ kind: 'secrets' }>
     | Readonly<{ kind: 'other' }>;
 
 type Params = Readonly<Record<string, string | string[] | undefined>>;
@@ -42,6 +45,11 @@ export function resolveConnectedServicesSelection(pathname: string, params: Para
     const normalized = pathname.replace(/\/+$/, '');
     if (normalized === CONNECTED_SERVICES_COLLECTION_ROUTE) return { kind: 'index' };
     if (normalized === CONNECTED_SERVICES_AGENT_SIGN_IN_ROUTE) return { kind: 'agentSignIn' };
+    if (normalized === CONNECTED_SERVICES_SECRETS_ROUTE) {
+        const ref = readParam(params, 'secret');
+        if (ref) return { kind: 'secret', ref };
+        return readParam(params, 'add') === '1' ? { kind: 'secretDraft' } : { kind: 'secrets' };
+    }
     if (normalized !== ACCOUNT_ROUTE) return { kind: 'other' };
     const pluginId = readParam(params, 'pluginId');
     const localId = readParam(params, 'localId');

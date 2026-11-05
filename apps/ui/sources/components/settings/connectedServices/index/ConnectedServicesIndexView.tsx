@@ -71,6 +71,8 @@ export type ConnectedServicesIndexViewProps = Readonly<{
     gateways?: React.ReactNode;
     /** Team-shared accounts, after the pools. */
     sharedWithYou?: React.ReactNode;
+    /** Saved Secrets not tied to one service (the credential seam's free-standing records). */
+    secrets?: React.ReactNode;
     /** The last section, "In the composer": where the usage gauges beside the prompt are set. */
     composer?: React.ReactNode;
     /** An open set-up panel holds the page's primary: row fixes step down. */
@@ -482,6 +484,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             {pools}
             {props.gateways ?? null}
             {renderSheets(toolSheets, t('connectedServicesSettings.codeAndToolsTitle'))}
+            {props.secrets ?? null}
             {props.sharedWithYou ?? null}
             {props.composer ?? null}
         </ItemList>

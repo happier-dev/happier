@@ -1986,6 +1986,8 @@ const ca: ConnectedServicesCollectionCopy = {
     renameTitle: 'Posa nom a aquest compte',
     renameBody: ({ service }) => `Només canvia el nom a Happier. ${service} manté el seu propi nom per al compte.`,
     identityHidden: 'Correu o identificador amagat',
+    secretsDescription: 'Claus, tokens i contrasenyes que no depenen d’un sol servei. Els valors queden ocults; tria’ls on Happier en demani un.',
+    secretsGroup: 'Secrets',
     composerGroup: 'Al compositor',
     composerDescription: 'Quant en queda, al costat de la petició.',
     composerUsageGauges: 'Indicadors d’ús',

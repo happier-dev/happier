@@ -1986,6 +1986,8 @@ const fr: ConnectedServicesCollectionCopy = {
     renameTitle: 'Nommer ce compte',
     renameBody: ({ service }) => `Seul le nom dans Happier change. ${service} garde son propre nom pour le compte.`,
     identityHidden: 'E-mail ou identifiant masqué',
+    secretsDescription: 'Clés, jetons et mots de passe qui ne sont liés à aucun service. Les valeurs restent masquées ; choisissez-les là où Happier en demande un.',
+    secretsGroup: 'Secrets',
     composerGroup: 'Dans le compositeur',
     composerDescription: 'Ce qu’il reste, à côté de la saisie.',
     composerUsageGauges: 'Jauges d’utilisation',

@@ -2008,6 +2008,8 @@ const ru: ConnectedServicesCollectionCopy = {
     renameTitle: 'Назовите этот аккаунт',
     renameBody: ({ service }) => `Меняется только имя в Happier. ${service} сохраняет собственное имя аккаунта.`,
     identityHidden: 'Почта или ID скрыты',
+    secretsDescription: 'Ключи, токены и пароли, не привязанные к одному сервису. Значения скрыты; выбирайте их там, где Happier попросит.',
+    secretsGroup: 'Секреты',
     composerGroup: 'В поле ввода',
     composerDescription: 'Сколько осталось — рядом с запросом.',
     composerUsageGauges: 'Индикаторы использования',

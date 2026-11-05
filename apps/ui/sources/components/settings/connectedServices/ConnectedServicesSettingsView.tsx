@@ -44,6 +44,7 @@ import { ConnectedServicePoolIndexItem } from './index/ConnectedServicePoolIndex
 import { ConnectedServicesGatewaysGroup, useConnectedServicesGatewaysUnavailable } from './index/ConnectedServicesGatewaysGroup';
 import { CredentialsComposerGaugesGroup } from './index/CredentialsComposerGaugesGroup';
 import { ConnectedServicesIndexView, type ConnectedServicesIndexPresentation } from './index/ConnectedServicesIndexView';
+import { CredentialsSecretsGroup } from './index/CredentialsSecretsGroup';
 import { NewPoolMenu, selectNewPoolServices } from './collection/NewPoolMenu';
 import { presentConnectedServiceRegistryReadFailure } from './model/presentConnectedServiceIndexDiagnostics';
 import type { ConnectedServicesIndexSheet } from './model/buildConnectedServicesIndexModel';
@@ -286,6 +287,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       ) : null}
       // Composer gauge preferences live once, with the other usage-limit settings; Credentials leads there.
       composer={<CredentialsComposerGaugesGroup onOpen={() => navigate('/(app)/settings/session/provider-limits' as never, 'ConnectedServices.openUsageGauges')} />}
+      secrets={<CredentialsSecretsGroup onOpen={(href) => navigate(href as never, 'ConnectedServices.openSecret')} />}
       sharedWithYou={(
         <TeamCredentialCatalogSettingsGroup
           title={t('teams.credentials.sharedWithYou')}

@@ -1981,6 +1981,8 @@ const zhHant: ConnectedServicesCollectionCopy = {
     renameTitle: '為此帳號命名',
     renameBody: ({ service }) => `只會變更 Happier 中的名稱。${service} 仍保留該帳號自己的名稱。`,
     identityHidden: '電子郵件或 ID 已隱藏',
+    secretsDescription: '不屬於單一服務的金鑰、權杖與密碼。值始終隱藏；在 Happier 需要時選擇即可。',
+    secretsGroup: '機密',
     composerGroup: '在輸入框中',
     composerDescription: '在提示詞旁顯示剩餘額度。',
     composerUsageGauges: '用量指示',

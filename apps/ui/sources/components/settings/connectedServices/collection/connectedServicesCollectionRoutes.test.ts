@@ -10,6 +10,10 @@ describe('resolveConnectedServicesSelection', () => {
 
         expect(resolveConnectedServicesSelection(`${root}/`, serviceParams)).toEqual({ kind: 'index' });
         expect(resolveConnectedServicesSelection(`${root}/sign-in/`, {})).toEqual({ kind: 'agentSignIn' });
+        // Saved Secrets live in the same collection (Credentials): a secret, the new-secret draft, or the page.
+        expect(resolveConnectedServicesSelection(`${root}/secrets`, { secret: 'resource:abc' })).toEqual({ kind: 'secret', ref: 'resource:abc' });
+        expect(resolveConnectedServicesSelection(`${root}/secrets`, { add: '1' })).toEqual({ kind: 'secretDraft' });
+        expect(resolveConnectedServicesSelection(`${root}/secrets`, {})).toEqual({ kind: 'secrets' });
         expect(resolveConnectedServicesSelection(`${root}/account`, serviceParams)).toEqual({ kind: 'service', serviceKey });
         expect(resolveConnectedServicesSelection(`${root}/account`, {
             ...serviceParams, accountId: 'work',

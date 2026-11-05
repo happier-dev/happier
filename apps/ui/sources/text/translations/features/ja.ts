@@ -1986,6 +1986,8 @@ const ja: ConnectedServicesCollectionCopy = {
     renameTitle: 'このアカウントに名前を付ける',
     renameBody: ({ service }) => `変わるのは Happier での名前だけです。${service} 側の名前はそのままです。`,
     identityHidden: 'メールまたはIDは非表示',
+    secretsDescription: '特定のサービスに結びつかないキー、トークン、パスワード。値は表示されず、Happier が求める場所で選べます。',
+    secretsGroup: 'シークレット',
     composerGroup: '入力欄',
     composerDescription: 'プロンプトの横に残量を表示します。',
     composerUsageGauges: '使用量ゲージ',
