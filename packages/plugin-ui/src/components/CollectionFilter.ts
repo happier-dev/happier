@@ -3,6 +3,7 @@ export {
     conditionModelFromFilter, applyCollectionConditionEdit,
     compileCollectionConditionValueCountOptions, collectionConditionValueCountsFromFacts,
     collectionConditionOptionValues, isCollectionConditionOptionPicked, collectionConditionValueLabels,
+    toggleCollectionConditionValue, isCollectionConditionChoiceOn, collectionConditionChoiceValues,
     type CollectionCondition, type CollectionConditionBindings, type CollectionConditionEdit,
     type CollectionConditionField, type CollectionConditionModel, type CollectionConditionRow, type CollectionConditionValueOption,
     type CollectionConditionValueCountRequest, type CollectionConditionValueCounts,

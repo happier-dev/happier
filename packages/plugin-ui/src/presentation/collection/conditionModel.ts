@@ -76,6 +76,41 @@ export function isCollectionConditionOptionPicked(values: readonly JsonValue[], 
     return collectionConditionOptionValues(option).every(value => includesJsonValue(values, value));
 }
 
+type CollectionQuickChoiceModel = Readonly<{ rows: readonly CollectionConditionRow[]; availableFields?: readonly CollectionConditionField[] }>;
+
+/** What a choice stands for in its condition: itself, or the registry's whole group (a Work status is several states). */
+export function collectionConditionChoiceValues(model: CollectionQuickChoiceModel, fieldId: string, value: JsonValue): readonly JsonValue[] {
+    const field = model.availableFields?.find(candidate => candidate.id === fieldId)
+        ?? model.rows.find(candidate => candidate.fieldId === fieldId)?.field;
+    const option = field?.valueOptions.find(candidate => sameJsonValue(candidate.value, value));
+    return option ? collectionConditionOptionValues(option) : [value];
+}
+
+/** Whether a choice is on: the field's "is" condition holds everything it stands for. */
+export function isCollectionConditionChoiceOn(model: CollectionQuickChoiceModel, fieldId: string, value: JsonValue): boolean {
+    const row = model.rows.find(candidate => candidate.fieldId === fieldId && candidate.operator === 'is');
+    return row !== undefined && collectionConditionChoiceValues(model, fieldId, value).every(item => includesJsonValue(row.values, item));
+}
+
+/**
+ * One choice's one-press edit (a filter chip): off when the field's "is" condition holds it, otherwise added to that
+ * condition. A set keeps its other values; the last value removes the row.
+ */
+export function toggleCollectionConditionValue(model: CollectionQuickChoiceModel, fieldId: string, value: JsonValue): CollectionConditionEdit {
+    const values = collectionConditionChoiceValues(model, fieldId, value);
+    const row = model.rows.find(candidate => candidate.fieldId === fieldId && candidate.operator === 'is');
+    if (!row) return { type: 'add', condition: { fieldId, operator: 'is', values } };
+    if (!isCollectionConditionChoiceOn(model, fieldId, value)) {
+        // A set gathers its choices; any other field holds one, so the press replaces it.
+        if (row.field && row.field.kind !== 'set') return { type: 'change', rowId: row.id, condition: { fieldId, operator: 'is', values } };
+        const added = values.filter(item => !includesJsonValue(row.values, item));
+        return { type: 'change', rowId: row.id, condition: { fieldId, operator: 'is', values: [...row.values, ...added] } };
+    }
+    const rest = row.values.filter(candidate => !includesJsonValue(values, candidate));
+    return rest.length === 0 ? { type: 'remove', rowId: row.id }
+        : { type: 'change', rowId: row.id, condition: { fieldId, operator: 'is', values: rest } };
+}
+
 /** Isolated option predicates, compiled once per demand through the registry's selection owner. */
 export function compileCollectionConditionValueCountOptions<Filter, Facts>(
     registry: EntityFilterRegistryV1<Filter, Facts>, filter: Filter, request: CollectionConditionValueCountRequest,

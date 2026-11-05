@@ -17,6 +17,11 @@ export type {
   HappierStyleProp,
   HappierTextSelection,
 } from './portableTypes.js';
+export {
+  HAPPIER_FILTER_CHIP_METRICS,
+  HappierCollectionFilterChips,
+  type HappierCollectionFilterChip,
+} from './collection/CollectionFilterChips.js';
 export { HappierRowOperationContext } from './collection/rowOperation.js';
 export {
   HappierCollectionAddMenu,

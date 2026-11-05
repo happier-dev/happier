@@ -8,6 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { HappierCollectionFilterChips, type HappierCollectionFilterChip } from '../presentation/collection/CollectionFilterChips.js';
 import { View } from 'react-native';
 
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
@@ -78,6 +79,11 @@ export type CollectionToolbarProps = Readonly<{
    */
   refine?: Readonly<{
     label: string;
+    /**
+     * What people filter by most, one press from on or off, standing in their own row under the search. The wide
+     * row's `render()` ends that row as the long tail. Folded, the chips stay and only the long tail folds.
+     */
+    chips?: readonly HappierCollectionFilterChip[];
     /** How many narrowings are in force; said in the folded button's name and drawn as its count. */
     activeCount?: number;
     render: () => ReactNode;
@@ -150,6 +156,7 @@ export function CollectionToolbar(props: CollectionToolbarProps): ReactElement {
 
 function WideToolbar(props: CollectionToolbarProps): ReactElement {
   const { slots, freshness, refresh } = props;
+  const wideChips = props.refine?.chips?.length ? props.refine.chips : null;
   const chrome = useHappierPageChromeInternal();
   const fit = useContext(CollectionToolbarOverflowContext);
   const { spacing } = usePluginTheme();
@@ -190,7 +197,7 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
   };
   // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
   const primary = props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded={false} />;
-  return (
+  const row = (
     <View
       ref={rowRef}
       style={[wideRowStyle, { gap: spacing.small, justifyContent: 'space-between' }]}
@@ -203,7 +210,7 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
         {slots?.title ?? null}
         {slots?.search ?? null}
         {props.lens ?? null}
-        {props.refine?.render() ?? null}
+        {wideChips ? null : props.refine?.render() ?? null}
         {slots?.selection ?? null}
         {props.accessory ?? null}
       </View>
@@ -239,6 +246,13 @@ function WideToolbar(props: CollectionToolbarProps): ReactElement {
       </View>
     </View>
   );
+  return wideChips ? (
+    <Stack gap="small">
+      {row}
+      <HappierCollectionFilterChips chips={wideChips} trailing={props.refine?.render() ?? null}
+        {...(props.testID === undefined ? {} : { testID: `${props.testID}:chips` })} />
+    </Stack>
+  ) : row;
 }
 
 function CompactToolbar(props: CollectionToolbarProps): ReactElement {
@@ -321,6 +335,8 @@ function CompactToolbar(props: CollectionToolbarProps): ReactElement {
           {trailingSelection}
         </Row>
       ) : null}
+      {refine?.chips?.length ? <HappierCollectionFilterChips chips={refine.chips} scrolls
+        {...(props.testID === undefined ? {} : { testID: `${props.testID}:chips` })} /> : null}
       <Row gap="small" align="center">
         {/* A transient accessory wraps under the lens instead of covering it. */}
         <Row gap="small" wrap align="center" style={compactLeadStyle}>
