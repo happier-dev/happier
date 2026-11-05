@@ -7,7 +7,8 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
-import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
+import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
@@ -19,7 +20,8 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { prepareScmFileBytesExport } from '@/scm/actions/deliverScmFileAtRevision';
-import { createTestGitRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
+import { createTestGitRpcManager, createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
+import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createCliActionDeps, type MachineActionDirectTargetTransport } from './createCliActionDeps';
 
@@ -60,8 +62,11 @@ describe('Session comparison discard Machine placement', () => {
 
   it.each(['small', 'withoutUndo', 'export', 'direct', 'unavailable', 'unknown'] as const)('uses the existing Machine for every discard and Undo export (%s)', async mode => {
     await withTempDir('happier-local-discard-home-', async home => {
-      const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
-      environment.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'discard-test-home' });
+      const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SCM_MAX_OUTPUT_BYTES']);
+      // This fixture crosses the reply budget. Let its preparatory Git read
+      // use that same budget instead of the smaller ordinary command default.
+      environment.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'discard-test-home',
+        HAPPIER_SCM_MAX_OUTPUT_BYTES: String(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES) });
       reloadConfiguration();
       const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-local-discard-' });
       const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
@@ -72,18 +77,29 @@ describe('Session comparison discard Machine placement', () => {
         await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'discard-test-home': machineId } }));
         admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
-        const before = { small: 'original small\n', large: `${'a'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES)}\n` };
-        const after = { small: 'changed small\n', large: `${'b'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES)}\n` };
+        // Each control character takes six JSON bytes on either side of the
+        // inverse. Cross the containing reply's budget, not a tunnel frame's.
+        const spanLength = Math.floor(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES / 12) + 1;
+        const before = { small: 'original small\n', large: `${'\u0001'.repeat(spanLength)}\n` };
+        const after = { small: 'changed small\n', large: `${'\u0002'.repeat(spanLength)}\n` };
         for (const key of ['small', 'large'] as const) await writeFile(join(fixture.rootPath, `${key}.txt`), before[key]);
         runScmExecutable(fixture.rootPath, 'git', ['add', '.']);
         runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'local discard base']);
         for (const key of ['small', 'large'] as const) await writeFile(join(fixture.rootPath, `${key}.txt`), after[key]);
-        const entries = (mode === 'small' ? ['small'] as const : ['small', 'large'] as const).map(key => {
+        const registry = createTestGitScmBackendRegistry();
+        const selection = await registry.selectBackend({ cwd: fixture.rootPath, workingDirectory: fixture.rootPath });
+        if (!selection?.backend.diffFile) throw new Error('The real Git diff owner is unavailable');
+        const entries = await Promise.all((mode === 'small' ? ['small'] as const : ['small', 'large'] as const).map(async key => {
           const path = `${key}.txt`;
-          const diff = runScmExecutable(fixture.rootPath, 'git', ['diff', '--no-color', '-U3', 'HEAD', '--', path]);
+          const diff = await selection.backend.diffFile({
+            context: { cwd: fixture.rootPath, projectKey: fixture.rootPath, detection: selection.detection },
+            request: { cwd: fixture.rootPath, path, area: 'both' },
+          });
+          expect(diff).toMatchObject({ success: true, diff: expect.any(String) });
+          if (!diff.success || diff.diff === undefined) throw new Error('Expected an admitted real Git diff');
           return { path, kind: 'comparison' as const, against: { source: { kind: 'workingTree' as const } },
-            changeKeys: buildReviewUnits(path, 'combined', diff).map(unit => unit.key), includeUndo: mode !== 'withoutUndo' };
-        });
+            changeKeys: buildReviewUnits(path, 'combined', diff.diff).map(unit => unit.key), includeUndo: mode !== 'withoutUndo' };
+        }));
         // Authenticated Home HTTP is a genuine network boundary. Workspace,
         // plugin admission, preparation and both Action executors remain real.
         vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/account/encryption/currentness')
@@ -161,6 +177,30 @@ describe('Session comparison discard Machine placement', () => {
           for (const key of ['small', 'large'] as const) expect(await readFile(join(fixture.rootPath, `${key}.txt`), 'utf8'))
             .toBe(mode === 'unavailable' ? after[key] : before[key]);
           if (mode === 'export' || mode === 'direct') expect(response.entries![1]!.previous).toHaveProperty('export');
+        }
+        if (response.success && mode !== 'withoutUndo') {
+          for (const entry of response.entries!) {
+            const path = join(fixture.rootPath, entry.path);
+            let bytes: Buffer;
+            if (entry.inverseEdits) {
+              const undone = applyInverseEdits(await readFile(path, 'utf8'), entry.inverseEdits);
+              expect(undone.ok).toBe(true);
+              if (!undone.ok) throw new Error('Discard inverse must restore the selected content');
+              bytes = Buffer.from(undone.text);
+            } else {
+              if (!entry.previous || !('export' in entry.previous)) throw new Error('Oversized Undo must retain its preimage export');
+              const prepared = entry.previous.export;
+              const downloaded = await lifecycle.requestPayloadFile({ transferId: prepared.transferId,
+                endpointCandidates: prepared.endpointCandidates, destinationPath: join(fixture.rootPath, `undo-${entry.path}`),
+                expectedSizeBytes: prepared.sizeBytes, expectedManifestHash: prepared.manifestHash });
+              bytes = await readFile(downloaded.destinationPath);
+              lifecycle.clearPublishedTransfer(prepared.transferId);
+            }
+            expect(await commitGuardedFileReplace({ destPath: path, expectation: entry.hashAfter, source: { kind: 'bytes', bytes } }))
+              .toMatchObject({ success: true, hash: entry.hashBefore });
+            const key = entry.path === 'small.txt' ? 'small' : 'large';
+            expect((await readFile(path)).equals(Buffer.from(after[key]))).toBe(true);
+          }
         }
       } finally {
         await lifecycle.stop();
