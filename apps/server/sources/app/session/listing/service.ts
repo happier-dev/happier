@@ -53,6 +53,7 @@ import { readSessionManagedSubtreeSessionIdsInTx, projectSessionRuntimeManagedSu
 import { projectSessionManagerForRowsInTx, readmitCapturedSessionManagerReferencesInTx, type SessionManagerContribution } from "@/app/session/awareness/sessionManagerProjection";
 import { readAccountFollowRuleReceiverCountsInTx } from '@/app/session/follow/accountFollowRuleService';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
+import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { mapV2SessionCompactListRow } from './rows';
 import { projectSessionEffectiveAccessV1 } from '@/app/session/access/sessionAccess';
 
@@ -523,10 +524,9 @@ async function listFilteredSessionsForAccount(params: Readonly<{
             const selected = new Set<string>();
             for (const row of projected) {
                 const coordinator = deriveSessionCoordinatorV1(row);
-                // Private rule membership can be unavailable on a shared row.
-                // Only proven matches enter this filter; other rows must not
-                // withdraw independently admitted coordinators from the page.
-                if (coordinator === true) selected.add(row.id);
+                // The manager projection already admitted both sides of this
+                // relation. Keep ordinary workers as their coordinator's context.
+                if (coordinator === true || readSessionManagerSessionIdV1(row) !== null) selected.add(row.id);
             }
             return rows.filter(row => selected.has(row.id));
         };
@@ -671,9 +671,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
         const current = await readmitCapturedSessionManagerReferencesInTx(tx, { ...admission, sessions, contributions });
         return SessionListQueryResponseV1Schema.parse({
             ...captured,
-            // Revoking the last readable child can remove coordinator membership
-            // during final admission, just as it removes that child's counts.
-            sessions: query.coordinator === undefined ? current : current.filter(row => deriveSessionCoordinatorV1(row) === true),
+            sessions: current,
         });
     }), { transactionClass: "session-listing-read" });
 }

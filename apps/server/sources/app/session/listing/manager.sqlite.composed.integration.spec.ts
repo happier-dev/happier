@@ -57,6 +57,26 @@ describe("Manager listing (SQLite)", () => {
         rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
     });
 
+    it('retains only accessible worker context through the coordinator filter', async () => {
+        const { owner, lead, create } = await fixture();
+        const first = await create();
+        const second = await create();
+        const foreign = await fixture();
+        for (const childId of [first.id, second.id, foreign.lead.id]) {
+            await db.sessionFollowEdge.create({ data: managerEdgeData(childId, lead.id) });
+        }
+        const result = await listSessionsForAccount({ userId: owner.id, authentication,
+            source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true,
+                scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator' } },
+            rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
+        });
+        expect(result?.sessions.map(row => row.id).sort()).toEqual([lead.id, first.id, second.id].sort());
+        expect(result?.sessions.find(row => row.id === lead.id)?.managedSessions?.total).toBe(2);
+        for (const id of [first.id, second.id]) {
+            expect(result?.sessions.find(row => row.id === id)?.manager).toEqual({ sessionId: lead.id });
+        }
+    });
+
     it('filters coordinator membership before pagination and drops it after the last rule or managed child is removed', async () => {
         const { owner, lead, unrelated, create } = await fixture();
         const ruleReceiver = await create();
@@ -72,22 +92,25 @@ describe("Manager listing (SQLite)", () => {
         expect(saved.ok).toBe(true);
         const query = { v: 1 as const, storage: 'active' as const, includeInactive: true, scope: 'all_accessible' as const,
             attention: 'any' as const, audiences: [], tagIds: [], coordinator: 'coordinator' as const, limit: 1, includeAttention: true };
-        const read = (cursor?: string) => listSessionsForAccount({ userId: owner.id, authentication,
-            source: { kind: 'query', query: { ...query, ...(cursor ? { cursor } : {}) } },
+        const read = (cursor?: string, limit = query.limit) => listSessionsForAccount({ userId: owner.id, authentication,
+            source: { kind: 'query', query: { ...query, limit, ...(cursor ? { cursor } : {}) } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}) });
         const first = await read();
         expect(first?.sessions).toHaveLength(1);
         expect(first?.hasNext).toBe(true);
         const second = await read(first?.nextCursor ?? undefined);
         expect(second?.sessions).toHaveLength(1);
-        expect(second?.hasNext).toBe(false);
-        const rows = [...first!.sessions, ...second!.sessions];
-        expect(rows.map(row => row.id).sort()).toEqual([lead.id, ruleReceiver.id].sort());
+        expect(second?.hasNext).toBe(true);
+        const third = await read(second?.nextCursor ?? undefined);
+        expect(third?.sessions).toHaveLength(1);
+        expect(third?.hasNext).toBe(false);
+        const rows = [...first!.sessions, ...second!.sessions, ...third!.sessions];
+        expect(rows.map(row => row.id).sort()).toEqual([lead.id, ruleReceiver.id, child.id].sort());
         expect(rows.find(row => row.id === ruleReceiver.id)).toMatchObject({ receivedRuleCount: 1 });
         expect(rows.some(row => row.id === unrelated.id)).toBe(false);
         expect((await removeAccountFollowRule({ accountId: owner.id, authentication, ruleId: 'project-rule',
             receiver: { kind: 'session', sessionId: ruleReceiver.id }, expectedVersion: 0 })).ok).toBe(true);
-        expect((await read())?.sessions.map(row => row.id)).toEqual([lead.id]);
+        expect((await read(undefined, 50))?.sessions.map(row => row.id).sort()).toEqual([lead.id, child.id].sort());
         await db.sessionFollowEdge.deleteMany({ where: { sourceSessionId: child.id, relation: 'manager' } });
         expect((await read())?.sessions).toEqual([]);
     });
@@ -110,7 +133,7 @@ describe("Manager listing (SQLite)", () => {
         })).rejects.toMatchObject({ reason: 'coordinator' });
     });
 
-    it('removes a manager-only coordinator when final admission revokes its last readable child', async () => {
+    it('retains an admitted manager-only coordinator until the next request after its child grant is revoked', async () => {
         const { owner, lead } = await fixture();
         const foreign = await fixture();
         await db.session.update({ where: { id: foreign.lead.id }, data: { archivedAt: new Date() } });
@@ -134,7 +157,7 @@ describe("Manager listing (SQLite)", () => {
         Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true,
             value: async (...args: Parameters<typeof original>) => {
                 const rows = await original(...args);
-                if (args[0]?.select?.runtimeActivityState && !args[0]?.select?.metadataVersion && ++reportReads === 2) {
+                if (args[0]?.select?.runtimeActivityState && !args[0]?.select?.metadataVersion && ++reportReads === 1) {
                     enter(); await release;
                 }
                 return rows;
@@ -145,7 +168,8 @@ describe("Manager listing (SQLite)", () => {
             await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: {
                 sessionId: foreign.lead.id, sharedWithUserId: owner.id } } });
             resume();
-            expect((await response)?.sessions).toEqual([]);
+            expect((await response)?.sessions.map(row => row.id)).toEqual([lead.id]);
+            expect((await read())?.sessions).toEqual([]);
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
