@@ -45,6 +45,37 @@ function DraftInput() {
 }
 
 describe('native material child continuity', () => {
+    it('retains the native input when a shared surface removes and restores its coat', async () => {
+        const { HappierSurface, useContainingHappierMaterialRole } = await import('@happier-dev/plugin-ui/presentation');
+        const { renderThemeMaterialSurface, useContainingGlassSurfaceGroup } = await import('./GlassSurface');
+        function Body() {
+            const role = useContainingHappierMaterialRole();
+            const group = useContainingGlassSurfaceGroup();
+            return <><DraftInput />{React.createElement('PlaneProbe', { role, group })}</>;
+        }
+        const scene = (coated: boolean) => <GlassSurface surfaceGroup="floating" finishRole={null}>
+            <HappierSurface testID="switching" materialRole={coated ? 'card' : undefined} renderMaterialSurface={renderThemeMaterialSurface}>
+                <Body />
+            </HappierSurface>
+        </GlassSurface>;
+        const screen = await renderScreen(scene(true));
+        const input = screen.findHostByTestId('draft');
+        await act(async () => { screen.changeTextByTestId('draft', 'retained'); });
+        for (const coated of [false, true]) {
+            await screen.update(scene(coated));
+            expect(screen.findHostByTestId('draft')).toBe(input);
+            expect(input?.props.value).toBe('retained');
+            const role = coated ? 'card' : 'floating';
+            expect(screen.findByType('PlaneProbe').props).toMatchObject({ role, group: role });
+            if (!coated) {
+                const plain = screen.findHostByTestId('switching')!;
+                expect(plain.findAllByType('BlurView')).toHaveLength(0);
+                expect(plain.findAllByType('NativeGlassView')).toHaveLength(0);
+                expect(plain.findAllByType('Rect')).toHaveLength(0);
+            }
+        }
+    });
+
     it('paints nested Elements with one tint and finish, without per-card native SDK views, preserving the draft', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         liquid.available = true;

@@ -11,7 +11,7 @@ import { setTranscriptJumpHighlight, type TranscriptJumpHighlightRowIdentity } f
 import { useOptionalAppPaneContext, useOptionalPaneFocusReturnOwner } from '@/components/appShell/panes/AppPaneContext';
 import { usePaneRegion } from '@/components/appShell/panes/paneRegion';
 import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
-import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationInstanceFacts } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -40,7 +40,7 @@ export function useWorkspaceFileOpener() {
     const { canOpen, phone } = useWorkspaceFileNavigationCapabilities();
     const router = useDestinationRouter();
     const focusReturnOwner = useOptionalPaneFocusReturnOwner();
-    const instance = React.useContext(DestinationInstanceContext);
+    const instance = useDestinationInstanceFacts();
     const instanceKey = instance?.tabId ?? null;
     const destinationNavigation = instance?.navigation;
     // The route carries the file into Details without the column it was opened from, so the opener

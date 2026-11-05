@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { AppPaneFileFrontContext } from '../AppPaneContext';
-import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationInstanceFacts } from '@/components/appShell/workspace/destinationInstanceContext';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 
 const subscribeToNothing = () => () => {};
@@ -26,7 +26,7 @@ export function useActiveDetailsPaneOpen(resourceScopeId: string | null): boolea
  * The scope is derived exactly as `useWorkspaceFileOpener` derives it (Session + retained instance).
  */
 export function useSessionFileTabFront(sessionId: string | null | undefined, serverId: string | null | undefined, path: string, rootPath?: string): boolean {
-    const instance = React.useContext(DestinationInstanceContext);
+    const instance = useDestinationInstanceFacts();
     const scopeId = sessionId ? createSessionPaneScopeId(sessionId, serverId ?? undefined, instance?.tabId ?? null) : '';
     return useFileTabFront(scopeId, path, rootPath);
 }

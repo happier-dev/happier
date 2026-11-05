@@ -17,7 +17,7 @@ import { resolveRootStackRouteOptions } from '@/components/navigation/root/rootS
 import { matchWorkspaceDestinationRoute, workspaceRouteFiles } from './workspaceRoutes';
 import { SessionViewerDestinationScope } from '@/components/sessions/viewer/SessionViewerDestinationScope';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstanceKey, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
+import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstance, useDestinationInstanceIdentity, useDestinationInstanceKey, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
 export { useDestinationInstanceKey, useDestinationNavigation, type DestinationNavigation } from './destinationInstanceContext';
 
 const EMPTY_SCREEN_OPTIONS: NativeStackNavigationOptions = {};
@@ -43,7 +43,7 @@ function RetainedDestinationContext(props: Readonly<{
 
 /** Retain this destination's identity/navigation without mounting a second destination or chrome. */
 export function useRetainedDestinationNode(children: React.ReactNode): React.ReactElement {
-    const captured = React.useContext(DestinationInstanceContext);
+    const captured = useDestinationInstance();
     return React.useMemo(() => <RetainedDestinationContext captured={captured}>{children}</RetainedDestinationContext>,
         [captured, children]);
 }
@@ -94,7 +94,7 @@ function DestinationNavigationChrome(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const hostedInstance = React.useContext(DestinationInstanceContext);
+    const hostedInstance = useDestinationInstance();
     const publicationOnly = props.publicationOnly !== undefined;
     const instance = publicationOnly ? props.publicationOnly : hostedInstance;
     const nativeShowsTitle = useNavigationTitleChromeShowsTitle();
@@ -207,20 +207,20 @@ export function useDestinationScreenOptions(options: NativeStackNavigationOption
 }
 
 export function useDestinationParams<T extends Record<string, string | string[] | undefined>>(): T {
-    const instance = React.useContext(DestinationInstanceContext);
+    const instance = useDestinationInstance();
     // A mounted body never moves between the Expo and workspace owners.
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     return (instance ? instance.ref.params : useLocalSearchParams()) as T;
 }
 
 export function useDestinationGlobalParams<T extends Record<string, string | string[] | undefined>>(): T {
-    const instance = React.useContext(DestinationInstanceContext);
+    const instance = useDestinationInstance();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     return (instance ? instance.ref.params : useGlobalSearchParams()) as T;
 }
 
 export function useDestinationPathname(): string {
-    const instance = React.useContext(DestinationInstanceContext);
+    const instance = useDestinationInstance();
     const workspace = useOptionalWorkspaceNavigation();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     const pathname = instance ? null : usePathname();
@@ -235,18 +235,15 @@ export function useDestinationPathname(): string {
     return pathname!;
 }
 
-export { useDestinationFocus } from './destinationInstanceContext';
-
-export function useDestinationVisibility(): boolean {
-    return React.useContext(DestinationInstanceContext)?.visible ?? true;
-}
+export { useDestinationFocus, useDestinationVisibility } from './destinationInstanceContext';
 
 export function useDestinationPaneScopeId(resourceScopeId: string): string {
     return qualifyPaneScopeId(resourceScopeId, useDestinationInstanceKey());
 }
 
 export function useDestinationRouter(): DestinationRouter {
-    const instance = React.useContext(DestinationInstanceContext);
+    // A router binds the tab's navigation owner, not its focus or visibility.
+    const instance = useDestinationInstanceIdentity();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.
     if (!instance) return useWorkspaceOrExpoRouter();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.

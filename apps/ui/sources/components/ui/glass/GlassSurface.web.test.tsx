@@ -94,6 +94,23 @@ function useAutoPreset() {
 }
 
 describe('web glass material', () => {
+    it('retains an opened layer when the containing coat disappears without another glass plane', async () => {
+        const { HappierSurface } = await import('@happier-dev/plugin-ui/presentation');
+        const { renderThemeMaterialSurface, GlassOpenedLayer } = await import('./GlassSurface');
+        const scene = (coated: boolean) => <HappierSurface materialRole={coated ? 'card' : undefined} renderMaterialSurface={renderThemeMaterialSurface}>
+            <GlassOpenedLayer><DraftInput /></GlassOpenedLayer>
+        </HappierSurface>;
+        const screen = await renderScreen(scene(true));
+        const input = screen.findHostByTestId('draft');
+        await act(async () => { screen.changeTextByTestId('draft', 'keep the opened draft'); });
+        for (const coated of [false, true]) {
+            await screen.update(scene(coated));
+            const current = screen.findHostByTestId('draft');
+            expect(current?.props.value).toBe('keep the opened draft');
+            expect(current).toBe(input);
+        }
+    });
+
     it('inherits a custom tint-only Elements coat without painting it again on a nested card', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');

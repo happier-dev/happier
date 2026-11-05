@@ -61,6 +61,8 @@ export type HappierFloatingRole = 'menu' | 'panel';
 
 export type HappierMaterialSurfaceRender = (input: Readonly<{
   role: HappierMaterialRole;
+  /** Keep the material host and its children mounted, without painting a coat or establishing a new plane. */
+  noCoat?: boolean;
   finishRole?: HappierSurfaceFinishRole;
   floatingRole?: HappierFloatingRole;
   nested?: boolean;
@@ -88,8 +90,8 @@ export function HappierMaterialSurface(props: Omit<HappierSurfaceProps, 'onPress
   const materialStyle = theme && props.materialRole && typeof flat?.backgroundColor === 'string' && !renderMaterial
     ? { backgroundColor: happierMaterialBackgroundColor(flat.backgroundColor, props.materialRole, Platform.OS === 'web', nested) }
     : undefined;
-  const body = props.materialRole && renderMaterial
-    ? renderMaterial({ role: props.materialRole, finishRole, floatingRole: props.floatingRole, gradient, nested, children: props.children, style: props.style, testID: props.testID, onLayout: props.onLayout, accessibilityLabel: props.accessibilityLabel })
+  const body = renderMaterial
+    ? renderMaterial({ role: props.materialRole ?? 'card', ...(props.materialRole === undefined ? { noCoat: true } : {}), finishRole, floatingRole: props.floatingRole, gradient, nested, children: props.children, style: props.style, testID: props.testID, onLayout: props.onLayout, accessibilityLabel: props.accessibilityLabel })
     : <View testID={props.testID} onLayout={props.onLayout} accessibilityLabel={props.accessibilityLabel} style={[props.style, materialStyle, happierSurfaceFinishLift(gradient, finishRole, dark, Platform.OS === 'web'), Platform.OS === 'web' ? happierSurfaceGradientWebStyle(gradient, !dark) : null]}>
         <HappierSurfaceGradientLayer gradient={gradient} borderRadius={typeof flat?.borderRadius === 'number' ? flat.borderRadius : undefined} />
         {props.children}
