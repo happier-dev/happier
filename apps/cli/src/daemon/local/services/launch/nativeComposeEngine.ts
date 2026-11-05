@@ -11,6 +11,7 @@ import { readObservedDockerEngineIds } from './dockerEngineObservation';
 export type NativeComposeEngineFacts = NativeDockerEngineFacts;
 
 export class NativeComposePrerequisiteError extends PluginError {
+    declare readonly details: { prerequisite: LocalServiceNativePrerequisiteV1 };
     constructor(cause: LocalServiceNativePrerequisiteV1['cause']) {
         const prerequisite: LocalServiceNativePrerequisiteV1 = { tool: 'docker', machineName: hostname(), cause };
         super({ code: 'native_tool_unavailable', message: 'Docker is unavailable on this machine', details: { prerequisite } });
@@ -243,6 +244,13 @@ export async function readNativeDockerEffectEngines(input: EngineReadInput): Pro
     } catch (error) {
         if (input.signal?.aborted || error && typeof error === 'object' && 'code' in error
             && error.code === 'plugin_exec_termination_incomplete') throw error;
-        throw new MachineNativeEffectAdmissionError('native_engine_impact_ambiguous');
+        const cause = error instanceof NativeComposePrerequisiteError ? error.details.prerequisite.cause : 'unavailable';
+        const problem = cause === 'permission_denied'
+            ? 'The Happier daemon user does not have permission to access Docker. Configure Docker access for that user and refresh its login session.'
+            : cause === 'not_running'
+                ? 'Docker is not running or its configured endpoint cannot be reached. Start Docker or correct the daemon user’s Docker endpoint.'
+                : 'The Docker engine identity could not be read. Check that Docker is running and accessible to the Happier daemon user.';
+        throw new MachineNativeEffectAdmissionError('native_engine_impact_ambiguous', undefined,
+            `${problem} Then review and apply machine setup again.`);
     }
 }

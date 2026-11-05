@@ -33,8 +33,8 @@ export class MachineNativeEffectAdmissionError extends Error {
     readonly code: 'effect_in_progress' | 'admission_unavailable' | 'plan_changed' | 'native_engine_impact_ambiguous';
     readonly actionOperationId: string | undefined;
     readonly details: Readonly<{ actionOperationId: string }> | undefined;
-    constructor(code: MachineNativeEffectAdmissionError['code'], actionOperationId?: string) {
-        super(code);
+    constructor(code: MachineNativeEffectAdmissionError['code'], actionOperationId?: string, message: string = code) {
+        super(message);
         this.name = 'MachineNativeEffectAdmissionError';
         this.code = code;
         this.actionOperationId = actionOperationId;

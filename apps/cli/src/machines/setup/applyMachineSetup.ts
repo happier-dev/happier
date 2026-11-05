@@ -215,7 +215,7 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code : signal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
-    return { ok: false, errorCode: code, error: code,
+    return { ok: false, errorCode: code, error: error instanceof MachineNativeEffectAdmissionError ? error.message : code,
       ...(error instanceof MachineNativeEffectAdmissionError && error.details ? { details: error.details } : {}) };
   }
 }

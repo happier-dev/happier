@@ -678,7 +678,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
   });
   } catch (error) {
     if (!(error instanceof MachineNativeEffectAdmissionError)) throw error;
-    return { ok: false as const, errorCode: error.code, error: error.code, effectAttempted: false,
+    return { ok: false as const, errorCode: error.code, error: error.message, effectAttempted: false,
       ...(error.details ? { details: error.details } : {}) };
   }
 }
