@@ -5,6 +5,8 @@ import type {
 import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
 
 import { normalizeStrictJsonReviewOutput } from '@/agent/reviews/normalize/normalizeStrictJsonReviewOutput';
+import { ReviewFollowUpIntentInputSchema } from '@/agent/reviews/followUp/reviewFollowUpIntentInput';
+import { parseCodexReviewText } from './parseCodexReviewText';
 import { buildCodexNativeReviewFindingsV2Payload } from './buildCodexNativeReviewFindingsV2Payload';
 
 export function normalizeCodexReviewOutput(params: Readonly<{
@@ -19,21 +21,26 @@ export function normalizeCodexReviewOutput(params: Readonly<{
   intentInput?: unknown;
   retentionPolicy?: ExecutionRunRetentionPolicy;
 }>): ExecutionRunProfileBoundedCompleteResult {
-  const strictResult = normalizeStrictJsonReviewOutput(params);
-  if (strictResult.status === 'succeeded') return strictResult;
+  if (ReviewFollowUpIntentInputSchema.safeParse(params.intentInput).success) {
+    return normalizeStrictJsonReviewOutput(params);
+  }
+  const parsed = parseCodexReviewText(params.rawText);
+  if (parsed?.format === 'strict-json') {
+    return normalizeStrictJsonReviewOutput({ ...params, rawText: parsed.rawText });
+  }
 
-  const findingsPayload = buildCodexNativeReviewFindingsV2Payload({
+  const findingsPayload = parsed?.format === 'native' ? buildCodexNativeReviewFindingsV2Payload({
     runId: params.runId,
     callId: params.callId,
     backendId: params.backendId,
     backendTarget: params.backendTarget,
     retentionPolicy: params.retentionPolicy,
-    rawText: params.rawText,
+    review: parsed.review,
     generatedAtMs: params.finishedAtMs,
-  });
+  }) : null;
 
   if (!findingsPayload) {
-    const summary = 'Invalid review output (empty Codex native review).';
+    const summary = 'Invalid review output (unsupported Codex review format).';
     return {
       status: 'failed',
       summary,

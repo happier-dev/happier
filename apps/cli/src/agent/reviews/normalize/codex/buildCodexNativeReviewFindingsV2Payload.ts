@@ -1,7 +1,7 @@
 import type { BackendTargetRefV1, ExecutionRunRetentionPolicy, ReviewFindingsV2 } from '@happier-dev/protocol';
 
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
-import { parseCodexNativeReviewText } from './parseCodexNativeReviewText';
+import type { ParsedCodexNativeReview } from './parseCodexReviewText';
 
 export function buildCodexNativeReviewFindingsV2Payload(params: Readonly<{
   runId: string;
@@ -9,11 +9,10 @@ export function buildCodexNativeReviewFindingsV2Payload(params: Readonly<{
   backendId: string;
   backendTarget?: BackendTargetRefV1;
   retentionPolicy?: ExecutionRunRetentionPolicy;
-  rawText: string;
+  review: ParsedCodexNativeReview;
   generatedAtMs: number;
-}>): ReviewFindingsV2 | null {
-  const parsed = parseCodexNativeReviewText(params.rawText);
-  if (!parsed) return null;
+}>): ReviewFindingsV2 {
+  const parsed = params.review;
 
   return buildReviewFindingsV2Payload({
     runId: params.runId,

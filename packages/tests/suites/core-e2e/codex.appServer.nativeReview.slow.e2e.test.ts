@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -30,6 +30,14 @@ import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBa
 
 const run = createRunDirs({ runLabel: 'core' });
 const nativeReviewTextMarker = 'Native Codex review completed.';
+const expectedNativeReviewFinding = {
+  title: 'Duplicate assistant text is persisted once',
+  severity: 'medium',
+  summary: 'The review bridge should not store both exitedReviewMode text and the matching final assistant message as duplicate output.',
+  filePath: '/fake/workspace/src/nativeReview.ts',
+  startLine: 12,
+  endLine: 14,
+};
 
 function readCodexMessageText(record: unknown): string | null {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
@@ -79,7 +87,13 @@ describe('core e2e: Codex app-server native review', () => {
     await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
 
     const requestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
-    const fakeAppServer = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath });
+    const fakeAppServerScript = await writeFakeCodexAppServerScript({ dir: testDir, requestLogPath });
+    // The real availability probe executes the command directly; Windows cannot
+    // launch a .mjs shebang, so expose the same fixture through a command shim.
+    const fakeAppServer = process.platform === 'win32' ? `${fakeAppServerScript}.cmd` : fakeAppServerScript;
+    if (process.platform === 'win32') {
+      await writeFile(fakeAppServer, `@echo off\r\n"${process.execPath}" "${fakeAppServerScript}" %*\r\n`, 'utf8');
+    }
     const codexEnv = {
       CI: '1',
       HAPPIER_VARIANT: 'dev',
@@ -216,7 +230,7 @@ describe('core e2e: Codex app-server native review', () => {
       expect(finishedRun.run.availableActionIds).toContain('review.triage');
 
       const payload = finishedRun.structuredMeta?.payload as { findings?: unknown[]; overviewMarkdown?: unknown } | undefined;
-      expect(payload?.findings?.length ?? 0).toBe(1);
+      expect(payload?.findings).toEqual([expect.objectContaining(expectedNativeReviewFinding)]);
       expect(String(payload?.overviewMarkdown ?? '')).toContain(nativeReviewTextMarker);
 
       const sidechainRows = await fetchAllSidechainMessages({
@@ -285,22 +299,28 @@ describe('core e2e: Codex app-server native review', () => {
         }),
       }));
 
+      let inlineReviewPayload: unknown;
       await waitFor(async () => {
         const mainRows = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
         const decoded = mainRows.map((row) => decryptLegacyBase64Normalized(row.content.c, secret));
         return decoded.some((record) => {
           const text = readCodexMessageText(record);
           const meta = readHappierMeta(record) as { kind?: unknown; payload?: { runRef?: { runId?: unknown }; overviewMarkdown?: unknown } } | null;
-          return text?.includes(nativeReviewTextMarker)
+          const isInlineReview = text?.includes(nativeReviewTextMarker)
             && meta?.kind === 'review_findings.v2'
             && typeof meta.payload?.runRef?.runId === 'string'
             && meta.payload.runRef.runId.startsWith(`session-review:${sessionId}:`)
             && String(meta.payload.overviewMarkdown ?? '').includes(nativeReviewTextMarker);
+          if (isInlineReview) inlineReviewPayload = meta?.payload;
+          return isInlineReview;
         });
       }, {
         timeoutMs: 45_000,
         intervalMs: 250,
         context: 'Inline Codex review command commits structured review findings to main transcript',
+      });
+      expect(inlineReviewPayload).toMatchObject({
+        findings: [expectedNativeReviewFinding],
       });
     } finally {
       ui.close();
