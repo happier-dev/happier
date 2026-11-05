@@ -51,25 +51,26 @@ describe('Your Home machine reachability', () => {
         await act(async () => recordMachineRequestFailed({ serverId: 'other-home', accountId: scope.accountId, machineId: machine.id }));
         expect(hook.getCurrent().online).toBe(1);
         await act(async () => recordMachineRequestFailed({ ...scope, machineId: machine.id }));
-        expect(hook.getCurrent()).toMatchObject({ online: 0, machines: [{ id: machine.id, online: false, lastSeenAt: machine.activeAt }] });
+        expect(hook.getCurrent()).toMatchObject({ online: 0, machines: [{ id: machine.id, online: false, lastSeenAt: null }] });
         await act(async () => recordMachineRequestSucceeded({ ...scope, machineId: machine.id }));
         expect(hook.getCurrent()).toMatchObject({ online: 1, machines: [{ id: machine.id, online: true, lastSeenAt: null }] });
         expect(network.requests).toEqual([]);
         await hook.unmount();
     });
 
-    it('ages machine presence at the shared lease boundary without a new heartbeat or Activity change', async () => {
+    it('keeps machine presence active until the server publishes an offline observation', async () => {
         const home = await network.addHome('https://your-home-presence.test', 'account-home');
         setActiveServerId(home.id);
         vi.useFakeTimers();
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const now = Date.now();
         vi.setSystemTime(now);
-        const machine = createMachineFixture({ id: 'studio', activeAt: now - 59_500 });
+        const machine = createMachineFixture({ id: 'studio', activeAt: now - 59_500, presenceProtocolVersion: 1 });
         storage.setState({ profileScope: { serverId: home.id, accountId: 'account-home' }, machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] } });
         const hook = await renderHook(() => useYourHomeModel());
         expect(hook.getCurrent().online).toBe(1);
         await act(async () => { await vi.advanceTimersByTimeAsync(501); });
+        expect(hook.getCurrent().online).toBe(1);
+        await act(async () => storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: now }], { sourceServerId: home.id }));
         expect(hook.getCurrent()).toMatchObject({ online: 0, machines: [{ id: machine.id, online: false }] });
         expect(network.requests).toEqual([]);
         await hook.unmount();

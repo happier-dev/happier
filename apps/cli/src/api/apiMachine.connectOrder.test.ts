@@ -95,6 +95,11 @@ describe('ApiMachineClient connect ordering', () => {
 
   it('publishes endpoint owner changes while Machine heartbeats only renew reachability', async () => {
     vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+    // Home feature discovery is an HTTP boundary; keep connection admission real.
+    const fetchFeatures = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ features: {}, capabilities: {} }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
     const socket = createApiSessionSocketStub({
       id: 'heartbeat-socket',
       emitWithAck: (event, payload) => event === 'machine-update-state'
@@ -155,8 +160,11 @@ describe('ApiMachineClient connect ordering', () => {
         status: 'authenticated', value: { pid: process.pid, contributionRegistryProjectionRevision: 0 },
       }));
       const writesBeforeHeartbeat = socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state').length;
-      now += 20_000;
-      await vi.advanceTimersByTimeAsync(20_000);
+      // Measure one complete steady interval; connection readiness may have
+      // advanced the fake clock before this observation window starts.
+      socket.emit.mockClear();
+      now += 60_000;
+      await vi.advanceTimersByTimeAsync(60_000);
       expect(socket.emit.mock.calls.filter(([event]) => event === 'machine-alive')).toHaveLength(1);
       expect(socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state')).toHaveLength(writesBeforeHeartbeat);
       now = listener.endpoint.expiresAt - 150_000;
@@ -174,6 +182,7 @@ describe('ApiMachineClient connect ordering', () => {
       await vi.advanceTimersByTimeAsync(40_000);
       expect(socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state')).toHaveLength(writesBeforeShutdown);
     } finally {
+      fetchFeatures.mockRestore();
       unsubscribe();
       await client.shutdown();
       await listener.stop();

@@ -17,6 +17,13 @@ import { describeMachinePresenceLine } from './machinePresenceLine';
 afterEach(() => clearMachineRequestReachabilityForTest());
 
 describe('describeMachinePresenceLine', () => {
+  it('keeps negotiated live presence online after several beats without a per-beat push', () => {
+    const at = Date.now();
+    const machine = { id: 'live', active: true, activeAt: at,
+      presenceProtocolVersion: 1 as const };
+    expect(describeMachinePresenceLine(machine, at + 180_000, null,
+      { serverId: 'home', accountId: 'presence-account' }).online).toBe(true);
+  });
   const scope = { serverId: 'home', accountId: 'presence-account' };
   const now = Date.now();
   const fresh = { id: 'machine', active: true, activeAt: now - 1_000 };

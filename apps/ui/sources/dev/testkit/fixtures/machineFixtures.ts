@@ -113,6 +113,7 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
         id: machine.id, kind: 'persistent', seq: machine.seq,
         createdAt: machine.createdAt, updatedAt: machine.updatedAt,
         active: machine.active, activeAt: machine.activeAt,
+        ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
         metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
         daemonState: machine.daemonState == null ? null : encodePlainMachineStoredContent(machine.daemonState), daemonStateVersion: machine.daemonStateVersion,
         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,

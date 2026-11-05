@@ -20,6 +20,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 afterEach(() => {
     standardCleanup();
@@ -521,29 +522,13 @@ describe('useAllMachines', () => {
         }
     });
 
-    it('refreshes launch-selection machines when heartbeat freshness changes online status', async () => {
+    it('keeps launch selection stable while authoritative activity changes remain current', async () => {
         const previousState = storage.getState();
         try {
             const staleActiveAt = Date.now() - 10 * 60_000;
-            storage.setState((state) => ({
-                ...state,
-                isDataReady: true,
-                machines: {
-                    'm-online': {
-                        id: 'm-online',
-                        seq: 1,
-                        createdAt: staleActiveAt,
-                        updatedAt: staleActiveAt,
-                        active: true,
-                        activeAt: staleActiveAt,
-                        metadata: { host: 'online', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
-                        metadataVersion: 1,
-                        daemonState: null,
-                        daemonStateVersion: 0,
-                        revokedAt: null,
-                    },
-                },
-            }));
+            const machine = createMachineFixture({ id: 'm-online', active: true, activeAt: staleActiveAt, presenceProtocolVersion: 1 });
+            const options = { sourceServerId: getActiveServerSnapshot().serverId };
+            storage.getState().applyMachines([machine], true, options);
 
             const hook = await renderHook(() => useLaunchSelectionMachines(), {
                 flushOptions: { cycles: 1, turns: 4 },
@@ -552,21 +537,17 @@ describe('useAllMachines', () => {
             const freshActiveAt = Date.now();
 
             await act(async () => {
-                storage.setState((state) => ({
-                    ...state,
-                    machines: {
-                        ...state.machines,
-                        'm-online': {
-                            ...state.machines['m-online']!,
-                            updatedAt: freshActiveAt,
-                            activeAt: freshActiveAt,
-                        },
-                    },
-                }));
+                storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: true, activeAt: freshActiveAt }], options);
             });
 
-            expect(hook.getCurrent()).not.toBe(firstMachines);
-            expect(hook.getCurrent()[0]?.activeAt).toBe(freshActiveAt);
+            expect(hook.getCurrent()).toBe(firstMachines);
+            expect(readMachineActivity(firstMachines[0]!).activeAt).toBe(freshActiveAt);
+            await act(async () => storage.getState().applyMachineActivityUpdates([
+                { id: machine.id, active: false, activeAt: freshActiveAt + 1 },
+            ], options));
+            expect(hook.getCurrent()).toBe(firstMachines);
+            expect(readMachineActivity(hook.getCurrent()[0]!).active).toBe(false);
+            expect(firstMachines[0]?.active).toBe(true);
 
             await hook.unmount();
         } finally {

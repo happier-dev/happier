@@ -41,3 +41,17 @@ export function useMachineResourceLiveDemand(machineKeys: readonly MachineResour
         demands.current.clear();
     }, []);
 }
+
+/**
+ * The same demand as a leaf: a page or list that owns demand renders this instead of calling the hook,
+ * so the presentation and host-viewed facts the demand follows (a retained tab hiding, the window
+ * losing focus) re-render this leaf alone, never the surface's rows, header or dashboard.
+ */
+export function MachineResourceLiveDemand(props: Readonly<{
+    machineKeys: readonly MachineResourceKey[];
+    detail: MachineVitalsView;
+    enabled?: boolean;
+}>): null {
+    useMachineResourceLiveDemand(props.machineKeys, { detail: props.detail, ...(props.enabled === undefined ? {} : { enabled: props.enabled }) });
+    return null;
+}

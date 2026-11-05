@@ -1,27 +1,45 @@
 import { RPC_ERROR_CODES, readRpcErrorCode } from '../rpc/errors.js';
 
-/** Existing daemon presence grace, shared by client projections. */
+// Released 0.2 clients age real observations after 60s; leave delivery margin.
+export const MACHINE_HEARTBEAT_INTERVAL_MS = 50_000;
+/** The existing deadline tolerates three missed Machine heartbeat intervals. */
+export const DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS = 3 * MACHINE_HEARTBEAT_INTERVAL_MS;
 export const DEFAULT_MACHINE_ONLINE_GRACE_MS = 60_000;
 
 export type MachinePresenceV1 = Readonly<{
     active: boolean;
     activeAt?: number | null;
     revokedAt?: number | null;
+    presenceProtocolVersion?: 1;
 }>;
 
-/** Presence projection; request failure custody stays with each transport owner. */
-export function isMachineOnlineV1(machine: MachinePresenceV1, nowMs: number,
-    graceMs: number = DEFAULT_MACHINE_ONLINE_GRACE_MS): boolean {
+/** Home owns presence expiry independently of the daemon version. */
+export function readMachinePresenceProtocolV1(machine: MachinePresenceV1): 1 | null {
+    return machine.presenceProtocolVersion === 1 ? 1 : null;
+}
+
+/** Homes without the presence fact retain the incumbent heartbeat grace. */
+export function isMachineOnlineV1(machine: MachinePresenceV1, nowMs = Date.now(), graceMs = DEFAULT_MACHINE_ONLINE_GRACE_MS): boolean {
     if (typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0) return false;
-    if (graceMs <= 0) return machine.active === true;
-    const activeAt = typeof machine.activeAt === 'number' ? machine.activeAt : 0;
-    if (!activeAt || !Number.isFinite(activeAt)) return machine.active === true;
+    if (readMachinePresenceProtocolV1(machine) === 1 || graceMs <= 0) return machine.active === true;
+    const activeAt = machine.activeAt;
+    if (typeof activeAt !== 'number' || !Number.isFinite(activeAt) || activeAt === 0) return machine.active === true;
     return Math.max(0, nowMs - activeAt) <= graceMs;
+}
+
+/** The same owner supplies legacy refresh boundaries; Home-owned presence does not expire in clients. */
+export function readMachinePresenceNextRefreshAtMsV1(machine: MachinePresenceV1, nowMs: number,
+    graceMs = DEFAULT_MACHINE_ONLINE_GRACE_MS): number | null {
+    if (readMachinePresenceProtocolV1(machine) === 1 || graceMs <= 0 || !isMachineOnlineV1(machine, nowMs, graceMs)) return null;
+    const activeAt = machine.activeAt;
+    if (typeof activeAt !== 'number' || !Number.isFinite(activeAt) || activeAt === 0) return null;
+    const expiresAtMs = activeAt + graceMs + 1;
+    return expiresAtMs > nowMs ? expiresAtMs : null;
 }
 
 export function isMachineReachableV1(input: Readonly<{
     machine: MachinePresenceV1;
-    nowMs: number;
+    nowMs?: number;
     graceMs?: number;
     requestOutcome?: 'succeeded' | 'failed' | null;
 }>): boolean {

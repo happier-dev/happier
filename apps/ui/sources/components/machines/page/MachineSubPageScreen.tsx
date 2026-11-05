@@ -33,7 +33,7 @@ import { MachineTabSubHead } from './MachineTabSubHead';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useMachinesDoor } from './machinesDoor';
 import { isMachineSubPageId, MACHINE_SUB_PAGE_TITLE_KEYS, type MachineSubPageId } from './machineSubPages';
-import { useMachinePageTarget, type MachinePageTarget } from './useMachinePageTarget';
+import { useMachinePageTarget, useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 /**
@@ -129,7 +129,8 @@ function MachineSubPageBody(props: Readonly<{
     machine: Machine;
     refreshKey: number;
 }>) {
-    const { target, machine } = props;
+    const { machine } = props;
+    const target = useMachinePagePresenceTarget(props.target);
     const serverId = target.serverId;
     const activeAccountScope = useActiveServerAccountScope();
     switch (props.page) {

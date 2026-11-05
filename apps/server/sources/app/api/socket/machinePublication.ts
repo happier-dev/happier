@@ -10,6 +10,7 @@ import { readVerifiedMachineSocketInstallationIdFromSocketData } from './machine
 import { buildMachineActivityEphemeral, eventRouter } from '@/app/events/eventRouter';
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
 import type { MachineAliveAdmission } from '@/app/presence/presenceRecorder';
+import { db } from '@/storage/db';
 import * as privacyKit from 'privacy-kit';
 
 export async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: string): Promise<string[]> {
@@ -113,11 +114,22 @@ export function resolveMachineMetadataTarget(
 
 export async function publishMachineAliveObservation(userId: string, machineId: string, timestamp: number,
     presence: MachineAliveAdmission, reconnected = false, workSummaryChanged = false): Promise<void> {
-    const payload = { ...buildMachineActivityEphemeral(machineId, true, timestamp),
-        ...(reconnected ? { reconnected: true as const } : {}),
-        ...(workSummaryChanged ? { workSummaryChanged: true as const } : {}) };
-    for (const accountId of presence.recipientAccountIds) eventRouter.emitEphemeral({
-        userId: accountId, payload, recipientFilter: { type: 'user-scoped-only' },
-    });
-    if (presence.wasOffline) await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
+    if (presence.wasOffline) {
+        const payload = { ...buildMachineActivityEphemeral(machineId, true, timestamp),
+            ...(reconnected ? { reconnected: true as const } : {}) };
+        for (const accountId of presence.recipientAccountIds) eventRouter.emitEphemeral({
+            userId: accountId, payload, recipientFilter: { type: 'user-scoped-only' },
+        });
+        await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
+    } else {
+        await eventRouter.publishLegacyMachineHeartbeat({ machineId, activeAt: timestamp });
+    }
+    if (workSummaryChanged) {
+        const recipientAccountIds = presence.wasOffline ? presence.recipientAccountIds
+            : await resolveCurrentMachineRecipientAccountIdsInTx(db, machineId, userId);
+        for (const accountId of recipientAccountIds) eventRouter.emitEphemeral({
+            userId: accountId, payload: { type: 'machine-work-summary-changed', machineId },
+            recipientFilter: { type: 'user-scoped-only' },
+        });
+    }
 }

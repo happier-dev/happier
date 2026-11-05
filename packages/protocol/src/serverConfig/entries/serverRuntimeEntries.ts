@@ -4,6 +4,7 @@ import {
 } from '../../actions/externalActionApi.js';
 import { defineServerConfigRegistry } from '../serverConfigEntry.js';
 import { resolveEmbeddedFeaturePolicyEnv } from '../../features/embeddedFeaturePolicy.js';
+import { DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS } from '../../machines/machineReachabilityV1.js';
 
 const PER_PROCESS_IDENTITY = 'Identifies one server process; a single stored value cannot describe several replicas.';
 const BUILD_POLICY_CEILING = 'Build policy is the ceiling a Home feature switch must never lift.';
@@ -740,7 +741,7 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     },
     HAPPIER_PRESENCE_MACHINE_TIMEOUT_MS: {
         type: 'int',
-        default: 60_000,
+        default: DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS,
         bounds: { min: 1 },
         sensitivity: 'plain',
         apply: 'restart',

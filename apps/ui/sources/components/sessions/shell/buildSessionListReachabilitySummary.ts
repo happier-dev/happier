@@ -153,7 +153,7 @@ function buildSessionDisplayRow(input: Readonly<{
 function sameMachineDisplayInput(left: ReachabilityMachineDisplay | undefined, right: ReachabilityMachineDisplay): boolean {
     return left === right || Boolean(left && left.id === right.id
         && left.replacedByMachineId === right.replacedByMachineId
-        && left.active === right.active && left.revokedAt === right.revokedAt
+        && left.revokedAt === right.revokedAt
         && (left.metadata === null) === (right.metadata === null)
         && left.availability?.kind === right.availability?.kind
         && left.metadata?.displayName === right.metadata?.displayName
@@ -192,7 +192,7 @@ function buildSessionDisplayRows(input: Readonly<{
         const previous = cache.machinesById.get(machine.id);
         if (!sameMachineDisplayInput(previous, machine)) {
             invalidateMachine(machine.id);
-            if (!previous || previous.active !== machine.active || previous.revokedAt !== machine.revokedAt
+            if (!previous || previous.revokedAt !== machine.revokedAt
                 || previous.replacedByMachineId !== machine.replacedByMachineId
                 || previous.metadata?.host !== machine.metadata?.host || previous.metadata?.homeDir !== machine.metadata?.homeDir) {
                 invalidateHost(previous); invalidateHost(machine);

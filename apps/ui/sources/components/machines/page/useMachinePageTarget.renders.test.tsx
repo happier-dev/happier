@@ -12,6 +12,9 @@ import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarne
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
     params: { id: 'page-machine' },
@@ -20,6 +23,49 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 const { useMachinePageTarget } = await import('./useMachinePageTarget');
 
 afterEach(() => standardCleanup());
+
+it('pulls a known Machine last-active time once on page open without following later activity', async () => {
+    const store = getStorage();
+    const previous = store.getState();
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://page-last-seen.test', accountId: 'owner' }],
+        route: request => request.path === '/v1/machines/read-batch'
+            ? createMachineReadBatchResponseFixture(request.body, id => createPlainMachineRowFixture({ id, accountId: 'owner', machine: createMachineFixture({ id, activeAt: 42_000 }) }))
+            : undefined });
+    const serverId = homes.homes.a!.id;
+    const machine = createMachineFixture({ id: 'page-machine', active: true, activeAt: 1_000 });
+    store.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    const hook = await renderHook(useMachinePageTarget);
+    try {
+        await waitForHomeGovernance(() => expect(homes.requests.filter(request => request.path === '/v1/machines/read-batch')).toHaveLength(1));
+        expect(hook.getCurrent()).toMatchObject({ lastSeenAtOnOpen: 42_000 });
+        await act(async () => store.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: 90_000 }], { sourceServerId: serverId }));
+        expect(hook.getCurrent()).toMatchObject({ lastSeenAtOnOpen: 42_000 });
+        expect(homes.requests.filter(request => request.path === '/v1/machines/read-batch')).toHaveLength(1);
+    } finally { await hook.unmount(); await homes.dispose(); store.setState(previous); }
+});
+
+it('keeps the page shell quiet when its Machine presence changes', async () => {
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://page-presence.test', serverIdentityId: 'srv_page_presence', accountId: 'owner' }], route: () => undefined });
+    const serverId = homes.homes.a!.id;
+    const store = getStorage();
+    const previous = store.getState();
+    const machine = createMachineFixture({ id: 'page-machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+    store.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    observeMachinePresenceForTest({ serverId, accountId: 'owner' }, [machine.id]);
+    let renders = 0;
+    const hook = await renderHook(() => { renders++; return useMachinePageTarget(); });
+    try {
+        const target = hook.getCurrent();
+        const before = renders;
+        await act(async () => publishMachineActivity(target.machine!, { active: false, activeAt: machine.activeAt }, []));
+        expect(renders - before).toBe(0);
+        expect(hook.getCurrent()).toBe(target);
+    } finally {
+        await hook.unmount();
+        await homes.dispose();
+        store.setState(previous);
+    }
+});
 
 // The Machine page's target names one Machine. Another Machine's daemon publications (live resource
 // summaries advance `daemonStateVersion` every sample) are not facts of this page and must not redraw it.

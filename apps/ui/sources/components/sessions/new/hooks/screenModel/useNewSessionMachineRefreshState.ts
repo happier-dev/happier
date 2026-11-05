@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { shallow } from 'zustand/shallow';
 
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hooks/useNewSessionCapabilitiesPrefetch';
@@ -7,7 +8,7 @@ import { sync } from '@/sync/sync';
 import { prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useStableRecentPathsResolver, type RecentPathSessionsInput } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
@@ -22,7 +23,6 @@ function buildMachineRefreshItemSignature(machine: Machine): string {
     const metadata = machine.metadata;
     return [
         machine.id,
-        String(machine.active === true),
         String(machine.revokedAt ?? ''),
         String(machine.replacedByMachineId ?? ''),
         String(machine.daemonStateVersion ?? ''),
@@ -67,12 +67,17 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
     // Manual refresh reads current facts at intent; a simple/hidden composer
     // has no consumer for fleet request receipts.
     const wizardPrefetchDemanded = params.useEnhancedSessionWizard && params.focused !== false;
-    const reachabilityRevision = useMachineReachabilityRevision(wizardPrefetchDemanded);
     const { binding } = useServerCredentialAccountScopeBinding(params.capabilityServerId);
     const scope = binding?.isCurrent() ? binding.scope : null;
+    const readMachines = React.useCallback(() => wizardPrefetchDemanded ? params.machines : [], [params.machines, wizardPrefetchDemanded]);
+    const readReachability = React.useCallback((nowMs: number) => readMachines().map(machine => isMachineReachable(scope, machine, nowMs)), [readMachines, scope]);
+    const presenceTargets = React.useMemo(() => wizardPrefetchDemanded
+        ? [{ serverId: params.capabilityServerId, machineIds: params.machines.map(machine => machine.id) }] : [],
+    [params.capabilityServerId, params.machines, wizardPrefetchDemanded]);
+    const reachability = useMachinePresenceSnapshot(readMachines, readReachability, presenceTargets, shallow);
     const machineReachable = React.useCallback(
         (machine: Machine) => isMachineReachable(scope, machine),
-        [scope, reachabilityRevision],
+        [scope, reachability],
     );
     const manualRefreshLifetime = React.useMemo(() => ({ controller: new AbortController() }), [params.capabilityServerId, params.selectedMachineId, params.focused]);
     React.useEffect(() => {

@@ -11588,7 +11588,7 @@ const settingsOverviewTranslations = { fr: {
         aboutDescription: 'Version, code source et conditions légales (Happier n’est pas affilié à Anthropic).',
         machineOnline: 'En ligne',
         machineOffline: ({ lastSeen }) => `Hors ligne · vue ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `Injoignable depuis ce Home · vue ${lastSeen}`,
+        machineUnreachableFromHome: 'Injoignable depuis ce Home',
         machineUpdateAvailable: 'Mise à jour disponible',
         machinesOnlineCount: ({ count }) => `${count} en ligne`,
         machinesOfflineCount: ({ count }) => `${count} hors ligne`,

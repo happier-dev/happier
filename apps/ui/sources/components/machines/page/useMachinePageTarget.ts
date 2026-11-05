@@ -7,7 +7,7 @@ import type { StorageState } from '@/sync/store/types';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { areServerProfileIdentifiersEquivalent, getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getActiveServerId, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { sync } from '@/sync/sync';
@@ -18,6 +18,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useManagedEnrolledMachine } from '@/components/settings/machines/managed/ManagedMachineSections';
+import { useMachineLastSeenOnOpen } from '@/hooks/machine/useMachineLastSeenOnOpen';
 
 /** The Home that lists this machine: the focused Home first, else the first Home that has it. */
 export function resolveMachineServerIdFromList(params: Readonly<{
@@ -81,10 +82,11 @@ export type MachinePageTarget = Readonly<{
     serverId: string;
     activeServerId: string;
     machine: Machine | null;
+    /** Fresh last-active observation captured once for this page opening. */
+    lastSeenAtOnOpen?: number | null;
     machineName: string;
     /** The name inside page sentences: "this machine" while the machine's details are locked or loading. */
     machineSentenceName: string;
-    online: boolean | null;
     /** The page is focusing the Home its link names. */
     isServerSwitching: boolean;
     /** The machine list is being read because the machine is not known yet. */
@@ -92,6 +94,18 @@ export type MachinePageTarget = Readonly<{
     /** The focused Home is the one the route names, so machine RPCs reach the right daemon. */
     switchReady: boolean;
 }>;
+
+export function useMachinePageOnline(serverId: string, machineId: string): boolean | null {
+    const presence = useMachinePresenceSummary(serverId, machineId);
+    return presence.reachability === 'unknown' ? null : presence.reachability === 'reachable';
+}
+
+export type MachinePagePresenceTarget = MachinePageTarget & Readonly<{ online: boolean | null }>;
+
+export function useMachinePagePresenceTarget(target: MachinePageTarget): MachinePagePresenceTarget {
+    const online = useMachinePageOnline(target.serverId, target.machineId);
+    return React.useMemo(() => ({ ...target, online }), [target, online]);
+}
 
 /**
  * The machine a Machines page (or one of its sub-pages) is about, from the route: which Home it
@@ -108,7 +122,8 @@ export function useMachinePageTarget(): MachinePageTarget {
     const serverId = naming.serverId;
     // The Home that lists the machine owns its row, whether or not that Home is the focused one.
     const machine = useServerScopedMachine(serverId, machineId);
-    const presence = useMachinePresenceSummary(serverId, machineId);
+    const lastSeenOnOpen = useMachineLastSeenOnOpen(machine ? [{ serverId, machineId }] : []);
+    const lastSeenAtOnOpen = lastSeenOnOpen.get(resolveServerProfileScopeIdForIdentifier(serverId))?.get(machineId) ?? machine?.activeAt ?? null;
     const [isServerSwitching, setIsServerSwitching] = React.useState(false);
     const [isHydratingMachine, setIsHydratingMachine] = React.useState(() => Boolean(machineId) && !machine);
     const hydrationRequestedRef = React.useRef(false);
@@ -165,7 +180,6 @@ export function useMachinePageTarget(): MachinePageTarget {
     }, [language, machine, naming.listedName, naming.managedName]);
     const machineSentenceName = React.useMemo(() => getMachineSentenceName(machine && { ...machine, managedName: naming.managedName }, machineName),
         [language, machine, machineName, naming.managedName]);
-    const online = presence.reachability === 'unknown' ? null : presence.reachability === 'reachable';
     const switchReady = Boolean(machineId) && !isServerSwitching
         && (!requestedServerId || areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId));
 
@@ -175,12 +189,12 @@ export function useMachinePageTarget(): MachinePageTarget {
         serverId,
         activeServerId,
         machine,
+        lastSeenAtOnOpen,
         machineName,
         machineSentenceName,
-        online,
         isServerSwitching,
         isHydratingMachine,
         switchReady,
-    }), [activeServerId, isHydratingMachine, isServerSwitching, machine, machineId, machineName, machineSentenceName,
-        online, requestedServerId, serverId, switchReady]);
+    }), [activeServerId, isHydratingMachine, isServerSwitching, machine, lastSeenAtOnOpen, machineId, machineName, machineSentenceName,
+        requestedServerId, serverId, switchReady]);
 }

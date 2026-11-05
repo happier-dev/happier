@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachines, resolveServerScopedMachineInventory, resolveServerScopedMachineInventoryKeys, selectMachineInventoryRowsById } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -36,7 +37,7 @@ export type MachinePresenceSummary = Readonly<{
     reachability: SessionMachineReachability;
     /** Distinguishes a retained unobserved row from a shared Session's invisible Machine. */
     machineIsKnown?: boolean;
-    /** The machine's last heartbeat while it is unreachable ("last seen 09:12"); null otherwise, so heartbeats re-render nothing. */
+    /** The offline machine's last heartbeat ("last seen 09:12"); null for live or unknown presence. */
     lastSeenAt?: number | null;
 }>;
 
@@ -82,8 +83,10 @@ export function useMachinePresenceSummaries(
             const homeDir = machine?.metadata?.homeDir?.trim() || null;
             const reachability = machine ? resolveMachineReachability(scope, machine, nowMs, resolveScopeId) : 'unknown';
             const machineIsKnown = Boolean(machine);
-            const lastSeenAt = reachability === 'unreachable' && typeof machine?.activeAt === 'number' && machine.activeAt > 0
-                ? machine.activeAt : null;
+            const activeAt = machine ? readMachineActivity(machine).activeAt : null;
+            const lastSeenAt = reachability === 'unreachable' && machine && !isMachineOnline(machine, nowMs)
+                && typeof activeAt === 'number' && activeAt > 0
+                ? activeAt : null;
             const previous = cached.current[index];
             return previous && previous.name === name && previous.sentenceName === sentenceName && previous.homeDir === homeDir
                 && previous.reachability === reachability && previous.lastSeenAt === lastSeenAt && previous.machineIsKnown === machineIsKnown
@@ -263,9 +266,9 @@ export function useMachinePresenceSnapshot<T>(
         const getSnapshot = () => {
             const inputs = readInputs(store.getState());
             if (cached && cached.revision === revision && samePresenceInputs(cached.inputs, inputs)) return cached.value;
-            // Sample wall time only at an observed input/request/deadline transition,
-            // never between React's consistency reads before the deadline callback.
-            const nextValue = readSnapshot(Date.now());
+            // Sample wall time only at an observed input/request transition.
+            const nowMs = Date.now();
+            const nextValue = readSnapshot(nowMs);
             const value = cached && areEqual?.(cached.value, nextValue) ? cached.value : nextValue;
             cached = { inputs, revision, value };
             return value;
@@ -273,28 +276,36 @@ export function useMachinePresenceSnapshot<T>(
         const subscribe = (listener: () => void) => {
             const token = {};
             let inputs = readInputs(store.getState());
-            let nextDeadline: number | null = null;
-            const refresh = () => {
-                nextDeadline = null;
-                for (const machine of readMachines()) {
-                    const deadline = machine ? readMachineStatusNextRefreshAtMs(machine, Date.now()) : null;
+            let stopActivity = () => {};
+            const refresh = (rebindActivity = false) => {
+                const machines = readMachines();
+                if (rebindActivity) observeActivity(machines);
+                let nextDeadline: number | null = null;
+                const nowMs = Date.now();
+                for (const machine of machines) {
+                    const deadline = machine ? readMachineStatusNextRefreshAtMs(machine, nowMs) : null;
                     if (deadline !== null) nextDeadline = nextDeadline === null ? deadline : Math.min(nextDeadline, deadline);
                 }
                 if (nextDeadline === null) sessionListRuntimeClock.clearWake(token);
                 else sessionListRuntimeClock.requestWake(token, nextDeadline);
                 listener();
             };
+            const onActivity = () => {
+                revision += 1;
+                refresh();
+            };
+            const observeActivity = (machines: ReturnType<typeof readMachines>) => {
+                stopActivity();
+                const stops = machines.flatMap(machine => machine ? [subscribeMachineActivity(machine, onActivity)] : []);
+                stopActivity = () => { for (const stop of stops) stop(); };
+            };
             const stopStore = store.subscribe(state => {
                 const next = readInputs(state);
                 if (samePresenceInputs(inputs, next)) return;
                 inputs = next;
-                refresh();
-            });
-            const stopClock = sessionListRuntimeClock.subscribe(() => {
-                if (nextDeadline === null || Date.now() < nextDeadline) return;
-                revision += 1;
-                refresh();
-            });
+                refresh(true);
+            }, { machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+                machinePresenceByServerId: true, machinePresenceById: true });
             const stopRequests = subscribeMachineRequestReachability(change => {
                 if (change && !observedTargets.some(target => target.machineIds?.length !== 0
                     && areServerProfileIdentifiersEquivalent(target.serverId?.trim() || activeServerId, change.scope.serverId)
@@ -302,11 +313,15 @@ export function useMachinePresenceSnapshot<T>(
                 revision += 1;
                 refresh();
             });
-            // A request or deadline may move after React's render read but before
+            const stopClock = sessionListRuntimeClock.subscribeWake(token, () => {
+                revision += 1;
+                refresh();
+            });
+            // A request or activity may move after React's render read but before
             // subscription (or while unsubscribed). Re-sample once after attaching.
             revision += 1;
-            refresh();
-            return () => { stopStore(); stopClock(); stopRequests(); sessionListRuntimeClock.clearWake(token); };
+            refresh(true);
+            return () => { stopStore(); stopRequests(); stopActivity(); stopClock(); };
         };
         return { getSnapshot, subscribe };
     }, [store, readSnapshot, readMachines, targets, areEqual, activeServerId, profilesGeneration]);

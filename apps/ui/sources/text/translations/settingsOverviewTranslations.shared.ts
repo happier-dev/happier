@@ -31,7 +31,7 @@ export type SettingsOverviewTranslation = Readonly<{
     machineOnline: string;
     machineOffline: (params: Readonly<{ lastSeen: string }>) => string;
     /** A live machine (fresh heartbeat) this Home's last request could not reach. */
-    machineUnreachableFromHome: (params: Readonly<{ lastSeen: string }>) => string;
+    machineUnreachableFromHome: string;
     machineUpdateAvailable: string;
     machinesOnlineCount: (params: Readonly<{ count: number }>) => string;
     machinesOfflineCount: (params: Readonly<{ count: number }>) => string;
@@ -104,7 +104,7 @@ export const settingsOverviewTranslationsEnglish = { en: {
         aboutDescription: 'Version, source code and legal terms (Happier is not affiliated with Anthropic).',
         machineOnline: 'Online',
         machineOffline: ({ lastSeen }) => `Offline · last seen ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `Can’t reach from this Home · seen ${lastSeen}`,
+        machineUnreachableFromHome: 'Can’t reach from this Home',
         machineUpdateAvailable: 'Update available',
         machinesOnlineCount: ({ count }) => `${count} online`,
         machinesOfflineCount: ({ count }) => `${count} offline`,

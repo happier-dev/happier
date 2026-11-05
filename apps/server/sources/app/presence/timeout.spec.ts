@@ -110,7 +110,7 @@ describe("presence timeout config", () => {
         });
         expect(config).toEqual({
             sessionTimeoutMs: 120_000,
-            machineTimeoutMs: 60_000,
+            machineTimeoutMs: 180_000,
             tickMs: 60 * 1000,
         });
     });

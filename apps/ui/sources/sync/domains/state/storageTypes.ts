@@ -291,6 +291,8 @@ export interface Machine {
     updatedAt: number;
     active: boolean;
     activeAt: number;  // Changed from lastActiveAt to activeAt for consistency
+    /** Home-owned transition-only presence; absent on legacy Homes. */
+    presenceProtocolVersion?: 1;
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;

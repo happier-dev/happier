@@ -1,4 +1,5 @@
 import type { Machine, MachineAvailability, MachineMetadata } from '@/sync/domains/state/storageTypes';
+import { linkMachineActivity } from './machineActivity';
 
 export interface MachineDisplayMetadata {
     displayName?: string | null;
@@ -20,6 +21,7 @@ export interface MachineDisplayRenderable {
     updatedAt: number;
     active: boolean;
     activeAt: number;
+    presenceProtocolVersion?: 1;
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;
@@ -81,6 +83,7 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine): Mach
         updatedAt: machine.updatedAt,
         active: machine.active,
         activeAt: machine.activeAt,
+        ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
         revokedAt: machine.revokedAt ?? null,
         replacedByMachineId: machine.replacedByMachineId ?? null,
         replacedAt: machine.replacedAt ?? null,
@@ -94,6 +97,7 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine): Mach
     };
     machineDisplays.set(machine, { metadata: machine.metadata,
         updatedAt: machine.updatedAt, activeAt: machine.activeAt, display: next });
+    linkMachineActivity(machine, next);
     return next;
 }
 
@@ -129,6 +133,7 @@ function areMachineDisplayValuesEqual(
         && previous.kind === next.kind
         && (!includeHeartbeatTimestamps || previous.updatedAt === next.updatedAt)
         && previous.active === next.active
+        && previous.presenceProtocolVersion === next.presenceProtocolVersion
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)
         && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
         && previous.metadataVersion === next.metadataVersion

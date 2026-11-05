@@ -1,3 +1,4 @@
+import { publishMachineWorkSummaryChanged } from '@/sync/store/domains/machines';
 import { type SessionMessageObservationFactsV1, type SessionMessageV1 } from '@happier-dev/protocol';
 import { readSessionFullPublicationUpdatedAt } from '@/sync/domains/session/sessionRuntimeObservation';
 import { resolveSessionViewerProjectionUpdate } from '@/sync/domains/session/readState/sessionViewer';
@@ -2127,6 +2128,7 @@ export async function handleUpdateContainer(params: {
             updatedAt: machineUpdate.updatedAt,
             active: machineUpdate.active,
             activeAt: machineUpdate.activeAt,
+            ...(machineUpdate.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
             revokedAt: null,
             metadata: null,
             metadataVersion: machineUpdate.metadataVersion,
@@ -2623,6 +2625,9 @@ export function handleEphemeralSocketUpdate(params: {
         // Handle machine activity updates through batching accumulator
         if (!shouldContinue()) return Promise.resolve();
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
+    } else if (updateData.type === 'machine-work-summary-changed') {
+        if (!shouldContinue()) return Promise.resolve();
+        if (sourceServerId) publishMachineWorkSummaryChanged(sourceServerId, updateData.machineId);
     } else if (updateData.type === 'execution-run-updated') {
         if (!shouldContinue()) return Promise.resolve();
         notifyExecutionRunActivityFromUpdate(sourceServerId, updateData);

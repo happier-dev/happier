@@ -56,7 +56,7 @@ function page(params: MachinePageTabParams) {
         <MachinePageTabBodies
             tabs={tabs}
             active={{ entry, params }}
-            body={{ serverId: 'home-a', machineId: 'm1', machineName: 'Studio', online: true, setParams: () => {} }}
+            body={{ serverId: 'home-a', machineId: 'm1', machineName: 'Studio', setParams: () => {} }}
             barAccessoriesInBar={false}
             footer={<TrackedAsk name="page-ask" />}
             footerShown={params.id !== 'overview' && root}
@@ -88,7 +88,7 @@ describe('MachinePageTabBodies', () => {
         const other = tabs.find(tab => tab.id === 'storage')!;
         const render = (active: MachinePageTabEntry) => <MachinePageTabBodies
             tabs={[entry, other]} active={{ entry: active, params: active.parseParams({}) }}
-            body={{ serverId: 'home-a', machineId: 'm1', machineName: 'Studio', online: true, setParams: () => {} }}
+            body={{ serverId: 'home-a', machineId: 'm1', machineName: 'Studio', setParams: () => {} }}
             barAccessoriesInBar={false} footer={null} footerShown={false}
         />;
         const tree = await renderScreen(render(entry));

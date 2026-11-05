@@ -470,6 +470,11 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
     reconnected: z.optional(z.literal(true)),
   }),
   z.looseObject({
+    /** Canonical live inventory facts changed; no counts or work identities cross this wake. */
+    type: z.literal('machine-work-summary-changed'),
+    machineId: z.string(),
+  }),
+  z.looseObject({
     type: z.literal('usage'),
     // Native Account accounting has no Happier Session; it wakes Account readers.
     id: z.nullable(z.string()),

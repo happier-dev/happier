@@ -6,7 +6,6 @@ import { resolvePresenceTimeoutConfig, renewLocalMachinePresenceDeadline } from 
 import { publishPresenceDeadline } from './presenceRedisQueue';
 import { retainMachinePresenceTransitionInTx } from './machinePresenceTransitions';
 import { db } from '@/storage/db';
-import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 
 export interface MachineAliveAdmission {
     recipientAccountIds: string[];
@@ -57,7 +56,7 @@ export async function recordMachineAlive(
             && await persistMachinePresence(db, params, currentPublisher) === 1) {
             renewLocalMachinePresenceDeadline({ ...params, lastActiveAt: new Date(params.timestamp) });
             return {
-                recipientAccountIds: await resolveCurrentMachineRecipientAccountIdsInTx(db, params.machineId, params.accountId),
+                recipientAccountIds: [],
                 wasOffline: false, lastActiveAt: new Date(params.timestamp),
             };
         }

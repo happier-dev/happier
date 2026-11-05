@@ -84,7 +84,7 @@ it('shares the Account-qualified Overview sample and retries the same retained r
     await machineResourceStore.read(key);
     expect(machineResourceStore.getState(key).status).toBe('ready');
     const state = { target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
-        machineName: 'Freshness Machine', machineSentenceName: 'Freshness Machine', online: true, isServerSwitching: false, isHydratingMachine: false, switchReady: true },
+        machineName: 'Freshness Machine', machineSentenceName: 'Freshness Machine', isServerSwitching: false, isHydratingMachine: false, switchReady: true },
         managedEnrolled: authority.getCurrent().managedEnrolled, refreshKey: 0, reload: async () => {} } satisfies MachinePageState;
     const screen = await renderScreen(<MachinePageStateContext.Provider value={state}>
         <MachineVitalsBarAccessory serverId={serverId} machineId={machine.id} online />
@@ -120,13 +120,13 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     await vi.waitFor(() => expect(authority.getCurrent().binding?.isCurrent()).toBe(true));
     const state = {
         target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
-            machineName: 'Overview Machine', machineSentenceName: 'Overview Machine', online: true, isServerSwitching: false, isHydratingMachine: false, switchReady: true },
+            machineName: 'Overview Machine', machineSentenceName: 'Overview Machine', isServerSwitching: false, isHydratingMachine: false, switchReady: true },
         managedEnrolled: authority.getCurrent().managedEnrolled, refreshKey: 0, reload: async () => {},
     } satisfies MachinePageState;
-    const frame = (state: MachinePageState) => (
+    const frame = (state: MachinePageState, online = true) => (
         <AuthProvider initialCredentials={{ token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` }}>
             <ModalProvider><MachinePageStateContext.Provider value={state}>
-                <MachineOverview serverId={serverId} machineId={machine.id} machineName="Overview Machine" online={state.target.online}
+                <MachineOverview serverId={serverId} machineId={machine.id} machineName="Overview Machine" online={online}
                     params={{ id: 'overview' }} setParams={() => {}} />
             </MachinePageStateContext.Provider></ModalProvider>
         </AuthProvider>
@@ -134,7 +134,7 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     const screen = await renderScreen(frame(state));
     expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
     await act(async () => { recordMachineRequestFailed({ ...authority.getCurrent().binding!.scope, machineId: machine.id }); });
-    await screen.update(frame({ ...state, target: { ...state.target, online: false } }));
+    await screen.update(frame(state, false));
     // Offline is said once, by the quiet banner above what the machine last reported (lab `rv` OS 3), never by the
     // checks for a machine that is online but cannot start sessions.
     expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();

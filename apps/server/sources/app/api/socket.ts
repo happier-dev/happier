@@ -5,6 +5,7 @@ import { registerSocketRoomDiscovery } from '@/app/api/socket/socketRoomDiscover
 import { Fastify } from "./types";
 import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
+import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
 import { log, warn } from "@/utils/logging/log";
@@ -35,7 +36,7 @@ import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compa
 import { createSessionHumanPresenceService } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { registerSessionHumanPresenceSocketHandlers, releaseSessionHumanPresenceHoldAfterFinalCurrentness } from "@/app/session/humanPresence/registerSessionHumanPresenceSocketHandlers";
 import { machineUpdateHandler, observeMachineAliveFromSocket } from "./socket/machineUpdateHandler";
-import { schedulePresenceDeadline } from '@/app/presence/timeout';
+import { recordMachineCleanDisconnect, schedulePresenceDeadline } from '@/app/presence/timeout';
 import { registerPresenceDeadlineNotifications } from '@/app/presence/presenceDeadlineNotification';
 import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
@@ -376,6 +377,11 @@ export function startSocket(app: Fastify) {
         void eventRouter.receiveCredentialQualifiedSessionDelivery(io.local, delivery);
     });
     const releasePresenceDeadlineNotifications = registerPresenceDeadlineNotifications(io, schedulePresenceDeadline);
+    io.on(LEGACY_MACHINE_HEARTBEAT_EVENT, (observation: unknown) => {
+        void eventRouter.receiveLegacyMachineHeartbeat(observation).catch(error => {
+            log({ module: 'machine-presence', error }, 'Failed to deliver legacy Machine heartbeat');
+        });
+    });
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
     const peerMediationObservabilityEmitter = createPeerMediationObservabilityEmitter(peerMediationObservabilityStore);
@@ -1018,10 +1024,18 @@ export function startSocket(app: Fastify) {
             }
 
             if (connection.connectionType === 'machine-scoped') {
-                void machineOwnershipRegistry.releaseOwner({
+                const publisher = {
                     accountId: userId,
                     machineId: connection.machineId,
                     socketId: socket.id,
+                };
+                // A retiring predecessor must not mark its replacement offline.
+                // Release after the presence write, before notification work.
+                const releasePublisher = () => machineOwnershipRegistry.releaseOwner(publisher);
+                void (reason === 'client namespace disconnect'
+                    ? recordMachineCleanDisconnect(publisher, () => machineOwnershipRegistry.isOwner(publisher), releasePublisher)
+                    : releasePublisher()).catch(error => {
+                    log({ module: 'machine-presence', error }, 'Failed to publish clean Machine disconnect');
                 });
             }
 

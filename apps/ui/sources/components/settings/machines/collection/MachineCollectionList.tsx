@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, type Pressable } from 'react-native';
-import { useMachineCollection } from './useMachineCollection';
+import { useMachineCollection, useMachineCollectionPresenceRows, useMachineCollectionRowPresence } from './useMachineCollection';
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -62,10 +62,18 @@ import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resour
 import { Text } from '@/components/ui/text/Text';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
-import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
+import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
+
+/** Presence changes adjust the existing batched demand without redrawing the collection. */
+function CollectionResourceLiveDemand({ rows }: Readonly<{ rows: readonly MachineCollectionRow[] }>) {
+    const current = useMachineCollectionPresenceRows(rows);
+    const machineKeys = React.useMemo(() => current.flatMap(row => row.online && row.kind === 'machine'
+        ? [{ serverId: row.serverId, machineId: row.machineId }] : []), [current]);
+    return <MachineResourceLiveDemand machineKeys={machineKeys} detail="summary" />;
+}
 
 /** The directory batches known owners; an owner beyond its current page uses the same exact Team reader as detail. */
 function MachinePresetTeamCollectionRow(props: Readonly<{
@@ -172,6 +180,81 @@ export const MachineAddOptionTiles = React.memo(function MachineAddOptionTiles(p
     );
 });
 
+const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
+    row: MachineCollectionRow;
+    rail: boolean;
+    selected: boolean;
+    selectedRef: React.Ref<React.ComponentRef<typeof Pressable>> | undefined;
+    onOpen: (row: MachineCollectionRow) => void;
+}>) {
+    const { theme } = useUnistyles();
+    const { rail, selected, selectedRef, onOpen } = props;
+    const row = useMachineCollectionRowPresence(props.row);
+    const summaryMetrics = useMachineSummarySettingValue().metrics.length;
+    return rail ? (
+        // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its
+        // live summary or its one word, then the host when the name is a different one. The glyph says the platform.
+        <Item
+            key={machineCollectionRowKey(row)}
+            testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
+            title={row.titleParts.name}
+            titleQualifier={row.titleParts.hint}
+            titleLines={1}
+            // With no instruments chosen and nothing to say, the row is its name alone.
+            subtitle={summaryMetrics === 0 && !(row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)) && !row.host ? undefined : (
+                <View style={railRowStyles.line}>
+                    <MachineListRowSummary
+                        testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
+                        serverId={row.serverId}
+                        machineId={row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? null}
+                        online={row.online}
+                        quietWord={row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)}
+                    />
+                    {row.host ? <Text variant="meta" numberOfLines={1} style={railRowStyles.host}>{row.host}</Text> : null}
+                </View>
+            )}
+            accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
+            icon={(
+                <HappierCollectionListMark>
+                    <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={selected}
+            pressableRef={selected ? selectedRef : undefined}
+            density="compact"
+            showChevron={false}
+            pressableStyle={collectionListStyles.row}
+            onPress={() => onOpen(row)}
+        />
+    ) : (
+        <Item
+            key={machineCollectionRowKey(row)}
+            testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
+            title={row.title}
+            subtitle={statusLine(row, !rail)}
+            subtitleLeading={row.kind === 'managed' ? undefined : (
+                <StatusDot
+                    testID={`settings.machines.row.${row.serverId}.${row.machineId}.presence`}
+                    color={row.online ? theme.colors.status.connected : theme.colors.status.disconnected}
+                />
+            )}
+            subtitleAccessory={rail || row.kind === 'managed' ? undefined : (
+                <MachineCliGlyphs machineId={row.machineId} serverId={row.serverId} isOnline={row.online} />
+            )}
+            icon={(
+                <HappierCollectionListMark>
+                    <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={rail ? selected : undefined}
+            density={rail ? 'compact' : undefined}
+            showChevron={!rail}
+            pressableStyle={rail ? collectionListStyles.row : undefined}
+            onPress={() => onOpen(row)}
+        />
+    );
+});
+
 /**
  * The Machines collection: this computer (desktop app), the machines of each Home the app shows, then
  * their machine pools. `rail` is the narrow list beside the open detail; `page` is the same list as
@@ -243,89 +326,28 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         teamNamesByServerId,
     });
 
-    // The column is an open surface: its online machines' summaries stay live while it shows (one batched demand).
-    const demandKeys = React.useMemo(() => rail ? collection.sections.flatMap(section => section.rows)
-        .flatMap(row => row.online && row.kind === 'machine' ? [{ serverId: row.serverId, machineId: row.machineId }] : []) : [], [collection.sections, rail]);
-    useMachineResourceLiveDemand(demandKeys, { detail: 'summary', enabled: rail });
+    const demandRows = React.useMemo(() => rail ? collection.sections.flatMap(section => section.rows) : [], [collection.sections, rail]);
 
     React.useEffect(() => {
         const selected = collection.sections.flatMap(section => section.rows).find(row => isMachineCollectionRowSelected(selectedKey, row));
         if (selected) recordMachineCollectionVisit({ ...selected, query });
     }, [selectedKey, collection, query]);
 
-    const openMachine = (row: MachineCollectionRow) => {
+    const openMachine = React.useCallback((row: MachineCollectionRow) => {
         recordMachineCollectionVisit({ ...row, query });
         // Beside a detail, switching machines replaces the shown detail instead of stacking history.
         openHref(router, machineCollectionHref(row, door), rail && onDetailRoute, 'MachineCollectionList.openMachine');
-    };
+    }, [door, onDetailRoute, query, rail, router]);
 
     // A long fleet opens on its selected machine, not at the top of the column.
     const selectedPresent = rail && collection.sections.some(section => section.rows.some(row => isMachineCollectionRowSelected(selectedKey, row)));
     const selectedRowRef = useRevealSelectedRow<React.ComponentRef<typeof Pressable>>(selectedKey, selectedPresent);
 
-    const summaryMetrics = useMachineSummarySettingValue().metrics.length;
-    const renderMachineRow = (row: MachineCollectionRow) => rail ? (
-        // The name has the whole row, on any width. What the machine reports stands on the line beneath it: its
-        // live summary or its one word, then the host when the name is a different one. The glyph says the platform.
-        <Item
-            key={machineCollectionRowKey(row)}
-            testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
-            title={row.titleParts.name}
-            titleQualifier={row.titleParts.hint}
-            titleLines={1}
-            // With no instruments chosen and nothing to say, the row is its name alone.
-            subtitle={summaryMetrics === 0 && !(row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)) && !row.host ? undefined : (
-                <View style={railRowStyles.line}>
-                    <MachineListRowSummary
-                        testID={`settings.machines.row.${row.serverId}.${row.kind === 'managed' ? row.managedId : row.machineId}.summary`}
-                        serverId={row.serverId}
-                        machineId={row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? null}
-                        online={row.online}
-                        quietWord={row.reason ?? (row.status === 'unknown' ? t('common.unknown') : !row.online && row.kind === 'managed' ? row.presenceWord ?? row.presence : !row.online ? t('machineDetailPage.offline') : row.ownership)}
-                    />
-                    {row.host ? <Text variant="meta" numberOfLines={1} style={railRowStyles.host}>{row.host}</Text> : null}
-                </View>
-            )}
-            accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
-            icon={(
-                <HappierCollectionListMark>
-                    <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
-                </HappierCollectionListMark>
-            )}
-            selected={isMachineCollectionRowSelected(selectedKey, row)}
-            pressableRef={isMachineCollectionRowSelected(selectedKey, row) ? selectedRowRef : undefined}
-            density="compact"
-            showChevron={false}
-            pressableStyle={collectionListStyles.row}
-            onPress={() => openMachine(row)}
-        />
-    ) : (
-        <Item
-            key={machineCollectionRowKey(row)}
-            testID={row.kind === 'managed' ? `settings.machines.managed.${row.serverId}.${row.managedId}` : `settings.machines.row.${row.serverId}.${row.machineId}`}
-            title={row.title}
-            subtitle={statusLine(row, !rail)}
-            subtitleLeading={row.kind === 'managed' ? undefined : (
-                <StatusDot
-                    testID={`settings.machines.row.${row.serverId}.${row.machineId}.presence`}
-                    color={row.online ? theme.colors.status.connected : theme.colors.status.disconnected}
-                />
-            )}
-            subtitleAccessory={rail || row.kind === 'managed' ? undefined : (
-                <MachineCliGlyphs machineId={row.machineId} serverId={row.serverId} isOnline={row.online} />
-            )}
-            icon={(
-                <HappierCollectionListMark>
-                    <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
-                </HappierCollectionListMark>
-            )}
-            selected={rail ? isMachineCollectionRowSelected(selectedKey, row) : undefined}
-            density={rail ? 'compact' : undefined}
-            showChevron={!rail}
-            pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openMachine(row)}
-        />
-    );
+    const renderMachineRow = (row: MachineCollectionRow) => {
+        const selected = isMachineCollectionRowSelected(selectedKey, row);
+        return <MachineListRow key={machineCollectionRowKey(row)} row={row} rail={rail} selected={selected}
+            selectedRef={selected ? selectedRowRef : undefined} onOpen={openMachine} />;
+    };
 
     const thisComputerRow = isDesktop ? (
         <Item
@@ -391,15 +413,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     // A long list keeps its offline machines under one fold after the ones that can work (real fleets carry
     // dozens of retired or sleeping machines); a short list shows them inline, as the lab's rail does.
     const renderRailSectionRows = (section: MachineCollectionSection) => {
-        const { inline, offline } = partitionMachineCollectionRailRows(section.rows, searchable);
-        if (offline.length === 0) return inline.map(renderMachineRow);
-        return (
-            <>
-                {inline.map(renderMachineRow)}
-                <MachineRowsFold testID={`settings.machines.offline.${section.key}`} title={t('machineDetailPage.offline')}
-                    rows={offline} rail selectedKey={selectedKey} query={query} renderRow={renderMachineRow} />
-            </>
-        );
+        return <RailSectionRows section={section} foldOffline={searchable} selectedKey={selectedKey}
+            query={query} renderRow={renderMachineRow} />;
     };
     const sectionStatusLabel = (section: MachineCollectionSection): string | undefined => {
         switch (section.status) {
@@ -498,6 +513,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     }
 
     return (
+        <>
+        <CollectionResourceLiveDemand rows={demandRows} />
         <CollectionList
             testID="settings.machines.rail"
             title={t('settings.machines')}
@@ -566,6 +583,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                 {presetSections}
             </>}
         </CollectionList>
+        </>
     );
 });
 
@@ -623,6 +641,23 @@ function ArchivedMachineSection(props: Readonly<{
     const disclosure = <MachineRowsFold testID={`settings.machines.archived.${props.section.serverId}`} title={t('managedCleanup.archiveTitle')}
         rows={props.section.rows} rail={props.rail} selectedKey={props.selectedKey} query={props.query} renderRow={props.renderRow} />;
     return props.rail ? disclosure : <ItemGroup title={props.section.title ?? undefined}>{disclosure}</ItemGroup>;
+}
+
+function RailSectionRows(props: Readonly<{
+    section: MachineCollectionSection;
+    foldOffline: boolean;
+    selectedKey: string | null;
+    query: string;
+    renderRow: (row: MachineCollectionRow) => React.ReactElement;
+}>) {
+    const rows = useMachineCollectionPresenceRows(props.section.rows);
+    const { inline, offline } = partitionMachineCollectionRailRows(rows, props.foldOffline);
+    return <>
+        {inline.map(props.renderRow)}
+        {offline.length > 0 ? <MachineRowsFold testID={`settings.machines.offline.${props.section.key}`}
+            title={t('machineDetailPage.offline')} rows={offline} rail selectedKey={props.selectedKey}
+            query={props.query} renderRow={props.renderRow} /> : null}
+    </>;
 }
 
 function MachineRowsFoldCaret(props: Readonly<{ expanded: boolean }>) {

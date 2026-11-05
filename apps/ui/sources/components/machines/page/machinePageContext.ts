@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { useManagedEnrolledMachine } from '@/components/settings/machines/managed/ManagedMachineSections';
 
-import type { MachinePageTarget } from './useMachinePageTarget';
+import { useMachinePagePresenceTarget, type MachinePageTarget, type MachinePagePresenceTarget } from './useMachinePageTarget';
 
 /**
  * What the machine page reads once and its Overview shows: the resolved machine, its managed record
@@ -19,8 +19,9 @@ export type MachinePageState = Readonly<{
 
 export const MachinePageStateContext = React.createContext<MachinePageState | null>(null);
 
-export function useMachinePageState(): MachinePageState {
+export function useMachinePageState(): Omit<MachinePageState, 'target'> & Readonly<{ target: MachinePagePresenceTarget }> {
     const state = React.useContext(MachinePageStateContext);
     if (!state) throw new Error('useMachinePageState must be used inside MachinePageScreen');
-    return state;
+    const target = useMachinePagePresenceTarget(state.target);
+    return React.useMemo(() => ({ ...state, target }), [state, target]);
 }

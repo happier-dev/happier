@@ -86,7 +86,7 @@ describe('reactive Machine presence', () => {
     });
 
     it('keeps a whitespace-normalized target current for row and request changes', async () => {
-        const machine = createMachineFixture({ id: 'trimmed-target', activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'trimmed-target', activeAt: Date.now(), presenceProtocolVersion: 1 });
         storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
         const hook = await renderHook(() => useMachinePresenceSummary(serverId, ` ${machine.id} `));
         try {
@@ -96,6 +96,11 @@ describe('reactive Machine presence', () => {
             expect(hook.getCurrent().name).toBe('Trimmed target renamed');
             await act(async () => { recordMachineRequestFailed({ serverId, accountId: 'account-a', machineId: machine.id }); });
             expect(hook.getCurrent().reachability).toBe('unreachable');
+            expect(hook.getCurrent().lastSeenAt).toBeNull();
+            await act(async () => storage.getState().applyMachineActivityUpdates([
+                { id: machine.id, active: false, activeAt: machine.activeAt },
+            ], { sourceServerId: serverId }));
+            expect(hook.getCurrent().lastSeenAt).toBe(machine.activeAt);
         } finally { await hook.unmount(); }
     });
 

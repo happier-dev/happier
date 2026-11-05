@@ -11617,7 +11617,7 @@ const settingsOverviewTranslations = { ru: {
         aboutDescription: 'Версия, исходный код и юридические условия (Happier не связан с Anthropic).',
         machineOnline: 'В сети',
         machineOffline: ({ lastSeen }) => `Не в сети · был ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `Недоступна из этого Home · была ${lastSeen}`,
+        machineUnreachableFromHome: 'Недоступна из этого Home',
         machineUpdateAvailable: 'Доступно обновление',
         machinesOnlineCount: ({ count }) => `${count} в сети`,
         machinesOfflineCount: ({ count }) => `${count} не в сети`,

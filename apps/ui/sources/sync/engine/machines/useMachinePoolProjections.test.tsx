@@ -15,6 +15,7 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { useMachinePoolProjections, type MachinePoolProjectionScope } from './useMachinePoolProjections';
 import { resetMachinePoolSyncRuntimeForTests } from './machinePoolSyncRuntime';
 import { invalidateMachinePoolProjection } from './machinePoolProjection';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 const boundary = {
     serverId: '',
@@ -518,9 +519,11 @@ describe('useMachinePoolProjections', () => {
         await hook.rerender();
         expect(boundary.requests).toHaveLength(1);
 
-        scopes = scopeWith([{ id: 'machine-a', active: true, activeAt: 2, updatedAt: 2 }]);
-        await hook.rerender();
+        const retainedMachine = scopes[0]!.machines[0]!;
+        await act(async () => publishMachineActivity(retainedMachine, { active: true, activeAt: 2 }, []));
         await vi.waitFor(() => expect(boundary.requests).toHaveLength(2));
+        await act(async () => publishMachineActivity(retainedMachine, { active: true, activeAt: 3 }, []));
+        expect(boundary.requests).toHaveLength(2);
 
         await hook.unmount();
     });

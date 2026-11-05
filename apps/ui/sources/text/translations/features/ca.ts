@@ -11586,7 +11586,7 @@ const settingsOverviewTranslations = { ca: {
         aboutDescription: 'Versió, codi font i termes legals (Happier no està afiliat amb Anthropic).',
         machineOnline: 'En línia',
         machineOffline: ({ lastSeen }) => `Fora de línia · vist ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `No accessible des d’aquest Home · vist ${lastSeen}`,
+        machineUnreachableFromHome: 'No accessible des d’aquest Home',
         machineUpdateAvailable: 'Actualització disponible',
         machinesOnlineCount: ({ count }) => `${count} en línia`,
         machinesOfflineCount: ({ count }) => `${count} fora de línia`,

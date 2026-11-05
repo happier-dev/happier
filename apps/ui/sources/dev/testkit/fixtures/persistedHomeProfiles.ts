@@ -21,3 +21,15 @@ export async function seedPersistedHomeProfilesForTests(input: Readonly<{
     const { resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
     resetServerProfilesRuntimeForTests();
 }
+
+/**
+ * Saves and selects one Home through the real profile owner. Unconfigured
+ * source builds (the test build) seed no default Home, so suites that read
+ * the ambient active Home must select one explicitly.
+ */
+export async function selectActiveTestHomeForTests(serverUrl = 'https://active-test-home.test'): Promise<ServerProfile> {
+    const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+    const profile = await upsertServerProfile({ serverUrl, name: 'Test Home' });
+    await setActiveServerId(profile.id);
+    return profile;
+}

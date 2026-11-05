@@ -33,8 +33,8 @@ import { isMachinePageTabRoot, machinePageTabQuery, machinePageTabRouteParams } 
 import { MACHINE_PAGE_TABS, resolveMachinePageTab } from './machinePageTabs';
 import { MachineResourcesAskBlock } from '@/components/machines/resources/ask/MachineResourcesAskBlock';
 import { MachinePageTabBodies } from './MachinePageTabBodies';
-import type { MachinePageTabId, MachinePageTabParams } from './machinePageTabQuery';
-import { useMachinePageTarget } from './useMachinePageTarget';
+import type { MachinePageTabId, MachinePageTabParams, MachinePageTabBarAccessoryProps } from './machinePageTabQuery';
+import { useMachinePageTarget, useMachinePageOnline, type MachinePageTarget } from './useMachinePageTarget';
 
 const styles = StyleSheet.create(() => ({
     // The tab strip is the one divider between the identity and the tab's body: the same breath above and below it,
@@ -77,10 +77,6 @@ export function MachinePageScreen() {
     // A machine Happier created reads as what it is: its provider's mark, where it came from, and its
     // observed power and kind. The same read feeds the Overview's managed sections.
     const managedEnrolled = useManagedEnrolledMachine({ enrolledMachineId: machineId || undefined, serverId });
-    // A connected daemon's start is when this machine's Happier came up: the header's "Running 3 h".
-    const daemonStartedAt = target.online && typeof machine?.daemonState?.startedAt === 'number' ? machine.daemonState.startedAt : undefined;
-    const managedIdentity = useManagedMachineHeaderIdentity(managedEnrolled.machine, managedEnrolled.serverId, { runningSince: daemonStartedAt });
-
     const [refreshKey, bumpRefreshKey] = React.useReducer((value: number) => value + 1, 0);
     const { execute: refreshInventory } = useMountedActionExecution(serverId);
     const reload = React.useCallback(async () => {
@@ -129,9 +125,8 @@ export function MachinePageScreen() {
     const scroll = useMachinePageScroll(tab.params);
     const barAccessoriesInBar = MACHINE_PAGE_TABS.length > 1 && !phone;
     const machineName = target.machineSentenceName;
-    const online = target.online;
-    const tabBody = React.useMemo(() => ({ serverId, machineId, machineName, online, setParams: setTabParams }),
-        [machineId, machineName, online, serverId, setTabParams]);
+    const tabBody = React.useMemo(() => ({ serverId, machineId, machineName, setParams: setTabParams }),
+        [machineId, machineName, serverId, setTabParams]);
 
     if (managedEnrolled.machine && !managedMachineEnrolledDetailId(managedEnrolled.machine)) {
         return <Redirect href={machineCollectionHref({ kind: 'managed', managedId: managedEnrolled.machine.id,
@@ -162,7 +157,7 @@ export function MachinePageScreen() {
     const BarAccessory = barAccessoriesInBar ? tab.entry.BarAccessory : undefined;
     const chrome = (
         <>
-            <MachinePageHeader target={target} managedIdentity={managedIdentity} renaming={rename.saving} onRename={rename.start} />
+            <ManagedMachinePageHeader target={target} managedEnrolled={managedEnrolled} renaming={rename.saving} onRename={rename.start} />
             {MACHINE_PAGE_TABS.length > 1 ? (
                 // In the page column like every section, so the tabs line up with the header and the sheets.
                 <ItemGroup header="none" surface="none" style={styles.tabsGroup}>
@@ -176,7 +171,7 @@ export function MachinePageScreen() {
                         accessibilityLabel={target.machineName}
                         testIDPrefix="machine-page-tab"
                     />
-                    {BarAccessory ? <BarAccessory serverId={serverId} machineId={machineId} online={target.online} params={tab.params} setParams={setTabParams} /> : null}
+                    {BarAccessory ? <MachinePageBarAccessory Component={BarAccessory} serverId={serverId} machineId={machineId} params={tab.params} setParams={setTabParams} /> : null}
                 </View>
                 </ItemGroup>
             ) : null}
@@ -222,6 +217,27 @@ export function MachinePageScreen() {
             )}
         </MachinePageStateContext.Provider>
     );
+}
+
+function ManagedMachinePageHeader(props: Readonly<{
+    target: MachinePageTarget;
+    managedEnrolled: ReturnType<typeof useManagedEnrolledMachine>;
+    renaming: boolean;
+    onRename(): void;
+}>) {
+    const online = useMachinePageOnline(props.target.serverId, props.target.machineId);
+    const startedAt = props.target.machine?.daemonState?.startedAt;
+    const managedIdentity = useManagedMachineHeaderIdentity(props.managedEnrolled.machine, props.managedEnrolled.serverId,
+        { runningSince: online && typeof startedAt === 'number' ? startedAt : undefined });
+    return <MachinePageHeader target={props.target} managedIdentity={managedIdentity} renaming={props.renaming} onRename={props.onRename} />;
+}
+
+function MachinePageBarAccessory(props: Omit<MachinePageTabBarAccessoryProps, 'online'> & Readonly<{
+    Component: React.ComponentType<MachinePageTabBarAccessoryProps>;
+}>) {
+    const online = useMachinePageOnline(props.serverId, props.machineId);
+    const { Component, ...body } = props;
+    return <Component {...body} online={online} />;
 }
 
 /** Renaming in place under the header (the header `⋯` → Rename); the draft belongs to one machine and Home. */

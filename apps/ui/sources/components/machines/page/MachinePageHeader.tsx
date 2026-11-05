@@ -37,6 +37,7 @@ import { resolveMachineReachability } from '@/sync/domains/machines/reachability
 import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -56,7 +57,7 @@ import { describeMachineUptime } from '@/components/machines/vitals/vitalsFormat
 import { formatMachineBytes, resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
 import type { MachineVitalsHostFactsV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { machineHeaderOriginKey, takeMachineHeaderOrigin } from './machineHeaderOrigin';
-import type { MachinePageTarget } from './useMachinePageTarget';
+import { useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 const styles = StyleSheet.create(() => ({
@@ -147,7 +148,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
     const router = useRouter();
-    const { target } = props;
+    const target = useMachinePagePresenceTarget(props.target);
     const machine = target.machine;
     const activeAccountScope = useActiveServerAccountScope();
     const { binding } = useServerCredentialAccountScopeBinding(target.serverId);
@@ -383,7 +384,7 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
                     serverId: target.serverId,
                     machineId,
                     replacementMachineId,
-                    confirmActiveOldMachine: machine?.active === true,
+                    confirmActiveOldMachine: machine ? readMachineActivity(machine).active : false,
                 });
                 if (!outcome.ok && (outcome.errorCode === 'cancelled' || isActionApprovalDeclinedErrorCode(outcome.errorCode))) return;
                 const result = outcome.ok ? MachineReplacementOutputSchema.parse(outcome.result) : null;
@@ -396,7 +397,7 @@ function useMachineReplacementActions(target: MachinePageTarget, accountScope: M
                 setReplacingMachineId(null);
             }
         })(), { tag: 'MachinePage.replaceMachine' });
-    }, [execution, machine?.active, machineId, replacingMachineId, target.serverId]);
+    }, [execution, machine, machineId, replacingMachineId, target.serverId]);
 
     const openPicker = React.useCallback(() => {
         if (!machineId || replacingMachineId || candidates.length === 0) return;

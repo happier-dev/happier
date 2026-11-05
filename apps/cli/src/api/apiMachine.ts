@@ -262,6 +262,7 @@ import {
     createSessionSyncPendingInputServerContractController,
     type SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import { MACHINE_HEARTBEAT_INTERVAL_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -5406,8 +5407,8 @@ export class ApiMachineClient {
                 logger.debugLargeJson(`[API MACHINE] Emitting machine-alive`, payload);
             }
             this.socket.emit('machine-alive', payload);
-        }, 20000);
-        logger.debug('[API MACHINE] Keep-alive started (20s interval)');
+        }, MACHINE_HEARTBEAT_INTERVAL_MS);
+        logger.debug('[API MACHINE] Keep-alive started (60s interval)');
     }
 
     private stopKeepAlive() {

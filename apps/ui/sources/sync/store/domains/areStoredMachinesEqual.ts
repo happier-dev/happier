@@ -60,7 +60,7 @@ export function areStoredMachineSemanticsEqual(
     previous: Machine | null | undefined,
     next: Machine | null | undefined,
 ): boolean {
-    return areStoredMachineValuesEqual(previous, next, false);
+    return areStoredMachineValuesEqual(previous, next, false, true, false);
 }
 
 type MachineContentAuthority = Pick<Machine, 'id' | 'dataEncryptionKey' | 'keyBasis' | 'installationId'
@@ -89,10 +89,7 @@ export function haveSameMachineContentAuthority(previous: MachineContentAuthorit
 /** One inventory retention rule for full-row ingress and later hydration. */
 export function retainMachineRecord(previous: Machine | null | undefined, next: Machine): Machine {
     if (!previous || previous.storageMode !== next.storageMode || !haveSameMachineContentAuthority(previous, next)) return next;
-    if (areStoredMachineSemanticsEqual(previous, next)) {
-        const nowMs = Date.now();
-        if (isMachineOnline(previous, nowMs) === isMachineOnline(next, nowMs)) return previous;
-    }
+    if (areStoredMachineSemanticsEqual(previous, next)) return previous;
     let retained = next;
     // Exact-field readers share the admitted siblings even when another field in the same decoded
     // blob advances. Whole-row version authority stays above.
@@ -139,6 +136,7 @@ function areStoredMachineValuesEqual(
     next: Machine | null | undefined,
     includeHeartbeatTimestamps: boolean,
     includeResources = true,
+    includeActiveState = true,
 ): boolean {
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
@@ -147,7 +145,8 @@ function areStoredMachineValuesEqual(
         && (!includeResources || previous.seq === next.seq)
         && previous.createdAt === next.createdAt
         && (!includeHeartbeatTimestamps || previous.updatedAt === next.updatedAt)
-        && previous.active === next.active
+        && (!includeActiveState || previous.active === next.active)
+        && previous.presenceProtocolVersion === next.presenceProtocolVersion
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)
         && (previous.revokedAt ?? null) === (next.revokedAt ?? null)
         && previous.metadataVersion === next.metadataVersion

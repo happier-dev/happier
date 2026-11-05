@@ -34,6 +34,21 @@ function createCapabilityPublicationClient(): ApiMachineClient {
 }
 
 describe('ApiMachineClient operation protocol capability publication', () => {
+  it('leaves Machine presence authority with Home instead of daemon capability publication', async () => {
+    for (const support of [undefined, { protocolVersions: [1] }] as const) {
+      const client = createCapabilityPublicationClient();
+      const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { machines: { machinePresence: support } } });
+      Reflect.set(client, 'lifecycleDependencies', { resolveServerFeaturesSnapshot: async () => ({ status: 'ready', features }) });
+      const published: Array<Record<string, unknown>> = [];
+      const emitWithAck = async (_event: string, body: { capabilities: Record<string, unknown> }) => {
+        published.push(body.capabilities); return { v: 1, result: 'success', revision: 1 };
+      };
+      Reflect.set(client, 'socket', { connected: true, emitWithAck, timeout: () => ({ emitWithAck }) });
+      await client.setProjectFiniteExecutionLive(true);
+      expect(published[0]).not.toHaveProperty('machinePresence');
+      expect(published[0]?.projectFiniteExecution).toEqual({ protocolVersions: [1] });
+    }
+  });
   it('keeps reset start out of older Home projections and out of daemons without the mounted owner', async () => {
     for (const [protocolVersion, installed] of [[4, true], [4, false], [3, true]] as const) {
       const client = createCapabilityPublicationClient();

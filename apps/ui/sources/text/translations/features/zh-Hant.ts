@@ -11570,7 +11570,7 @@ const settingsOverviewTranslations = { 'zh-Hant': {
         aboutDescription: '版本、原始碼和法律條款（Happier 與 Anthropic 無關聯）。',
         machineOnline: '線上',
         machineOffline: ({ lastSeen }) => `離線 · 最後上線 ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `無法從此 Home 存取 · 上線 ${lastSeen}`,
+        machineUnreachableFromHome: '無法從此 Home 存取',
         machineUpdateAvailable: '有可用更新',
         machinesOnlineCount: ({ count }) => `${count} 在線`,
         machinesOfflineCount: ({ count }) => `${count} 離線`,

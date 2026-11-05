@@ -7,6 +7,7 @@ import type {
     SelectionListStep,
 } from '@/components/ui/selectionList';
 import { t } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
@@ -21,7 +22,7 @@ import {
     type MachineSelectionFavoriteGroupPlacement,
 } from './buildMachineSelectionBuckets';
 import { MachinePresenceDot, MachineRowMark, MachineSelectionRowAccessory } from './MachineSelectionRowAccessory';
-import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { describeMachinePresenceLine, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
@@ -212,7 +213,7 @@ function machineSubtitle(machine: MachineDisplayRenderable): string | undefined 
  * 4 days ago"), then the row's own fact when it has one (a domain's reason, the Home's detail).
  */
 function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReachabilityScope | null | undefined, detail: string | undefined, managedMachine?: ManagedMachineV1): string {
-    const presence = describeMachinePresenceLine(machine, undefined, managedMachine, scope);
+    const presence = describeMachinePresenceLine(machine, undefined, projectMachineManagedPresence(machine, managedMachine), scope);
     // An online machine says what it is ("Online · Linux", lab m-pick); an offline one keeps its
     // last-seen time as its only fact, so the line stays short.
     const platform = presence.online ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
@@ -363,6 +364,7 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
 export function useMachineSelectionListModel<TMachine extends MachineDisplayRenderable = Machine>(
     params: BuildMachineSelectionListModelParams<TMachine>,
 ): MachineSelectionListModel {
+    const language = usePreferredLanguage();
     const purpose = params.purpose ?? 'session';
     const managedHomes = React.useMemo(() => params.groups.map(group => group.serverId), [params.groups]);
     const bindings = useServerCredentialAccountScopeBindings(managedHomes);
@@ -1155,6 +1157,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         pendingExpiry,
         theme.colors.text.secondary,
         scopeForServer,
+        language,
     ]);
     const managedWakeByServerId = React.useMemo(() => Object.fromEntries(params.groups.map(group => [group.serverId,
         Object.fromEntries(group.machines.flatMap(machine => {

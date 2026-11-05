@@ -22,7 +22,7 @@ import { type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/prot
 import { applySessionTranscriptPublicationCeiling } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
 import { projectSessionFollowWakeBatchDelivery } from "@/app/session/follow/projectSessionFollowWakeBatchDelivery";
-import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
+import { serializeMachineKeyBasis, serializeMachinePresence } from "@/app/machines/machineSerialization";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
@@ -638,8 +638,7 @@ export function buildNewMachineUpdate(machine: {
             replacementReason: machine.replacementReason ?? null,
             replacementSource: machine.replacementSource ?? null,
             replacementActorUserId: machine.replacementActorUserId ?? null,
-            active: machine.active,
-            activeAt: machine.lastActiveAt.getTime(),
+            ...serializeMachinePresence(machine),
             revokedAt: machine.revokedAt ? machine.revokedAt.getTime() : null,
             createdAt: machine.createdAt.getTime(),
             updatedAt: machine.updatedAt.getTime()

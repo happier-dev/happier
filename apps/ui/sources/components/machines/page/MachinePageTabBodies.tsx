@@ -5,7 +5,9 @@ import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurfac
 import type { MachinePageTabEntry } from './machinePageTabs';
 import type { MachinePageTabBodyProps, MachinePageTabId, MachinePageTabParams } from './machinePageTabQuery';
 
-type TabBodyBase = Omit<MachinePageTabBodyProps, 'params' | 'barAccessoryShown'>;
+import { useMachinePageOnline } from './useMachinePageTarget';
+
+type TabBodyBase = Omit<MachinePageTabBodyProps, 'params' | 'barAccessoryShown' | 'online'>;
 
 /**
  * The machine page's tab bodies under the tab bar, then the block that closes a tab's root (the page's Ask an agent).
@@ -61,11 +63,12 @@ const RetainedTabBody = React.memo(function RetainedTabBody(props: Readonly<{
     barAccessoryShown: boolean;
 }>) {
     const Body = props.entry.Body;
+    const online = useMachinePageOnline(props.body.serverId, props.body.machineId);
     return (
         <RetainedPanelSurface mode="content" isActive={props.active}
             suspendWhenHidden={props.entry.suspendWhenHidden}
             testID={`machine-page-tab-body.${props.entry.id}`}>
-            <Body {...props.body} params={props.params} barAccessoryShown={props.barAccessoryShown} />
+            <Body {...props.body} online={online} params={props.params} barAccessoryShown={props.barAccessoryShown} />
         </RetainedPanelSurface>
     );
 });

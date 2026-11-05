@@ -1,3 +1,8 @@
+import { renderHook } from '@/dev/testkit';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { useSessionMachineControlTarget, useSessionMachineControlTargetState } from '@/components/sessions/model/useSessionMachineTarget';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -150,6 +155,51 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         modalShow.mockClear();
         modalAlert.mockClear();
     });
+
+    it('updates mounted Machine controls through presence alone without replacing inventory', async () => {
+        const serverId = homes.homes.projection!.id;
+        const machine = storage.getState().machines[MACHINE_ID]!;
+        const session = storage.getState().sessions.sess_1!;
+        storage.setState({
+            sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
+            ordinarySessionListMembershipByServerId: { [serverId]: [session.id] },
+        });
+        observeMachinePresenceForTest({ serverId, accountId: 'header-account' }, [machine.id]);
+        const before = storage.getState();
+        let renders = 0;
+        const targets = await renderHook(() => {
+            renders += 1;
+            return { control: useSessionMachineControlTarget(session.id, serverId),
+                state: useSessionMachineControlTargetState(session.id, serverId) };
+        });
+        try {
+            expect(targets.getCurrent().control).toMatchObject({ machineId: machine.id, basePath: '/workspace' });
+            const mountedRenders = renders;
+            const other = createMachineFixture({ id: 'unrelated-presence-machine' });
+            for (let beat = 1; beat <= 5; beat += 1) {
+                await act(async () => {
+                    publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + beat }, []);
+                    publishMachineActivity(other, { active: false, activeAt: other.activeAt + beat }, []);
+                });
+            }
+            expect(renders).toBe(mountedRenders);
+            await act(async () => {
+                const root = storage.getState();
+                publishMachineActivity(machine, { active: false, activeAt: machine.activeAt + 5 }, []);
+                expect(storage.getState()).toBe(root);
+            });
+            expect(targets.getCurrent()).toMatchObject({ control: null, state: { status: 'unavailable' } });
+            expect(storage.getState().machines).toBe(before.machines);
+            await act(async () => {
+                const root = storage.getState();
+                publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 6 }, []);
+                expect(storage.getState()).toBe(root);
+            });
+            expect(targets.getCurrent().control).toMatchObject({ machineId: machine.id, basePath: '/workspace' });
+            expect(storage.getState().machines).toBe(before.machines);
+        } finally { await targets.unmount(); }
+    });
+
 
     // Moved from the legacy handoff suite: one normalized descriptor must have
     // the same admitted occurrence and omitted input through both UI arms.

@@ -11574,7 +11574,7 @@ const settingsOverviewTranslations = { ja: {
         aboutDescription: 'バージョン、ソースコード、法的条件（Happier は Anthropic とは提携していません）。',
         machineOnline: 'オンライン',
         machineOffline: ({ lastSeen }) => `オフライン · 最終確認 ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `この Home から接続できません · 確認 ${lastSeen}`,
+        machineUnreachableFromHome: 'この Home から接続できません',
         machineUpdateAvailable: 'アップデートあり',
         machinesOnlineCount: ({ count }) => `${count} 台オンライン`,
         machinesOfflineCount: ({ count }) => `${count} 台オフライン`,

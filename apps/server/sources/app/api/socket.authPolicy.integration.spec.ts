@@ -1,3 +1,8 @@
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { eventRouter } from '@/app/events/eventRouter';
+import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
+import { inTx } from '@/storage/inTx';
+import { createAuthenticatedTestApp } from './testkit/sqliteFastify';
 import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
@@ -1569,4 +1574,94 @@ describe("startSocket (auth policy enforcement)", () => {
             statusCode: 403,
         });
     }, 30_000);
+
+    it("makes a cleanly stopped Machine offline immediately and admits its replacement without the presence timeout", async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const installation = tweetnacl.sign.keyPair();
+        const installationId = `clean-stop-${account.id}`;
+        const machine = await db.machine.create({ data: {
+            id: `clean-stop-${account.id}`, accountId: account.id, installationId,
+            installationPublicKey: new Uint8Array(installation.publicKey), active: false,
+            metadata: encodePlainMachineStoredContent({ host: 'clean-stop', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' }) as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') { await app.close(); throw new Error('Missing socket listener'); }
+        const connect = (runtimeId: string) => ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'machine-scoped', machineId: machine.id, runtimeId,
+                startupSource: 'manual', serviceManaged: false, installationId,
+                installationPublicKey: encodeProtocolBase64(installation.publicKey, 'base64url'),
+                installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,
+                    machineId: machine.id, accountId: account.id }, privateKey: installation.secretKey }),
+            },
+        });
+        const publisher = connect('clean-stop-first');
+        const replacement = connect('clean-stop-replacement');
+        const viewer = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'user-scoped' },
+        });
+        const currentViewer = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'user-scoped',
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+        });
+        const activity: Array<Extract<EphemeralUpdate, { type: 'machine-activity' }>> = [];
+        const currentActivity: typeof activity = [];
+        currentViewer.on('ephemeral', (event: EphemeralUpdate) => {
+            if (event.type === 'machine-activity' && event.id === machine.id) currentActivity.push(event);
+        });
+        viewer.on('ephemeral', (event: EphemeralUpdate) => {
+            if (event.type === 'machine-activity' && event.id === machine.id) activity.push(event);
+        });
+        const readPresence = () => db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+        try {
+            expect(await auth.verifyTokenForRoute(token)).toMatchObject({ userId: account.id });
+            const watching = waitForConnectionSuccess(viewer); viewer.connect(); await watching;
+            await viewer.timeout(7_500).emitWithAck('ping');
+            const watchingCurrent = waitForConnectionSuccess(currentViewer); currentViewer.connect(); await watchingCurrent;
+            await currentViewer.timeout(7_500).emitWithAck('ping');
+            const connected = waitForConnectionSuccess(publisher); publisher.connect(); await connected;
+            await publisher.timeout(7_500).emitWithAck('ping');
+            let online = await readPresence();
+            expect(online.active).toBe(true);
+            await expect.poll(() => currentActivity.length).toBe(1);
+            publisher.emit('machine-alive', { machineId: machine.id, time: Date.now() });
+            await expect.poll(() => activity.length).toBe(2);
+            online = await readPresence();
+            expect(activity[1]).toEqual({ type: 'machine-activity', id: machine.id, active: true,
+                activeAt: online.lastActiveAt.getTime() });
+            expect(currentActivity).toHaveLength(1);
+            activity.pop(); // Keep the transition assertions independent of the legacy observation.
+            publisher.disconnect();
+            await expect.poll(async () => (await readPresence()).active).toBe(false);
+            expect((await readPresence()).lastActiveAt).toEqual(online.lastActiveAt);
+            await expect.poll(() => activity.filter(event => !event.active)).toEqual([
+                { type: 'machine-activity', id: machine.id, active: false, activeAt: online.lastActiveAt.getTime() },
+            ]);
+            const reconnected = waitForConnectionSuccess(replacement); replacement.connect(); await reconnected;
+            await replacement.timeout(7_500).emitWithAck('ping');
+            expect((await readPresence()).active).toBe(true);
+            await expect.poll(() => activity.map(event => event.active)).toEqual([true, false, true]);
+            // An unexpected transport loss retains the existing missed-beat grace.
+            const serverSocket = [...eventRouter.getConnections(account.id) ?? []]
+                .find(connection => connection.socket.id === replacement.id)?.socket;
+            if (!serverSocket) throw new Error('Missing admitted replacement socket');
+            const transportClosed = new Promise<void>(resolve => serverSocket.once('disconnect', () => { setImmediate(resolve); }));
+            replacement.io.engine.close();
+            await transportClosed;
+            expect((await inTx(tx => tx.machine.findUniqueOrThrow({ where: { id: machine.id } }))).active).toBe(true);
+        } finally {
+            publisher.close(); replacement.close(); viewer.close(); currentViewer.close(); await app.close();
+        }
+    }, 30_000);
+
+
+
 });

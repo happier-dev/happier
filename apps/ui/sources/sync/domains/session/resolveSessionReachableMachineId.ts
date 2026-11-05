@@ -1,4 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 
@@ -15,7 +16,7 @@ export type MachineResolutionContext = Readonly<{
 
 type MachineResolutionCandidate = Readonly<{
     id?: string | null;
-    active?: boolean;
+    active: boolean;
     activeAt?: number | null;
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
@@ -181,7 +182,7 @@ function resolveSessionReachableMachineIdWithContext(input: Readonly<{
     const canonical = resolveCanonicalMachineId(machineId, input.machineResolutionContext.machineById);
     const resolvedMachineId = canonical?.machineId ?? machineId;
     const machine = input.machineResolutionContext.machineById.get(resolvedMachineId);
-    if (!machine || machine.active !== true) return null;
+    if (!machine || !readMachineActivity(machine).active) return null;
     if (machine.revokedAt && machine.revokedAt > 0) return null;
     if (machine.replacedByMachineId) return null;
     return resolvedMachineId;

@@ -11573,7 +11573,7 @@ const settingsOverviewTranslations = { de: {
         aboutDescription: 'Version, Quellcode und rechtliche Bedingungen (Happier ist nicht mit Anthropic verbunden).',
         machineOnline: 'Online',
         machineOffline: ({ lastSeen }) => `Offline · zuletzt gesehen ${lastSeen}`,
-        machineUnreachableFromHome: ({ lastSeen }) => `Von diesem Home nicht erreichbar · gesehen ${lastSeen}`,
+        machineUnreachableFromHome: 'Von diesem Home nicht erreichbar',
         machineUpdateAvailable: 'Update verfügbar',
         machinesOnlineCount: ({ count }) => `${count} online`,
         machinesOfflineCount: ({ count }) => `${count} offline`,

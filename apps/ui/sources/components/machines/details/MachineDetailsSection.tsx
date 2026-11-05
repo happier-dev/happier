@@ -45,6 +45,12 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+function MachineLastSeenItem({ activeAt }: Readonly<{ activeAt: number | null }>) {
+    return <Item title={t('machine.lastSeen')}
+        detail={activeAt ? new Date(activeAt).toLocaleString() : t('machine.never')}
+        mode="info" showChevron={false} />;
+}
+
 /**
  * The machine's identifiers and facts (Details sub-page), then Remove machine: the irreversible action
  * closes the page, with its consequence beneath it.
@@ -52,6 +58,7 @@ const styles = StyleSheet.create((theme) => ({
 export const MachineDetailsSection = React.memo(function MachineDetailsSection(props: Readonly<{
     machine: Machine;
     serverId: string;
+    lastSeenAtOnOpen?: number | null;
 }>) {
     const router = useRouter();
     const door = useMachinesDoor();
@@ -157,12 +164,7 @@ export const MachineDetailsSection = React.memo(function MachineDetailsSection(p
                         showChevron={false}
                     />
                 )}
-                <Item
-                    title={t('machine.lastSeen')}
-                    detail={machine.activeAt ? new Date(machine.activeAt).toLocaleString() : t('machine.never')}
-                    mode="info"
-                    showChevron={false}
-                />
+                <MachineLastSeenItem activeAt={props.lastSeenAtOnOpen ?? machine.activeAt} />
                 <Item
                     title={t('machine.metadataVersion')}
                     detail={String(machine.metadataVersion)}

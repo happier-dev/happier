@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createRenderCommitCounter, renderHook, useRenderCommitCounter } from '@/dev/testkit';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { act } from 'react-test-renderer';
-import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { isMachineReachable, recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { storage } from '@/sync/domains/state/storageStore';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const capabilityBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -76,6 +81,41 @@ async function renderMachineRefreshState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachineRefreshState', () => {
+    it('prefetches wizard capabilities after retained Machine recovery without waking on heartbeats', async () => {
+        const account = await restoreServerAccountForTest({ serverUrl: 'https://wizard-machine-recovery.test', accountId: 'wizard-account' });
+        const machine = createMachineFixture({ id: 'wizard-recovered', active: false, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        storage.getState().applyMachines([machine], true, { sourceServerId: account.serverId });
+        observeMachinePresenceForTest({ serverId: account.serverId, accountId: 'wizard-account' }, [machine.id]);
+        const counter = createRenderCommitCounter();
+        capabilityBoundary.rpc.mockResolvedValue({ protocolVersion: 1, results: {} });
+        const params: HookParams = {
+            capabilityServerId: account.serverId, selectedMachineId: machine.id, machines: [machine],
+            recentMachinePaths: [], favoriteMachines: [], useEnhancedSessionWizard: true,
+            refreshMachineEnvPresence: () => {}, sessions: [],
+        };
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            const refresh = useNewSessionMachineRefreshState(params);
+            const { binding } = useServerCredentialAccountScopeBinding(account.serverId);
+            return { refresh, binding };
+        });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().binding?.isCurrent()).toBe(true));
+            expect(isMachineReachable(hook.getCurrent().binding!.scope, machine)).toBe(false);
+            capabilityBoundary.rpc.mockClear();
+            await act(async () => publishMachineActivity(machine, { active: true, activeAt: Date.now() + 1 }, []));
+            expect(isMachineReachable(hook.getCurrent().binding!.scope, machine)).toBe(true);
+            await vi.waitFor(() => expect(capabilityBoundary.rpc).toHaveBeenCalled());
+            counter.reset();
+            await act(async () => publishMachineActivity(machine, { active: true, activeAt: Date.now() + 2 }, []));
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+        } finally {
+            await hook.unmount();
+            capabilityBoundary.rpc.mockReset();
+            await account.dispose();
+        }
+    });
+
     it.each([
         { useEnhancedSessionWizard: false, focused: true },
         { useEnhancedSessionWizard: true, focused: false },

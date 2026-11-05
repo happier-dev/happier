@@ -23,7 +23,7 @@ import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
 import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { managedCreationState } from '@/components/settings/machines/managed/managedCreationPresentation';
+import { isManagedMachineResourceAbsent, managedCreationState } from '@/components/settings/machines/managed/managedCreationPresentation';
 import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { readWorkStatusPresentationRank } from './workStatusRank';
@@ -167,6 +167,37 @@ export type WorkStatusInput =
     | Readonly<{ kind: 'agent_activity'; facts: Readonly<{ status: AgentActivityStatusV1; isActive?: boolean; word: string }> }>;
 
 type StatusShape = Readonly<{ bucket: WorkStatusBucket; tone: WorkStatusTone }>;
+
+/** Native lifecycle overrides connectivity; callers may retain only this rendered result. */
+export function resolveManagedMachineWorkStatus(facts: Pick<Extract<WorkStatusInput, { kind: 'machine' }>['facts'],
+    'online' | 'managedMachine' | 'machineId' | 'revokedAt'>): WorkStatusPresentation | null {
+    const managed = facts.managedMachine;
+    const hasManagedOwner = managed?.creationState === 'active' && managed.archivedAt === undefined
+        && !(typeof facts.revokedAt === 'number' && facts.revokedAt > 0) && facts.machineId
+        && managed.enrolledMachineId === facts.machineId;
+    if (!hasManagedOwner) return null;
+    // Native removal settles the resource even while a retained heartbeat describes its former daemon.
+    if (isManagedMachineResourceAbsent(managed)) {
+        return workStatus('resource_absent', { bucket: 'needs_you', tone: 'attention' }, t('managedPower.resourceAbsent'), 'blocked');
+    }
+    const lifecycle = managedCreationState(managed);
+    if (lifecycle.kind === 'stopPending') return workStatus('stopping', { bucket: 'working', tone: 'neutral' }, t('managedPower.stopPending'));
+    if (lifecycle.kind === 'cleanupUnknown') return workStatus('cleanup_unknown', { bucket: 'needs_you', tone: 'attention' }, t('managedMachines.cleanup.unknownCause'), 'blocked');
+    if (!facts.online) {
+        const observation = managed.observation;
+        if (observation?.storage === 'lost') return workStatus('storage_lost', { bucket: 'needs_you', tone: 'attention' }, t('managedPower.volumeLost'), 'blocked');
+        if (!observation || observation.availability !== 'present') return workStatus('unknown', { bucket: 'idle', tone: 'neutral' }, t('status.unknown'));
+        const wakeState = resolveManagedMachineWakeStateV1(managed, facts.machineId);
+        if (wakeState === 'starting') {
+            return workStatus('starting', { bucket: 'working', tone: 'neutral' }, t('managedWake.starting', { machine: managed.launch.name }));
+        }
+        if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
+            return workStatus(observation.power, { bucket: 'idle', tone: 'neutral' }, wakeState === 'asleep' ? t('managedPower.asleep')
+                : t(`managedMachines.detail.power.${observation.power}`));
+        }
+    }
+    return null;
+}
 
 /** Semantic tokens only; the shared status renderer owns their drawing. */
 function statusGlyph(state: string, bucket: WorkStatusBucket, tone: WorkStatusTone): WorkStatusPresentation['glyph'] {
@@ -356,34 +387,9 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         }
         case 'machine': {
             const { online, needsYouCount, runningSessionCount, word } = input.facts;
-            const managed = input.facts.managedMachine;
-            const hasManagedOwner = managed?.creationState === 'active' && managed.archivedAt === undefined
-                && !(typeof input.facts.revokedAt === 'number' && input.facts.revokedAt > 0) && input.facts.machineId
-                && managed.enrolledMachineId === input.facts.machineId;
-            if (hasManagedOwner) {
-                // Consume Lane 12's existing lifecycle projection, including native
-                // refusal/uncertainty; connectivity is not the native intent owner.
-                const lifecycle = managedCreationState(managed);
-                if (lifecycle.kind === 'stopPending') return workStatus('stopping', { bucket: 'working', tone: 'neutral' }, t('managedPower.stopPending'));
-                if (lifecycle.kind === 'cleanupUnknown') return workStatus('cleanup_unknown', { bucket: 'needs_you', tone: 'attention' }, t('managedMachines.cleanup.unknownCause'), 'blocked');
-            }
+            const managed = resolveManagedMachineWorkStatus(input.facts);
+            if (managed) return managed;
             if (!online) {
-                if (hasManagedOwner) {
-                    const observation = managed.observation;
-                    if (managed.allocation === 'confirmed-absent' || observation?.availability === 'absent') {
-                        return workStatus('resource_absent', { bucket: 'needs_you', tone: 'attention' }, t('managedPower.resourceAbsent'), 'blocked');
-                    }
-                    if (observation?.storage === 'lost') return workStatus('storage_lost', { bucket: 'needs_you', tone: 'attention' }, t('managedPower.volumeLost'), 'blocked');
-                    if (!observation || observation.availability !== 'present') return workStatus('unknown', { bucket: 'idle', tone: 'neutral' }, t('status.unknown'));
-                    const wakeState = resolveManagedMachineWakeStateV1(managed, input.facts.machineId);
-                    if (wakeState === 'starting') {
-                        return workStatus('starting', { bucket: 'working', tone: 'neutral' }, t('managedWake.starting', { machine: managed.launch.name }));
-                    }
-                    if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
-                        return workStatus(observation.power, { bucket: 'idle', tone: 'neutral' }, wakeState === 'asleep' ? t('managedPower.asleep')
-                            : t(`managedMachines.detail.power.${observation.power}`));
-                    }
-                }
                 return workStatus(online === null ? 'unknown' : 'disconnected', { bucket: online === null ? 'idle' : 'offline', tone: 'neutral' }, word);
             }
             if (needsYouCount > 0) return workStatus('action_required', { bucket: 'needs_you', tone: 'attention' }, word, 'decision');

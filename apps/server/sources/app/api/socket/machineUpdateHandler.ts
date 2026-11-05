@@ -123,14 +123,14 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
             if (machine.accountId !== userId || classifyMachineAvailabilityState(machine) !== 'available'
                 || !hasCurrentMachineSocketInstallation(socket, machine.installationId)) return null;
         }
-        return { recipientAccountIds: await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
+        return { recipientAccountIds: machine.active ? [] : await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId),
             wasOffline: !machine.active, lastActiveAt: machine.lastActiveAt };
     }, input.continuingBeat ? {
         installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data), isCurrent,
     } : undefined);
     if (!presence) { activityCache.invalidateMachine(machineId); return; }
-    // Semantic beats renew the deadline and the released reader's content-free
-    // liveness fact. Reconnect/work hints do not turn that fact into content.
+    // Ordinary beats only renew reachability. Transitions and changed work facts
+    // publish their separate content-free notifications.
     await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
         input.workSummaryChanged === true);
     if (!input.continuingBeat) {

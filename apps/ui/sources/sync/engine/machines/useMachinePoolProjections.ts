@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { shallow } from 'zustand/shallow';
 import type { MachineKind } from '@happier-dev/protocol/machines/machineKind';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
@@ -17,6 +18,8 @@ import {
     useMachinePoolListStatusByServerId,
 } from '@/sync/domains/state/storage';
 import type { MachinePoolListStatus } from '@/sync/store/domains/machinePools';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useMachinePoolProjectionSync } from './machinePoolSyncRuntime';
 
@@ -27,7 +30,7 @@ import { useMachinePoolProjectionSync } from './machinePoolSyncRuntime';
 export type MachinePoolProjectionMachine = Readonly<{
     id: string;
     kind?: MachineKind;
-    active?: boolean;
+    active: boolean;
     activeAt?: number;
     updatedAt?: number;
     revokedAt?: number | null;
@@ -73,7 +76,7 @@ function buildMachineLifecycleRevisionKey(scope: MachinePoolProjectionScope): st
     return scope.machines.map((machine) => [
             machine.id,
             machine.kind ?? '',
-            machine.active === true ? '1' : '0',
+            readMachineActivity(machine).active ? '1' : '0',
             machine.revokedAt ?? '',
             machine.replacedByMachineId ?? '',
         ].join(':')).join('|');
@@ -104,6 +107,11 @@ export function useMachinePoolProjections(
         scopeIds,
         MACHINE_POOL_CREDENTIAL_SCOPE_LIFECYCLE,
     );
+    const readMachines = React.useCallback(() => scopes.flatMap(scope => scope.machines), [scopes]);
+    const readLifecycleKeys = React.useCallback(() => scopes.map(buildMachineLifecycleRevisionKey), [scopes]);
+    const presenceTargets = React.useMemo(() => scopes.map(scope => ({ serverId: scope.serverId,
+        machineIds: scope.machines.map(machine => machine.id) })), [scopes]);
+    const lifecycleKeys = useMachinePresenceSnapshot(readMachines, readLifecycleKeys, presenceTargets, shallow);
 
     const projections = React.useMemo<readonly MachinePoolProjection[]>(() => scopes.map((scope, index) => {
         const scopeId = scopeIds[index] ?? scope.serverId;
@@ -166,7 +174,7 @@ export function useMachinePoolProjections(
         const accountScope = accountScopes.get(scopeId);
         return {
             serverId: scopeId,
-            machineRevisionKey: buildMachineLifecycleRevisionKey(scopes[index]!),
+            machineRevisionKey: lifecycleKeys[index]!,
             transportEnabled: projection.featureEnabled,
             // A signed-out or failed Home keeps its last-known rows visible but inert. Those states
             // recover from the canonical credential/Home-change lifecycle, not from a render-driven
@@ -179,7 +187,7 @@ export function useMachinePoolProjections(
                 )
                 && (poolListStatusByServerId[scopeId] ?? 'idle') === 'idle',
         };
-    }), [accountScopes, poolAccountIdByServerId, poolListByServerId, projections, scopeIds, scopes]);
+    }), [accountScopes, lifecycleKeys, poolAccountIdByServerId, poolListByServerId, projections, scopeIds]);
     // Every visible Home participates in the shared feature/currentness wake, while Pool transport
     // itself is admitted only after the Home positively advertises it. This lets a live Home move
     // from unsupported/disabled to enabled without a remount or an unsupported speculative Action.

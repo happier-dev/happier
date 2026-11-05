@@ -398,6 +398,10 @@ export type EphemeralEvent = SessionPersonalEventEphemeralV1 | PendingActivation
     id: string;
     active: boolean;
     activeAt: number;
+    reconnected?: true;
+} | {
+    type: 'machine-work-summary-changed';
+    machineId: string;
 } | Extract<EphemeralUpdate, { type: 'usage' }> | {
     /**
      * Content-free invalidation: a new immutable usage fact was recorded for this

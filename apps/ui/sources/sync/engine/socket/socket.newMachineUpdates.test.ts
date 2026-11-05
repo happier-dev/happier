@@ -26,8 +26,25 @@ import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateC
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { subscribeActivityLocalNotifications } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
+import { isMachineOnlineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
 const initialStorageState = storage.getState();
+describe('Machine work-summary socket facts', () => {
+    it('wakes summary demand only for a genuine work fact from its current Home', async () => {
+        const updates: unknown[] = [];
+        const release = subscribeMachineUpdates((serverId, machineIds, facts) => updates.push({ serverId, machineIds, facts }), { workSummary: true });
+        try {
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-b',
+                update: { type: 'machine-work-summary-changed', machineId: 'machine' } }));
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-a', shouldContinue: () => false,
+                update: { type: 'machine-work-summary-changed', machineId: 'machine' } }));
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-b',
+                update: { type: 'machine-activity', id: 'machine', active: true, activeAt: Date.now(), workSummaryChanged: true } }));
+            expect(updates).toEqual([{ serverId: 'home-b', machineIds: ['machine'], facts: { workSummaryChanged: true } }]);
+        } finally { release(); }
+    });
+});
 describe('committed usage source wake', () => {
     it('invalidates source readers after a content-free harvest settlement and rejects retired ingress', async () => {
         const homes: string[] = [];
@@ -287,6 +304,23 @@ describe('socket update handling: new-machine', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
     });
+
+    it('keeps a new Home-owned Machine online while full census hydration is pending', async () => {
+        await handleUpdateContainer({ ...buildBaseParams({ encryption: null, readAccountMode: async () => 'plain' }),
+            updateData: { id: 'presence-hint', seq: 1, createdAt: 100_000, body: {
+                t: 'new-machine', machineId: 'presence-hint-machine', seq: 1,
+                metadata: '{}', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                active: true, activeAt: 100_000, presenceProtocolVersion: 1,
+                createdAt: 100_000, updatedAt: 100_000,
+            } },
+        });
+        const machine = storage.getState().machines['presence-hint-machine'];
+        expect(machine).toBeDefined();
+        expect(isMachineOnlineV1(machine!, 160_001)).toBe(true);
+        expect(isMachineOnlineV1({ ...machine!, active: false }, 100_001)).toBe(false);
+    });
+
 
     it('rejects a legacy Plain marker when the owning Account is E2EE', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(17));

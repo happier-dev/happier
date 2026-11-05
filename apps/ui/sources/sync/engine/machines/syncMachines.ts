@@ -55,6 +55,7 @@ export type MachineDataKeyCacheEntry = Readonly<{
 type MachineIdentityFields = Pick<
     Machine,
     | 'kind'
+    | 'presenceProtocolVersion'
     | 'replacedByMachineId'
     | 'replacedAt'
     | 'replacementReason'
@@ -90,6 +91,7 @@ export type FetchedMachineRow = Readonly<{
     seq: number;
     active: boolean;
     activeAt: number;
+    presenceProtocolVersion?: 1;
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;
@@ -133,6 +135,7 @@ function readMachineIdentityFields(source: MachineIdentityFieldSource): MachineI
     const accepted = capabilities.success && typeof revision === 'number' && Number.isInteger(revision) && revision > 0;
     return {
         kind: MachineKindFromLegacyProjectionSchema.parse(source.kind),
+        ...(source.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
         replacedByMachineId: source.replacedByMachineId ?? null,
         replacedAt: source.replacedAt ?? null,
         replacementReason: source.replacementReason ?? null,

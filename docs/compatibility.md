@@ -2,6 +2,70 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Home-owned Machine presence (unreleased 0.3)
+
+Home stamps `presenceProtocolVersion: 1` on published Machine rows. This additive
+projection selects authoritative pushed online/offline presence independently of
+the daemon's operation capabilities. A 0.2 daemon therefore uses the same Home
+presence authority as a 0.3 daemon. No persisted field or migration is needed.
+
+The daemon sends a heartbeat every 50 seconds. This cadence replaces the initial
+60-second owner decision to leave margin below released 0.2 clients' 60-second
+grace. Each steady beat updates its Machine row once and renews the existing
+offline deadline. With only current clients attached there is no audience read
+or client presence delivery. The default deadline remains three intervals:
+150 seconds after the last received beat, subject to the existing operator
+override. Home pushes one observation per recipient on each online/offline
+transition; the offline observation retains the last stored `activeAt`.
+An explicit clean socket disconnect persists Offline immediately and releases
+the publisher claim before pushing the transition. An unexpected
+transport loss retains the missed-heartbeat deadline.
+
+Live Machines have no client expiry timer. A failed request can say “Unreachable
+from this Home” without a ticking last-seen label. Offline labels use the retained
+last-active time. Opening a Machine page or popover pulls that timestamp once;
+periodic heartbeats cause no current-client UI work. The existing keyed activity owner publishes
+presence transitions without replacing inventory rows or lists.
+
+A 0.2 Home omits the projection marker, retaining its existing UI heartbeat grace
+and shared runtime clock. Its ten-minute default Machine timeout accommodates a
+0.3 daemon's 50-second cadence. A 0.2 UI connected to a 0.3 Home receives the real
+stored observation on each beat. Home identifies these sockets by the existing
+stored-content handshake's `legacy-missing` result: released 0.2 sync clients send
+no declaration, while current 0.3 clients send the current declaration. No new
+feature gate or client-dependent daemon cadence is introduced. Each Home indexes
+its local legacy sockets at connection admission; only Homes with such sockets
+resolve the current Machine audience. Clustered Homes forward each steady
+observation through their existing server-side transport so legacy readers on a
+different replica receive it; current clients receive transitions only.
+
+| Daemon | Home | UI | Presence delivery |
+| --- | --- | --- | --- |
+| 0.3 | 0.3 | 0.3 | Home marker; transitions only; no client expiry |
+| 0.3 | 0.2 | 0.2 or 0.3 | Real 50s observations; released 60s grace |
+| 0.2 | 0.3 | 0.2 | Released daemon cadence; legacy-only real observations |
+| 0.3 | 0.3 | 0.2 | Real 50s observations only to legacy sockets |
+| 0.2 | 0.3 | 0.3 | Home marker; transitions only |
+
+The 50-second cadence leaves 10 seconds for delay before the released helper's
+grace expires; a delay exceeding that margin can still cause a visible legacy
+flip. No synthetic timestamp, lease or 0.2 backport changes this behavior.
+Revocation and request-failure verdicts retain their precedence. Earlier
+undeployed 0.3 capability negotiation is removed rather than maintained as a
+second presence authority.
+
+
+
+Mounted development work-summary readers refresh from the live inventory's
+existing `subscribeFacts` publication. Its content-free `workSummaryChanged`
+hint travels through `machine-alive` → `machine-work-summary-changed`;
+ordinary heartbeats carry no work invalidation. Only a mounted exact-Machine
+summary subscriber reads in response, and a fact received during a pending read
+causes one trailing read. Counts and requester identities remain in the admitted
+summary response, never in presence, Machine content or a persisted counter.
+Older readers safely ignore the separate ephemeral; older producers omit it,
+leaving explicit refresh and connection/access recovery available.
+
 ## Software first-presence provenance (unreleased 0.3)
 
 Software Apply records the executing native interpreter's presence observation

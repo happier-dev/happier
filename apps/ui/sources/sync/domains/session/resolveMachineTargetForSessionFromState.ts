@@ -19,6 +19,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerScopedMachineInventory, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 type MachineTargetLikeState = SessionListLookupStateLike & Readonly<{
     sessions?: Record<string, {
@@ -111,7 +112,7 @@ function resolveUniqueActiveMachineByHost(
     if (!host) return null;
     const matches = machineCollectionValues(machines).filter((machine) => {
         const machineHost = normalizeNonEmptyString(machine.metadata?.host);
-        return machine.active === true
+        return readMachineActivity(machine).active
             && !machine.revokedAt
             && !machine.replacedByMachineId
             && machineHost === host;
@@ -124,22 +125,22 @@ function resolveUniqueActiveMachineByLocality(input: Readonly<{
     sessionHost: string | null;
     sessionHomeDir: string | null;
 }>): Machine | null {
-    if (!input.sessionHost || !input.sessionHomeDir) return null;
+    const { sessionHost, sessionHomeDir } = input;
+    if (!sessionHost || !sessionHomeDir) return null;
     const matches = machineCollectionValues(input.machines).filter((machine) => {
-        const machineHost = normalizeNonEmptyString(machine.metadata?.host);
-        const machineHomeDir = normalizeNonEmptyString(machine.metadata?.homeDir);
-        return machine.active === true
+        return readMachineActivity(machine).active
             && !machine.revokedAt
             && !machine.replacedByMachineId
-            && isSameMachineLocality({
-                sessionHost: input.sessionHost,
-                sessionHomeDir: input.sessionHomeDir,
-                currentHost: machineHost,
-                currentHomeDir: machineHomeDir,
-                homeDir: machineHomeDir,
-            });
+            && isMachineAtSessionLocality(machine, sessionHost, sessionHomeDir);
     });
     return matches.length === 1 ? matches[0] ?? null : null;
+}
+
+function isMachineAtSessionLocality(machine: Machine, sessionHost: string, sessionHomeDir: string): boolean {
+    const machineHomeDir = normalizeNonEmptyString(machine.metadata?.homeDir);
+    return isSameMachineLocality({ sessionHost, sessionHomeDir,
+        currentHost: normalizeNonEmptyString(machine.metadata?.host),
+        currentHomeDir: machineHomeDir, homeDir: machineHomeDir });
 }
 
 function readSessionTargetInputForMetadata(
@@ -321,6 +322,30 @@ function readPrivateSessionTargetInput(state: SessionMachineTargetState, session
     return readPrivateSessionTargetInputs(state, sessionId)[0] ?? null;
 }
 
+/** The retained rows whose liveness can change this Session's RPC/control target. */
+export function readSessionMachineTargetActivityInputs(
+    state: SessionMachineTargetState,
+    target: SessionMachineTargetIdentity,
+): readonly Machine[] {
+    const machines = new Set<Machine>();
+    for (const input of readSessionTargetInputs(state, target)) {
+        const direct = resolveSessionDisplayTarget(input);
+        const directMachine = direct && findMachineInCollection(input.machines, direct.machineId);
+        if (directMachine) machines.add(directMachine);
+        const host = normalizeNonEmptyString(input.metadata?.host);
+        const homeDir = normalizeNonEmptyString(input.metadata?.homeDir);
+        const usesLegacyHost = !input.sessionMachineId && !input.projectMachineId;
+        const usesLocality = Boolean(input.sessionMachineId && homeDir);
+        if (!host || (!usesLegacyHost && !usesLocality)) continue;
+        for (const machine of machineCollectionValues(input.machines)) {
+            if (machine.revokedAt || machine.replacedByMachineId) continue;
+            if (usesLegacyHost ? normalizeNonEmptyString(machine.metadata?.host) === host
+                : homeDir && isMachineAtSessionLocality(machine, host, homeDir)) machines.add(machine);
+        }
+    }
+    return [...machines];
+}
+
 export function resolveMachineTargetForSessionFromState(
     state: SessionMachineTargetState,
     target: SessionMachineTargetIdentity,
@@ -356,7 +381,7 @@ function hasKnownUnavailableMachineState(machine: Machine | undefined): boolean 
     if (!machine) return false;
     if (machine.revokedAt && machine.revokedAt > 0) return true;
     if (machine.replacedByMachineId) return true;
-    return machine.active !== true;
+    return !readMachineActivity(machine).active;
 }
 
 function hasConflictingDirectSessionMachine(input: ReturnType<typeof readPrivateSessionTargetInput>): boolean {

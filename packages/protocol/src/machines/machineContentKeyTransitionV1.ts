@@ -85,6 +85,7 @@ const MachinePublishedRowCanonicalV1Schema = lazyZodSchema(() => z.strictObject(
   seq: z.optional(z.number().check(z.int(), z.nonnegative())),
   active: z.optional(z.boolean()),
   activeAt: z.optional(z.number()),
+  presenceProtocolVersion: z.optional(z.literal(1)),
   revokedAt: z.optional(z.nullable(z.number())),
   createdAt: z.optional(z.number()),
   updatedAt: z.optional(z.number()),

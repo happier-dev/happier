@@ -47,6 +47,11 @@ export function serializeMachineKeyBasis(
     };
 }
 
+/** Every Home Machine projection carries the same liveness authority. */
+export function serializeMachinePresence(row: Readonly<{ active: boolean; lastActiveAt: Date }>) {
+    return { active: row.active, activeAt: row.lastActiveAt.getTime(), presenceProtocolVersion: 1 as const };
+}
+
 export function serializeMachineRow(
     row: MachineSerializationRow,
     options: Readonly<{
@@ -124,12 +129,21 @@ export function serializeMachineRow(
         replacementSource: row.replacementSource ?? null,
         replacementActorUserId: row.replacementActorUserId ?? null,
         seq: row.seq,
-        active: row.active,
-        activeAt: row.lastActiveAt.getTime(),
+        ...serializeMachinePresence(row),
         revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
     };
+}
+
+/** Finite host selection consumes admitted identity, access and presence, never private bodies or wrapping keys. */
+export function serializeMachineHostFacts(
+    row: Pick<MachineSerializationRow, 'id' | 'kind' | 'active' | 'lastActiveAt' | 'revokedAt' | 'replacedByMachineId'>,
+    access: AccessibleMachineAccessV1,
+) {
+    return { id: row.id, kind: MachineKindFromLegacyProjectionSchema.parse(row.kind), ...serializeMachinePresence(row),
+        revokedAt: row.revokedAt?.getTime() ?? null,
+        replacedByMachineId: row.replacedByMachineId ?? null, access };
 }
 
 /** Access is server-derived; foreign rows carry only their own current resource envelope. */

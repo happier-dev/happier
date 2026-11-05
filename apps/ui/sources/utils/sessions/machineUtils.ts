@@ -1,4 +1,5 @@
-import { DEFAULT_MACHINE_ONLINE_GRACE_MS, isMachineOnlineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { DEFAULT_MACHINE_ONLINE_GRACE_MS, isMachineOnlineV1, readMachinePresenceNextRefreshAtMsV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
 let cachedGraceEnvRaw: string | null = null;
 let cachedGraceEnvMs: number = DEFAULT_MACHINE_ONLINE_GRACE_MS;
@@ -24,27 +25,17 @@ export function readMachineOnlineGraceMsFromEnv(): number {
 }
 
 export function isMachineOnline(
-    machine: Readonly<{
-        active: boolean;
-        activeAt?: number | null;
-        revokedAt?: number | null;
-    }>,
+    machine: MachinePresenceV1,
     nowMs: number = Date.now(),
 ): boolean {
-    return isMachineOnlineV1(machine, nowMs, readMachineOnlineGraceMsFromEnv());
+    const activity = readMachineActivity(machine);
+    return isMachineOnlineV1({ ...machine, active: activity.active, activeAt: activity.activeAt }, nowMs, readMachineOnlineGraceMsFromEnv());
 }
 
-/** Next presentation change from these presence facts, using the same grace owner as online status. */
-export function readMachineStatusNextRefreshAtMs(
-    machine: Parameters<typeof isMachineOnline>[0],
-    nowMs: number,
-): number | null {
-    if (!isMachineOnline(machine, nowMs)) return null;
-    const graceMs = readMachineOnlineGraceMsFromEnv();
-    const activeAt = machine.activeAt;
-    if (graceMs <= 0 || typeof activeAt !== 'number' || !Number.isFinite(activeAt) || activeAt === 0) return null;
-    const expiresAtMs = activeAt + graceMs + 1;
-    return expiresAtMs > nowMs ? expiresAtMs : null;
+/** Legacy Homes retain the canonical grace boundary; Home-owned presence never arms a client clock. */
+export function readMachineStatusNextRefreshAtMs(machine: MachinePresenceV1, nowMs: number): number | null {
+    const activity = readMachineActivity(machine);
+    return readMachinePresenceNextRefreshAtMsV1({ ...machine, ...activity }, nowMs, readMachineOnlineGraceMsFromEnv());
 }
 
 export type MachinePresenceCounts = Readonly<{ online: number; offline: number; unknown: number }>;

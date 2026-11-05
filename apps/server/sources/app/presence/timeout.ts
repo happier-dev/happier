@@ -21,8 +21,8 @@ import {
 import { expireSessionPublisherCandidates } from "./sessionPublisherPresence";
 import { emitPendingActivationHint } from "@/app/session/pending/publishPendingMutation";
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
-import { lockMachinePresenceInTx, markMachinePresenceInactive } from './persistMachinePresence';
-import { inTx } from '@/storage/inTx';
+import { lockMachinePresenceInTx, markMachinePresenceInactive, type MachinePresenceRow } from './persistMachinePresence';
+import { inTx, type Tx } from '@/storage/inTx';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import type { PresenceDeadlineNotification } from './presenceDeadlineNotification';
 import { retainMachinePresenceTransitionInTx } from './machinePresenceTransitions';
@@ -76,6 +76,30 @@ async function publishInactiveMachines(machines: Array<TimedOutPresenceCandidate
     await submitMachineRemoteAlerts({ machines: machines.map(machine => ({ machineId: machine.id, accountId: machine.accountId })), phase: 'offline' });
 }
 
+async function persistMachineOfflineInTx(tx: Tx, machine: MachinePresenceRow) {
+    if (await markMachinePresenceInactive(tx, { accountId: machine.accountId, machineId: machine.id,
+        lastActiveAt: machine.lastActiveAt }) !== 1) return null;
+    const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
+    await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
+        occurredAt: Date.now(), recipientAccountIds });
+    return { ...machine, recipientAccountIds };
+}
+
+/** A graceful publisher withdrawal uses the same offline transition as deadline expiry. */
+export async function recordMachineCleanDisconnect(
+    identity: Readonly<{ accountId: string; machineId: string }>,
+    isCurrentPublisher: () => Promise<boolean>,
+    releasePublisher: () => Promise<void>,
+): Promise<void> {
+    const machine = await inTx(async tx => {
+        const current = await lockMachinePresenceInTx(tx, identity.machineId);
+        if (!current || current.accountId !== identity.accountId || !current.active
+            || current.revokedAt || current.replacedByMachineId || !await isCurrentPublisher()) return null;
+        return persistMachineOfflineInTx(tx, current);
+    }).finally(releasePublisher);
+    if (machine) await publishInactiveMachines([machine]);
+}
+
 /** One real deadline per observed Machine; peer renewals are read at expiry. */
 export function createMachinePresenceDeadlineOwner(timeoutMs = resolvePresenceTimeoutConfig().machineTimeoutMs) {
     const timers = new Map<string, { deadline: number; timer: NodeJS.Timeout }>();
@@ -109,13 +133,8 @@ export function createMachinePresenceDeadlineOwner(timeoutMs = resolvePresenceTi
                     if (!machine || !machine.active
                         || machine.revokedAt || machine.replacedByMachineId) return null;
                     if (machine.lastActiveAt.getTime() + timeoutMs > Date.now()) return { kind: 'renewed' as const, machine };
-                    if (await markMachinePresenceInactive(tx, { accountId: machine.accountId, machineId: machine.id,
-                        lastActiveAt: machine.lastActiveAt }) !== 1) return null;
-                    const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
-                    await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
-                        occurredAt: Date.now(), recipientAccountIds });
-                    return { kind: 'expired' as const, machine: { ...machine,
-                        recipientAccountIds } };
+                    const expired = await persistMachineOfflineInTx(tx, machine);
+                    return expired ? { kind: 'expired' as const, machine: expired } : null;
                 });
             }).then(async result => {
                 // A publication failure after commit is deliberately not

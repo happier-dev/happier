@@ -267,6 +267,13 @@ export function createMachineSocketOwnershipRegistry(params: Readonly<{
     }
 
     return {
+        /** Compares the accepted claim before Socket.IO makes its namespace socket live. */
+        async isOwner(identity: Readonly<{ accountId: string; machineId: string; socketId: string }>): Promise<boolean> {
+            const key = resolveOwnershipKey(identity);
+            const owner = params.config.enabled ? await readRedisOwner(key) : localOwners.get(key);
+            return owner?.socketId === identity.socketId;
+        },
+
         /** The existing lease is the authority; a partial room census cannot choose a new owner. */
         async readOwner(identity: Readonly<{ accountId: string; machineId: string }>): Promise<MachineSocketOwnerSnapshot | null> {
             const key = resolveOwnershipKey(identity);

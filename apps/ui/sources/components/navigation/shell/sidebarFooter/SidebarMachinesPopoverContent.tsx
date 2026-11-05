@@ -5,7 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark, HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { useMachineCollection } from '@/components/settings/machines/collection/useMachineCollection';
+import { useMachineLastSeenOnOpen } from '@/hooks/machine/useMachineLastSeenOnOpen';
+import { useMachineCollection, useMachineCollectionPresenceRows, useMachineCollectionRowPresence } from '@/components/settings/machines/collection/useMachineCollection';
 import { MachinePresenceCounts } from '@/components/machines/MachinePresenceCounts';
 import { useMachineAddPaths, useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import {
@@ -35,7 +36,6 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceRefreshing, useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import type { MachineResourceKey } from '@/sync/domains/machines/resources/machineRpc';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -106,20 +106,13 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         rows: section.rows.filter(row => row.kind !== 'machine' || !needsYouKeys.has(JSON.stringify([row.serverId, row.machineId]))),
     }), [collection.sections, needsYouKeys]);
     const machineCount = sections.reduce((count, section) => count + section.rows.length, 0) + needsYouKeys.size;
-    // Counted by the one presence owner (the rail tooltip and Home's Machines section count the same way).
-    const counts = React.useMemo(() => collection.sections.flatMap(section => section.rows).reduce((result, row) => {
-        if (row.kind !== 'machine') return result;
-        if (row.online) result.online += 1;
-        else if (row.status === 'offline') result.offline += 1;
-        else result.unknown += 1;
-        return result;
-    }, { online: 0, offline: 0, unknown: 0 }), [collection.sections]);
     // Values are live only while the popover is open: one batched demand for the online machines it lists.
     const summary = useMachineSummarySettingValue();
-    const demandKeys = React.useMemo((): MachineResourceKey[] => collection.sections.filter(section => !section.archived).flatMap(section => section.rows)
-        .filter(row => row.online && row.kind === 'machine')
-        .map(row => ({ serverId: row.serverId, machineId: row.kind === 'machine' ? row.machineId : '' })), [collection.sections]);
-    useMachineResourceLiveDemand(demandKeys, { detail: 'summary', enabled: summary.metrics.length > 0 || needsYouKeys.size > 0 });
+    const presenceRows = React.useMemo(() => collection.sections.filter(section => !section.archived).flatMap(section => section.rows), [collection.sections]);
+    const demandKeys = React.useMemo(() => presenceRows
+        .filter(row => row.kind === 'machine')
+        .map(row => ({ serverId: row.serverId, machineId: row.kind === 'machine' ? row.machineId : '' })), [presenceRows]);
+    useMachineLastSeenOnOpen(demandKeys);
     const refreshing = useMachineResourceRefreshing(demandKeys);
     const [customizing, setCustomizing] = React.useState(false);
 
@@ -214,12 +207,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
             subheader={(
                 <>
                     {/* A summary that stopped answering says how old it is, with Retry, where the counts stand. */}
-                    <MachineSummaryFreshnessLine machineKeys={demandKeys} fallback={(
-                        <View style={styles.counts}>
-                            <MachinePresenceCounts testID="sidebar-machines-presence" counts={counts} />
-                            <WorkingTotal />
-                        </View>
-                    )} />
+                    <PopoverPresence rows={presenceRows} demandEnabled={summary.metrics.length > 0 || needsYouKeys.size > 0} />
                     {/* With one machine there is nothing to summarise: its row is the summary. */}
                     {machineCount > 1 ? (
                         <HappierPressable
@@ -328,13 +316,35 @@ const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props:
  * saying why ("Offline · last seen yesterday", "Asleep · …"), which closes the name's line, or sits under it
  * when the two cannot share the line.
  */
+/** Only the aggregate badge and demand leaf observe the whole fleet's presence. */
+function PopoverPresence(props: Readonly<{ rows: readonly MachineCollectionRow[]; demandEnabled: boolean }>) {
+    const rows = useMachineCollectionPresenceRows(props.rows);
+    const counts = React.useMemo(() => rows.reduce((result, row) => {
+        if (row.kind !== 'machine') return result;
+        if (row.online) result.online += 1;
+        else if (row.status === 'offline') result.offline += 1;
+        else result.unknown += 1;
+        return result;
+    }, { online: 0, offline: 0, unknown: 0 }), [rows]);
+    const machineKeys = React.useMemo(() => rows.flatMap(row => row.online && row.kind === 'machine'
+        ? [{ serverId: row.serverId, machineId: row.machineId }] : []), [rows]);
+    useMachineResourceLiveDemand(machineKeys, { detail: 'summary', enabled: props.demandEnabled });
+    return <MachineSummaryFreshnessLine machineKeys={machineKeys} fallback={(
+        <View style={styles.counts}>
+            <MachinePresenceCounts testID="sidebar-machines-presence" counts={counts} />
+            <WorkingTotal />
+        </View>
+    )} />;
+}
+
 const MachinesPopoverRow = React.memo(function MachinesPopoverRow(props: Readonly<{
     row: MachineCollectionRow;
     thisComputer: boolean;
     onOpen: (row: MachineCollectionRow, identity?: readonly unknown[]) => void;
 }>) {
     const { theme } = useUnistyles();
-    const { row, onOpen } = props;
+    const { onOpen } = props;
+    const row = useMachineCollectionRowPresence(props.row);
     const machineId = row.kind === 'machine' ? row.machineId : row.enrolledMachineId ?? '';
     const working = useMachineWorkingCount({ serverId: row.serverId, machineId });
     const onlineWord = t('settingsOverview.machineOnline');

@@ -1,9 +1,11 @@
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
-import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { describeMachinePresenceLine, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { describeMachineLockedReason, getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
+import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
+import { carryMachineActivity, linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { describeManagedCreation } from '../managed/managedCreationPresentation';
@@ -29,6 +31,12 @@ export function buildMachineAddHref(options: Readonly<{ path?: MachineAddRoutePa
 
 type MachineCollectionRowPresentation = Readonly<{
     serverId: string;
+    /** The existing activity owner backs each row's independently subscribed presence. */
+    presenceSource?: Readonly<{
+        machine: Parameters<typeof describeMachinePresenceLine>[0];
+        managedPresence: MachineManagedPresence | null;
+        scope?: Parameters<typeof describeMachinePresenceLine>[3];
+    }>;
     /** The name the user gave the machine, else its host; told apart when two share it. */
     title: string;
     /**
@@ -166,12 +174,25 @@ export function buildMachineCollection(input: Readonly<{
                 .map((machine): MachineCollectionRow => {
                 const host = machine.metadata?.host?.trim() || null;
                 const name = getMachineDisplayName(machine) ?? machine.id;
-                const presence = describeMachinePresenceLine(machine, nowMs, managedByMachineId.get(machine.id), group.accountScope);
+                const managedMachine = managedByMachineId.get(machine.id);
+                const managedPresence = projectMachineManagedPresence(machine, managedMachine);
+                const presence = describeMachinePresenceLine(machine, nowMs, managedPresence, group.accountScope);
+                // A daemon publication must not become part of this presentation row's equality.
+                // Retain only the facts this leaf renders, linked to the existing activity owner.
+                const presenceMachine = {
+                    id: machine.id,
+                    ...readMachineActivity(machine),
+                    revokedAt: machine.revokedAt,
+                    presenceProtocolVersion: machine.presenceProtocolVersion,
+                    ...('presence' in machine && machine.presence === null ? { presence: null } : {}),
+                };
+                linkMachineActivity(machine, presenceMachine);
                 const titleParts = names.get(machine.id) ?? { name, hint: null };
                 return {
                     kind: 'machine',
                     machineId: machine.id,
                     serverId: group.serverId,
+                    presenceSource: { machine: presenceMachine, managedPresence, scope: group.accountScope },
                     title: titleParts.hint ? `${titleParts.name} · ${titleParts.hint}` : titleParts.name,
                     titleParts,
                     host: !managedByMachineId.has(machine.id) && host && host !== name ? host : null,
@@ -241,6 +262,34 @@ export function buildMachineCollection(input: Readonly<{
             title: input.groupedByHome ? group.serverName : null, status: group.status, rows };
     });
     return { count, machineCount, firstAnswerPending, sections, presetSections };
+}
+
+/**
+ * Carry the previous collection's row, section and preset identities into `next` wherever a key's content
+ * is unchanged, so a one-Machine change replaces one row object and every other consumer row stays quiet.
+ * Returns `previous` itself when nothing differs.
+ */
+export function reconcileMachineCollection(previous: MachineCollection | null, next: MachineCollection): MachineCollection {
+    if (!previous) return next;
+    const sections = reconcileStableRows(previous.sections, next.sections.map(section => {
+        const before = previous.sections.find(candidate => candidate.key === section.key);
+        if (!before) return section;
+        const rows = reconcileStableRows(before.rows, section.rows, machineCollectionRowKey);
+        rows.forEach((row, index) => {
+            const current = section.rows[index]!;
+            if (row !== current && row.presenceSource && current.presenceSource) {
+                carryMachineActivity(row.presenceSource.machine, current.presenceSource.machine);
+            }
+        });
+        return { ...section, rows };
+    }), section => section.key);
+    const presetSections = reconcileStableRows(previous.presetSections, next.presetSections.map(section => {
+        const before = previous.presetSections.find(candidate => candidate.key === section.key);
+        return before ? { ...section, rows: reconcileStableRows(before.rows, section.rows, machinePresetCollectionRowKey) } : section;
+    }), section => section.key);
+    return sections === previous.sections && presetSections === previous.presetSections
+        && previous.count === next.count && previous.machineCount === next.machineCount && previous.firstAnswerPending === next.firstAnswerPending
+        ? previous : { ...next, sections, presetSections };
 }
 
 /**
