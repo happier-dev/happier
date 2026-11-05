@@ -39,7 +39,8 @@ const PLANET_MOBILE_VERTICAL_ANCHOR = 0.2;
 // gives us for free.
 const PLANET_ASPECT_RATIO = 6144 / 4096;
 
-const PLANET_MOBILE_BG_SIZE = `${PLANET_MOBILE_SCALE * 100}%`;
+// 3× the width, and never shorter than the screen: a phone is taller than the 3× image, which would stop short.
+const PLANET_MOBILE_BG_SIZE = `auto max(100%, ${(PLANET_MOBILE_SCALE / PLANET_ASPECT_RATIO) * 100}vw)`;
 const PLANET_MOBILE_BG_POSITION = `center ${PLANET_MOBILE_VERTICAL_ANCHOR * 100}%`;
 
 /**
@@ -126,8 +127,8 @@ export const PlanetBackground = React.memo(function PlanetBackground(props: Plan
 /**
  * Native mobile backdrop. Measures the container and renders the planet at
  * the exact pixel rect that reproduces the web recipe:
- *   width  = container width × PLANET_MOBILE_SCALE
- *   height = width / PLANET_ASPECT_RATIO          (web `auto` height)
+ *   height = the larger of (container width × PLANET_MOBILE_SCALE) / PLANET_ASPECT_RATIO and the container height
+ *   width  = height × PLANET_ASPECT_RATIO         (web `auto` width)
  *   left   = (container width − width) / 2        (`center`)
  *   top    = anchor × (container height − height) (`center 20%`)
  * `contentFit="fill"` is safe because the computed box already matches the
@@ -147,8 +148,8 @@ const PlanetBackgroundMobileNative = React.memo(function PlanetBackgroundMobileN
 
     let imageStyle: React.ComponentProps<typeof ExpoImage>['style'] = null;
     if (size) {
-        const imageWidth = size.width * PLANET_MOBILE_SCALE;
-        const imageHeight = imageWidth / PLANET_ASPECT_RATIO;
+        const imageHeight = Math.max(size.width * PLANET_MOBILE_SCALE / PLANET_ASPECT_RATIO, size.height);
+        const imageWidth = imageHeight * PLANET_ASPECT_RATIO;
         imageStyle = {
             position: 'absolute',
             width: imageWidth,

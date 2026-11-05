@@ -87,16 +87,18 @@ describe('PlanetBackground', () => {
         // no distortion. This mirrors the web `background-size: 300%` (width
         // ×3, aspect-preserving height) rather than a 300%×300% cover crop.
         expect(image?.props.contentFit).toBe('fill');
-        // width  = 400 × 3                       = 1200
-        // height = 1200 / 1.5                     = 800
-        // left   = (400 − 1200) / 2               = -400  (center)
-        // top    = 0.2 × (900 − 800)              = 20    (center 20%)
+        // A phone is taller than the 3× image (1200 / 1.5 = 800 < 900), so the image grows to its height:
+        // no hard edge where the picture would stop short of the screen.
+        // height = max(800, 900)                  = 900
+        // width  = 900 × 1.5                      = 1350
+        // left   = (400 − 1350) / 2               = -475  (center)
+        // top    = 0.2 × (900 − 900)              = 0     (center 20%)
         expect(image?.props.style).toMatchObject({
             position: 'absolute',
-            width: 1200,
-            height: 800,
-            left: -400,
-            top: 20,
+            width: 1350,
+            height: 900,
+            left: -475,
+            top: 0,
         });
     });
 });
