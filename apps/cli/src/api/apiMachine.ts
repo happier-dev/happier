@@ -45,7 +45,6 @@ import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { registerDaemonStorageRpcHandlers, type DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedMetadataV1Schema, StoredMachinePublishedDaemonStateV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema, TeamCredentialExternalProviderOperationRetireResponseV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
-import { randomBytes } from 'node:crypto';
 import { MachineLiveStreamDecodedEnvelopeV1Schema, MachineLiveStreamRelayEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { hasMachineLiveStreamSensitiveContentV1, sealMachineLiveStreamEnvelopeV1, openMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import type { MachineLiveStreamPayloadErrorCodeV1, MachineLiveStreamWireEnvelopeV1 } from '@happier-dev/protocol';
@@ -62,17 +61,15 @@ import {
     readCurrentMessageActionReferenceRowV1,
     resolveMessageActionReferenceSnapshotV1,
 } from '@/api/session/messageActionReference';
-import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { FeaturesResponse, IrohEndpointDescriptorV1, ActionOperationRevisionEphemeralV1, ConnectedServiceExecutionAuthorityV1, ExternalSessionSourceUnavailableOccurrenceV1 } from '@happier-dev/protocol';
-import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader, type MachineSetupTargetUnavailableFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { MachineSetupTargetUnavailableFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { fetchAccountProfile } from './accountProfile';
 import { fetchAccountEncryptionCurrentness, AccountEncryptionCurrentnessUnavailableError } from './client/connectedServiceCredentialApi';
-import { readAccountEncryptionModeOnce } from './client/accountEncryptionMode';
 import { acquireRequesterAccountEncryptionCurrentness, waitForObservation } from './client/accountEncryptionCurrentnessObservation';
-import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -384,19 +381,10 @@ import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRo
 import { assertFilesystemEffectCurrent, createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 
-export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
+import { createActionOperationSnapshotPublisher, emitActionOperationSnapshotV1 } from './machine/actionOperationSnapshotPublisher';
+export { createActionOperationSnapshotPublisher, emitActionOperationSnapshotV1 } from './machine/actionOperationSnapshotPublisher';
 
-export function emitActionOperationSnapshotV1(params: Readonly<{
-    socket: Pick<Socket<ServerToDaemonEvents, DaemonToServerEvents>, 'emit'> | null;
-    machineId: string;
-    content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content'];
-}>): void {
-    params.socket?.emit(ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, {
-        type: ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
-        machineId: params.machineId,
-        content: params.content,
-    });
-}
+export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
 
 const REQUIRED_MACHINE_CONTROL_RPC_METHODS = Object.freeze([
     RPC_METHODS.SPAWN_HAPPY_SESSION,
@@ -608,81 +596,6 @@ function readMachineSocketRetirementReason(error: unknown): 'replaced' | 'revoke
     if (errorCode === 'machine_revoked') return 'revoked';
     return errorCode === 'machine-replaced' || errorCode === 'machine_replaced' || message === 'machine-replaced'
         ? 'replaced' : null;
-}
-
-/** Serialize the consumed machine activity stream through one Account encryption boundary. */
-export function createActionOperationSnapshotPublisher(input: Readonly<{
-    resolveAccountId(): Promise<string | null>;
-    serverBaseUrl: string;
-    readCredentials: typeof readStoredCredentials;
-    publishContent(content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content']): void;
-}>) {
-    type Snapshot = import('@happier-dev/protocol/actions').ActionOperationSnapshotV1;
-    const queued = new Map<string, Snapshot>();
-    let draining: Promise<void> | null = null;
-    const publishBatch = async (snapshots: readonly Snapshot[]): Promise<void> => {
-        const credentials = await input.readCredentials().catch(() => null);
-        if (!credentials) return;
-        const accountId = await input.resolveAccountId();
-        if (!accountId || readAccountIdFromToken(credentials.token) !== accountId) {
-            logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
-            return;
-        }
-        const admitted = snapshots.filter(snapshot => snapshot.scope.accountId === accountId);
-        if (admitted.length !== snapshots.length) {
-            logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
-        }
-        if (admitted.length === 0) return;
-        const accountMode = await readAccountEncryptionModeOnce({ credentials, usage: 'identity', scope: { token: credentials.token, serverBaseUrl: input.serverBaseUrl }, request: () => axios.get(
-            `${input.serverBaseUrl.replace(/\/+$/, '')}/v1/account/encryption`, {
-                headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` },
-                timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: () => true,
-            },
-        ) });
-        if (accountMode.kind !== 'resolved') return;
-        if (accountMode.mode === 'plain') {
-            for (const snapshot of admitted) {
-                input.publishContent({ t: 'plain', v: projectActionOperationSnapshotForV1Reader(snapshot) });
-            }
-            return;
-        }
-        if (!credentials.encryption) return;
-        const material = credentials.encryption.type === 'legacy'
-            ? { type: 'legacy' as const, secret: credentials.encryption.secret }
-            : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
-        for (const snapshot of admitted) {
-            input.publishContent({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
-                kind: 'action_operation_snapshot', material, payload: projectActionOperationSnapshotForV1Reader(snapshot),
-                randomBytes: (length) => new Uint8Array(randomBytes(length)),
-            }) });
-        }
-    };
-    const drain = async (): Promise<void> => {
-        while (queued.size > 0) {
-            const batch = [...queued.values()];
-            queued.clear();
-            try {
-                await publishBatch(batch);
-            } catch (error) {
-                logger.warn('Failed to publish Action operation snapshot', { error: serializeAxiosErrorForLog(error) });
-            }
-        }
-    };
-    const ensureDrain = (): Promise<void> => {
-        if (draining) return draining;
-        draining = drain().then(async () => {
-            draining = null;
-            // A revision queued between the drain's final empty check and this
-            // continuation belongs to the same publication promise.
-            if (queued.size > 0) await ensureDrain();
-        });
-        return draining;
-    };
-    return (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): Promise<void> => {
-        const queuedSnapshot = queued.get(snapshot.operationId);
-        if (!queuedSnapshot || snapshot.revision > queuedSnapshot.revision) queued.set(snapshot.operationId, snapshot);
-        return ensureDrain();
-    };
 }
 
 type AccountChangesSyncDemand = {
@@ -1617,6 +1530,16 @@ export class ApiMachineClient {
         // Native-view imports are available independently of managed Chromium startup.
         registerDaemonBrowserControlHandler(this.rpcHandlerManager, { getNativeClient: () => this });
         const operationInstallation = readInstallationIdentityIfExistsSync();
+        const actionOperationPublisher = createActionOperationSnapshotPublisher({
+            resolveAccountId: async () => await this.getAccountId(),
+            get serverBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
+            readCredentials: async () => this.projectionSchedulingClosed || configuration.activeServerId !== machineRuntimeServerId
+                ? null : await readStoredCredentialsForServerId(machineRuntimeServerId),
+            publishContent: content => { emitActionOperationSnapshotV1({ socket: this.socket, machineId: this.machine.id, content }); },
+            publishContentAcknowledged: async content => await emitActionOperationSnapshotV1({
+                socket: this.socket, machineId: this.machine.id, content, acknowledge: true,
+            }) === true,
+        });
         this.actionOperationRuntime = createHostActionOperationRuntime({
             serverId: configuration.activeServerId,
             machineId: this.machine.id,
@@ -1626,15 +1549,8 @@ export class ApiMachineClient {
             resolveAccountId: async () => await this.getAccountId(),
             ...(this.lifecycleDependencies.onProjectOperationInspection
                 ? { onInspection: this.lifecycleDependencies.onProjectOperationInspection } : {}),
-            publishSnapshot: createActionOperationSnapshotPublisher({
-                resolveAccountId: async () => await this.getAccountId(),
-                get serverBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
-                readCredentials: async () => this.projectionSchedulingClosed || configuration.activeServerId !== machineRuntimeServerId
-                    ? null : await readStoredCredentialsForServerId(machineRuntimeServerId),
-                publishContent: (content) => emitActionOperationSnapshotV1({
-                    socket: this.socket, machineId: this.machine.id, content,
-                }),
-            }),
+            publishSnapshot: actionOperationPublisher,
+            publishSnapshotAcknowledged: actionOperationPublisher.acknowledge,
             supportsCoreCancellation: (actionId, input) => {
                 if (actionId !== 'session.spawn_new') return true;
                 if (!input || typeof input !== 'object' || Array.isArray(input)) return false;

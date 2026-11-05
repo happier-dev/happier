@@ -620,7 +620,8 @@ export function machineUpdateHandler(
         }
     });
 
-    const handleActionOperationSnapshotPush = async (raw: unknown) => {
+    const handleActionOperationSnapshotPush = async (raw: unknown, acknowledge?: (admitted: boolean) => void) => {
+        let admitted = false;
         try {
             if (!await hasCurrentSocketCredential(userId, socket)) return;
             const account = await db.account.findUnique({ where: { id: userId }, select: { encryptionMode: true } });
@@ -632,8 +633,13 @@ export function machineUpdateHandler(
             });
             if (!payload || !await hasCurrentSocketCredential(userId, socket)) return;
             eventRouter.emitEphemeral({ userId, payload, recipientFilter: { type: 'user-scoped-only' } });
+            admitted = true;
         } catch {
             // Unavailable Account admission cannot disclose an operation observation.
+        } finally {
+            // This acknowledges Home admission and fanout, not delivery to each
+            // observing client. Existing producers need not request an ACK.
+            acknowledge?.(admitted);
         }
     };
     socket.on(ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1, handleActionOperationSnapshotPush);

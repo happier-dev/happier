@@ -15,13 +15,15 @@ import { runMachineSetupEffectInternal } from './effectInternal';
 import type { MachineElevationDependencies, MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
 import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import { groupMachineSetupChanges } from '../../../../../apps/ui/sources/components/settings/machines/managed/machineSetupReviewChanges';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
 
 // Only native command execution is substituted. Admission, cold projection,
 // Action discovery/Plan, package selection and Apply's interpreter remain real.
-async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' | 'ready' | 'denied' = 'absent') {
+async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' | 'ready' | 'denied' = 'absent', refreshFails = false) {
   const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{ files: {}, manifest: PLUGIN_MANIFEST }] });
   const acquire = () => acquireAuthoritativePluginRuntimeRegistryLease({ controller: runtime.controller, happyHomeDir: runtime.happyHomeDir });
   const calls: MachineSetupNativeCommand[] = [];
@@ -38,6 +40,7 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
     if (command.executable === 'systemctl') {
       if (command.args[0] === 'show') return ok('MainPID=27\nActiveState=active\n');
       effects.push([...command.args]);
+      if (refreshFails) return { code: 1, stdout: '', stderr: 'User manager restart failed' };
       if (member) groups.splice(0, groups.length, 1000, 109);
       return ok();
     }
@@ -151,9 +154,10 @@ it.each([['other', 'absent']] as const)('refuses unsupported native facts (%s, %
   } finally { await f.runtime.dispose(); }
 });
 
-it.each([{ configured: false, installed: false }, { configured: false, installed: true }, { configured: true, installed: true }])(
-  'Apply refreshes the user manager so the daemon’s next Docker call succeeds (%j)', async ({ configured, installed }) => {
-  const f = await fixture('ubuntu', installed ? 'ready' : 'absent');
+it.each([{ configured: false, installed: false, refreshFails: false }, { configured: false, installed: true, refreshFails: false },
+  { configured: true, installed: true, refreshFails: false }, { configured: true, installed: true, refreshFails: true }])(
+  'Apply preserves terminal success across the post-acknowledgement refresh (%j)', async ({ configured, installed, refreshFails }) => {
+  const f = await fixture('ubuntu', installed ? 'ready' : 'absent', refreshFails);
   const uid = vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
   try {
     if (installed) for (const name of ['docker.io', 'docker-buildx', 'docker-compose-v2']) f.installed.add(name);
@@ -184,9 +188,27 @@ it.each([{ configured: false, installed: false }, { configured: false, installed
     };
     const elevation: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn,
       readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true, observe: async () => f.observation };
-    const result = await applyMachineSetup({ homeId: 'home', machineId: 'machine', requesterAccountId: 'owner',
+    let acknowledge!: (value: boolean) => void;
+    const homeAcknowledgement = new Promise<boolean>(resolve => { acknowledge = resolve; });
+    let refreshFinished!: () => void;
+    const refreshed = new Promise<void>(resolve => { refreshFinished = resolve; });
+    const operationId = `docker-access-${configured}-${installed}`;
+    const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner',
+      generateOperationId: () => operationId, publishSnapshotAcknowledged: async snapshot => {
+        expect(snapshot).toMatchObject({ operationId, state: 'succeeded' });
+        return homeAcknowledgement;
+      } });
+    const execution = operations.observeExecution({ actionId: 'machines.setup.apply', input: {}, execute: async operation => {
+      operation.operationAcceptance?.accept({ operationId });
+      return await applyMachineSetup({ homeId: 'home', machineId: 'machine', requesterAccountId: 'owner',
       userHomeDirectory: '/home/happier', setup: reviewed.sources.map(source => source.setup), recipePlans: reviewed.recipePlans,
-      elevation, groupRefreshNative, isCurrent: async () => true,
+      elevation: { ...elevation, spawn: launch => {
+        const child = spawn(launch);
+        void child.settled.then(() => {
+          if (f.effects.some(args => args[0] === 'restart')) refreshFinished();
+        });
+        return child;
+      } }, groupRefreshNative, isCurrent: async () => true,
       terminalSessions: { ensure() { throw new Error('No terminal expected'); }, waitForExit() { throw new Error('No terminal expected'); },
         requestStop() { throw new Error('No terminal expected'); }, observeOutput() { throw new Error('No terminal expected'); } },
       environmentIo: { resolveTool: async () => null, run: async request => {
@@ -194,11 +216,25 @@ it.each([{ configured: false, installed: false }, { configured: false, installed
         if (!installed) throw Object.assign(new Error('Docker absent'), { code: 'ENOENT' });
         return { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker socket' };
       } },
-      operation: { actionRequestId: `docker-access-${configured}`, signal: new AbortController().signal,
-        operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-    expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 0 });
-    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
+      operation });
+    } });
+    expect(await execution).toMatchObject({ ok: true, result: { operationId } });
+    expect(await operations.handlers.getV2({ operationId, waitForTerminal: true })).toMatchObject({
+      kind: 'found', operation: { operationId, state: 'succeeded' } });
+    expect(f.effects).not.toContainEqual(['restart', '--', 'user@1000.service']);
+    expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 1 });
+    acknowledge(true);
+    await refreshed;
+    expect(await operations.handlers.getV2({ operationId })).toMatchObject({
+      kind: 'found', operation: { operationId, state: 'succeeded' } });
+    expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: refreshFails ? 1 : 0 });
+    if (refreshFails) await expect(readNativeComposeEngine({ command: 'docker', prefix: [], cwd: '/home/happier', env: {},
+      io: { run: async request => {
+        const result = await f.run({ executable: request.command, args: [...request.args] });
+        if (result.code === null) throw new Error('Docker probe process did not settle');
+        return { exitCode: result.code, stdout: result.stdout, stderr: result.stderr };
+      } } })).rejects.toMatchObject({ code: 'native_tool_unavailable', details: { prerequisite: { cause: 'permission_denied' } } });
+    expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: refreshFails ? 'drifted' : 'satisfied' }] } });
     expect(reviewed.recipePlans?.[0]?.plan.steps.find(step => step.kind === 'group')).toMatchObject({
       name: 'docker', members: ['happier'], review: { description: expect.stringMatching(/root.equivalent.*administrator/i) } });
     expect(f.effects).toContainEqual(['restart', '--', 'user@1000.service']);

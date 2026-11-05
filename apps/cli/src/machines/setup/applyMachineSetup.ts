@@ -2,7 +2,8 @@ import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/pro
 import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineSetupPlansRequireAdministratorV1,
-  runMachineSetupNativeCommand, type MachineSetupApplyResultV1 } from '@happier-dev/cli-common/machineSetup';
+  runMachineSetupNativeCommand, buildUserManagerGroupRefreshStep, machineSetupStepChangesDaemonGroupsV1,
+  type MachineSetupApplyResultV1 } from '@happier-dev/cli-common/machineSetup';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -10,7 +11,7 @@ import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/se
 import { selectMachineSetupRecipeItemsV1,
   machineSetupItemKeyV1, projectMachineSetupSourceChangeExecutionV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
-import { runElevatedEffect, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
+import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { resolveMachineSetupNativeEffectKeys } from './machineSetupNativeEffects';
 import { readMachineSetupSessionRefreshRequirement, describeMachineSetupSessionRefresh,
   type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
@@ -21,6 +22,8 @@ import type { SecretReferenceOverlayEnvironmentInput } from '@/settings/secrets/
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
+import { userInfo } from 'node:os';
+import { logger } from '@/ui/logger';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
@@ -234,6 +237,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
   const attachment = { kind: 'machineSetup' as const, serverId: input.homeId, machineId: input.machineId,
     ...(input.preset ? { preset: input.preset } : {}), ...(input.managedId ? { managedId: input.managedId } : {}) };
   input.operation.operationOwnerUpdate.update({ domainRef: attachment });
+  let refreshDaemonGroups: (() => Promise<void>) | undefined;
   if (input.plans.length) {
     const plans = input.plans.map(plan => ({ plan }));
     let daemonRestartRequired = false;
@@ -273,8 +277,24 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
     }
     if (signal.aborted) return fail('cancelled');
     const requiredStep = await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
-    if (requiredStep) return { ok: false, errorCode: 'requires_session_refresh',
-      error: describeMachineSetupSessionRefresh(requiredStep), details: { requiredStep } };
+    if (requiredStep) {
+      const elevation = input.elevation;
+      if (requiredStep.scope === 'userServices' && elevation && input.operation.afterTerminalSuccessAcknowledged
+        && input.plans.some(plan => plan.steps.some(step => step.kind === 'group' && step.name === 'docker'
+          && machineSetupStepChangesDaemonGroupsV1(step, requiredStep.username)))) {
+        const step = buildUserManagerGroupRefreshStep(input.groupRefreshNative?.user ?? userInfo());
+        const basis = input.plans[0]!.basis;
+        // Restarting this user manager can kill this process. The operation
+        // owner runs this last effect only after Home acknowledges success.
+        refreshDaemonGroups = async () => {
+          const result = await runElevatedMachineSetupIntent({ machineId: input.machineId, operationId,
+            signal, basis, steps: [step] }, elevation);
+          if (result.outcome !== 'applied') logger.warn('[machineSetup] Post-settlement group refresh did not complete',
+            { outcome: result.outcome });
+        };
+      } else return { ok: false, errorCode: 'requires_session_refresh',
+        error: describeMachineSetupSessionRefresh(requiredStep), details: { requiredStep } };
+    }
   }
   let terminalId: string | undefined;
   const terminals: { install?: string; setup?: string } = {};
@@ -368,6 +388,11 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput): Prom
       if (verified.status !== 'satisfied') return fail(verified.status === 'drifted'
         ? 'machine_setup_script_check_failed' : 'machine_setup_script_check_unavailable');
     }
+  }
+  if (refreshDaemonGroups) {
+    input.operation.operationProgress.update({ phase: 'setup', label:
+      'Docker membership is applied. Happier restarts to pick it up after this result reaches Home.' });
+    input.operation.afterTerminalSuccessAcknowledged?.(refreshDaemonGroups);
   }
   return { ok: true, result: { operationId, ...(terminalId ? { terminalId } : {}) } };
 }

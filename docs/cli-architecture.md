@@ -1493,14 +1493,21 @@ possible downtime to Plan. When automatic refresh is unavailable, Apply returns
 `requires_session_refresh` with a typed `requiredStep` instead of running later
 scripts or reporting readiness. A no-op retry still requires recovery when the
 account membership is correct but the daemon's kernel groups are stale.
-For Docker access on Linux, a daemon inside `user@<uid>.service` adds the existing
-administrator user-manager refresh after the reviewed membership effects, interrupting
+For Docker access on Linux, a daemon inside `user@<uid>.service` runs the existing
+administrator user-manager refresh as its last effect, after the operation has
+settled successfully and Home has acknowledged its terminal snapshot. The review
+explains that membership is applied and Happier restarts to pick it up. The native
+Apply plan never restarts its own operation owner. This refresh interrupts
 all its user services. Restarting only the daemon cannot refresh the manager's
 groups. A system-service install names the
 existing daemon unit restart instead. An unrecognized/manual installation names
 a fresh login session. Those installations and other group grants retain the
 typed recovery instruction.
-After recovery and reconnect, review a new Plan to establish usable membership.
+The reconnect uses ordinary presence. No setup result retention or reconciliation
+is added. If acknowledgement is missing or refresh fails, success remains settled;
+the next Docker use reports the existing typed inaccessible-Docker prerequisite.
+This visible, recoverable glitch is accepted; review and reapply Software after
+reconnect to retry the refresh.
 
 The Docker Software recipe checks its Ubuntu/Debian distro packages and grants
 the target daemon user Docker membership through the same declaration used by

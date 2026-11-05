@@ -7,13 +7,12 @@ import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/
 import { machineRecipeInputConstraintsSatisfiedV1,
   MachineRecipeTargetFactUnavailableErrorV1, type MachineRecipeTargetFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
-import { createMachineSetupNativeBackend, createMachineSetupEffectPlan, buildUserManagerGroupRefreshStep, findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1, machineSetupStepChangesDaemonGroupsV1,
+import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
 import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
-import { userInfo } from 'node:os';
 
 /** Saved-copy reads stay inert; newly selected declarations use the native observer. */
 export async function prepareMachineSetupPlanV1(params: Readonly<{
@@ -148,21 +147,9 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     }
   }
   const selectedEntries = [...(removals?.ok ? removals.removalPlans : []), ...recipePlans];
-  let selectedPlans = selectedEntries.map(entry => entry.plan);
+  const selectedPlans = selectedEntries.map(entry => entry.plan);
   const requiresSessionRefresh = input.mode
     ? await readMachineSetupSessionRefreshRequirement(selectedPlans, params.groupRefreshNative) : undefined;
-  if (requiresSessionRefresh?.scope === 'userServices' && selectedPlans.some(plan => plan.steps.some(step =>
-    step.kind === 'group' && step.name === 'docker' && machineSetupStepChangesDaemonGroupsV1(step, requiresSessionRefresh.username)))) {
-    // One reviewed refresh follows every membership effect. The native owner
-    // re-observes it after earlier steps, including initially satisfied managers.
-    const entry = selectedEntries.at(-1)!;
-    const step = buildUserManagerGroupRefreshStep(params.groupRefreshNative?.user ?? userInfo());
-    const fact = await backend.observe(step);
-    const { v: _v, planDigest: _digest, ...contents } = entry.plan;
-    entry.plan = createMachineSetupEffectPlan({ ...contents, steps: [...contents.steps, step],
-      nativeFacts: [...contents.nativeFacts, fact] });
-    selectedPlans = selectedEntries.map(entry => entry.plan);
-  }
   for (const { sourceIndex, itemIndex, plan } of recipePlans) {
     const blocked = findMachineSetupBlockingObservationV1(plan);
     const reason = blocked ? MachineSetupObservationReasonV1Schema.safeParse(blocked.reason) : undefined;

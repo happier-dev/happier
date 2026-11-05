@@ -5,5 +5,5 @@ export function createDockerMembershipStep<T extends string | { kind: 'targetFac
 } {
     return { id: 'docker-membership', kind: 'group', name: 'docker', members: [daemonUsername],
         review: { title: 'Docker administrator access',
-            description: 'Docker group membership gives the Happier daemon root-equivalent administrator power.' } };
+            description: 'Docker group membership gives the Happier daemon root-equivalent administrator power. Happier must restart to pick up new membership. On supported Linux installations, Software Apply restarts Happier after the operation completes.' } };
 }

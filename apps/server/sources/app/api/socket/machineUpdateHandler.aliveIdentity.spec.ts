@@ -49,8 +49,10 @@ const machineFindFirst = vi.fn(async (): Promise<{ revokedAt: Date | null; repla
     revokedAt: null,
     replacedByMachineId: null,
 }));
+const accountFindUnique = vi.fn(async () => ({ encryptionMode: 'plain' }));
 vi.mock("@/storage/db", () => ({
     db: {
+        account: { findUnique: accountFindUnique },
         machine: {
             findFirst: machineFindFirst,
         },
@@ -107,7 +109,44 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         // Call clearing does not discard unconsumed per-test database results.
         machineFindFirst.mockReset();
         machineFindFirst.mockResolvedValue({ revokedAt: null, replacedByMachineId: null });
+        accountFindUnique.mockReset();
+        accountFindUnique.mockResolvedValue({ encryptionMode: 'plain' });
     });
+
+    it('acknowledges terminal operation content only after Home admits and fans it out', async () => {
+        const { machineUpdateHandler } = await import('./machineUpdateHandler');
+        const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: 'm1' } });
+        machineUpdateHandler('u1', socket as unknown as import('socket.io').Socket, defaultMachineUpdateHandlerOptions);
+        const snapshot = { version: 1, operationId: 'setup', revision: 3, actionId: 'machines.setup.apply',
+            state: 'succeeded', scope: { accountId: 'u1', machineId: 'm1' }, title: 'Apply setup',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: { membershipApplied: true } };
+        const payload = { type: 'action-operation-updated', machineId: 'm1', content: { t: 'plain', v: snapshot } };
+        const order: string[] = [];
+        emitEphemeral.mockImplementationOnce(() => { order.push('fanout'); });
+        const acknowledge = vi.fn((accepted: boolean) => { order.push(accepted ? 'ack' : 'refused'); });
+        await getSocketHandler(socket, 'action-operation-updated')(payload, acknowledge);
+        expect(emitEphemeral).toHaveBeenCalledWith({ userId: 'u1', payload, recipientFilter: { type: 'user-scoped-only' } });
+        expect(acknowledge).toHaveBeenCalledWith(true);
+        expect(order).toEqual(['fanout', 'ack']);
+    });
+
+    it.each(['foreign-machine', 'foreign-account', 'disconnected', 'fanout-failed'] as const)(
+        'does not positively acknowledge an unforwarded terminal snapshot (%s)', async refusal => {
+            const { machineUpdateHandler } = await import('./machineUpdateHandler');
+            const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: 'm1' } });
+            machineUpdateHandler('u1', socket as unknown as import('socket.io').Socket, defaultMachineUpdateHandlerOptions);
+            const snapshot = { version: 1, operationId: 'setup', revision: 3, actionId: 'machines.setup.apply',
+                state: 'succeeded', scope: { accountId: refusal === 'foreign-account' ? 'other' : 'u1', machineId: 'm1' },
+                title: 'Apply setup', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported' };
+            const payload = { type: 'action-operation-updated', machineId: refusal === 'foreign-machine' ? 'other' : 'm1',
+                content: { t: 'plain', v: snapshot } };
+            if (refusal === 'disconnected') socket.connected = false;
+            if (refusal === 'fanout-failed') emitEphemeral.mockImplementationOnce(() => { throw new Error('Transport failed'); });
+            const acknowledge = vi.fn();
+            await getSocketHandler(socket, 'action-operation-updated')(payload, acknowledge);
+            expect(acknowledge).toHaveBeenCalledWith(false);
+        },
+    );
 
     it("ignores machine-alive events from user-scoped sockets", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");

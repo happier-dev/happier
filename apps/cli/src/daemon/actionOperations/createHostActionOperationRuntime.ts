@@ -101,6 +101,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   resolveAccountId: () => Promise<string | null>;
   generateOperationId?: () => string;
   publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void;
+  publishSnapshotAcknowledged?: (snapshot: ActionOperationSnapshotV1) => Promise<boolean>;
   onInspection?: (operation: ActionOperationSnapshotV1) => void;
   supportsCoreCancellation?: (
     actionId: 'session.fork' | 'session.spawn_new' | 'session.handoff' | 'projects.service.relocate',
@@ -121,6 +122,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         : null;
     },
     ...(deps.generateOperationId ? { generateOperationId: deps.generateOperationId } : {}),
+    ...(deps.publishSnapshotAcknowledged ? { publishSnapshotAcknowledged: deps.publishSnapshotAcknowledged } : {}),
   });
   let owner: ActionOperationDomainOwner | null = null;
   const attachedOwners = new Set<ActionOperationDomainOwner>();
@@ -213,6 +215,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
       operationCancellation?: ActionOperationCancellation;
       operationReview?: import('./actionOperationTypes').ActionOperationReviewContinuation;
+      afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
       settleManagedDeleteOperation?: ManagedMachineOperationSettlementContext['settleManagedDeleteOperation'];
     }>) => Promise<ActionExecuteResult>;
   }>): Promise<ActionExecuteResult> => {
@@ -320,7 +323,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
         ? 'supported'
         : 'unsupported',
-      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview }) => await request.execute({
+      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => await request.execute({
         ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
         // Receipt correspondence is not a replacement for original-root correlation.
         ...(deploymentRequestId ? request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}
@@ -331,6 +334,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         operationOwnerUpdate: { update: publishOwnerUpdate },
         operationCancellation: { onRequest: onCancellationRequested },
         operationReview,
+        ...(afterTerminalSuccessAcknowledged ? { afterTerminalSuccessAcknowledged } : {}),
         ...(settleManagedDeleteOperation ? { settleManagedDeleteOperation } : {}),
         ...(operationAcceptance ? { operationAcceptance } : {}),
       }),

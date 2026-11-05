@@ -127,6 +127,7 @@ export function createActionOperationRunner(deps: Readonly<{
   store: ActionOperationStore;
   resolveAction: (actionId: string) => ResolvedTrackedAction | null;
   generateOperationId?: () => string;
+  publishSnapshotAcknowledged?: (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => Promise<boolean>;
 }>) {
   const generateOperationId = deps.generateOperationId ?? randomUUID;
   const active = new Map<string, ActiveInvocation>();
@@ -153,6 +154,7 @@ export function createActionOperationRunner(deps: Readonly<{
       operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
       onCancellationRequested: (listener: () => void) => () => void;
       operationReview: ActionOperationReviewContinuation;
+      afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
     }>) => Promise<ActionExecuteResult>;
   }>): Promise<ActionExecuteResult> => {
     const action = request.action ?? deps.resolveAction(request.actionId);
@@ -198,6 +200,8 @@ export function createActionOperationRunner(deps: Readonly<{
       };
       const cancellationListeners = new Set<() => void>();
       const ownerEvidence: { outcome?: ActionExecuteResult } = {};
+      let lastEffect: (() => Promise<void>) | undefined;
+      let terminalSuccess: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null = null;
       const onCancellationRequested = (listener: () => void): (() => void) => {
         cancellationListeners.add(listener);
         return () => { cancellationListeners.delete(listener); };
@@ -251,6 +255,9 @@ export function createActionOperationRunner(deps: Readonly<{
             publishOwnerUpdate,
             onCancellationRequested,
             operationReview,
+            afterTerminalSuccessAcknowledged: effect => {
+              lastEffect = effect;
+            },
             operationAcceptance: { operationId, actionId: action.actionId,
               ...(previousSessionCreationFailure ? { previousSessionCreationFailure } : {}), accept: (result) => {
               if (isFiniteProjectCommand(action.actionId)) acceptFinite();
@@ -331,7 +338,7 @@ export function createActionOperationRunner(deps: Readonly<{
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
             deps.store.cancel(operationId);
           } else if (executionResult.ok) {
-            deps.store.succeed(operationId, executionResult.result);
+            terminalSuccess = deps.store.succeed(operationId, executionResult.result);
             settleReviewedIsolationPredecessors({ store: deps.store, scope: request.scope, action, operationId,
               requestInput: request.input, result: executionResult.result, isActive: heldId => active.has(heldId) });
             const completed = deps.store.get(request.scope, operationId)?.domainRef;
@@ -366,6 +373,7 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           return executionResult;
         } catch (error) {
+          terminalSuccess = null;
           const projected = projectThrownFailure(error);
           const acceptedFinite = isFiniteProjectCommand(action.actionId)
             && deps.store.get(request.scope, operationId)?.domainRef?.kind === 'projectCommand';
@@ -390,6 +398,17 @@ export function createActionOperationRunner(deps: Readonly<{
           // native instance; do not advertise a cancellation owner that is gone.
           if (action.actionId === 'projects.service.relocate') deps.store.updateCancellation(operationId, 'unsupported');
           active.delete(operationId);
+          const publish = deps.publishSnapshotAcknowledged;
+          const effect = lastEffect;
+          const snapshot = terminalSuccess;
+          if (snapshot && effect && publish) {
+            // Settlement and active ownership finish before this transport-only
+            // continuation. Missing Home admission or a failed last effect leaves
+            // the known result intact; neither is another running operation.
+            void Promise.resolve().then(() => publish(snapshot)).then(async admitted => {
+              if (admitted) await effect();
+            }).catch(() => undefined);
+          }
         }
       });
       // Session creation publishes an accepted/pending receipt once the row and

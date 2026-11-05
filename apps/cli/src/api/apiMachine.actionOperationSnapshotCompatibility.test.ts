@@ -16,6 +16,47 @@ describe('Action operation snapshot producer compatibility', () => {
     } });
   });
   afterEach(() => vi.restoreAllMocks());
+  it.each(['plain', 'e2ee'] as const)('waits for Home admission of the exact %s terminal snapshot without blocking progress', async mode => {
+    const accountId = 'setup-owner';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, updatedAt: 1 } });
+    let acknowledge!: (accepted: boolean) => void;
+    const homeAnswer = new Promise<boolean>(resolve => { acknowledge = resolve; });
+    const emit = vi.fn();
+    const emitWithAck = vi.fn(async (_event: string, _payload: {
+      content: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'];
+    }) => homeAnswer);
+    // This transport fixture implements only the snapshot event of Socket.IO's generic API.
+    const boundary = { emit, emitWithAck, connected: true } as unknown as
+      NonNullable<Parameters<typeof emitActionOperationSnapshotV1>[0]['socket']>;
+    const dependencies = { resolveAccountId: async () => accountId, serverBaseUrl: 'https://setup-home.example',
+      readCredentials: async () => ({ token, encryption: mode === 'plain' ? null : material }),
+      publishContent: (content: Parameters<typeof emitActionOperationSnapshotV1>[0]['content']) => {
+        emitActionOperationSnapshotV1({ socket: boundary, machineId: 'machine', content });
+      },
+      publishContentAcknowledged: async (content: Parameters<typeof emitActionOperationSnapshotV1>[0]['content']) =>
+        await emitActionOperationSnapshotV1({ socket: boundary, machineId: 'machine', content, acknowledge: true }) === true,
+    };
+    const publisher = createActionOperationSnapshotPublisher(dependencies);
+    const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'setup', revision: 3,
+      actionId: 'machines.setup.apply', state: 'succeeded', scope: { accountId, machineId: 'machine' },
+      title: 'Apply setup', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: { membershipApplied: true } };
+    let settled = false;
+    const publication = publisher.acknowledge(snapshot).then(value => { settled = true; return value; });
+    await publisher({ ...snapshot, operationId: 'unrelated', state: 'running', revision: 2 });
+    expect(emit).toHaveBeenCalledOnce();
+    expect(emitWithAck).toHaveBeenCalledOnce();
+    const payload = emitWithAck.mock.calls[0]![1];
+    const expected = projectActionOperationSnapshotForV1Reader(snapshot);
+    const opened = payload.content.t === 'plain' ? payload.content.v : openAccountScopedBlobCiphertext({
+      kind: 'action_operation_snapshot', material, ciphertext: payload.content.c,
+    })?.value;
+    expect(opened).toEqual(expected);
+    expect(settled).toBe(false);
+    acknowledge(true);
+    await expect(publication).resolves.toBe(true);
+  });
   it.each(['plain', 'e2ee'] as const)('publishes current reboot attendance and before-basis through the existing %s Account push', async mode => {
     const accountId = 'reboot-owner';
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
