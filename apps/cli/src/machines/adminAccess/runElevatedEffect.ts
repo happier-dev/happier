@@ -270,7 +270,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             requiredFact: missingFact,
             remedy: `Required native fact ${missingFact} is unavailable. Check this Machine's administrator access and the named prerequisite, then retry the operation.`,
         } : {}), ...(remedy ? { remedy } : {}), ...context };
-        return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : kind;
+        return nativeReason === 'platform_unsupported' ? 'platform_unsupported' : nativeFailure.kind;
     };
     const nativeRefused = (reasonCode: Refusal['reasonCode']): MachineElevatedResultV1 => ({
         outcome: 'not_applied', reasonCode, ...(nativeFailure ? { failure: nativeFailure } : {}),

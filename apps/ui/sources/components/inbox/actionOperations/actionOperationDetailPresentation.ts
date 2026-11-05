@@ -131,8 +131,11 @@ function presentFailure(snapshot: ActionOperationSnapshot): ActionOperationDetai
         ? t('localServices.actions.failure.exitCode', { code: String(observedStepExit) })
         : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
     const presented = presentApprovalFailure({ errorCode, error }, sentence, t('inbox.actionOperations.failureGeneric'));
+    const details = snapshot.error.details;
+    const failure = details && 'kind' in details && details.kind === 'machineSetup' ? details.failure : undefined;
+    const remedy = failure && 'remedy' in failure ? failure.remedy : undefined;
     return {
-        reason: presented.reason,
+        reason: remedy ?? presented.reason,
         technicalLines: presented.code ? [{ key: 'failure-code', label: t('common.error'), value: presented.code }] : [],
     };
 }

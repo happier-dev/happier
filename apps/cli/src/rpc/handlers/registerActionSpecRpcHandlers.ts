@@ -12,6 +12,7 @@ import { SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1, type SkillMachineActionIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
 import {
@@ -149,6 +150,11 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
     if (Object.prototype.hasOwnProperty.call(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)) {
         const projected = ActionOperationFailureV1Schema.safeParse({ errorCode: result.errorCode, error: result.error, details: result.details });
         details = projected.success ? projected.data.details : undefined;
+    }
+    if (ManagedMachineActionIdV1Schema.safeParse(actionId).success) {
+        const projected = ActionOperationFailureV1Schema.safeParse({ errorCode: result.errorCode, error: result.error, details: result.details });
+        if (projected.success && projected.data.details && 'kind' in projected.data.details
+            && projected.data.details.kind === 'machineSetup') details = projected.data.details;
     }
     if (actionId === 'projects.worker.copy.retire') {
         const outcomeUnknown = readObjectValue(result.details, 'kind') === 'outcomeUnknown';

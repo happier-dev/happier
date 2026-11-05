@@ -23,6 +23,72 @@ async function apply(step: MachineRecipeStepV1, run: (input: MachineSetupNativeC
 }
 
 describe('native package effects through the public recipe interpreter', () => {
+    it.each([undefined, '1'])('refreshes missing apt candidates during Apply, keeping CHECK read-only (version %s)', async version => {
+        const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io', ...(version ? { version } : {}) }] });
+        let refreshed = false, installed = false;
+        const effects: string[] = [];
+        const backend = createMachineSetupNativeBackend({ run: async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get' && input.args[0] === '--version') return ok('apt 3.2\n');
+            if (input.executable === 'dpkg-query') return installed ? ok('docker.io\tinstall ok installed\t1\tamd64\n') : { code: 1, stdout: '', stderr: '' };
+            if (input.executable === 'lslocks') return ok('{"locks":[]}');
+            if (input.executable === 'apt-cache' && input.args[0] === 'policy') return ok(refreshed ? 'Candidate: 1\n  1 500\n' : 'docker.io:\n  Candidate: (none)\n  Version table:\n');
+            if (input.executable === 'apt-cache') return ok('Package: docker.io\nVersion: 1\nArchitecture: amd64\n');
+            expect(input.executable).toBe('apt-get');
+            effects.push(input.args[0]!);
+            if (input.args[0] === 'update') refreshed = true;
+            else { expect(input.args[0]).toBe('install'); expect(refreshed).toBe(true); installed = true; }
+            return ok();
+        } });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+        expect(effects).toEqual([]);
+        expect(plan.nativeFacts).toMatchObject([{ status: 'drifted', facts: { unresolvedPackages: ['docker.io'] } }]);
+        expect(await applyMachineSetupEffectPlan({ plan, backend })).toMatchObject({ status: 'applied', completedStepIds: ['docker'] });
+        expect(effects).toEqual(['update', 'install']);
+        expect(installed).toBe(true);
+    });
+
+    it.each([undefined, '1'])('reports an apt package unsupported only after a refresh still finds no candidate (version %s)', async version => {
+        const effects: string[] = [];
+        const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io', ...(version ? { version } : {}) }] });
+        const result = await apply(step, async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get' && input.args[0] === '--version') return ok('apt 3.2\n');
+            if (input.executable === 'dpkg-query') return { code: 1, stdout: '', stderr: '' };
+            if (input.executable === 'lslocks') return ok('{"locks":[]}');
+            if (input.executable === 'apt-cache') return ok('docker.io:\n  Candidate: (none)\n  Version table:\n');
+            expect(input.executable).toBe('apt-get');
+            effects.push(input.args[0]!);
+            return ok();
+        });
+        expect(effects).toEqual(['update']);
+        expect(result).toMatchObject({ status: 'failed', reason: 'required_fact_unavailable', stepId: 'docker', failure: {
+            kind: 'native_check_unsupported', requiredFact: version ? 'packageVersion' : 'packageAvailability',
+            remedy: 'Check the selected packages and enabled apt repositories, then review and retry.',
+        } });
+    });
+
+    it('retains a failed partial apt refresh instead of declaring its missing package unsupported', async () => {
+        const effects: string[] = [];
+        const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io' }] });
+        const result = await apply(step, async input => {
+            if (input.executable === 'dpkg') return ok('amd64\n');
+            if (input.executable === 'apt-get' && input.args[0] === '--version') return ok('apt 3.2\n');
+            if (input.executable === 'dpkg-query') return { code: 1, stdout: '', stderr: '' };
+            if (input.executable === 'lslocks') return ok('{"locks":[]}');
+            if (input.executable === 'apt-cache') return ok('docker.io:\n  Candidate: (none)\n  Version table:\n');
+            expect(input.executable).toBe('apt-get');
+            effects.push(input.args[0]!);
+            // apt normally tolerates transient index fetch failures; its own option
+            // makes those failures a nonzero exit, without parsing repository output.
+            return { code: input.args.includes('--error-on=any') ? 100 : 0, stdout: '', stderr: 'Failed to fetch private-repository: temporary failure resolving host' };
+        });
+        expect(effects).toEqual(['update']);
+        expect(result).toMatchObject({ status: 'failed', failure: { kind: 'native_effect_failed',
+            nativeCommand: { command: 'apt-get', phase: 'update', exitCode: 100, category: 'command_failed' } } });
+        expect(JSON.stringify(result)).not.toContain('private-repository');
+    });
+
     it('names unreadable APT lock ownership and the administrator-check remedy without treating it as a busy manager', async () => {
         const step = declaration({ id: 'docker', kind: 'package', manager: 'apt', packages: [{ name: 'docker.io' }, { name: 'docker-compose-v2' }] });
         const backend = createMachineSetupNativeBackend({ run: async input => {

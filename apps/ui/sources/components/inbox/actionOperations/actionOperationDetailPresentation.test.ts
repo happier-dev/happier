@@ -24,6 +24,16 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it.each([undefined, 'Refresh apt package indexes, then review and retry.'])('shows the native owner recovery when supplied (%s)', remedy => {
+        const detail = projectActionOperationDetail(operation({ actionId: 'machines.setup.apply', state: 'failed',
+            settledAt: 2_000, error: { errorCode: 'native_check_unsupported', error: 'native_check_unsupported',
+                details: { kind: 'machineSetup', failure: { kind: 'native_check_unsupported',
+                    reason: 'required_fact_unavailable', requiredFact: 'packageAvailability', ...(remedy ? { remedy } : {}) } } },
+        }), 'available');
+        expect(detail.failure?.reason).toBe(remedy ?? t('errors.machineNativeCheckUnsupported'));
+        expect(detail.failure?.technicalLines).toContainEqual({ key: 'failure-code', label: t('common.error'), value: 'native_check_unsupported' });
+    });
+
     it.each([
         ['machine_admin_access_required', 'errors.machineAdminAccessRequired'],
         ['managed_cli_unavailable', 'errors.machineManagedCliUnavailable'],

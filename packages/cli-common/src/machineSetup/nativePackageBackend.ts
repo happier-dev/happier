@@ -115,9 +115,12 @@ async function apt(run: NativeRun, step: PackageStep) {
         if (policy.code !== 0) return unavailable(step, facts);
         const candidate = /^\s*Candidate:\s*(\S+)$/m.exec(policy.stdout)?.[1];
         const versions = [...policy.stdout.matchAll(/^\s+(?:\*\*\*\s+)?(\S+)\s+\d+\s*$/gm)].map(match => match[1]);
-        if (pkg.version !== undefined && !versions.includes(pkg.version)) return unsupported(step, 'packageVersion', { ...facts, package: pkg.name, requestedVersion: pkg.version });
-        if (candidate === '(none)') return unsupported(step, 'packageAvailability', { ...facts, package: pkg.name });
-        if (!candidate) { if (policy.stdout.trim()) return unavailable(step, facts); unresolved.push(pkg.name); continue; }
+        if (!candidate && policy.stdout.trim()) return unavailable(step, facts);
+        // CHECK is read-only: an incomplete index is not evidence of an unsupported
+        // package. Apply refreshes unresolved candidates before deciding availability.
+        if (!candidate || candidate === '(none)' || pkg.version !== undefined && !versions.includes(pkg.version)) {
+            unresolved.push(pkg.name); continue;
+        }
         const available = await run('apt-cache', ['show', '--', `${pkg.name}=${pkg.version ?? candidate}`], locale);
         if (available.code !== 0) return unavailable(step, facts);
         const matches = controlRecords(available.stdout).filter(record => record.Package === pkg.name && record.Version === (pkg.version ?? candidate));
@@ -305,9 +308,15 @@ export function createNativePackageBackend(currentProcessRun: NativeRun, runAsDa
             if (result.code !== 0) throw new MachineSetupEffectError(step.manager === 'dnf' && result.code === 200 ? 'package_manager_busy' : 'native_effect_failed');
         };
         if (step.manager === 'apt' && step.state !== 'absent' && Array.isArray(state.facts.unresolvedPackages) && state.facts.unresolvedPackages.length) {
-            await mutateApt(run, ['update']); state = await observe(step);
+            await mutateApt(run, ['update', '--error-on=any']); state = await observe(step);
             if (state.status === 'satisfied') return;
-            if (state.status !== 'drifted' || !Array.isArray(state.facts.unresolvedPackages) || state.facts.unresolvedPackages.length) throw new MachineSetupEffectError(state.reason === 'package_manager_busy' ? 'package_manager_busy' : 'required_fact_unavailable');
+            if (state.status !== 'drifted' || !Array.isArray(state.facts.unresolvedPackages)) throw new MachineSetupEffectError(state.reason === 'package_manager_busy' ? 'package_manager_busy' : 'required_fact_unavailable');
+            if (state.facts.unresolvedPackages.length) {
+                const unresolved = state.facts.unresolvedPackages;
+                throw new MachineSetupEffectError('required_fact_unavailable', { kind: 'native_check_unsupported', reason: 'required_fact_unavailable',
+                    requiredFact: step.packages.some(pkg => pkg.version !== undefined && unresolved.includes(pkg.name)) ? 'packageVersion' : 'packageAvailability',
+                    remedy: 'Check the selected packages and enabled apt repositories, then review and retry.' });
+            }
         }
         const packages = state.facts.packages;
         if (!Array.isArray(packages)) throw new MachineSetupEffectError('required_fact_unavailable');
