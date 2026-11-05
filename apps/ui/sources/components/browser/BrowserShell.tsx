@@ -268,6 +268,8 @@ export function BrowserShell(props: Readonly<{
     onAllowBrowserSandbox?: () => Promise<BrowserSandboxInstallOutcome | null>;
     onOpenInSystemBrowser?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
     onOpenDevtools?: (view: Readonly<{ browserSessionId: string; viewId: string }>) => void | Promise<ActionExecuteResult>;
+    /** Opens the sign-in import for the managed profile in view; absent where the host has no Machine for it. */
+    onImportLogins?: (view: Readonly<{ browserSessionId: string; viewId: string; profileId: string; profileName: string | null }>) => void;
     /**
      * B-2 cause-2: a sink the in-app render engines call to feed their page-load lifecycle
      * (iframe `onLoad`/`onError`, RN `onLoadStart`/`onLoadEnd`/`onError`, desktop `publishPageInfo`)
@@ -519,6 +521,13 @@ export function BrowserShell(props: Readonly<{
     const openDiagnostics = React.useMemo(() => (activeDiagnostics || props.supplementalDiagnostics
         ? () => diagnosticsDrawerRef.current?.open()
         : null), [activeDiagnostics, props.supplementalDiagnostics]);
+    // A managed profile the Machine runs can take imported sign-ins; an embedded or preview page cannot.
+    const importProfileId = activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeSession?.profileId ?? null : null;
+    const onImportLogins = props.onImportLogins;
+    const importLogins = React.useMemo(() => (onImportLogins && activeView && importProfileId
+        ? () => onImportLogins({ browserSessionId: activeView.browserSessionId, viewId: activeView.viewId, profileId: importProfileId,
+            profileName: props.browserProfile?.profile?.displayName ?? null })
+        : null), [activeView?.browserSessionId, activeView?.viewId, importProfileId, onImportLogins, props.browserProfile?.profile?.displayName]);
     const overflowItems = useBrowserToolbarOverflowItems({
         activeView,
         annotation: props.browserContext ? annotation : null,
@@ -527,6 +536,7 @@ export function BrowserShell(props: Readonly<{
         onDiscardRecording: recordingModel?.onCancelRecording ? discardRecording : undefined,
         onOpenInYourBrowser: openInYourBrowser,
         onOpenDiagnostics: openDiagnostics,
+        onImportLogins: importLogins,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools: openDesktopDevtools,
         plugins,

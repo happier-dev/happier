@@ -36,6 +36,8 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
     onOpenInYourBrowser?: (() => void) | null;
     /** Idle Diagnostics live here rather than as a bar under the page (lab Q). */
     onOpenDiagnostics?: (() => void) | null;
+    /** Present for a managed profile on a Machine: bring cookies or passkeys into it. */
+    onImportLogins?: (() => void) | null;
     desktopNativeDevtoolsAvailable: boolean;
     onOpenDesktopDevtools: () => void;
     plugins: BrowserPluginActions;
@@ -50,6 +52,7 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
         onDiscardRecording,
         onOpenInYourBrowser,
         onOpenDiagnostics,
+        onImportLogins,
         desktopNativeDevtoolsAvailable,
         onOpenDesktopDevtools,
         pluginActionsEnabled,
@@ -93,6 +96,9 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
                     disabledReason: recording.unavailable?.message ?? null,
                 });
             }
+        }
+        if (onImportLogins) {
+            items.push({ id: 'import-logins', iconName: 'sign-in', label: t('browserShell.loginImport.menu'), onPress: onImportLogins });
         }
         if (onOpenInYourBrowser) {
             items.push({
@@ -142,6 +148,7 @@ export function useBrowserToolbarOverflowItems(input: Readonly<{
         }
         return items;
     }, [
+        onImportLogins,
         activeView,
         annotation,
         recording,

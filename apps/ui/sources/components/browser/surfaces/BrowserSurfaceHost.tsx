@@ -696,6 +696,14 @@ export function BrowserSurfaceHost(props: Readonly<{
         externalActionTarget: browserActionTarget,
     }), [executeBrowserAction, browserActionAccountLifetime, props.pluginBrowserActionContext?.sessionId, browserActionTarget]);
 
+    // The Machine that runs this browser receives the sign-ins; the sheet reads its sources only while open.
+    const onImportLogins = React.useMemo(() => (browserOperationScope && browserMachineId
+        ? (view: Readonly<{ browserSessionId: string; viewId: string; profileId: string; profileName: string | null }>) => {
+            // Loaded on demand: a browser that never opens the import keeps none of its code.
+            void import('@/components/browser/profile/BrowserLoginImportSheet').then(module => module.presentBrowserLoginImportSheet({
+                serverId: browserOperationScope.serverId, accountId: browserOperationScope.accountId, machineId: browserMachineId, ...view }));
+        }
+        : undefined), [browserMachineId, browserOperationScope]);
     const onOpenInSystemBrowser = React.useCallback((view: Readonly<{ browserSessionId: string; viewId: string }>) => executeBrowserAction(
         'browser.view.openExternal', { ...view, commandId: `browser_command:${view.viewId}:openExternal:${Date.now()}` }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
@@ -908,6 +916,7 @@ export function BrowserSurfaceHost(props: Readonly<{
                 onAllowBrowserSandbox={onAllowBrowserSandbox}
                 onOpenInSystemBrowser={onOpenInSystemBrowser}
                 onOpenDevtools={onOpenDevtools}
+                onImportLogins={onImportLogins}
                 daemonControlAvailable={sendDaemonCommand !== undefined}
                 onViewLifecycle={applyViewLifecycleSignal}
                 lifecycleState={lifecycleSlot ? lifecycleSnapshot.lifecycleState : undefined}
