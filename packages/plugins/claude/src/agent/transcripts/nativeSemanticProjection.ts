@@ -225,6 +225,21 @@ function readTextContentParts(value: unknown): string | null {
   return parts.length > 0 ? parts.join('') : null;
 }
 
+/** One parser for native tool-result blocks, shared by replay and the SDK stream. */
+export function readClaudeNativeToolResultBlock(value: unknown): Readonly<{
+  callId: string;
+  content: unknown;
+  isError?: boolean;
+}> | null {
+  if (!isRecord(value) || value.type !== 'tool_result') return null;
+  const callId = readString(value.tool_use_id);
+  if (!callId) return null;
+  return {
+    callId, content: value.content ?? '',
+    ...(typeof value.is_error === 'boolean' ? { isError: value.is_error } : {}),
+  };
+}
+
 /** Collapse only plain text blocks; any additional block facts must survive. */
 export function readClaudeToolResultText(value: unknown): string | null {
   if (typeof value === 'string') return value;
@@ -312,14 +327,13 @@ function readMessageContentParts(value: unknown, row: RawJSONLines): readonly Cl
       continue;
     }
     if (type === 'tool_result') {
-      const callId = readString(valuePart.tool_use_id);
-      parts.push(callId === null
+      const result = readClaudeNativeToolResultBlock(valuePart);
+      parts.push(result === null
         ? { kind: 'unsupported', source: 'tool_result' }
         : {
-            kind: 'tool_result',
-            callId,
-            output: withClaudeNativeToolResultMetadata(valuePart.content ?? '', row),
-            ...(typeof valuePart.is_error === 'boolean' ? { isError: valuePart.is_error } : {}),
+            kind: 'tool_result', callId: result.callId,
+            output: withClaudeNativeToolResultMetadata(result.content, row),
+            ...(result.isError === undefined ? {} : { isError: result.isError }),
           });
       if (Array.isArray(valuePart.content) && valuePart.content.some(part => isRecord(part) && part.type === 'image')) {
         parts.push({ kind: 'unsupported', source: 'image' });

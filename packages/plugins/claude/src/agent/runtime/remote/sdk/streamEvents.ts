@@ -1,6 +1,6 @@
 import { isClaudeSidechainRuntimeEvidence } from '../../../hooks/sidechain.js';
 import type { SDKMessage } from '../../../sdk/types.js';
-import { readClaudeToolResultText, withClaudeNativeToolResultMetadata } from '../../../transcripts/nativeSemanticProjection.js';
+import { readClaudeNativeToolResultBlock, readClaudeToolResultText, withClaudeNativeToolResultMetadata } from '../../../transcripts/nativeSemanticProjection.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/plugin-sdk';
 import {
     containsDefinitiveClaudeOAuthRevocationEvidence,
@@ -207,15 +207,12 @@ export function extractToolResultBlocksFromSdkMessage(message: unknown): ClaudeS
     if (!content) return [];
     const blocks: ClaudeSdkToolResultBlock[] = [];
     for (const item of content) {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-        const block = item as Record<string, unknown>;
-        if (block.type !== 'tool_result') continue;
-        const toolUseId = readNonEmptyString(block.tool_use_id);
-        if (!toolUseId) continue;
+        const block = readClaudeNativeToolResultBlock(item);
+        if (!block) continue;
         blocks.push({
-            toolUseId,
+            toolUseId: block.callId,
             output: withClaudeNativeToolResultMetadata(readClaudeToolResultText(block.content) ?? block.content ?? '', record),
-            ...(typeof block.is_error === 'boolean' ? { isError: block.is_error } : {}),
+            ...(block.isError === undefined ? {} : { isError: block.isError }),
         });
     }
     return blocks;
