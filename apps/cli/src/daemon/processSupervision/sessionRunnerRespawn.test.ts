@@ -9,6 +9,9 @@ import {
 
 import { createSessionRunnerRespawnManager } from './sessionRunnerRespawn';
 import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
+import { buildVersionRuntimeRefreshTerminalCompletion } from '../plannedRunnerRestart/buildVersionRuntimeRefreshTerminalCompletion';
+import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlannedRunnerRestart';
+import type { RestartSessionRunnerCompletion } from '../plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -21,6 +24,59 @@ type RespawnOptionsResolver = (input: Readonly<{
 }>) => SpawnSessionOptions | Promise<SpawnSessionOptions>;
 
 describe('createSessionRunnerRespawnManager', () => {
+  it.each([
+    SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+    SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
+    SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED,
+    SPAWN_SESSION_ERROR_CODES.SESSION_INITIAL_ACCESS_NOT_AUTHENTICATED,
+    SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+    SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING,
+  ])('settles an awaiting restart after one permanent replacement refusal (%s)', async errorCode => {
+    vi.useFakeTimers();
+    const failure = { ok: false, status: 'partial_failure' } as const;
+    const handoff = createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({
+      timeoutMs: null, timeoutCompletion: failure, supersededCompletion: failure, cancelledCompletion: failure,
+    });
+    const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'signed-out',
+      processCommandHash: 'runner-command', processStartTimeMs: 100,
+      spawnOptions: { directory: '/repo', resume: 'vendor-session' } };
+    const target = { sessionId: 'signed-out', previousPid: tracked.pid, tracked };
+    const spawnSession = vi.fn(async () => ({ type: 'error' as const, errorCode, errorMessage: 'User action required' }));
+    const terminal = vi.fn(({ reason, detail }: Parameters<NonNullable<Parameters<typeof createSessionRunnerRespawnManager>[0]['onRespawnTerminal']>>[0]) => {
+      handoff.settle(target.sessionId, target.previousPid, buildVersionRuntimeRefreshTerminalCompletion(reason, detail));
+    });
+    const manager = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: null,
+      baseDelayMs: 50, maxDelayMs: 50, jitterMs: 0, random: () => 0,
+      isSessionAlreadyRunning: () => false, spawnSession, onRespawnTerminal: terminal,
+      logDebug: () => {}, logWarn: () => {} });
+    let settled = false;
+    const restart = requestPlannedRunnerRestart({ sessionId: target.sessionId, tracked,
+      deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: new Map([[111, tracked]]),
+      isProcessSafeToSignal: async () => true,
+      completion: { hasPending: () => handoff.hasPending(), join: () => handoff.join(target), create: () => handoff.create(target) },
+      requestSignal: async request => {
+        if (!await request.shouldSignal()) return { status: 'skipped_stale_owner' };
+        manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: 0, signal: null }, { forceRestart: true });
+        return { status: 'requested' };
+      },
+    }).then(result => { settled = true; return result; });
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(spawnSession).toHaveBeenCalledTimes(1);
+      expect(terminal).toHaveBeenCalledTimes(1);
+      expect(terminal.mock.calls[0]?.[0]).toMatchObject({ detail: errorCode });
+      expect(settled).toBe(true);
+      await expect(restart).resolves.toMatchObject({ signaled: true,
+        completion: { ok: false, status: 'spawn_failed', diagnostics: { errorCode } } });
+      expect(handoff.hasPending()).toBe(false);
+    } finally {
+      manager.markStopRequested(target.sessionId, { reason: 'test_cleanup', requestedAtMs: 1_000 });
+      handoff.settle(target.sessionId, target.previousPid, failure);
+      await restart;
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['scheduled', 'retry', 'preflight'] as const)('settles the exact predecessor refresh when Stop retires a %s respawn', async phase => {
     vi.useFakeTimers();
     const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'stopped-refresh',
@@ -1227,6 +1283,7 @@ describe('createSessionRunnerRespawnManager', () => {
       sessionId: 'sess-resume-not-supported',
       previousPid: 111,
       reason: 'resume_not_supported',
+      detail: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
     });
   });
 
@@ -1440,7 +1497,7 @@ describe('createSessionRunnerRespawnManager', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(spawnSession).toHaveBeenCalledTimes(1);
     expect(logWarn).toHaveBeenCalledWith(
-      '[DAEMON RUN] Respawn suppressed for session sess-stale-auth (auth:not_authenticated)',
+      '[DAEMON RUN] Respawn suppressed for session sess-stale-auth (spawn:not_authenticated)',
     );
 
     await vi.advanceTimersByTimeAsync(150);

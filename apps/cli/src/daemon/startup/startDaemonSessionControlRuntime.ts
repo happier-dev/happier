@@ -740,6 +740,7 @@ import {
 import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlannedRunnerRestart';
 import { restartStaleRunnersAfterDaemonStart } from '../plannedRunnerRestart/restartStaleRunnersAfterDaemonStart';
 import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
+import { buildVersionRuntimeRefreshTerminalCompletion } from '../plannedRunnerRestart/buildVersionRuntimeRefreshTerminalCompletion';
 import type {
   PlannedRunnerRestartNotSignaledReason,
   PlannedRunnerRestartSignalGateResult,
@@ -5020,43 +5021,6 @@ daemonWorkSignal: AbortSignal;
     60_000,
     { min: 1_000, max: 10 * 60_000 },
   );
-  const buildVersionRuntimeRefreshTerminalCompletion = (
-    reason: SessionRunnerRespawnTerminalReason,
-    detail?: string,
-  ): RestartSessionRunnerCompletion => {
-    const diagnostics = {
-      respawnTerminalReason: reason,
-      ...(detail ? { detail } : {}),
-    };
-    if (reason === 'not_authenticated') {
-      return {
-        ok: false,
-        status: 'spawn_failed',
-        reasonCode: 'missing_credentials',
-        diagnostics,
-      };
-    }
-    if (reason === 'missing_spawn_options') {
-      return {
-        ok: false,
-        status: 'spawn_failed',
-        reasonCode: 'missing_spawn_options',
-        diagnostics,
-      };
-    }
-    if (reason === 'already_running') {
-      return {
-        ok: false,
-        status: 'partial_failure',
-        reasonCode: 'restart_already_running',
-        diagnostics,
-      };
-    }
-    if (reason === 'stop_requested') {
-      return { ok: false, status: 'partial_failure', diagnostics };
-    }
-    return { ok: false, status: 'spawn_failed', diagnostics };
-  };
   const versionRuntimeRefreshAttemptHandoff =
     createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({
       // The respawn owner settles success/failure under its existing spawn

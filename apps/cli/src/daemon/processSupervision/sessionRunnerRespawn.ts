@@ -62,6 +62,9 @@ export type SessionRunnerRespawnTerminalReason =
   | 'missing_spawn_options'
   | 'no_restart'
   | 'not_authenticated'
+  | 'agent_signed_out'
+  | 'agent_cli_missing'
+  | 'backend_disabled'
   | 'resume_not_supported'
   | 'session_directory_missing'
   | 'startup_dependency_failure'
@@ -74,20 +77,35 @@ function normalizeSessionId(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
-function isNotAuthenticatedSpawnResult(result: unknown): boolean {
-  if (!result || typeof result !== 'object') return false;
+function readPermanentSpawnRefusal(result: unknown): Readonly<{
+  reason: SessionRunnerRespawnTerminalReason;
+  code: string;
+}> | null {
+  if (!result || typeof result !== 'object') return null;
   const value = result as Readonly<{
     code?: unknown;
     error?: unknown;
     errorCode?: unknown;
     errorMessage?: unknown;
   }>;
-  return (
-    value.code === 'not_authenticated' ||
-    value.error === 'not_authenticated' ||
-    value.errorCode === 'not_authenticated' ||
-    value.errorMessage === 'not_authenticated'
-  );
+  // These refusals require a person to repair launch prerequisites. Retrying
+  // the same replacement cannot sign in, install/enable an Agent, approve a
+  // directory, or add resume support. Transport and child failures still retry.
+  switch (value.errorCode) {
+    case SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT:
+    case SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING:
+    case SPAWN_SESSION_ERROR_CODES.BACKEND_DISABLED:
+    case SPAWN_SESSION_ERROR_CODES.SESSION_INITIAL_ACCESS_NOT_AUTHENTICATED:
+      return { reason: value.errorCode, code: value.errorCode };
+    case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
+      return { reason: 'resume_not_supported', code: value.errorCode };
+    case SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING:
+      return { reason: 'session_directory_missing', code: value.errorCode };
+  }
+  // Keep the existing authentication error spellings at this boundary.
+  const notAuthenticated = SPAWN_SESSION_ERROR_CODES.SESSION_INITIAL_ACCESS_NOT_AUTHENTICATED;
+  return value.code === notAuthenticated || value.error === notAuthenticated || value.errorMessage === notAuthenticated
+    ? { reason: 'not_authenticated', code: notAuthenticated } : null;
 }
 
 function isChildExitedBeforeWebhookSpawnResult(result: unknown): boolean {
@@ -96,15 +114,6 @@ function isChildExitedBeforeWebhookSpawnResult(result: unknown): boolean {
   return (
     value.type === 'error'
     && value.errorCode === SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK
-  );
-}
-
-function isResumeNotSupportedSpawnResult(result: unknown): boolean {
-  if (!result || typeof result !== 'object') return false;
-  const value = result as Readonly<{ type?: unknown; errorCode?: unknown }>;
-  return (
-    value.type === 'error'
-    && value.errorCode === SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED
   );
 }
 
@@ -493,14 +502,6 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
           }, { sessionId, previousPid, trackedSession, intended: existing.intended })
           .then((result) => {
             if (finishIfCycleRetired()) return;
-            if (result && typeof result === 'object'
-              && 'errorCode' in result
-              && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
-              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (private directory missing)`);
-              endRespawnCycle(sessionId);
-              beginTerminalSettlement({ sessionId, previousPid, reason: 'session_directory_missing' });
-              return;
-            }
             if (result && typeof result === 'object' && (result as any).type === 'success') {
               params.onRespawnSuccess?.({ sessionId, previousPid, result });
               observeRespawnSuccess(sessionId);
@@ -514,17 +515,11 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               return;
             }
 
-            if (isNotAuthenticatedSpawnResult(result)) {
-              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (auth:not_authenticated)`);
+            const refusal = readPermanentSpawnRefusal(result);
+            if (refusal) {
+              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (spawn:${refusal.code})`);
               endRespawnCycle(sessionId);
-              beginTerminalSettlement({ sessionId, previousPid, reason: 'not_authenticated' });
-              return;
-            }
-
-            if (isResumeNotSupportedSpawnResult(result)) {
-              params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (resume not supported)`);
-              endRespawnCycle(sessionId);
-              beginTerminalSettlement({ sessionId, previousPid, reason: 'resume_not_supported' });
+              beginTerminalSettlement({ sessionId, previousPid, reason: refusal.reason, detail: refusal.code });
               return;
             }
 

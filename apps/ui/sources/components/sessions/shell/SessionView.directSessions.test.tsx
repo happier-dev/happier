@@ -98,6 +98,7 @@ import { BUNDLED_CANONICAL_AGENT_DECLARATIONS, type BundledAgentDeclaration } fr
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
+import { readComposerText } from '@/dev/testkit/readComposerText';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams';
 
@@ -2770,6 +2771,44 @@ describe('SessionView (direct sessions)', () => {
       });
       expect(modalAlertSpy).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it.each(['not_authenticated', 'agent_signed_out'] as const)('clears Continue loading and keeps the draft after replacement refuses %s', async errorCode => {
+    requireModelRestartAtSocketBoundary();
+    featureEnabledState.providers = true;
+    const real = await vi.importActual<typeof import('@/sync/ops/sessionRunnerRestart')>('@/sync/ops/sessionRunnerRestart');
+    restartProviderBindingSessionRunnerSpy.mockImplementation(request => real.restartSessionRunnerForProviderBindingChange(
+      request as Parameters<typeof real.restartSessionRunnerForProviderBindingChange>[0],
+    ));
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({
+      state: { ...buildSessionRunnerRuntimeStatus({ sessionId: 's1', machineId: 'machine-1', versionState: 'stale' }),
+        plannedRestart: { supported: true, eligible: true } },
+      runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 },
+    });
+    pendingRestartReceipt = createDeferred<unknown>();
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const picker = await mountSessionModelPicker(screen);
+    await act(async () => picker.props.onSelect({ agentTargetKey: 'agent:happier.agent.codex/codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'provider-model' }));
+    await settleDirectSessionView();
+    await act(async () => { findAgentInput(screen).props.onChangeText('Keep my signed-out draft'); });
+    let pending!: Promise<void>;
+    await act(async () => { pending = findAgentInput(screen).props.onSend(); });
+    await waitForHomeGovernance(() => expect(externalRpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2)).toHaveLength(1));
+    expect(findAgentInput(screen).props.isSending).toBe(true);
+    await act(async () => {
+      pendingRestartReceipt!.resolve({ ok: false, status: 'spawn_failed', sessionId: 's1', reasonCode: 'missing_credentials',
+        diagnostics: { respawnTerminalReason: errorCode, detail: errorCode, errorCode } });
+      await pending;
+    });
+    expect(findAgentInput(screen).props.isSending).toBe(false);
+    expect(readComposerText(findAgentInput(screen))).toBe('Keep my signed-out draft');
+    expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
+    expect(actionExecuteSpy).toHaveBeenCalledWith('session.runtime.refresh', expect.objectContaining({ sessionId: 's1' }), expect.anything());
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    const buttons = modalAlertSpy.mock.calls[0]?.[2] as { text: string; onPress?: () => void }[] | undefined;
+    await act(async () => { buttons?.find(button => button.text === 'approvals.technicalDetails')?.onPress?.(); });
+    expect(modalAlertSpy.mock.calls.at(-1)?.[1]).toContain(errorCode);
   });
 
   it.each(['stale runner', 'provider binding'] as const)('retires a deferred %s restart observation when leaving the screen', async (kind) => {
