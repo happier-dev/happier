@@ -1,30 +1,16 @@
+import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
+export { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { SessionVoicePreferenceV1Schema } from '../sessions/instructions/sessionVoicePreferenceV1.js';
 import { VoiceAttemptPresentationSchema } from '../voice/attemptPresentation.js';
-
-export const VOICE_CONVERSATION_ACTION_IDS = [
-  'ui.voice_global.get', 'ui.voice_global.start', 'ui.voice_global.end', 'ui.voice_global.set_muted',
-  'ui.voice_global.recover', 'ui.voice_global.dismiss', 'ui.voice_global.turn_control',
-  'ui.voice_global.hold_begin', 'ui.voice_global.hold_release', 'ui.voice_global.hold_cancel',
-  'ui.voice_global.brief.request', 'ui.voice_global.brief.retry', 'ui.voice_global.brief.stop',
-  'ui.voice_global.brief.close', 'ui.voice_global.glance.open', 'ui.voice_global.glance.close',
-  'ui.voice_global.transcript.set_visible', 'ui.voice_global.companion.reveal', 'ui.voice_global.position.set',
-  'ui.voice_global.setup.open', 'ui.voice_global.setup.close', 'ui.voice_global.open_conversation',
-  'ui.voice_global.setup.microphone.permission.request', 'ui.voice_global.setup.system_settings.open',
-  'ui.voice_global.dictation.start', 'ui.voice_global.dictation.finish',
-  'ui.voice_global.dictation.cancel', 'ui.voice_global.dictation.dismiss',
-  'ui.voice_global.conversations.list',
-  'ui.voice_global.history.search', 'ui.voice_global.history.load_older',
-  'ui.voice_global.history.export', 'ui.voice_global.history.clear',
-] as const;
 export type VoiceConversationActionId = typeof VOICE_CONVERSATION_ACTION_IDS[number];
 export function isVoiceConversationActionId(value: string): value is VoiceConversationActionId {
   return (VOICE_CONVERSATION_ACTION_IDS as readonly string[]).includes(value);
 }
 
-export type VoiceDictationOperation = 'start' | 'finish' | 'cancel' | 'dismiss';
+export type VoiceDictationOperation = 'start' | 'finish' | 'cancel' | 'dismiss' | 'retry';
 export type VoiceDictationActionId = Extract<VoiceConversationActionId, `ui.voice_global.dictation.${string}`>;
 export function isVoiceDictationActionId(value: string): value is VoiceDictationActionId {
   return value.startsWith('ui.voice_global.dictation.') && isVoiceConversationActionId(value);
@@ -77,8 +63,13 @@ export const VoiceDictationActionResultSchema = lazyZodSchema(() => z.discrimina
 export type VoiceDictationActionResult = z.infer<typeof VoiceDictationActionResultSchema>;
 export const VoiceConversationActionInputSchemas = {
   'ui.voice_global.conversations.list': z.strictObject({ conversationSessionAddress: z.optional(AddressSchema), cursor: z.optional(ConversationHistoryCursorSchema) }),
+  'ui.voice_global.say.start': z.strictObject({ text: z.string().check(z.trim(), z.minLength(1)) }),
+  'ui.voice_global.say.stop': z.strictObject({}),
   'ui.voice_global.get': z.strictObject({ target: z.optional(VoiceConversationTargetSchema) }),
   'ui.voice_global.start': z.strictObject({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }),
+  'ui.voice_global.new_conversation': z.strictObject({ target: VoiceConversationTargetSchema, expectedAttempt: z.null() }),
+  'ui.voice_global.continue_conversation': z.strictObject({ conversationSessionAddress: AddressSchema, expectedAttempt: z.null() }),
+  'ui.voice_global.conversations.open': z.strictObject({ conversationSessionAddress: AddressSchema }),
   'ui.voice_global.end': AttemptInputSchema,
   'ui.voice_global.set_muted': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AttemptInputSchema, { muted: z.boolean() }))),
   'ui.voice_global.recover': AttemptInputSchema,
@@ -105,6 +96,7 @@ export const VoiceConversationActionInputSchemas = {
   'ui.voice_global.dictation.finish': DictationInputSchema,
   'ui.voice_global.dictation.cancel': DictationInputSchema,
   'ui.voice_global.dictation.dismiss': DictationInputSchema,
+  'ui.voice_global.dictation.retry': DictationInputSchema,
   'ui.voice_global.history.search': HistorySearchInputSchema,
   'ui.voice_global.history.load_older': HistoryPageInputSchema,
   'ui.voice_global.history.export': HistoryExportInputSchema,
@@ -143,10 +135,21 @@ export const VoiceSetupMicrophonePermissionActionResultSchema = lazyZodSchema(()
 const BriefResultSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['waiting', 'sent', 'refused', 'stopped', 'closed']), attemptId: z.nullable(IdSchema),
 }));
+export const VoiceSayActionResultSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('completed') }),
+  z.strictObject({ status: z.literal('cancelled') }),
+  z.strictObject({ status: z.literal('unavailable'), code: IdSchema }),
+]));
+export type VoiceSayActionResult = z.infer<typeof VoiceSayActionResultSchema>;
 export const VoiceConversationActionOutputSchemas = {
   'ui.voice_global.conversations.list': VoiceConversationHistoryListSchema,
+  'ui.voice_global.say.start': VoiceSayActionResultSchema,
+  'ui.voice_global.say.stop': VoiceSayActionResultSchema,
   'ui.voice_global.get': VoiceConversationActionResultSchema,
   'ui.voice_global.start': VoiceConversationActionResultSchema,
+  'ui.voice_global.new_conversation': VoiceConversationActionResultSchema,
+  'ui.voice_global.continue_conversation': VoiceConversationActionResultSchema,
+  'ui.voice_global.conversations.open': VoiceConversationActionResultSchema,
   'ui.voice_global.end': VoiceConversationActionResultSchema,
   'ui.voice_global.set_muted': VoiceConversationActionResultSchema,
   'ui.voice_global.recover': VoiceConversationActionResultSchema,
@@ -173,6 +176,7 @@ export const VoiceConversationActionOutputSchemas = {
   'ui.voice_global.dictation.finish': VoiceDictationActionResultSchema,
   'ui.voice_global.dictation.cancel': VoiceDictationActionResultSchema,
   'ui.voice_global.dictation.dismiss': VoiceDictationActionResultSchema,
+  'ui.voice_global.dictation.retry': VoiceDictationActionResultSchema,
   'ui.voice_global.history.search': VoiceHistorySnapshotSchema,
   'ui.voice_global.history.load_older': VoiceHistorySnapshotSchema,
   'ui.voice_global.history.export': z.strictObject({ fileName: z.string(), mimeType: z.literal('application/json'),
@@ -182,9 +186,14 @@ export const VoiceConversationActionOutputSchemas = {
 
 /** What a person reads in Settings, approvals and the form. Agents read `description`. */
 const VOICE_CONVERSATION_ACTION_SUMMARIES = {
-  'ui.voice_global.conversations.list': 'Read a page of the person’s own active and archived Voice conversations at this Home, including retained and retired custody, with exact addresses, Session titles, meaningful activity and blocked-input flags. Return nextCursor unchanged to read another page; null cursor components are exhausted. Coverage remains loaded; coverageComplete is false while pages or unreadable owner displays remain. canContinue:null means the compact display has not established eligibility; Continue resolves that exact conversation. Supply conversationSessionAddress to read only that conversation’s canonical Pending recovery identities and reasons. Offer cleanup through approval-governed session.pending.markHandled, session.pending.dismiss, session.pending.sendAsNew or session.pending.withdraw with that Home, Session and exact localId; never automatically replay or discard inputs. Send as new may duplicate an effect.',
+  'ui.voice_global.say.start': 'Say chosen text now on the answering client through its configured speech output. Waits for playback or cancellation; does not start microphone capture or submit an Agent turn. Use ui.voice_global.say.stop to stop it.',
+  'ui.voice_global.say.stop': 'Stop the chosen text currently being spoken on the answering client without ending its Voice conversation.',
   'ui.voice_global.get': 'See whether a voice conversation is going on, and what it is attached to.',
   'ui.voice_global.start': 'Start talking with Happier, about everything or about one session.',
+  'ui.voice_global.new_conversation': 'Start a fresh Voice conversation with new Agent context. Keeps earlier conversations and their pending inputs.',
+  'ui.voice_global.continue_conversation': 'Continue the exact Voice conversation at its Home and Session address, regardless of the lifetime preference.',
+  'ui.voice_global.conversations.list': 'Read a page of the person’s own active and archived Voice conversations at this Home, including retained and retired custody, with exact addresses, Session titles, meaningful activity and blocked-input flags. Return nextCursor unchanged to read another page; null cursor components are exhausted. Coverage remains loaded; coverageComplete is false while pages or unreadable owner displays remain. canContinue:null means the compact display has not established eligibility; Continue resolves that exact conversation. Supply conversationSessionAddress to read only that conversation’s canonical Pending recovery identities and reasons. Offer cleanup through approval-governed session.pending.markHandled, session.pending.dismiss, session.pending.sendAsNew or session.pending.withdraw with that Home, Session and exact localId; never automatically replay or discard inputs. Send as new may duplicate an effect.',
+  'ui.voice_global.conversations.open': 'Open an exact Voice conversation as an ordinary Session, including its Pending recovery and approval custody.',
   'ui.voice_global.end': 'End the voice conversation that is going on.',
   'ui.voice_global.set_muted': 'Mute or unmute your microphone during a voice conversation.',
   'ui.voice_global.recover': 'Try again when a voice conversation dropped or could not start.',
@@ -209,6 +218,7 @@ const VOICE_CONVERSATION_ACTION_SUMMARIES = {
   'ui.voice_global.open_conversation': 'Open the captured conversation destination, including Voice History for an unsaved attempt.',
   'ui.voice_global.dictation.start': 'Dictate into the exact focused editable field. Requires microphone consent and never submits the field.',
   'ui.voice_global.dictation.finish': 'Finish Dictation and insert recognized words into the same editable field without sending.',
+  'ui.voice_global.dictation.retry': 'Retry the same retained failed recording and insert recognized words into the same editable field without sending or recording again.',
   'ui.voice_global.dictation.cancel': 'Cancel Dictation for the exact mounted field without inserting words.',
   'ui.voice_global.dictation.dismiss': 'Dismiss the exact mounted field’s Dictation failure.',
   'ui.voice_global.history.search': 'Search ordinary text in the person’s owned Voice conversations, including archived conversations, at this Home. Discovers conversations on first use; refresh explicitly reloads them. Warm search filters loaded rows.',
@@ -226,7 +236,11 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
   } } : {}),
   title: {
     'ui.voice_global.conversations.list': 'List Voice conversations',
+    'ui.voice_global.say.start': 'Say this now', 'ui.voice_global.say.stop': 'Stop read-aloud',
     'ui.voice_global.get': 'Read current Voice attempt', 'ui.voice_global.start': 'Start Voice conversation',
+    'ui.voice_global.new_conversation': 'New Voice conversation',
+    'ui.voice_global.continue_conversation': 'Continue Voice conversation',
+    'ui.voice_global.conversations.open': 'Open Voice conversation as a Session',
     'ui.voice_global.end': 'End Voice conversation', 'ui.voice_global.set_muted': 'Set Voice microphone mute',
     'ui.voice_global.recover': 'Recover Voice conversation', 'ui.voice_global.dismiss': 'Dismiss ended or failed Voice attempt',
     'ui.voice_global.turn_control': 'Control current Voice turn', 'ui.voice_global.hold_begin': 'Begin Voice hold-to-talk',
@@ -244,20 +258,24 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
     'ui.voice_global.open_conversation': 'Open Voice conversation',
     'ui.voice_global.dictation.start': 'Start field Dictation', 'ui.voice_global.dictation.finish': 'Finish field Dictation',
     'ui.voice_global.dictation.cancel': 'Cancel field Dictation', 'ui.voice_global.dictation.dismiss': 'Dismiss field Dictation failure',
+    'ui.voice_global.dictation.retry': 'Retry field Dictation',
     'ui.voice_global.history.search': 'Search Voice History', 'ui.voice_global.history.load_older': 'Load older Voice History',
     'ui.voice_global.history.export': 'Export Voice History', 'ui.voice_global.history.clear': 'Clear Voice History',
   }[id],
-  description: isVoiceHistoryActionId(id) ? VOICE_CONVERSATION_ACTION_SUMMARIES[id]
+  description: id === 'ui.voice_global.say.start' || id === 'ui.voice_global.say.stop' || isVoiceHistoryActionId(id) || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
+    || id === 'ui.voice_global.conversations.open' ? VOICE_CONVERSATION_ACTION_SUMMARIES[id]
     : 'Use the answering client’s existing Voice lifecycle, input, recovery and Inbox Brief owners. Mutations require the captured attempt identity; navigation cannot retarget them. Local Voice and host-tool realtime may decide pending requests when Voice agent can approve requests is enabled (the default); when off, a tap is required. Native Codex Realtime cannot decide: tap the request or switch to Local Voice. Confirm outcomes only from canonical request state.',
   safety: id === 'ui.voice_global.start' || id === 'ui.voice_global.recover' || id === 'ui.voice_global.hold_begin'
+    || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
     || id === 'ui.voice_global.set_muted' || id === 'ui.voice_global.dictation.start'
     || id === 'ui.voice_global.setup.microphone.permission.request'
-    || id === 'ui.voice_global.history.clear'
+    || id === 'ui.voice_global.history.clear' || id === 'ui.voice_global.say.start'
     || id === 'ui.voice_global.brief.request' || id === 'ui.voice_global.brief.retry' ? 'danger' : 'safe',
   sideEffectClass: id === 'ui.voice_global.get' || id === 'ui.voice_global.conversations.list' || (isVoiceHistoryActionId(id) && id !== 'ui.voice_global.history.clear') ? 'read' : 'write',
   requiredAuthority: 'account_automation', executionPlacement: 'client', placements: ['command_palette'],
   bindings: { mcpToolName: id.replaceAll('.', '_') },
-  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+  surfaces: { ui: true, voice: id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
+    || id.startsWith('ui.voice_global.conversations.'), agent: true, mcp: true, cli: false, rpc: false },
   inputSchema: VoiceConversationActionInputSchemas[id], outputSchema: VoiceConversationActionOutputSchemas[id],
   inputHints: { description: VOICE_CONVERSATION_ACTION_SUMMARIES[id], fields: isVoiceHistoryActionId(id)
     ? id === 'ui.voice_global.history.clear' ? [] : [
@@ -265,13 +283,16 @@ export const VOICE_CONVERSATION_ACTION_SPECS = VOICE_CONVERSATION_ACTION_IDS.map
       ...(id === 'ui.voice_global.history.search' ? [{ path: 'refresh', title: 'Refresh history', widget: 'boolean' as const }] : []),
       ...(id === 'ui.voice_global.history.export' ? [{ path: 'range', title: 'Export range', widget: 'select' as const, required: true,
         options: [{ value: 'loaded', label: 'Loaded history' }, { value: 'all', label: 'All history' }] }] : []),
-    ] : isVoiceDictationActionId(id)
+    ] : id === 'ui.voice_global.say.start' ? [{ path: 'text', title: 'Text to speak', widget: 'text', required: true }]
+    : id === 'ui.voice_global.say.stop' ? [] : isVoiceDictationActionId(id)
     ? [{ path: 'commandId', title: 'Mounted field command', widget: 'text', required: true }]
     : id === 'ui.voice_global.get' ? [{ path: 'target', title: 'Where Voice would start', widget: 'json' }]
-    : id === 'ui.voice_global.start' ? [
+    : id === 'ui.voice_global.start' || id === 'ui.voice_global.new_conversation' ? [
       { path: 'target', title: 'Where Voice starts', description: 'Everywhere in the app, or one session.', widget: 'json', required: true },
       { path: 'expectedAttempt', title: 'Current Voice conversation', description: 'Empty when none is running.', widget: 'json', required: true },
-    ] : id.startsWith('ui.voice_global.brief.') ? [{ path: 'expectedAttemptId', title: 'Voice conversation', widget: 'text' }]
+    ] : id === 'ui.voice_global.continue_conversation' || id === 'ui.voice_global.conversations.open'
+      ? [{ path: 'conversationSessionAddress', title: 'Exact Voice conversation', widget: 'json', required: true }]
+    : id.startsWith('ui.voice_global.brief.') ? [{ path: 'expectedAttemptId', title: 'Voice conversation', widget: 'text' }]
     : id === 'ui.voice_global.position.set' ? [
       { path: 'x', title: 'Horizontal position', widget: 'number', required: true },
       { path: 'y', title: 'Vertical position', widget: 'number', required: true },

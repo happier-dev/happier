@@ -5,6 +5,21 @@ import { getActionSpec, PublicActionIdSchema } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('local Voice Action contract', () => {
+  it('exposes Say and Stop on the answering client with ordinary automation approval defaults', () => {
+    for (const operation of ['say.start', 'say.stop'] as const) {
+      const actionId = ActionIdSchema.parse(`ui.voice_global.${operation}`);
+      const spec = getActionSpec(actionId);
+      expect(spec.executionPlacement).toBe('client');
+      expect(spec.surfaces).toMatchObject({ agent: true, mcp: true, plugin: true });
+      expect(spec.inputSchema.safeParse(operation === 'say.start' ? { text: 'hello '.repeat(1000) } : {}).success).toBe(true);
+      expect(spec.inputSchema.safeParse(operation === 'say.start' ? { text: '   ' } : { text: 'wrong' }).success).toBe(false);
+      for (const surface of ['agent', 'mcp', 'plugin'] as const) {
+        expect(resolveActionApprovalRouting({ actionId, spec,
+          context: { surface, authority: 'account_automation' } }).required).toBe(operation === 'say.start');
+      }
+    }
+  });
+
   it('exposes History reads and export while preserving destructive clear approval', () => {
     for (const operation of ['search', 'load_older', 'export', 'clear']) {
       const actionId = ActionIdSchema.parse(`ui.voice_global.history.${operation}`);
@@ -22,7 +37,7 @@ describe('local Voice Action contract', () => {
     for (const id of ['get', 'start', 'end', 'set_muted', 'recover', 'dismiss', 'hold_begin', 'hold_release', 'hold_cancel', 'turn_control',
       'brief.request', 'brief.retry', 'brief.stop', 'brief.close', 'glance.open', 'glance.close', 'transcript.set_visible',
       'companion.reveal', 'position.set', 'setup.open', 'setup.close', 'open_conversation',
-      'dictation.start', 'dictation.finish', 'dictation.cancel', 'dictation.dismiss']) {
+      'dictation.start', 'dictation.finish', 'dictation.cancel', 'dictation.dismiss', 'dictation.retry']) {
       expect(ActionIdSchema.safeParse(`ui.voice_global.${id}`).success, id).toBe(true);
     }
   });
@@ -31,7 +46,7 @@ describe('local Voice Action contract', () => {
     for (const id of ['get', 'start', 'end', 'set_muted', 'recover', 'dismiss', 'hold_begin', 'hold_release', 'hold_cancel', 'turn_control',
       'brief.request', 'brief.retry', 'brief.stop', 'brief.close', 'glance.open', 'glance.close', 'transcript.set_visible',
       'companion.reveal', 'position.set', 'setup.open', 'setup.close', 'open_conversation',
-      'dictation.start', 'dictation.finish', 'dictation.cancel', 'dictation.dismiss']) {
+      'dictation.start', 'dictation.finish', 'dictation.cancel', 'dictation.dismiss', 'dictation.retry']) {
       const actionId = `ui.voice_global.${id}`;
       const parsed = ActionIdSchema.safeParse(actionId);
       expect(parsed.success, actionId).toBe(true);
@@ -52,7 +67,7 @@ describe('local Voice Action contract', () => {
       ['hold_cancel', false], ['turn_control', false], ['brief.stop', false], ['brief.close', false],
       ['glance.open', false], ['glance.close', false], ['transcript.set_visible', false], ['companion.reveal', false],
       ['position.set', false], ['setup.open', false], ['setup.close', false], ['open_conversation', false],
-      ['dictation.start', true], ['dictation.finish', false], ['dictation.cancel', false], ['dictation.dismiss', false],
+      ['dictation.start', true], ['dictation.finish', false], ['dictation.cancel', false], ['dictation.dismiss', false], ['dictation.retry', false],
     ] as const) {
       const actionId = ActionIdSchema.parse(`ui.voice_global.${operation}`);
       const spec = getActionSpec(actionId);
@@ -130,4 +145,25 @@ describe('local Voice Action contract', () => {
     expect(teleport.surfaces).toMatchObject({ agent: true, mcp: true, plugin: true });
     expect(teleport.requiredAuthority).toBe('account_automation');
   });
+});
+import { listActionSpecs } from './actionSpecs.js';
+
+it('VI-LIFE exposes exact New, Continue, list and open operations to UI, Voice, Agent and MCP with microphone approval', () => {
+  for (const id of ['ui.voice_global.new_conversation', 'ui.voice_global.continue_conversation',
+    'ui.voice_global.conversations.list', 'ui.voice_global.conversations.open']) {
+    const spec = listActionSpecs().find(spec => spec.id === id);
+    expect(spec, id).toBeDefined();
+    expect(spec?.surfaces).toMatchObject({ ui: true, voice: true, agent: true, mcp: true });
+    if (!spec) throw new Error('Expected the registered Voice conversation Action');
+    expect(spec.bindings?.mcpToolName).toBe(id.replaceAll('.', '_'));
+    for (const surface of ['voice', 'agent', 'mcp'] as const) {
+      expect(resolveActionApprovalRouting({ actionId: ActionIdSchema.parse(id), spec,
+        context: { surface, authority: 'account_automation' } }).required)
+        .toBe(id.endsWith('new_conversation') || id.endsWith('continue_conversation'));
+    }
+    if (id.endsWith('new_conversation') || id.endsWith('continue_conversation')) {
+      expect(spec?.safety).toBe('danger');
+      expect(spec?.approval.result).toBe('required');
+    }
+  }
 });
