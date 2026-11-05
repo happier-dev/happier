@@ -4620,6 +4620,19 @@ purpose-binding reason, and admission-time currentness; they neither grant
 credential access nor assert continuing readiness. Terminal/rejoined outcomes
 remain unchanged. The existing V1 response and push projection omit these facts.
 
+Successful terminal `machines.setup.apply` pushes retain the current full snapshot
+so the existing client operation store can show completion before a daemon group
+refresh replaces the process. Current clients validate its Account, Machine and
+setup reference before consuming it; other setup notifications still use the V1
+projection and current-read enrichment. This unreleased Action uses the existing
+snapshot envelope and adds no retained Home or daemon result. After the refresh,
+an operation read may return `not_found`; the next setup Plan observes whether
+the recipe is satisfied. This visible, recoverable gap is accepted rather than
+extending operation lifetime or retaining results across the restart.
+Older closed snapshot readers drop this unknown setup domain; matching current
+clients are needed to show that completion push. V1 RPC responses retain their
+released projection.
+
 Managed controller failures in the current development V2 read retain a strict
 `managedControllerRequest` diagnostic: the static request path, failure category,
 observed HTTP status when available, and safe machine-readable code when supplied.

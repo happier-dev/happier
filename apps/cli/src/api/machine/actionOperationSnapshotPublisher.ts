@@ -7,6 +7,7 @@ import type { readStoredCredentials } from '@/persistence';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -66,6 +67,11 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             },
         ) });
         if (accountMode.kind !== 'resolved') return false;
+        // Successful setup output must reach the outside holder before its last
+        // effect can replace this process. Other pushes retain their projection.
+        const outward = (snapshot: Snapshot) => snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+            && snapshot.state === 'succeeded' && snapshot.domainRef?.kind === 'machineSetup'
+            ? snapshot : projectActionOperationSnapshotForV1Reader(snapshot);
         const publish = async (content: import('@happier-dev/protocol/actions/operations/v1').ActionOperationRevisionEphemeralV1['content']) => {
             if (acknowledge) return await input.publishContentAcknowledged!(content);
             input.publishContent(content);
@@ -73,7 +79,7 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
         };
         if (accountMode.mode === 'plain') {
             for (const snapshot of admitted) {
-                if (!await publish({ t: 'plain', v: projectActionOperationSnapshotForV1Reader(snapshot) })) return false;
+                if (!await publish({ t: 'plain', v: outward(snapshot) })) return false;
             }
             return true;
         }
@@ -83,7 +89,7 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
         for (const snapshot of admitted) {
             if (!await publish({ t: 'encrypted', c: sealAccountScopedBlobCiphertext({
-                kind: 'action_operation_snapshot', material, payload: projectActionOperationSnapshotForV1Reader(snapshot),
+                kind: 'action_operation_snapshot', material, payload: outward(snapshot),
                 randomBytes: (length) => new Uint8Array(randomBytes(length)),
             }) })) return false;
         }

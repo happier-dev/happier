@@ -40,7 +40,7 @@ describe('operation effects after Home acknowledges terminal success', () => {
     expect(runtime.store.get(scope, 'setup')).toMatchObject({ state: 'succeeded', result: result.result });
   });
 
-  it('leaves the acknowledged Home result known when the last effect replaces the daemon', async () => {
+  it('pushes terminal success to Home before refresh and accepts successor not_found before replanning', async () => {
     let homeSnapshot: ActionOperationSnapshotV1 | undefined;
     let successor: ReturnType<typeof createHostActionOperationRuntime> | undefined;
     let effectSignal: AbortSignal | undefined;

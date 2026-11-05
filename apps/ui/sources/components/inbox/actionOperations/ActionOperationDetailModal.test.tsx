@@ -1,10 +1,14 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
+import { getActionOperation, type ActionOperationRpc } from '@/sync/ops/actionOperations';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const initialState = storage.getState();
@@ -47,6 +51,35 @@ afterEach(() => {
 const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
 
 describe('ActionOperationDetailModal', () => {
+    it.each(['plain', 'e2ee'] as const)('shows the pushed Software Apply outcome after the daemon loses its receipt (%s)', async mode => {
+        const homeId = 'home-a';
+        const serverId = homeId;
+        const active = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'software-apply', revision: 1,
+            actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'running',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Install Software',
+            createdAt: 100, startedAt: 110, cancellation: 'supported',
+            domainRef: { kind: 'machineSetup', serverId: homeId, machineId: 'machine-1', terminalId: 'install-output' } });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [active] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={active.operationId} onClose={() => {}} />);
+        const terminal = ActionOperationSnapshotV1Schema.parse({ ...active, revision: 2, state: 'succeeded', settledAt: 200,
+            domainRef: { ...active.domainRef, exitCode: 0 } });
+        // Only the daemon RPC boundary has restarted. Its typed terminal push,
+        // qualified reader, store, selector and mounted modal remain real.
+        // RPC returns untyped wire data; getActionOperation validates the response.
+        const rpc: ActionOperationRpc = async <Response,>() => ({ kind: 'not_found' } as Response);
+        await act(async () => consumeActionOperationSnapshotPush({
+            update: { type: 'action-operation-updated', machineId: 'machine-1', content: mode === 'plain'
+                ? { t: 'plain', v: terminal } : { t: 'encrypted', c: 'sealed-terminal' } },
+            accountEncryptionMode: mode, accountId: 'account-1', sourceServerId: serverId,
+            openSnapshot: () => terminal,
+            readSnapshot: operationId => getActionOperation({ serverId, accountId: 'account-1', machineId: 'machine-1',
+                operationId, requireCurrentDomainFacts: true, rpc }),
+        }));
+        expect(screen.getTextContent()).toContain('inbox.actionOperations.status.succeeded');
+        expect(screen.getTextContent()).not.toContain('inbox.actionOperations.observation.unavailable');
+        expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toEqual([{ serverId, snapshot: terminal }]);
+    });
+
     it('cancels an unanswered handoff resume when its modal closes', async () => {
         actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [{
             version: 1, operationId: 'handoff-operation', revision: 3, actionId: 'session.handoff', state: 'running',

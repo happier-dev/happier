@@ -4,6 +4,7 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from '@/daemon/actionOperations/testFixtures/predecessorActionOperationV1';
 
@@ -16,6 +17,39 @@ describe('Action operation snapshot producer compatibility', () => {
     } });
   });
   afterEach(() => vi.restoreAllMocks());
+  it.each(['plain', 'e2ee'] as const)('publishes full terminal setup success through ordinary and acknowledged %s pushes', async mode => {
+    const accountId = 'setup-terminal-owner';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, updatedAt: 1 } });
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => accountId,
+      serverBaseUrl: 'https://setup-terminal-home.example',
+      readCredentials: async () => ({ token, encryption: mode === 'plain' ? null : material }),
+      publishContent: content => { contents.push(content); },
+      publishContentAcknowledged: async content => { contents.push(content); return true; },
+    });
+    const running: ActionOperationSnapshotV1 = { version: 1, operationId: 'setup-terminal', revision: 2,
+      actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'running', scope: { accountId, machineId: 'machine' },
+      title: 'Apply setup', createdAt: 1, startedAt: 2, cancellation: 'supported',
+      domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'machine',
+        setupTask: { id: 'setup-task', taskKind: 'machine.setup.apply.v1' },
+        terminalId: 'setup-output', terminals: { setup: 'setup-output' } } };
+    const terminal: ActionOperationSnapshotV1 = { ...running, revision: 3, state: 'succeeded', settledAt: 3,
+      domainRef: { ...running.domainRef!, kind: 'machineSetup', serverId: 'home', machineId: 'machine', exitCode: 0 },
+      result: { membershipApplied: true } };
+    await publisher(running);
+    await publisher(terminal);
+    await expect(publisher.acknowledge(terminal)).resolves.toBe(true);
+    const opened = contents.map(content => content.t === 'plain' ? content.v : openAccountScopedBlobCiphertext({
+      kind: 'action_operation_snapshot', material, ciphertext: content.c,
+    })?.value);
+    expect(opened[0]).toEqual(projectActionOperationSnapshotForV1Reader(running));
+    expect(ActionOperationSnapshotV1Schema.parse(opened[1])).toEqual(terminal);
+    expect(ActionOperationSnapshotV1Schema.parse(opened[2])).toEqual(terminal);
+    expect(PredecessorSnapshotSchema.safeParse(opened[0]).success).toBe(true);
+    expect(PredecessorSnapshotSchema.safeParse(opened[1]).success).toBe(false);
+  });
   it.each(['plain', 'e2ee'] as const)('waits for Home admission of the exact %s terminal snapshot without blocking progress', async mode => {
     const accountId = 'setup-owner';
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;

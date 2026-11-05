@@ -5,6 +5,7 @@ import {
     type ActionOperationRevisionEphemeralV1,
 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
@@ -46,11 +47,13 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
     ) return;
 
     const store = params.store ?? actionOperationStore;
-    // The full opened Account-scoped push is the surviving holder's basis.
-    // Reboot can destroy the target before the ordinary fresh read completes;
-    // retaining this typed basis is not a generic notification fallback.
-    if (snapshot.actionId === 'machines.reboot' && snapshot.domainRef?.kind === 'machineReboot'
-        && snapshot.domainRef.basis?.dispatchStarted
+    // Reboot and successful Software Apply publish full Account-scoped facts
+    // before the target daemon can disappear. Other notifications still need
+    // the ordinary fresh read to supply their current domain facts.
+    if (((snapshot.actionId === 'machines.reboot' && snapshot.domainRef?.kind === 'machineReboot'
+        && snapshot.domainRef.basis?.dispatchStarted)
+        || (snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && snapshot.state === 'succeeded'
+            && snapshot.domainRef?.kind === 'machineSetup'))
         && snapshot.domainRef.machineId === snapshot.scope.machineId
         && areServerProfileIdentifiersEquivalent(snapshot.domainRef.serverId, sourceServerId)) {
         store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot] });
